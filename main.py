@@ -20,13 +20,19 @@ Rôles :
      et fusionne les catalogues, chaque id exposé préfixé ;
   4. ne transmet QUE les routes nécessaires (FORWARD_POST_PATHS,
      /v1/chat/completions, /v1/models) — toute autre URL reçoit un 404
-     local, rien n'est relayé aveuglément aux backends.
+     local, rien n'est relayé aveuglément aux backends ;
+  5. auth optionnelle du proxy lui-même : PROXY_API_KEY (env, vide par
+     défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
+     à la OpenAI (plusieurs clés séparées par des virgules, 401 sinon,
+     /healthz exempté). Ce Bearer est la clé DU PROXY : il n'est jamais
+     relayé aux backends quand l'auth est active.
 
 Tout ce qui est spécifique à Albert (limiteur de quotas, familles,
 association routeurs ↔ modèles) vit dans albert.py.
 """
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -42,6 +48,15 @@ import albert
 TOOL_CHOICE = os.environ.get("FORCE_TOOL_CHOICE", "auto")
 UPSTREAM_API_KEY = os.environ.get("UPSTREAM_API_KEY", "")
 TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "600"))
+
+# Clé(s) exigée(s) DES CLIENTS pour appeler le proxy (à la OpenAI :
+# «Authorization: Bearer <clé>»). Vide (défaut) = proxy ouvert.
+# Plusieurs clés possibles, séparées par des virgules. /healthz reste
+# toujours accessible sans clé.
+PROXY_API_KEYS = frozenset(
+    k.strip() for k in os.environ.get("PROXY_API_KEY", "").split(",")
+    if k.strip()
+)
 
 # Seules routes POST relayées aux backends, en plus des handlers dédiés
 # (/v1/chat/completions, /v1/models). Tout le reste → 404 local.
@@ -223,6 +238,13 @@ async def lifespan(app: FastAPI):
             "transmis tel quel)",
         )
     log.info("tool_choice forcé à %r", TOOL_CHOICE)
+    if PROXY_API_KEYS:
+        log.info(
+            "auth proxy ACTIVE : %d clé(s) acceptée(s), /healthz exempté",
+            len(PROXY_API_KEYS),
+        )
+    else:
+        log.info("auth proxy inactive (PROXY_API_KEY vide) : proxy ouvert")
     if albert.ROUTER_MODELS:
         log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 
@@ -268,8 +290,38 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="albert-proxy", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def require_proxy_key(request: Request, call_next):
+    if PROXY_API_KEYS and request.url.path != "/healthz":
+        auth = request.headers.get("authorization", "")
+        token = auth[7:] if auth.lower().startswith("bearer ") else ""
+        if not any(hmac.compare_digest(token, k) for k in PROXY_API_KEYS):
+            log.warning(
+                "clé proxy absente ou invalide : %s %s → 401",
+                request.method, request.url.path,
+            )
+            return JSONResponse(
+                {
+                    "error": {
+                        "message": (
+                            "clé API du proxy absente ou invalide "
+                            "(en-tête «Authorization: Bearer <clé>» attendu)"
+                        ),
+                        "type": "invalid_api_key",
+                    }
+                },
+                status_code=401,
+            )
+    return await call_next(request)
+
+
 def clean_headers(request: Request, api_key: str) -> dict:
-    skip = HOP_BY_HOP | ({"authorization"} if api_key else set())
+    # Authorization du client jamais relayé si le backend a sa clé, ni si
+    # l'auth proxy est active (le Bearer du client est la clé DU PROXY,
+    # elle ne doit pas fuiter vers l'upstream).
+    skip = HOP_BY_HOP | (
+        {"authorization"} if api_key or PROXY_API_KEYS else set()
+    )
     headers = {
         k: v for k, v in request.headers.items()
         if k.lower() not in skip
@@ -364,6 +416,7 @@ async def healthz():
     return {
         "status": "ok",
         "tool_choice": TOOL_CHOICE,
+        "auth_required": bool(PROXY_API_KEYS),
         "backends": {
             name: {
                 "url": b.url,

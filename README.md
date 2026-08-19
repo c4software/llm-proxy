@@ -94,6 +94,7 @@ backends à quotas sans `api_key` héritent d'`UPSTREAM_API_KEY`),
 |---|---|---|
 | `BACKENDS` | *Albert seul* | Déclaration des backends (voir ci-dessus) |
 | `UPSTREAM_API_KEY` | *(vide)* | Clé par défaut des backends à quotas ; si définie, remplace l'`Authorization` du client |
+| `PROXY_API_KEY` | *(vide)* | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>`, à la OpenAI). Vide = proxy ouvert. Plusieurs clés séparées par des virgules ; 401 sinon, `/healthz` exempté |
 | `UPSTREAM_TIMEOUT` | `600` | Secondes ; large pour les longues générations |
 | `FORCE_TOOL_CHOICE` | `auto` | Valeur injectée quand `tools` est présent sans `tool_choice` |
 | `FORWARD_POST_PATHS` | `/v1/completions,/v1/embeddings,/v1/rerank,/v1/audio/transcriptions,/v1/ocr` | Routes POST relayées en plus des handlers dédiés ; le reste → 404 |
@@ -125,9 +126,13 @@ fixer manuellement. Id et alias (`openai/gpt-oss-120b` ↔
 ## Sécurité
 
 Avec `UPSTREAM_API_KEY` défini, **le proxy devient une clé Albert
-ouverte pour quiconque peut l'atteindre**. C'est assumé — l'exposition
-se contrôle au niveau réseau (Nginx Proxy Manager, Tailscale, réseau
-Docker partagé).
+ouverte pour quiconque peut l'atteindre**. Deux parades, cumulables :
+
+- **`PROXY_API_KEY`** : exige des clients une clé à la OpenAI
+  (`Authorization: Bearer <clé>`) — sans elle, 401. Quand l'auth est
+  active, le Bearer du client n'est jamais relayé aux backends (c'est
+  la clé du proxy, pas de l'upstream).
+- **Le réseau** : Nginx Proxy Manager, Tailscale, réseau Docker partagé.
 
 ## Vérification
 
