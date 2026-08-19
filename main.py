@@ -46,7 +46,6 @@ from starlette.background import BackgroundTask
 import albert
 
 TOOL_CHOICE = os.environ.get("FORCE_TOOL_CHOICE", "auto")
-UPSTREAM_API_KEY = os.environ.get("UPSTREAM_API_KEY", "")
 TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "600"))
 
 # Clé(s) exigée(s) DES CLIENTS pour appeler le proxy (à la OpenAI :
@@ -113,9 +112,8 @@ class Backend:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
 
-# Défaut si BACKENDS n'est pas défini : Albert seul. Les URLs ne vivent
-# QUE dans BACKENDS (ou ce défaut) ; UPSTREAM_API_KEY ne porte que le
-# secret du backend à quotas.
+# Défaut si BACKENDS n'est pas défini : Albert seul. URLs ET clés ne
+# vivent QUE dans BACKENDS (champ api_key par backend), rien ailleurs.
 DEFAULT_BACKENDS = {
     "albert": {"url": "https://albert.api.etalab.gouv.fr", "quotas": True},
 }
@@ -135,12 +133,6 @@ def load_backends() -> dict[str, Backend]:
         if not key:
             raise SystemExit("BACKENDS : nom de backend vide")
         out[key] = Backend(key, cfg if isinstance(cfg, dict) else {})
-    # Plusieurs backends à quotas possibles (deux comptes Albert avec des
-    # clés différentes) ; UPSTREAM_API_KEY sert de clé par défaut à ceux
-    # qui n'ont pas d'api_key dans le JSON.
-    for b in out.values():
-        if b.quotas and not b.api_key:
-            b.api_key = UPSTREAM_API_KEY
     return out
 
 

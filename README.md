@@ -79,10 +79,11 @@ entrée est le préfixe de routage :
         "bigchuck": {"url": "http://bigchuck:8009"}
       }
 
-Options par backend : `api_key` (`--api-key` de llama-server ; les
-backends à quotas sans `api_key` héritent d'`UPSTREAM_API_KEY`),
-`quotas` (active le limiteur Albert), `timeout` (secondes, défaut
-`UPSTREAM_TIMEOUT`), `verify_ssl: false` (certificat auto-signé).
+Options par backend : `api_key` (**la clé du backend vit ici**, et
+nulle part ailleurs — clé Albert, ou `--api-key` de llama-server ; si
+définie, elle remplace l'`Authorization` du client), `quotas` (active
+le limiteur Albert), `timeout` (secondes, défaut `UPSTREAM_TIMEOUT`),
+`verify_ssl: false` (certificat auto-signé).
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
 `unknown_backend_prefix`. Seules les requêtes sans champ `model`
@@ -93,7 +94,6 @@ backends à quotas sans `api_key` héritent d'`UPSTREAM_API_KEY`),
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `BACKENDS` | *Albert seul* | Déclaration des backends (voir ci-dessus) |
-| `UPSTREAM_API_KEY` | *(vide)* | Clé par défaut des backends à quotas ; si définie, remplace l'`Authorization` du client |
 | `PROXY_API_KEY` | *(vide)* | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>`, à la OpenAI). Vide = proxy ouvert. Plusieurs clés séparées par des virgules ; 401 sinon, `/healthz` exempté |
 | `UPSTREAM_TIMEOUT` | `600` | Secondes ; large pour les longues générations |
 | `FORCE_TOOL_CHOICE` | `auto` | Valeur injectée quand `tools` est présent sans `tool_choice` |
@@ -125,8 +125,9 @@ fixer manuellement. Id et alias (`openai/gpt-oss-120b` ↔
 
 ## Sécurité
 
-Avec `UPSTREAM_API_KEY` défini, **le proxy devient une clé Albert
-ouverte pour quiconque peut l'atteindre**. Deux parades, cumulables :
+Avec une `api_key` configurée sur un backend, **le proxy devient une
+clé Albert ouverte pour quiconque peut l'atteindre**. Deux parades,
+cumulables :
 
 - **`PROXY_API_KEY`** : exige des clients une clé à la OpenAI
   (`Authorization: Bearer <clé>`) — sans elle, 401. Quand l'auth est

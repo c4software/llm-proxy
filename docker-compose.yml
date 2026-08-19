@@ -12,7 +12,6 @@ services:
       - "bigchuck:100.64.0.4"
     environment:
       FORCE_TOOL_CHOICE: auto
-      UPSTREAM_API_KEY: ${UPSTREAM_API_KEY}
       UPSTREAM_TIMEOUT: "600"
       LOG_LEVEL: INFO
       RATE_LIMIT_MARGIN: "0.9"
@@ -40,15 +39,17 @@ services:
       STATUS_INTERVAL: "600"
       # Backends OpenAI-compatibles ; le PRÉFIXE du modèle est le
       # discriminant de routage : «albert/…» → Albert (quotas: true →
-      # limiteur, api_key héritée d'UPSTREAM_API_KEY si absente ici),
-      # «bigchuck/…» → llama.cpp local (sans quota, pas toujours allumé :
+      # limiteur), «bigchuck/…» → llama.cpp local (sans quota, pas
+      # toujours allumé :
       # contacté uniquement à la demande, jamais sondé en tâche de fond ;
       # éteint → 503 backend_offline, échec rapide en ~5 s).
       # TOUT modèle doit être préfixé : sans préfixe reconnu → 400.
       # GET /v1/models interroge les backends en direct et renvoie le
       # catalogue fusionné, ids préfixés (albert/…, bigchuck/…).
-      # Options par backend : "api_key", "quotas", "timeout" (secondes,
-      # défaut UPSTREAM_TIMEOUT), "verify_ssl": false (cert auto-signé).
+      # Options par backend : "api_key" (LA clé du backend vit ici —
+      # ${ALBERT_API_KEY} est substitué par Compose depuis le .env),
+      # "quotas", "timeout" (secondes, défaut UPSTREAM_TIMEOUT),
+      # "verify_ssl": false (cert auto-signé).
       # Plusieurs backends du même type possibles — deux comptes Albert
       # avec des clés différentes ("albert2": {..., "quotas": true,
       # "api_key": "sk-…"}, limiteurs séparés) ou plusieurs machines
@@ -56,7 +57,7 @@ services:
       BACKENDS: |
         {
           "albert":   {"url": "https://albert.api.etalab.gouv.fr",
-                       "quotas": true},
+                       "quotas": true, "api_key": "${ALBERT_API_KEY}"},
           "bigchuck": {"url": "http://bigchuck:8009"}
         }
       # Endpoints hors quota chat (500 RPM, TPM/TPD illimités côté Albert) :
