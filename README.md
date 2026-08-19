@@ -1,36 +1,57 @@
-# albert-proxy
+# llm-proxy
 
-Proxy transparent devant une API OpenAI-compatible qui applique
-`tool_choice="none"` par défaut — cas d'Albert (DINUM), dont le schéma
-OpenAPI déclare `"default": "none"` alors que sa propre description dit
-que `auto` s'applique quand `tools` est présent.
+Passerelle OpenAI-compatible qui expose **plusieurs backends LLM derrière
+un seul endpoint** : Albert (DINUM), machines llama.cpp locales, ou tout
+autre serveur compatible OpenAI. Le client parle à une seule URL et
+choisit le backend par le **préfixe du nom de modèle**
+(`albert/deepseek-v4-flash`, `bigchuck/qwen3-32b`).
 
-Conséquence sans proxy : les agents (Hermes, pi, …) envoient `tools`,
-n'envoient pas `tool_choice`, et le modèle *décrit* ce qu'il ferait au
-lieu d'appeler les outils. Pas d'erreur, juste un agent qui s'arrête au
-premier tour.
+## Fonctionnalités
 
-## Ce que fait le proxy
-
-- Sur `POST /v1/chat/completions` : si `tools` est une liste non vide et
-  que `tool_choice` est absent, ajoute `tool_choice: "auto"` (un
-  `tool_choice` explicite du client n'est jamais écrasé).
-- Route chaque requête vers son backend d'après le **préfixe du modèle**
-  (`albert/…`, `bigchuck/…`) — voir « Multi-backends ».
-- Temporise les requêtes vers Albert pour rester sous ses quotas
-  (fenêtres minute et jour, limites exactes du compte via `/v1/me/info`).
-- Le streaming SSE passe intact.
+- **Routage multi-backends** — `BACKENDS` (JSON en env) déclare les
+  backends ; le préfixe du modèle est le discriminant de routage, retiré
+  avant transfert (llama.cpp reçoit `qwen3-32b`, pas `bigchuck/qwen3-32b`).
+- **Catalogue unifié** — `GET /v1/models` interroge tous les backends en
+  direct, préfixe les ids et **normalise les entrées sur un schéma
+  uniforme** (type, coûts, `max_context_length` dérivé du `--ctx-size`
+  ou du `n_ctx_train` côté llama.cpp) ; les détails internes (chemins
+  `.gguf`, args…) ne sont jamais publiés. Les noms renvoyés sont
+  directement routables.
+- **Limiteur de quotas Albert** — temporise les requêtes pour rester
+  sous les limites du compte (fenêtres minute **et** jour, chargées via
+  `/v1/me/info`, rafraîchies périodiquement). Retarde plutôt que
+  rejeter ; si l'attente dépasse `MAX_QUEUE_SECONDS` (quota journalier
+  épuisé) → 429 local avec `Retry-After`. Plusieurs backends à quotas
+  possibles (deux comptes Albert = deux jeux de limiteurs indépendants).
+- **Backends locaux à la demande** — jamais sondés en tâche de fond
+  (souvent éteints) : connexion coupée à 5 s, backend éteint → 503
+  `backend_offline` avec `Retry-After`, et simplement absent de
+  `/v1/models`.
+- **Clé centralisée** — la clé Albert ne vit que dans le proxy ;
+  l'`Authorization` du client est remplacé. Les clients n'ont rien à
+  configurer (une valeur bidon suffit si leur SDK exige une clé).
+- **Correctif `tool_choice`** — si `tools` est présent sans
+  `tool_choice`, injecte `tool_choice: "auto"` (le schéma d'Albert
+  déclare `"default": "none"`, ce qui casse le tool calling des agents).
+  Un `tool_choice` explicite n'est jamais écrasé ; inoffensif pour les
+  autres backends.
+- **Surface minimale** — seuls `POST /v1/chat/completions`,
+  `GET /v1/models` et les chemins de `FORWARD_POST_PATHS` sont relayés ;
+  toute autre URL → 404 local `unknown_route`. Le streaming SSE passe
+  intact.
+- **Observabilité** — `GET /healthz` expose l'état de chaque backend
+  (URL, quotas restants par fenêtre, derniers modèles vus) ; un résumé
+  périodique des compteurs est loggé (`STATUS_INTERVAL`).
 
 ## Fichiers
 
 | Fichier | Rôle |
 |---|---|
-| `main.py` | Le proxy : backends, routage au préfixe, `/v1/models` fusionné, HTTP |
-| `albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles, association routeurs ↔ modèles via `/v1/me/info` |
+| `main.py` | La passerelle : backends, routage au préfixe, `/v1/models` fusionné, HTTP |
+| `albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 
-`main.py` ne connaît d'Albert que « le backend marqué `quotas: true`
-passe par `albert.get_limiter()` » ; toute la mécanique de quotas vit
-dans `albert.py` et peut s'ignorer tant qu'on ne touche pas aux limites.
+`main.py` ne connaît d'Albert que « un backend `quotas: true` passe par
+sa `QuotaState` » ; toute la mécanique de quotas vit dans `albert.py`.
 
 ## Déploiement
 
@@ -44,21 +65,12 @@ Nouvelle ressource → Dockerfile, pointer sur ce dépôt. Port 8000.
 Ajouter les variables d'environnement ci-dessous, puis exposer le
 service via Nginx Proxy Manager sur un sous-domaine interne.
 
-## Variables
+## Configuration
 
-| Variable | Défaut | Rôle |
-|---|---|---|
-| `FORCE_TOOL_CHOICE` | `auto` | Valeur injectée |
-| `UPSTREAM_API_KEY` | *(vide)* | Clé du backend à quotas ; si définie, **remplace systématiquement** l'`Authorization` du client |
-| `UPSTREAM_TIMEOUT` | `600` | Secondes ; large pour les longues générations |
-| `LOG_LEVEL` | `INFO` | `INFO` logue chaque injection |
-| `BACKENDS` | *Albert seul* | JSON `{"<nom>": {url, api_key?, quotas?, timeout?, verify_ssl?}}` — le nom est le préfixe de routage ; **seule source de vérité des URLs** |
-| `FORWARD_POST_PATHS` | `/v1/completions,/v1/embeddings,/v1/rerank,/v1/audio/transcriptions,/v1/ocr` | Seules routes POST relayées (en plus de `/v1/chat/completions` et `/v1/models`) ; toute autre URL → 404 local |
+### Backends
 
-## Multi-backends (Albert + llama.cpp local)
-
-`BACKENDS` déclare les backends, et **le préfixe du nom de modèle est le
-discriminant de routage** — le client parle à un seul endpoint :
+`BACKENDS` est la **seule source de vérité des URLs** — le nom de chaque
+entrée est le préfixe de routage :
 
     BACKENDS: |
       {
@@ -67,59 +79,61 @@ discriminant de routage** — le client parle à un seul endpoint :
         "bigchuck": {"url": "http://bigchuck:8009"}
       }
 
-- `model: "bigchuck/qwen3-32b"` → bigchuck, préfixe retiré avant
-  transfert (llama.cpp reçoit `qwen3-32b`), **sans limiteur** (local =
-  illimité). `model: "albert/openweight-large"` → Albert, préfixe retiré,
-  limiteur de quotas habituel.
-- **Tout modèle doit être préfixé** : modèle sans préfixe reconnu → 400
-  `unknown_backend_prefix`. Seules les requêtes sans champ `model`
-  (endpoints de compte, corps non JSON) partent vers le backend à
-  quotas.
-- Chaque backend `"quotas": true` porte **sa propre** mécanique de
-  quotas (`/v1/me/info`, familles, buckets — voir `albert.py`). On peut
-  en déclarer plusieurs : deux comptes Albert avec des clés différentes
-  (`"albert"`, `"albert2"`) ont chacun leurs limiteurs et leur refresh.
-  Idem côté local : plusieurs machines llama.cpp = plusieurs entrées,
-  chacune son préfixe. Les URLs ne vivent **que** dans `BACKENDS`
-  (défaut si absent : Albert seul) ; `UPSTREAM_API_KEY` ne porte que le
-  secret, hérité par les backends à quotas sans `api_key` dans le JSON.
-- Les backends sans quota (llama.cpp, pas toujours allumés) ne sont
-  **jamais sondés en tâche de fond** : ils sont contactés uniquement à
-  la demande (connexion coupée au bout de 5 s). Backend éteint → 503
-  `backend_offline` avec `Retry-After`.
-- `GET /v1/models` interroge les backends **en direct** et renvoie le
-  catalogue fusionné, chaque id préfixé par son backend (`albert/…`,
-  `bigchuck/…`) — les noms renvoyés sont directement routables. Un
-  backend éteint est simplement absent de la liste.
-- Options par backend : `api_key` (`--api-key` de llama-server),
-  `timeout` (secondes, défaut `UPSTREAM_TIMEOUT`), `verify_ssl: false`
-  (certificat auto-signé).
-- Le proxy ne relaie **que les routes nécessaires** : `POST
-  /v1/chat/completions`, `GET /v1/models` et les chemins de
-  `FORWARD_POST_PATHS`. Toute autre URL ou méthode → 404 local
-  `unknown_route`, rien n'est transmis aveuglément aux backends.
-- État visible dans `/healthz` → `backends`.
+Options par backend : `api_key` (`--api-key` de llama-server ; les
+backends à quotas sans `api_key` héritent d'`UPSTREAM_API_KEY`),
+`quotas` (active le limiteur Albert), `timeout` (secondes, défaut
+`UPSTREAM_TIMEOUT`), `verify_ssl: false` (certificat auto-signé).
 
-L'injection `tool_choice=auto` s'applique à tous les backends
-(inoffensif, llama.cpp est OpenAI-compatible).
+**Tout modèle doit être préfixé** : préfixe inconnu → 400
+`unknown_backend_prefix`. Seules les requêtes sans champ `model`
+(endpoints de compte, corps non JSON) partent vers le backend à quotas.
 
-## Clé centralisée
+### Variables générales
 
-Avec `UPSTREAM_API_KEY` défini, la clé Albert ne vit qu'ici. Les clients
-n'ont plus rien à configurer : l'en-tête `Authorization` qu'ils envoient
-est retiré et remplacé, et ceux qui n'en envoient pas fonctionnent aussi.
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `BACKENDS` | *Albert seul* | Déclaration des backends (voir ci-dessus) |
+| `UPSTREAM_API_KEY` | *(vide)* | Clé par défaut des backends à quotas ; si définie, remplace l'`Authorization` du client |
+| `UPSTREAM_TIMEOUT` | `600` | Secondes ; large pour les longues générations |
+| `FORCE_TOOL_CHOICE` | `auto` | Valeur injectée quand `tools` est présent sans `tool_choice` |
+| `FORWARD_POST_PATHS` | `/v1/completions,/v1/embeddings,/v1/rerank,/v1/audio/transcriptions,/v1/ocr` | Routes POST relayées en plus des handlers dédiés ; le reste → 404 |
+| `LOG_LEVEL` | `INFO` | `INFO` logue chaque injection et chaque mise en attente |
 
-Côté pi, `apiKey` reste obligatoire dans `registerProvider()` — mettre
-`"unused"` suffit. Côté Hermes, `api_key` peut recevoir la même valeur
-bidon.
+### Variables du limiteur (backends à quotas)
 
-**Le proxy devient une clé Albert ouverte pour quiconque peut l'atteindre.**
-C'est assumé (proxy public) — l'exposition se contrôle au niveau réseau
-(Nginx Proxy Manager, Tailscale, réseau Docker partagé).
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `RATE_LIMIT_MARGIN` | `0.9` | Fraction des limites réellement utilisée (marge de sécurité) |
+| `MAX_QUEUE_SECONDS` | `900` | Attente max avant 429 local (quota journalier épuisé) |
+| `LIMITS_REFRESH` | `3600` | Période de rechargement de `/v1/me/info` (0 = jamais) |
+| `GENERIC_RPM` / `GENERIC_TPM` | `30` / `128000` | Limites des modèles hors familles connues |
+| `FAMILY_LIMITS` | *intégré* | JSON `{"<famille>": {rpm, tpm, models: [préfixes]}}` — limites statiques de repli par famille |
+| `ROUTER_MODELS` | *(vide)* | JSON `{"<router_id>": ["préfixe", ...]}` — association manuelle routeurs ↔ modèles, prioritaire sur la détection par signature |
+| `EXEMPT_PATHS` | `/embeddings,/rerank,/audio/transcriptions,/ocr` | Suffixes de routes exclus du limiteur |
+| `STATUS_INTERVAL` | `600` | Période du résumé des compteurs dans les logs |
+
+### Association routeurs ↔ modèles (Albert)
+
+`/v1/me/info` donne les limites par `router_id` mais pas quels modèles
+chaque routeur sert. Le proxy reconstruit le mapping par **signature** :
+chaque famille de modèles (`FAMILY_LIMITS`) est rattachée au routeur du
+compte qui porte ses (rpm, tpm). Si l'association est ambiguë, la
+famille reste sur ses limites statiques ; `ROUTER_MODELS` permet de la
+fixer manuellement. Id et alias (`openai/gpt-oss-120b` ↔
+`openweight-large`) partagent le même compteur.
+
+## Sécurité
+
+Avec `UPSTREAM_API_KEY` défini, **le proxy devient une clé Albert
+ouverte pour quiconque peut l'atteindre**. C'est assumé — l'exposition
+se contrôle au niveau réseau (Nginx Proxy Manager, Tailscale, réseau
+Docker partagé).
 
 ## Vérification
 
     curl http://localhost:8000/healthz
+
+    curl -s http://localhost:8000/v1/models | jq '.data[].id'
 
     curl -s http://localhost:8000/v1/chat/completions \
       -H "Content-Type: application/json" \
@@ -130,20 +144,15 @@ C'est assumé (proxy public) — l'exposition se contrôle au niveau réseau
              "required":["path"]}}}]}' \
       | jq '.choices[0].finish_reason'
 
-Doit renvoyer `"tool_calls"`. Les logs du conteneur affichent alors :
+Doit renvoyer `"tool_calls"`, avec dans les logs :
 `tool_choice=auto injecté (model=albert/deepseek-v4-flash, 1 tools)`.
-Même chose côté local : `"model":"bigchuck/qwen3.8-27b"` part vers
+Même chose côté local : `"model":"bigchuck/qwen3-32b"` part vers
 llama.cpp (503 `backend_offline` si la machine est éteinte).
 
-## Une fois en place
+## Côté clients
 
-- Hermes : retirer `extra_body.tool_choice` du provider `albert` dans
+- Hermes : retirer `extra_body.tool_choice` du provider dans
   `~/.hermes/config.yaml`, pointer `api` sur le proxy.
 - pi : retirer `patchFetchForAlbert()` de l'extension, pointer
-  `ENDPOINT` sur le proxy.
-
-## À terme
-
-Ce proxy contourne ce qui ressemble à un bug côté Albert (le `default`
-du schéma contredit la description du champ). Une issue chez Etalab
-rendrait ce dépôt inutile — c'est le but.
+  `ENDPOINT` sur le proxy ; `apiKey` reste obligatoire dans
+  `registerProvider()` — `"unused"` suffit.
