@@ -49,6 +49,7 @@ services:
       # Options par backend : "api_key" (LA clé du backend vit ici —
       # ${ALBERT_API_KEY} est substitué par Compose depuis le .env),
       # "quotas", "timeout" (secondes, défaut UPSTREAM_TIMEOUT),
+      # "meta_timeout" (secondes pour GET /v1/models & co, défaut 5),
       # "verify_ssl": false (cert auto-signé).
       # Plusieurs backends du même type possibles — deux comptes Albert
       # avec des clés différentes ("albert2": {..., "quotas": true,

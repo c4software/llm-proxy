@@ -83,7 +83,9 @@ Options par backend : `api_key` (**la clé du backend vit ici**, et
 nulle part ailleurs — clé Albert, ou `--api-key` de llama-server ; si
 définie, elle remplace l'`Authorization` du client), `quotas` (active
 le limiteur Albert), `timeout` (secondes, défaut `UPSTREAM_TIMEOUT`),
-`verify_ssl: false` (certificat auto-signé).
+`meta_timeout` (secondes pour les appels de méta-données — `/v1/models`,
+`/v1/me/info` —, défaut `5`), `verify_ssl: false` (certificat
+auto-signé).
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
 `unknown_backend_prefix`. Seules les requêtes sans champ `model`

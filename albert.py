@@ -34,8 +34,8 @@ tokens des messages envoyés (~4 chars/token estimés ici), pas la sortie.
 Ce module ne connaît ni FastAPI ni httpx. Chaque backend à quotas de
 main.py instancie SA QuotaState : deux backends « albert » avec des clés
 différentes ont chacun leurs limiteurs, leur association routeurs et
-leur refresh. refresh() reçoit le Backend (attributs .client et
-.auth_headers()).
+leur refresh. refresh() reçoit le Backend (attributs .client,
+.auth_headers() et .meta_timeout).
 """
 
 import asyncio
@@ -69,8 +69,6 @@ DEFAULT_FAMILY_LIMITS = {
 # Estimation de tokens : Albert compte les tokens des messages envoyés ;
 # faute de tokenizer, on approxime à N caractères par token.
 CHARS_PER_TOKEN = 4
-# Timeout des appels de méta-données (/v1/me/info, /v1/models), en secondes.
-META_TIMEOUT = 15.0
 # Longueur max des extraits JSON bruts loggés en cas de schéma non reconnu.
 LOG_EXCERPT_CHARS = 280
 
@@ -410,14 +408,16 @@ class QuotaState:
     async def refresh(self, backend) -> bool:
         """Charge /v1/me/info + /v1/models du backend et reconstruit
         l'association. N'écrase jamais des données valides par un échec.
-        `backend` : objet avec .client (httpx.AsyncClient) et .auth_headers()."""
+        `backend` : objet avec .client (httpx.AsyncClient), .auth_headers()
+        et .meta_timeout (secondes)."""
         if backend is None or backend.client is None or not backend.api_key:
             return False
         client = backend.client
         headers = backend.auth_headers()
+        timeout = backend.meta_timeout
         try:
-            info = await client.get("/v1/me/info", headers=headers, timeout=META_TIMEOUT)
-            models = await client.get("/v1/models", headers=headers, timeout=META_TIMEOUT)
+            info = await client.get("/v1/me/info", headers=headers, timeout=timeout)
+            models = await client.get("/v1/models", headers=headers, timeout=timeout)
         except Exception as exc:
             log.warning("[%s] refresh limites impossible : %s — fallbacks conservés",
                         self.name, exc)

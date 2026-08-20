@@ -47,6 +47,10 @@ import albert
 
 TOOL_CHOICE = os.environ.get("FORCE_TOOL_CHOICE", "auto")
 TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "600"))
+# Timeout par défaut (secondes) des appels de méta-données vers les
+# backends (GET /v1/models, /v1/me/info…) : court, un backend lent ne
+# doit pas bloquer le catalogue. Surchargeable par BACKENDS[...].meta_timeout.
+META_TIMEOUT = 5.0
 
 # Clé(s) exigée(s) DES CLIENTS pour appeler le proxy (à la OpenAI :
 # «Authorization: Bearer <clé>»). Vide (défaut) = proxy ouvert.
@@ -101,6 +105,7 @@ class Backend:
         self.verify_ssl = bool(cfg.get("verify_ssl", True))
         self.quotas = bool(cfg.get("quotas", False))
         self.timeout = float(cfg.get("timeout", TIMEOUT))
+        self.meta_timeout = float(cfg.get("meta_timeout", META_TIMEOUT))
         # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
         # Albert avec des clés différentes ne partagent rien).
         self.quota_state = albert.QuotaState(name) if self.quotas else None
@@ -415,6 +420,7 @@ async def healthz():
                 "quotas": b.quotas,
                 "key_injection": bool(b.api_key),
                 "timeout": b.timeout,
+                "meta_timeout": b.meta_timeout,
                 # dernier catalogue vu lors d'un GET /v1/models (informel)
                 "last_seen_models": sorted(f"{name}/{m}" for m in b.models),
                 # état du limiteur (backends à quotas seulement)
@@ -474,7 +480,7 @@ async def list_models(request: Request):
         headers = b.auth_headers() or clean_headers(request, "")
         try:
             r = await b.client.get(
-                "/v1/models", headers=headers, timeout=albert.META_TIMEOUT,
+                "/v1/models", headers=headers, timeout=b.meta_timeout,
             )
             if r.status_code != 200:
                 log.warning("/v1/models %s → %d", b.name, r.status_code)
