@@ -2,14 +2,8 @@ services:
   albert-proxy:
     build: .
     restart: unless-stopped
-    extends:
-      file: ../bases-configuration/base.yml
-      service: base
-    container_name: albert-proxy
-    #ports:
-    #  - "8000:8000"
-    extra_hosts:
-      - "bigchuck:100.64.0.4"
+    ports:
+      - "8000:8000"
     environment:
       FORCE_TOOL_CHOICE: auto
       UPSTREAM_TIMEOUT: "600"
