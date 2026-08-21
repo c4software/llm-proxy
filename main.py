@@ -2,10 +2,11 @@
 Proxy transparent devant l'API Albert (DINUM), OpenAI-compatible.
 
 Rôles :
-  1. injecte tool_choice="auto" quand `tools` est présent sans `tool_choice`
-     (le défaut du schéma Albert est "none", ce qui casse le tool calling) —
-     réglable PAR BACKEND via BACKENDS[...].force_tool_choice (false =
-     aucune injection, une chaîne = cette valeur, défaut = FORCE_TOOL_CHOICE) ;
+  1. peut injecter tool_choice quand `tools` est présent sans `tool_choice`
+     (le défaut du schéma Albert est "none", ce qui casse le tool calling).
+     RIEN N'EST INJECTÉ par défaut : cela s'active PAR BACKEND via
+     BACKENDS[...].force_tool_choice (true = FORCE_TOOL_CHOICE, une chaîne
+     = cette valeur) ;
   2. porte les clés upstream pour tous les clients ;
   3. multi-backends : BACKENDS (env, JSON {"<nom>": {url, ...}}) déclare
      les backends OpenAI-compatibles ; le PRÉFIXE du modèle est LE
@@ -120,12 +121,12 @@ class Backend:
         self.quotas = bool(cfg.get("quotas", False))
         self.timeout = float(cfg.get("timeout", TIMEOUT))
         self.meta_timeout = float(cfg.get("meta_timeout", META_TIMEOUT))
-        # Injection de `tool_choice` : le correctif ne vaut que pour les
-        # backends dont le schéma a "none" pour défaut (Albert). Un
-        # llama.cpp local, lui, n'en a pas besoin — et certains modèles
-        # s'en portent plus mal. Par backend :
-        #   absent / true → valeur globale FORCE_TOOL_CHOICE ;
-        #   false         → aucune injection ;
+        # Injection de `tool_choice` : DÉSACTIVÉE PAR DÉFAUT. Le
+        # correctif ne vaut que pour les backends dont le schéma a
+        # "none" pour défaut (Albert) ; ailleurs il est au mieux inutile,
+        # au pire nuisible. On l'active donc backend par backend :
+        #   absent / false → aucune injection (défaut) ;
+        #   true           → valeur globale FORCE_TOOL_CHOICE ;
         #   "auto", "required"… → cette valeur-là, pour ce backend.
         self.tool_choice = self._tool_choice(cfg.get("force_tool_choice"))
         # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
@@ -137,11 +138,11 @@ class Backend:
 
     @staticmethod
     def _tool_choice(value) -> str | None:
-        """None = ne rien injecter pour ce backend."""
-        if value is None or value is True:
-            return TOOL_CHOICE
-        if value is False:
+        """None = ne rien injecter pour ce backend (le défaut)."""
+        if value is None or value is False:
             return None
+        if value is True:
+            return TOOL_CHOICE
         return str(value)
 
     def auth_headers(self) -> dict:

@@ -45,10 +45,10 @@ services:
       # "quotas", "timeout" (secondes, défaut UPSTREAM_TIMEOUT),
       # "meta_timeout" (secondes pour GET /v1/models & co, défaut 5),
       # "verify_ssl": false (cert auto-signé), "force_tool_choice"
-      # (injection de tool_choice : absent/true = FORCE_TOOL_CHOICE,
-      # false = aucune injection, "auto"/"required"… = cette valeur) —
-      # c'est Albert qui en a besoin (son schéma déclare «default:
-      # none», ce qui casse le tool calling) ; llama.cpp non.
+      # (injection de tool_choice : absent/false = AUCUNE injection,
+      # c'est le défaut ; true = FORCE_TOOL_CHOICE ; "auto"/"required"…
+      # = cette valeur) — seul Albert en a besoin (son schéma déclare
+      # «default: none», ce qui casse le tool calling) ; llama.cpp non.
       # Plusieurs backends du même type possibles — deux comptes Albert
       # avec des clés différentes ("albert2": {..., "quotas": true,
       # "api_key": "sk-…"}, limiteurs séparés) ou plusieurs machines
@@ -58,8 +58,7 @@ services:
           "albert":   {"url": "https://albert.api.etalab.gouv.fr",
                        "quotas": true, "api_key": "${ALBERT_API_KEY}",
                        "force_tool_choice": "auto"},
-          "bigchuck": {"url": "http://bigchuck:8009",
-                       "force_tool_choice": false}
+          "bigchuck": {"url": "http://bigchuck:8009"}
         }
       # Endpoints hors quota chat (500 RPM, TPM/TPD illimités côté Albert) :
       # jamais temporisés.

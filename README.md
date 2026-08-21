@@ -32,12 +32,12 @@ choisit le backend par le **préfixe du nom de modèle**
 - **Clé centralisée** — la clé Albert ne vit que dans le proxy ;
   l'`Authorization` du client est remplacé. Les clients n'ont rien à
   configurer (une valeur bidon suffit si leur SDK exige une clé).
-- **Correctif `tool_choice`** — si `tools` est présent sans
-  `tool_choice`, injecte `tool_choice: "auto"` (le schéma d'Albert
-  déclare `"default": "none"`, ce qui casse le tool calling des agents).
-  Un `tool_choice` explicite n'est jamais écrasé, et l'injection se règle
-  **par backend** (`force_tool_choice`) : un llama.cpp local qui n'en a
-  pas besoin la coupe avec `false`.
+- **Correctif `tool_choice`** — quand `tools` est présent sans
+  `tool_choice`, le proxy peut injecter `tool_choice: "auto"` (le schéma
+  d'Albert déclare `"default": "none"`, ce qui casse le tool calling des
+  agents). **Rien n'est injecté par défaut** : le correctif s'active
+  backend par backend (`force_tool_choice`), là où il est nécessaire. Un
+  `tool_choice` explicite du client n'est jamais écrasé.
 - **Surface minimale** — seuls `POST /v1/chat/completions`,
   `GET /v1/models` et les chemins de `FORWARD_POST_PATHS` sont relayés ;
   toute autre URL → 404 local `unknown_route`. Le streaming SSE passe
@@ -128,8 +128,9 @@ le limiteur Albert), `timeout` (secondes, défaut `UPSTREAM_TIMEOUT`),
 `meta_timeout` (secondes pour les appels de méta-données — `/v1/models`,
 `/v1/me/info` —, défaut `5`), `verify_ssl: false` (certificat
 auto-signé), `force_tool_choice` (injection de `tool_choice` : absent ou
-`true` → la valeur de `FORCE_TOOL_CHOICE` ; `false` → aucune injection
-pour ce backend ; une chaîne (`"auto"`, `"required"`…) → cette valeur-là).
+`false` → **aucune injection**, c'est le défaut ; `true` → la valeur de
+`FORCE_TOOL_CHOICE` ; une chaîne (`"auto"`, `"required"`…) → cette
+valeur-là).
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
 `unknown_backend_prefix`. Seules les requêtes sans champ `model`
@@ -142,7 +143,7 @@ pour ce backend ; une chaîne (`"auto"`, `"required"`…) → cette valeur-là).
 | `BACKENDS` | *Albert seul* | Déclaration des backends (voir ci-dessus) |
 | `PROXY_API_KEY` | *(vide)* | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>`, à la OpenAI). Vide = proxy ouvert. Plusieurs clés séparées par des virgules ; 401 sinon, `/healthz` exempté ; `/ui` accepte aussi `?key=<clé>` (puis cookie) |
 | `UPSTREAM_TIMEOUT` | `600` | Secondes ; large pour les longues générations |
-| `FORCE_TOOL_CHOICE` | `auto` | Valeur injectée quand `tools` est présent sans `tool_choice` ; défaut de tous les backends, surchargeable par `force_tool_choice` dans `BACKENDS` |
+| `FORCE_TOOL_CHOICE` | `auto` | Valeur injectée quand `tools` est présent sans `tool_choice`, pour les backends ayant `force_tool_choice: true`. L'injection est désactivée par défaut : elle s'active dans `BACKENDS` |
 | `FORWARD_POST_PATHS` | `/v1/completions,/v1/embeddings,/v1/rerank,/v1/audio/transcriptions,/v1/ocr` | Routes POST relayées en plus des handlers dédiés ; le reste → 404 |
 | `LOG_LEVEL` | `INFO` | `INFO` logue chaque injection et chaque mise en attente |
 | `STATS_LATENCY_SAMPLES` | `500` | Échantillons de latence gardés par modèle pour le p95 de `/v1/stats` |
