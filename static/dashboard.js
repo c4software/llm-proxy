@@ -29,12 +29,4 @@
   setInterval(tick, 1000);
   document.addEventListener("htmx:load", tick);
   document.addEventListener("DOMContentLoaded", tick);
-  // Surligne brièvement les seules valeurs que le serveur vient d'envoyer.
-  document.addEventListener("htmx:oobAfterSwap", function (e) {
-    var el = e.detail.target;
-    if (!el || !el.classList.contains("v")) return;
-    el.classList.remove("fresh");
-    void el.offsetWidth;
-    el.classList.add("fresh");
-  });
 })();

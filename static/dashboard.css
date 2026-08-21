@@ -125,12 +125,7 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
   animation: pulse 2.4s ease-in-out infinite;
 }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
-/* Seules les valeurs réellement réécrites clignotent — pas leur ligne,
-   pas leur carte : c'est le signe visible que rien d'autre n'a bougé. */
-.v { border-radius: 5px; padding: 0 2px; margin: 0 -2px; }
-@keyframes touched {
-  from { background: color-mix(in srgb, var(--accent) 30%, transparent); }
-  to { background: transparent; }
-}
-.v.fresh { animation: touched 1.2s ease-out; }
+/* Les valeurs réécrites le sont sans effet : un chiffre qui change se
+   remarque bien assez, un clignotement toutes les 5 s fatigue. Seule la
+   barre de répartition glisse doucement vers sa nouvelle largeur. */
 .share-bar > i { transition: width .5s ease; }
