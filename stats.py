@@ -139,13 +139,8 @@ class ModelStats:
     """Compteurs d'un modèle. Créé à la PREMIÈRE requête le concernant :
     un modèle jamais appelé n'a pas d'entrée, donc n'apparaît pas."""
 
-    def __init__(self, key: str, backend: str, model: str, created_rev: int):
+    def __init__(self, key: str, backend: str, model: str):
         self.key = key
-        # Révisions globales : celle de la création (le client qui a déjà
-        # cette ligne l'a forcément vue) et celle du dernier changement —
-        # c'est ce qui permet à /ui de ne réémettre QUE les lignes bougées.
-        self.created_rev = created_rev
-        self.revision = created_rev
         self.backend = backend
         self.model = model
         self.requests = 0
@@ -167,9 +162,8 @@ class ModelStats:
 
     def record(self, endpoint: str, status: int, latency: float,
                prompt_tokens: int, completion_tokens: int,
-               exact: bool, streamed: bool, revision: int) -> None:
+               exact: bool, streamed: bool) -> None:
         now = time.time()
-        self.revision = revision
         self.requests += 1
         if 200 <= status < 400:
             self.ok += 1
@@ -205,8 +199,6 @@ class ModelStats:
         return {
             "object": "model.stats",
             "id": self.key,
-            "revision": self.revision,
-            "created_revision": self.created_rev,
             "backend": self.backend,
             "model": self.model,
             "requests": self.requests,
@@ -239,17 +231,10 @@ class ModelStats:
 
 
 _models: dict[str, ModelStats] = {}
-# Compteur de changements : incrémenté à chaque requête enregistrée. Un
-# client (le tableau de bord) qui connaît une révision sait exactement ce
-# qui a bougé depuis — et s'il n'y a rien, on ne renvoie rien du tout.
+# Compteur de changements : incrémenté à chaque requête enregistrée (et à
+# chaque reset). Le tableau de bord le compare à celui de son dernier
+# rendu : inchangé → rien n'a bougé, il ne se redessine pas.
 _revision = 0
-# Révision minimale à partir de laquelle un delta est valide : un reset()
-# invalide tout l'historique du client, qui doit repartir d'un rendu complet.
-_full_from = 0
-
-
-def revision() -> int:
-    return _revision
 
 
 def record(model_key: str, backend: str, model: str, endpoint: str,
@@ -263,16 +248,15 @@ def record(model_key: str, backend: str, model: str, endpoint: str,
     _revision += 1
     entry = _models.get(model_key)
     if entry is None:
-        entry = _models[model_key] = ModelStats(model_key, backend, model,
-                                                _revision)
+        entry = _models[model_key] = ModelStats(model_key, backend, model)
     entry.record(endpoint, status, latency, prompt_tokens,
-                 completion_tokens, exact, streamed, _revision)
+                 completion_tokens, exact, streamed)
 
 
 def snapshot() -> dict:
     """Vue complète : uniquement les modèles ayant réellement généré."""
-    # Ordre d'APPARITION, volontairement stable : un tableau qui ne se
-    # réordonne pas se met à jour ligne par ligne, sans tout redessiner.
+    # Ordre d'APPARITION, volontairement stable : le tableau de bord ne
+    # voit donc jamais ses lignes se réordonner sous le curseur.
     data = [m.snapshot() for m in _models.values()]
     totals = {
         "models": len(data),
@@ -304,24 +288,6 @@ def snapshot() -> dict:
 
 
 def reset() -> None:
-    global _revision, _full_from
+    global _revision
     _models.clear()
     _revision += 1
-    _full_from = _revision
-
-
-def delta_since(rev: int) -> tuple[bool, list[str]] | None:
-    """Ce qui a changé depuis la révision `rev`, du point de vue d'un
-    client qui affiche déjà cet état :
-      - None            → rien n'a bougé (le client peut ne rien faire) ;
-      - (True, [])      → l'historique ne permet pas de delta, tout
-                          réémettre ;
-      - (False, [ids])  → seules ces lignes ont changé.
-    """
-    # rev <= 0 : le client n'affiche encore rien (page fraîche) — il lui
-    # faut la structure, même si aucune requête n'a été servie.
-    if rev <= 0 or rev < _full_from or rev > _revision:
-        return True, []
-    if rev == _revision:
-        return None
-    return False, [m.key for m in _models.values() if m.revision > rev]

@@ -1,0 +1,78 @@
+<!doctype html>
+<!--
+  Tableau de bord : du HTML statique, envoyé tel quel. Il n'y a pas de
+  moteur de template — les chiffres sont remplis par dashboard.js, qui
+  lit /ui/stats (le JSON de /v1/stats, servi sous /ui pour que le cookie
+  de la page suffise à s'authentifier).
+-->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>llm-proxy — statistiques</title>
+<link rel="stylesheet" href="/ui/static/dashboard.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><span class="dot"></span> llm-proxy</div>
+    <h1>Statistiques d'usage</h1>
+    <p class="sub">Compteurs tenus en mémoire depuis le démarrage du proxy.
+    Un modèle n'apparaît qu'à partir de sa première génération ; les mêmes
+    chiffres sont disponibles en JSON sur <code>/v1/stats</code>.</p>
+  </header>
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">Requêtes</div>
+      <div class="value" id="c-req">—</div>
+      <div class="hint" id="c-req-hint"></div>
+    </div>
+    <div class="card">
+      <div class="label">Tokens</div>
+      <div class="value" id="c-tok">—</div>
+      <div class="hint" id="c-tok-hint"></div>
+    </div>
+    <div class="card">
+      <div class="label">Modèles actifs</div>
+      <div class="value" id="c-mod">—</div>
+      <div class="hint" id="c-mod-hint"></div>
+    </div>
+    <div class="card">
+      <div class="label">Erreurs</div>
+      <div class="value" id="c-err">—</div>
+      <div class="hint" id="c-err-hint"></div>
+    </div>
+  </div>
+
+  <div id="share" class="panel share" hidden>
+    <div class="label">Répartition des tokens</div>
+    <div class="share-bar" id="share-bar"></div>
+    <div class="legend" id="share-legend"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Par modèle</h2>
+      <span class="meta live"><i></i>par ordre d'apparition</span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Modèle</th><th>Requêtes</th><th>Erreurs</th><th>Entrée</th>
+          <th>Sortie</th><th>Total</th><th>Moy./req</th><th>p95</th>
+          <th>Comptage</th><th>Dernière</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>Rafraîchissement toutes les 5 s : la page relit
+  <code>/v1/stats</code> et ne se redessine que si les compteurs ont
+  bougé.</footer>
+</div>
+<script src="/ui/static/dashboard.js"></script>
+</body>
+</html>

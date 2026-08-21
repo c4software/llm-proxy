@@ -1,8 +1,0 @@
-{% import "macros.html" as mac with context %}
-<tr id="empty-row"><td colspan="{{ columns|length }}">
-  <div class="empty">
-    <div class="big">Aucune génération pour l'instant</div>
-    <div>Le proxy tourne depuis {{ mac.since(totals.since) }} ;
-    les modèles apparaîtront ici dès leur première requête.</div>
-  </div>
-</td></tr>

@@ -44,10 +44,9 @@ choisit le backend par le **préfixe du nom de modèle**
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
   (URL, quotas restants par fenêtre, derniers modèles vus) ; un résumé
   périodique des compteurs est loggé (`STATUS_INTERVAL`).
-- **Tableau de bord** — `GET /ui` (ou `/`) : page HTML + HTMX qui
-  consomme ces compteurs, rafraîchie **en différentiel** (voir
-  [Tableau de bord](#tableau-de-bord)) : `204` quand rien n'a bougé,
-  sinon seules les valeurs concernées sont réécrites.
+- **Tableau de bord** — `GET /ui` (ou `/`) : une page HTML statique qui
+  relit ces compteurs en JSON toutes les 5 s et se remplit côté client
+  (voir [Tableau de bord](#tableau-de-bord)).
 - **Statistiques d'usage** — `GET /v1/stats` : compteurs **par modèle**
   (nom préfixé), alimentés en lisant l'`usage` des réponses upstream —
   streaming SSE compris — avec repli sur une estimation quand l'upstream
@@ -61,9 +60,8 @@ choisit le backend par le **préfixe du nom de modèle**
 |---|---|
 | `main.py` | La passerelle : backends, routage au préfixe, `/v1/models` fusionné, HTTP |
 | `stats.py` | Compteurs d'usage par modèle (requêtes, tokens, latences) et extraction de l'`usage` dans le flux de réponse |
-| `ui.py` | Tableau de bord `/ui` : prépare les valeurs et décide quoi envoyer (rien / valeurs / structure). Aucun balisage |
-| `templates/` | Le HTML du tableau de bord (Jinja2) : `page.html`, `row.html`, `share.html`, `update.html`, `macros.html` |
-| `static/` | `dashboard.css`, `dashboard.js` et HTMX 2.0.4 vendorisé (tableau de bord fonctionnel hors ligne) |
+| `templates/index.html` | La page du tableau de bord : HTML statique, servi tel quel (aucun moteur de template) |
+| `static/` | `dashboard.css` et `dashboard.js` — ce dernier lit le JSON des stats et remplit la page |
 | `albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 
 `main.py` ne connaît d'Albert que « un backend `quotas: true` passe par
@@ -72,23 +70,25 @@ sa `QuotaState` » ; toute la mécanique de quotas vit dans `albert.py`.
 ## Tableau de bord
 
 `GET /ui` (ou `/`) affiche les compteurs de `/v1/stats` — c'est la copie
-d'écran ci-dessus. La page n'est envoyée qu'une fois ; ensuite un sondage
-HTMX toutes les 5 s transmet la **révision** déjà affichée :
+d'écran ci-dessus. La page est un fichier HTML statique
+(`templates/index.html`) : le serveur ne calcule aucun balisage. Tout le
+reste tient dans `static/dashboard.js`, sans dépendance ni CDN :
 
-- rien n'a bougé → `204 No Content`, le DOM n'est pas touché ;
-- sinon la réponse ne contient **que des valeurs** — chaque nombre est un
-  `<span>` identifié, et seuls ceux des totaux et des modèles ayant
-  réellement servi une requête sont réécrits (swaps *out of band*
-  ciblés). Aucune carte, aucune ligne, aucune barre n'est reconstruite ;
-- une structure n'est insérée que si le client ne l'a pas encore
-  (premier modèle vu, modèle qui apparaît) — et seulement sa ligne ;
+- toutes les 5 s, un `fetch` du JSON des stats ;
+- la charge porte un champ `revision`, incrémenté à chaque requête
+  servie : inchangé → rien n'a bougé, la page ne se redessine pas ;
+- sinon cartes, barre de répartition et tableau sont réécrits depuis le
+  JSON — et uniquement les valeurs qui diffèrent, donc pas de
+  clignotement ;
 - les « il y a 3 min » vieillissent dans le navigateur à partir d'un
-  timestamp : le temps qui passe ne déclenche ni requête ni redessin.
+  timestamp : le temps qui passe ne déclenche aucune requête.
 
-Le balisage vit dans `templates/` (Jinja2), le style et le script dans
-`static/`, HTMX compris — aucun CDN, le tableau de bord fonctionne hors
-ligne. Si `PROXY_API_KEY` est défini, ouvrir `/ui?key=<clé>` une fois :
-la clé est ensuite mémorisée dans un cookie `HttpOnly`.
+Le JSON est lu sur `/ui/stats`, qui renvoie exactement `stats.snapshot()`
+— la réponse de `/v1/stats`. Ce doublon n'existe que pour l'auth : un
+`fetch` de navigateur ne peut pas porter l'en-tête `Authorization`, alors
+que le cookie posé par `/ui` vaut pour tout ce qui est sous `/ui`. Si
+`PROXY_API_KEY` est défini, ouvrir `/ui?key=<clé>` une fois : la clé est
+ensuite mémorisée dans un cookie `HttpOnly`.
 
 Le badge **exact / estimé** de la colonne *Comptage* dit d'où viennent
 les tokens : le bloc `usage` de l'upstream, ou l'estimation de repli

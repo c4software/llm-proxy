@@ -25,8 +25,8 @@ Rôles :
      alimentés en lisant l'`usage` des réponses upstream (ou par
      estimation à défaut) ; un modèle n'y apparaît QUE s'il a servi au
      moins une requête — voir stats.py. GET /ui en est le tableau de
-     bord HTML (HTMX ; sondage différentiel : 204 si rien n'a changé,
-     sinon seules les valeurs concernées sont réécrites) — voir ui.py ;
+     bord : une page HTML statique (templates/index.html) que
+     static/dashboard.js remplit en relisant ce JSON toutes les 5 s ;
   5. auth optionnelle du proxy lui-même : PROXY_API_KEY (env, vide par
      défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
      à la OpenAI (plusieurs clés séparées par des virgules, 401 sinon,
@@ -49,14 +49,13 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import (
-    HTMLResponse, JSONResponse, RedirectResponse, Response as PlainResponse,
+    HTMLResponse, JSONResponse, RedirectResponse,
     StreamingResponse,
 )
 from starlette.background import BackgroundTask
 
 import albert
 import stats
-import ui
 
 TOOL_CHOICE = os.environ.get("FORCE_TOOL_CHOICE", "auto")
 TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "600"))
@@ -299,11 +298,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="albert-proxy", lifespan=lifespan)
 
-# Feuille de style, script du tableau de bord et HTMX vendorisé : servis
-# par le proxy lui-même, aucun CDN. Monté AVANT le catch-all, qui sinon
-# répondrait 404. Le mount reste sous /ui : l'auth du proxy s'y applique.
+# Feuille de style et script du tableau de bord : servis par le proxy
+# lui-même, aucun CDN. Monté AVANT le catch-all, qui sinon répondrait
+# 404. Le mount reste sous /ui : l'auth du proxy s'y applique.
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 app.mount("/ui/static", StaticFiles(directory=STATIC_DIR), name="static")
+# La page du tableau de bord : du HTML statique, sans moteur de template —
+# tout est rempli par static/dashboard.js à partir du JSON des stats.
+UI_HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "templates", "index.html")
 
 
 UI_PREFIX = "/ui"
@@ -672,11 +675,13 @@ async def usage_stats():
 
 @app.get("/ui", response_class=HTMLResponse)
 async def ui_page(request: Request):
-    """Tableau de bord. Le contenu chiffré vient de /ui/stats, rafraîchi
-    par HTMX sans jamais recharger la page."""
-    response = HTMLResponse(ui.page())
+    """Tableau de bord : page statique. Les chiffres sont lus côté client
+    sur /ui/stats, toutes les 5 s, sans jamais recharger la page."""
+    with open(UI_HTML, encoding="utf-8") as fh:
+        response = HTMLResponse(fh.read())
     # Auth active + clé passée en «?key=» : mémorisée pour que les appels
-    # HTMX suivants (sans en-tête possible) restent authentifiés.
+    # suivants (sans en-tête possible depuis le navigateur) restent
+    # authentifiés.
     key = request.query_params.get("key", "")
     if PROXY_API_KEYS and key:
         response.set_cookie(
@@ -686,16 +691,12 @@ async def ui_page(request: Request):
     return response
 
 
-@app.get("/ui/stats", response_class=HTMLResponse)
-async def ui_stats(rev: int = 0):
-    """Sondage différentiel du tableau de bord. `rev` = révision déjà
-    affichée par le client : identique à celle du serveur → 204 et le
-    navigateur ne touche à rien ; sinon la réponse ne porte que les
-    valeurs qui ont changé (swaps «out of band» ciblés)."""
-    body, status = ui.render(rev)
-    if status == 204:
-        return PlainResponse(status_code=204)
-    return HTMLResponse(body)
+@app.get("/ui/stats")
+async def ui_stats():
+    """Exactement le JSON de /v1/stats, mais sous /ui : le cookie posé par
+    la page y suffit comme authentification (un fetch de navigateur ne
+    peut pas porter le Bearer)."""
+    return stats.snapshot()
 
 
 @app.get("/")
