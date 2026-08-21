@@ -25,7 +25,8 @@ Rôles :
      alimentés en lisant l'`usage` des réponses upstream (ou par
      estimation à défaut) ; un modèle n'y apparaît QUE s'il a servi au
      moins une requête — voir stats.py. GET /ui en est le tableau de
-     bord HTML (HTMX, rafraîchi tout seul) — voir ui.py ;
+     bord HTML (HTMX ; sondage différentiel : 204 si rien n'a changé,
+     sinon seules les valeurs concernées sont réécrites) — voir ui.py ;
   5. auth optionnelle du proxy lui-même : PROXY_API_KEY (env, vide par
      défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
      à la OpenAI (plusieurs clés séparées par des virgules, 401 sinon,
@@ -46,6 +47,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import (
     HTMLResponse, JSONResponse, RedirectResponse, Response as PlainResponse,
     StreamingResponse,
@@ -297,15 +299,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="albert-proxy", lifespan=lifespan)
 
-# HTMX servi par le proxy lui-même (aucun CDN) ; lu une fois au démarrage.
-_HTMX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "static", "htmx.min.js")
-try:
-    with open(_HTMX_PATH, "rb") as fh:
-        HTMX_JS: bytes | None = fh.read()
-except OSError:
-    HTMX_JS = None
-    log.warning("static/htmx.min.js introuvable : /ui sera sans rafraîchissement")
+# Feuille de style, script du tableau de bord et HTMX vendorisé : servis
+# par le proxy lui-même, aucun CDN. Monté AVANT le catch-all, qui sinon
+# répondrait 404. Le mount reste sous /ui : l'auth du proxy s'y applique.
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+app.mount("/ui/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 UI_PREFIX = "/ui"
@@ -689,26 +687,15 @@ async def ui_page(request: Request):
 
 
 @app.get("/ui/stats", response_class=HTMLResponse)
-async def ui_stats():
-    """Fragment HTML rafraîchi par HTMX — même source que /v1/stats."""
-    return HTMLResponse(ui.fragment())
-
-
-@app.get("/ui/htmx.min.js")
-async def ui_htmx():
-    """HTMX vendorisé (static/htmx.min.js) : pas de CDN, le tableau de
-    bord fonctionne hors ligne."""
-    if HTMX_JS is None:
-        return JSONResponse(
-            {"error": {"message": "static/htmx.min.js absent du déploiement",
-                       "type": "proxy_error"}},
-            status_code=500,
-        )
-    return PlainResponse(
-        HTMX_JS,
-        media_type="application/javascript",
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
+async def ui_stats(rev: int = 0):
+    """Sondage différentiel du tableau de bord. `rev` = révision déjà
+    affichée par le client : identique à celle du serveur → 204 et le
+    navigateur ne touche à rien ; sinon la réponse ne porte que les
+    valeurs qui ont changé (swaps «out of band» ciblés)."""
+    body, status = ui.render(rev)
+    if status == 204:
+        return PlainResponse(status_code=204)
+    return HTMLResponse(body)
 
 
 @app.get("/")

@@ -1,0 +1,15 @@
+{#- Répartition des tokens : structure seulement (un segment et une
+    légende par modèle). Largeurs et pourcentages sont des valeurs,
+    envoyées séparément. -#}
+{%- if models %}
+<div class="label">Répartition des tokens</div>
+<div class="share-bar">
+  {%- for m in models %}<i id="seg-{{ m.row_id }}"></i>{% endfor %}
+</div>
+<div class="legend">
+  {%- for m in models %}
+  <span><b style="background:{{ m.color }}"></b><em>{{ m.id }}</em>&nbsp;<span
+    class="v" id="leg-{{ m.row_id }}"></span></span>
+  {%- endfor %}
+</div>
+{%- endif %}

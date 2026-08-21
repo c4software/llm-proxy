@@ -43,8 +43,12 @@ choisit le backend par le **préfixe du nom de modèle**
   (URL, quotas restants par fenêtre, derniers modèles vus) ; un résumé
   périodique des compteurs est loggé (`STATUS_INTERVAL`).
 - **Tableau de bord** — `GET /ui` (ou `/`) : page HTML + HTMX qui
-  consomme ces compteurs et se rafraîchit toute seule toutes les 5 s.
-  HTMX est servi par le proxy (`static/htmx.min.js`), aucun CDN.
+  consomme ces compteurs. Le rafraîchissement est **différentiel** : le
+  sondage (5 s) envoie la révision affichée, le serveur répond `204` si
+  rien n'a bougé, sinon il ne renvoie **que les valeurs concernées**
+  (swaps *out of band* ciblés) — aucune ligne, aucune carte, aucune
+  structure n'est redessinée, et les « il y a 3 min » vieillissent côté
+  navigateur. HTMX est servi par le proxy, aucun CDN.
 - **Statistiques d'usage** — `GET /v1/stats` : compteurs **par modèle**
   (nom préfixé), alimentés en lisant l'`usage` des réponses upstream —
   streaming SSE compris — avec repli sur une estimation quand l'upstream
@@ -58,8 +62,9 @@ choisit le backend par le **préfixe du nom de modèle**
 |---|---|
 | `main.py` | La passerelle : backends, routage au préfixe, `/v1/models` fusionné, HTTP |
 | `stats.py` | Compteurs d'usage par modèle (requêtes, tokens, latences) et extraction de l'`usage` dans le flux de réponse |
-| `ui.py` | Tableau de bord HTML servi sur `/ui` : page + fragment rafraîchi par HTMX |
-| `static/htmx.min.js` | HTMX 2.0.4 vendorisé (le tableau de bord fonctionne hors ligne) |
+| `ui.py` | Tableau de bord `/ui` : prépare les valeurs et décide quoi envoyer (rien / valeurs / structure). Aucun balisage |
+| `templates/` | Le HTML du tableau de bord (Jinja2) : `page.html`, `row.html`, `share.html`, `update.html`, `macros.html` |
+| `static/` | `dashboard.css`, `dashboard.js` et HTMX 2.0.4 vendorisé (tableau de bord fonctionnel hors ligne) |
 | `albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 
 `main.py` ne connaît d'Albert que « un backend `quotas: true` passe par

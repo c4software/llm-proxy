@@ -1,314 +1,203 @@
 """
-Tableau de bord HTML du proxy : une page + un fragment rafraîchi par HTMX,
-tous deux construits à partir de stats.snapshot() — la même source que
+Tableau de bord HTML du proxy. Ce module ne contient AUCUN balisage : la
+présentation vit dans templates/ (Jinja2) et static/ (CSS, JS, HTMX) ; ici
+on ne fait que préparer les valeurs et décider ce qu'il faut envoyer.
+
+Les chiffres viennent de stats.snapshot() — la même source que
 GET /v1/stats, donc rien à resynchroniser.
 
-HTMX est servi depuis static/htmx.min.js (vendorisé) : le tableau de bord
-fonctionne sans accès Internet et sans CDN tiers.
-
-Ce module ne fait que du texte : aucune connaissance de FastAPI.
+Rafraîchissement DIFFÉRENTIEL, et non « re-rendre la page toutes les 5 s » :
+  - le sondage envoie la révision déjà affichée (stats.revision()) ;
+  - rien n'a bougé → 204 No Content, HTMX ne touche pas au DOM ;
+  - sinon la réponse ne contient QUE DES VALEURS : chaque nombre affiché
+    est un <span> identifié, et seuls ceux des totaux et des modèles dont
+    les compteurs ont bougé sont réécrits, en swaps « out of band ».
+    Aucune carte, aucune ligne, aucune structure n'est redessinée ;
+  - seule une STRUCTURE nouvelle (premier modèle vu, modèle qui apparaît)
+    insère du DOM, et uniquement sa ligne ;
+  - un delta impossible (premier chargement, proxy redémarré) réémet le
+    tableau complet.
+Les horodatages relatifs (« il y a 3 min ») sont calculés dans le
+navigateur à partir d'un timestamp : le simple passage du temps ne
+provoque donc ni requête ni redessin.
 """
 
-import html
-import time
+import hashlib
+import os
+
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 import stats
 
-# Rafraîchissement du fragment (secondes) — hx-trigger="every Ns".
+# Intervalle de sondage (secondes). Un tick sans changement coûte une
+# requête vide et un 204, rien de plus.
 REFRESH_SECONDS = 5
+
+# Colonnes du tableau et valeurs d'une ligne (l'ordre des `cells` suit
+# celui des colonnes, « flux » mis à part : il vit sous le nom du modèle).
+COLUMNS = ("Modèle", "Requêtes", "Erreurs", "Entrée", "Sortie", "Total",
+           "Moy./req", "p95", "Comptage", "Dernière")
+CELLS = ("req", "err", "in", "out", "tot", "avg", "p95", "acc", "ago",
+         "flux")
+
+# Cartes de synthèse : (id du <span>, libellé). Chacune a aussi son
+# «<id>-hint» sous le chiffre.
+CARDS = (
+    ("c-req", "Requêtes"),
+    ("c-tok", "Tokens"),
+    ("c-mod", "Modèles actifs"),
+    ("c-err", "Erreurs"),
+)
+
+# Couleurs des modèles (pastille + segment de répartition), tons chauds
+# lisibles sur les deux thèmes, cyclées au-delà de six modèles.
+SEGMENT_COLORS = ("#d97757", "#e0a458", "#7d9b76", "#6b8fa3", "#a37ba0",
+                  "#c08552")
+
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "templates")
 
 
 def _n(value) -> str:
-    """Entier à la française : espace fine insécable comme séparateur."""
+    """Entier à la française : espace comme séparateur de milliers."""
     try:
-        return f"{int(value):,}".replace(",", " ")
+        return f"{int(value):,}".replace(",", " ")
     except (TypeError, ValueError):
         return "0"
 
 
-def _dur(seconds: float) -> str:
-    s = int(max(seconds, 0))
-    if s < 60:
-        return f"{s} s"
-    if s < 3600:
-        return f"{s // 60} min"
-    if s < 86400:
-        return f"{s // 3600} h {(s % 3600) // 60:02d}"
-    return f"{s // 86400} j {(s % 86400) // 3600} h"
-
-
-def _ago(ts: float) -> str:
-    if not ts:
+def _ms(seconds) -> str:
+    try:
+        seconds = float(seconds)
+    except (TypeError, ValueError):
         return "—"
-    delta = time.time() - ts
-    return "à l'instant" if delta < 5 else f"il y a {_dur(delta)}"
+    return f"{seconds:.1f} s" if seconds >= 1 else f"{int(seconds * 1000)} ms"
 
 
-def _ms(seconds: float) -> str:
-    if seconds >= 1:
-        return f"{seconds:.1f} s"
-    return f"{int(seconds * 1000)} ms"
+def _epoch(ts) -> str:
+    """Timestamp brut pour le navigateur, qui en tire « il y a 3 min »."""
+    try:
+        return f"{float(ts):.0f}"
+    except (TypeError, ValueError):
+        return "0"
 
 
-def _esc(value) -> str:
-    return html.escape(str(value), quote=True)
+env = Environment(
+    loader=FileSystemLoader(TEMPLATES_DIR),
+    autoescape=select_autoescape(["html"]),
+    trim_blocks=True,
+    lstrip_blocks=True,
+)
+env.filters["n"] = _n
+env.filters["ms"] = _ms
+env.filters["epoch"] = _epoch
 
 
-CSS = """
-:root {
-  color-scheme: light dark;
-  --bg: #faf9f5; --panel: #fffefb; --ink: #191919; --muted: #6b6963;
-  --line: #e6e2d8; --accent: #d97757; --accent-soft: #f4e2da;
-  --ok: #3f7d58; --err: #b4402f; --track: #efece3;
-  --radius: 14px;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1a1917; --panel: #211f1d; --ink: #f2efe8; --muted: #9c968b;
-    --line: #322f2b; --accent: #e08b6d; --accent-soft: #3a2b24;
-    --ok: #79b58f; --err: #e08573; --track: #2b2825;
-  }
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0; background: var(--bg); color: var(--ink);
-  font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-.wrap { max-width: 1180px; margin: 0 auto; padding: 48px 28px 72px; }
-header { margin-bottom: 34px; }
-.brand {
-  display: inline-flex; align-items: center; gap: 9px;
-  font-size: 13px; letter-spacing: .13em; text-transform: uppercase;
-  color: var(--muted); margin-bottom: 18px;
-}
-.dot {
-  width: 9px; height: 9px; border-radius: 50%; background: var(--accent);
-  box-shadow: 0 0 0 4px var(--accent-soft);
-}
-h1 {
-  font: 400 40px/1.15 ui-serif, Georgia, "Times New Roman", serif;
-  letter-spacing: -.02em; margin: 0 0 10px;
-}
-.sub { margin: 0; color: var(--muted); max-width: 62ch; }
-.cards {
-  display: grid; gap: 14px; margin-bottom: 26px;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-}
-.card {
-  background: var(--panel); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: 18px 20px;
-}
-.card .label {
-  font-size: 11.5px; letter-spacing: .11em; text-transform: uppercase;
-  color: var(--muted);
-}
-.card .value {
-  font: 400 30px/1.2 ui-serif, Georgia, serif; margin-top: 8px;
-  font-variant-numeric: tabular-nums; letter-spacing: -.01em;
-}
-.card .hint { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
-.panel {
-  background: var(--panel); border: 1px solid var(--line);
-  border-radius: var(--radius); overflow: hidden;
-}
-.panel-head {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: 16px; padding: 18px 20px 14px; border-bottom: 1px solid var(--line);
-}
-.panel-head h2 {
-  font: 400 19px/1.2 ui-serif, Georgia, serif; margin: 0;
-}
-.panel-head .meta { font-size: 12.5px; color: var(--muted); }
-.scroll { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th {
-  text-align: right; font-weight: 500; font-size: 11.5px;
-  letter-spacing: .09em; text-transform: uppercase; color: var(--muted);
-  padding: 12px 14px; white-space: nowrap; border-bottom: 1px solid var(--line);
-}
-th:first-child, td:first-child { text-align: left; padding-left: 20px; }
-th:last-child, td:last-child { padding-right: 20px; }
-td {
-  padding: 13px 14px; text-align: right; white-space: nowrap;
-  border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums;
-}
-tr:last-child td { border-bottom: 0; }
-tbody tr:hover td { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
-.model { display: flex; flex-direction: column; gap: 3px; }
-.model .id {
-  font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
-  font-size: 13.5px;
-}
-.model .backend { font-size: 12px; color: var(--muted); }
-.bar { height: 4px; border-radius: 3px; background: var(--track); margin-top: 7px; }
-.bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
-.tag {
-  display: inline-block; font-size: 11px; letter-spacing: .04em;
-  padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line);
-  color: var(--muted);
-}
-.tag.exact { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
-.tag.est { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-.err { color: var(--err); }
-.dim { color: var(--muted); }
-.empty { padding: 56px 20px; text-align: center; color: var(--muted); }
-.empty .big {
-  font: 400 22px/1.3 ui-serif, Georgia, serif; color: var(--ink);
-  margin-bottom: 8px;
-}
-code {
-  font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px;
-  background: var(--track); padding: 2px 6px; border-radius: 6px;
-}
-footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
-footer a { color: inherit; }
-.live { display: inline-flex; align-items: center; gap: 7px; }
-.live i {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--ok);
-  animation: pulse 2.4s ease-in-out infinite;
-}
-@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
-#stats.htmx-swapping { opacity: .55; transition: opacity .12s ease; }
-"""
+def _row_id(key: str) -> str:
+    """Identifiant DOM stable pour un modèle (les id contiennent « / »,
+    des points…) : préfixe + empreinte courte."""
+    return "row-" + hashlib.md5(key.encode()).hexdigest()[:10]
+
+
+def _prepare(snap: dict) -> list[dict]:
+    """Ajoute à chaque modèle ce dont la présentation a besoin et qui ne
+    change jamais : son identifiant DOM et sa couleur."""
+    models = []
+    for index, model in enumerate(snap["data"]):
+        model = dict(model)
+        model["row_id"] = _row_id(model["id"])
+        model["color"] = SEGMENT_COLORS[index % len(SEGMENT_COLORS)]
+        models.append(model)
+    return models
+
+
+def _totals(snap: dict) -> dict:
+    """Valeurs des cartes de synthèse."""
+    totals = dict(snap["totals"])
+    totals["success_rate"] = (
+        f"{100 * totals['requests_ok'] / totals['requests']:.1f}%"
+        if totals["requests"] else "—"
+    )
+    totals["backends"] = " · ".join(
+        f"{name} : {_n(b['requests'])} req"
+        for name, b in snap["backends"].items()
+    ) or "aucun trafic"
+    totals["since"] = snap["since"]
+    return totals
+
+
+def _segments(models: list[dict], total_tokens: int) -> list[dict]:
+    """Largeur et pourcentage de chaque part de la répartition — des
+    valeurs, elles aussi : la barre n'est pas reconstruite."""
+    if not total_tokens:
+        return []
+    segments = []
+    for model in models:
+        tokens = model["usage"]["total_tokens"]
+        pct = 100 * tokens / total_tokens
+        segments.append({
+            "row_id": model["row_id"],
+            "color": model["color"],
+            "pct": f"{pct:.2f}",
+            "label": f"{pct:.0f}%",
+            "title": f"{model['id']} — {_n(tokens)} tokens",
+        })
+    return segments
 
 
 def page(refresh: int = REFRESH_SECONDS) -> str:
-    """Page complète. Le corps du tableau vient du fragment, chargé puis
-    rafraîchi par HTMX — la page elle-même n'est jamais rechargée."""
-    return f"""<!doctype html>
-<html lang="fr">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>llm-proxy — statistiques</title>
-<style>{CSS}</style>
-<script src="/ui/htmx.min.js" defer></script>
-</head>
-<body>
-<div class="wrap">
-  <header>
-    <div class="brand"><span class="dot"></span> llm-proxy</div>
-    <h1>Statistiques d'usage</h1>
-    <p class="sub">Compteurs tenus en mémoire depuis le démarrage du proxy.
-    Un modèle n'apparaît qu'à partir de sa première génération ; les mêmes
-    chiffres sont disponibles en JSON sur <code>/v1/stats</code>.</p>
-  </header>
-  <main id="stats"
-        hx-get="/ui/stats"
-        hx-trigger="load, every {refresh}s"
-        hx-swap="innerHTML swap:120ms">
-    <div class="empty">Chargement…</div>
-  </main>
-  <footer>Rafraîchi toutes les {refresh} secondes · les compteurs
-  repartent de zéro à chaque redémarrage du proxy.</footer>
-</div>
-</body>
-</html>"""
-
-
-def _row(model: dict, max_tokens: int) -> str:
-    usage = model["usage"]
-    total = usage["total_tokens"]
-    share = int(100 * total / max_tokens) if max_tokens else 0
-    acc = model["tokens_accounting"]
-    if acc["estimated_requests"] == 0:
-        badge = '<span class="tag exact">exact</span>'
-    elif acc["exact_requests"] == 0:
-        badge = '<span class="tag est">estimé</span>'
-    else:
-        badge = (f'<span class="tag est">{_n(acc["exact_requests"])} exact · '
-                 f'{_n(acc["estimated_requests"])} estimé</span>')
-    errors = (f'<span class="err">{_n(model["requests_error"])}</span>'
-              if model["requests_error"] else '<span class="dim">0</span>')
-    return f"""<tr>
-  <td>
-    <div class="model">
-      <span class="id">{_esc(model["id"])}</span>
-      <span class="backend">{_esc(model["backend"])} ·
-        {_n(model["streamed_requests"])} en flux</span>
-    </div>
-    <div class="bar"><i style="width:{share}%"></i></div>
-  </td>
-  <td>{_n(model["requests"])}</td>
-  <td>{errors}</td>
-  <td>{_n(usage["prompt_tokens"])}</td>
-  <td>{_n(usage["completion_tokens"])}</td>
-  <td><strong>{_n(total)}</strong></td>
-  <td>{_n(model["avg_tokens_per_request"])}</td>
-  <td>{_ms(model["latency_seconds"]["p95"])}</td>
-  <td>{badge}</td>
-  <td class="dim">{_ago(model["last_request"])}</td>
-</tr>"""
-
-
-def fragment(snap: dict | None = None) -> str:
-    """Bloc rafraîchi par HTMX : cartes de synthèse + tableau par modèle."""
-    snap = snap if snap is not None else stats.snapshot()
-    data = snap["data"]
-    totals = snap["totals"]
-    backends = snap["backends"]
-
-    if not data:
-        return f"""<div class="panel">
-  <div class="empty">
-    <div class="big">Aucune génération pour l'instant</div>
-    <div>Le proxy tourne depuis {_dur(snap["uptime_seconds"])}.
-    Les modèles apparaîtront ici dès leur première requête.</div>
-  </div>
-</div>"""
-
-    ok = totals["requests_ok"]
-    rate = f"{100 * ok / totals['requests']:.1f}" if totals["requests"] else "—"
-    backends_line = " · ".join(
-        f"{_esc(name)} : {_n(b['requests'])} req" for name, b in backends.items()
+    return env.get_template("page.html").render(
+        refresh=refresh, cards=CARDS, columns=COLUMNS,
     )
-    max_tokens = max(m["usage"]["total_tokens"] for m in data)
-    rows = "\n".join(_row(m, max_tokens) for m in data)
 
-    return f"""<div class="cards">
-  <div class="card">
-    <div class="label">Requêtes</div>
-    <div class="value">{_n(totals["requests"])}</div>
-    <div class="hint">{rate}% en succès ·
-      {_n(totals["streamed_requests"])} en flux</div>
-  </div>
-  <div class="card">
-    <div class="label">Tokens</div>
-    <div class="value">{_n(totals["total_tokens"])}</div>
-    <div class="hint">{_n(totals["prompt_tokens"])} entrée ·
-      {_n(totals["completion_tokens"])} sortie</div>
-  </div>
-  <div class="card">
-    <div class="label">Modèles actifs</div>
-    <div class="value">{_n(totals["models"])}</div>
-    <div class="hint">{backends_line or "—"}</div>
-  </div>
-  <div class="card">
-    <div class="label">Erreurs</div>
-    <div class="value">{_n(totals["requests_error"])}</div>
-    <div class="hint">depuis {_dur(snap["uptime_seconds"])} de service</div>
-  </div>
-</div>
 
-<div class="panel">
-  <div class="panel-head">
-    <h2>Par modèle</h2>
-    <span class="meta live"><i></i>à jour {_esc(time.strftime("%H:%M:%S"))}</span>
-  </div>
-  <div class="scroll">
-    <table>
-      <thead>
-        <tr>
-          <th>Modèle</th><th>Requêtes</th><th>Erreurs</th>
-          <th>Entrée</th><th>Sortie</th><th>Total</th>
-          <th>Moy./req</th><th>p95</th><th>Comptage</th><th>Dernière</th>
-        </tr>
-      </thead>
-      <tbody>
-{rows}
-      </tbody>
-    </table>
-  </div>
-</div>"""
+def _update(snap: dict, updated_ids: list[str], new_ids: list[str],
+            structure: bool, rows_oob: str) -> str:
+    models = _prepare(snap)
+    by_id = {m["id"]: m for m in models}
+    totals = _totals(snap)
+    return env.get_template("update.html").render(
+        cards=CARDS,
+        cells=CELLS,
+        columns=COLUMNS,
+        totals=totals,
+        models=models,
+        updated=[by_id[k] for k in updated_ids if k in by_id],
+        new_rows=[by_id[k] for k in new_ids if k in by_id],
+        structure=structure,
+        rows_oob=rows_oob,
+        segments=_segments(models, totals["total_tokens"]),
+        revision=snap["revision"],
+    )
+
+
+def render(since_rev: int) -> tuple[str, int]:
+    """(corps HTML, statut). 204 = rien n'a changé, le DOM n'est pas touché."""
+    change = stats.delta_since(since_rev)
+    if change is None:
+        return "", 204
+
+    snap = stats.snapshot()
+    force_full, changed = change
+    if force_full:
+        # Premier chargement ou proxy redémarré : le client n'a rien.
+        return _update(
+            snap, updated_ids=[], new_ids=[m["id"] for m in snap["data"]],
+            structure=True, rows_oob="innerHTML",
+        ), 200
+
+    new_ids, updated_ids = [], []
+    for key in changed:
+        model = next((m for m in snap["data"] if m["id"] == key), None)
+        if model is None:
+            continue
+        (new_ids if model["created_revision"] > since_rev
+         else updated_ids).append(key)
+    return _update(
+        snap, updated_ids=updated_ids, new_ids=new_ids,
+        structure=bool(new_ids),
+        # Premier modèle jamais vu : l'état vide doit céder la place ;
+        # sinon la nouvelle ligne s'ajoute à la suite.
+        rows_oob=("innerHTML" if len(new_ids) == len(snap["data"])
+                  else "beforeend"),
+    ), 200

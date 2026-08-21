@@ -1,0 +1,27 @@
+{#- Réponse du sondage : QUE des valeurs, chacune visant son <span>.
+    Les structures (ligne d'un modèle nouveau, barre de répartition dont
+    la composition change, rendu complet) ne sont émises que lorsqu'elles
+    n'existent pas encore chez le client. -#}
+{% import "macros.html" as mac with context %}
+{%- for cid, _label in cards %}
+{{ mac.oob(cid, mac.card(totals, cid)) }}
+{{ mac.oob(cid ~ "-hint", mac.card(totals, cid ~ "-hint")) }}
+{%- endfor %}
+{%- for m in updated %}{% for name in cells %}
+{{ mac.oob(m.row_id ~ "-" ~ name, mac.value(m, name)) }}
+{%- endfor %}{% endfor %}
+{%- if structure %}
+<div id="share" class="panel share"{% if not models %} hidden{% endif %}
+     hx-swap-oob="outerHTML">{% include "share.html" %}</div>
+<template><tbody id="rows" hx-swap-oob="{{ rows_oob }}">
+  {%- if models %}{% for m in new_rows %}{% include "row.html" %}{% endfor %}
+  {%- else %}{% include "empty_row.html" %}{% endif %}
+</tbody></template>
+{%- endif %}
+{%- for s in segments %}
+<i id="seg-{{ s.row_id }}" hx-swap-oob="outerHTML"
+   style="width:{{ s.pct }}%;background:{{ s.color }}"
+   title="{{ s.title }}"></i>
+{{ mac.oob("leg-" ~ s.row_id, s.label) }}
+{%- endfor %}
+<span id="rev" data-rev="{{ revision }}" hidden hx-swap-oob="true"></span>

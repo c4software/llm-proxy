@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py albert.py stats.py ui.py .
 COPY static/ static/
+COPY templates/ templates/
 
 RUN useradd --create-home --uid 10001 appuser
 USER appuser
