@@ -3,7 +3,9 @@ Proxy transparent devant l'API Albert (DINUM), OpenAI-compatible.
 
 Rôles :
   1. injecte tool_choice="auto" quand `tools` est présent sans `tool_choice`
-     (le défaut du schéma Albert est "none", ce qui casse le tool calling) ;
+     (le défaut du schéma Albert est "none", ce qui casse le tool calling) —
+     réglable PAR BACKEND via BACKENDS[...].force_tool_choice (false =
+     aucune injection, une chaîne = cette valeur, défaut = FORCE_TOOL_CHOICE) ;
   2. porte les clés upstream pour tous les clients ;
   3. multi-backends : BACKENDS (env, JSON {"<nom>": {url, ...}}) déclare
      les backends OpenAI-compatibles ; le PRÉFIXE du modèle est LE
@@ -118,12 +120,29 @@ class Backend:
         self.quotas = bool(cfg.get("quotas", False))
         self.timeout = float(cfg.get("timeout", TIMEOUT))
         self.meta_timeout = float(cfg.get("meta_timeout", META_TIMEOUT))
+        # Injection de `tool_choice` : le correctif ne vaut que pour les
+        # backends dont le schéma a "none" pour défaut (Albert). Un
+        # llama.cpp local, lui, n'en a pas besoin — et certains modèles
+        # s'en portent plus mal. Par backend :
+        #   absent / true → valeur globale FORCE_TOOL_CHOICE ;
+        #   false         → aucune injection ;
+        #   "auto", "required"… → cette valeur-là, pour ce backend.
+        self.tool_choice = self._tool_choice(cfg.get("force_tool_choice"))
         # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
         # Albert avec des clés différentes ne partagent rien).
         self.quota_state = albert.QuotaState(name) if self.quotas else None
         self.client: httpx.AsyncClient | None = None
         # Dernier catalogue vu lors d'un GET /v1/models (informel, healthz).
         self.models: set[str] = set()
+
+    @staticmethod
+    def _tool_choice(value) -> str | None:
+        """None = ne rien injecter pour ce backend."""
+        if value is None or value is True:
+            return TOOL_CHOICE
+        if value is False:
+            return None
+        return str(value)
 
     def auth_headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -246,7 +265,12 @@ async def lifespan(app: FastAPI):
             "injectée" if b.api_key else "aucune (Authorization du client "
             "transmis tel quel)",
         )
-    log.info("tool_choice forcé à %r", TOOL_CHOICE)
+        log.info(
+            "backend %s : %s",
+            name,
+            f"tool_choice={b.tool_choice!r} injecté si absent"
+            if b.tool_choice else "aucune injection de tool_choice",
+        )
     if PROXY_API_KEYS:
         log.info(
             "auth proxy ACTIVE : %d clé(s) acceptée(s), /healthz exempté",
@@ -381,10 +405,14 @@ def response_headers(upstream: httpx.Response) -> dict:
     }
 
 
-def inject_tool_choice(payload: dict) -> bool:
+def inject_tool_choice(payload: dict, b: Backend) -> bool:
+    """Injecte `tool_choice` si le backend le demande et que le client
+    n'en a pas mis. Un `tool_choice` explicite n'est jamais écrasé."""
+    if b.tool_choice is None:
+        return False
     tools = payload.get("tools")
     if isinstance(tools, list) and tools and payload.get("tool_choice") is None:
-        payload["tool_choice"] = TOOL_CHOICE
+        payload["tool_choice"] = b.tool_choice
         return True
     return False
 
@@ -505,6 +533,7 @@ async def healthz():
                 "url": b.url,
                 "quotas": b.quotas,
                 "key_injection": bool(b.api_key),
+                "tool_choice": b.tool_choice or False,
                 "timeout": b.timeout,
                 "meta_timeout": b.meta_timeout,
                 # dernier catalogue vu lors d'un GET /v1/models (informel)
@@ -623,21 +652,26 @@ async def chat_completions(request: Request):
     except (json.JSONDecodeError, UnicodeDecodeError):
         payload = None
 
-    if isinstance(payload, dict) and inject_tool_choice(payload):
-        log.info(
-            "tool_choice=%s injecté (model=%s, %d tools)",
-            TOOL_CHOICE, payload.get("model"), len(payload["tools"]),
-        )
-        raw = json.dumps(payload).encode()
-
+    # Le routage d'abord : l'injection de tool_choice dépend du backend
+    # visé (chacun peut la désactiver ou choisir sa valeur).
     backend, prefixed = route_backend(payload)
     if backend is None:
         return unknown_prefix_response(str(payload.get("model", "")))
+
+    injected = isinstance(payload, dict) and inject_tool_choice(payload, backend)
+    if injected:
+        log.info(
+            "tool_choice=%s injecté (backend=%s, model=%s, %d tools)",
+            backend.tool_choice, backend.name, payload.get("model"),
+            len(payload["tools"]),
+        )
     # Nom PRÉFIXÉ tel que demandé : c'est la clé des stats (le corps, lui,
     # est dé-préfixé juste après pour l'upstream).
     model_key = str(payload.get("model", "") or "") if isinstance(payload, dict) else ""
     if prefixed:
         raw = strip_backend_prefix(payload, backend)
+    elif injected:
+        raw = json.dumps(payload).encode()
     if not backend.quotas:
         albert.maybe_log_status()
         return await forward(request, "v1/chat/completions", raw,
