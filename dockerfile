@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py albert.py stats.py ui.py .
+COPY main.py albert.py stats.py .
 COPY static/ static/
 COPY templates/ templates/
 
