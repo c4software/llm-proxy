@@ -152,7 +152,11 @@ class Backend:
 # Défaut si BACKENDS n'est pas défini : Albert seul. URLs ET clés ne
 # vivent QUE dans BACKENDS (champ api_key par backend), rien ailleurs.
 DEFAULT_BACKENDS = {
-    "albert": {"url": "https://albert.api.etalab.gouv.fr", "quotas": True},
+    # Albert est le seul à avoir besoin du correctif tool_choice (son
+    # schéma déclare «default: none») : ce fallback l'active donc, alors
+    # que l'option est à false partout ailleurs.
+    "albert": {"url": "https://albert.api.etalab.gouv.fr", "quotas": True,
+               "force_tool_choice": "auto"},
 }
 
 

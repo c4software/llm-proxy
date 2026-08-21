@@ -130,7 +130,9 @@ le limiteur Albert), `timeout` (secondes, défaut `UPSTREAM_TIMEOUT`),
 auto-signé), `force_tool_choice` (injection de `tool_choice` : absent ou
 `false` → **aucune injection**, c'est le défaut ; `true` → la valeur de
 `FORCE_TOOL_CHOICE` ; une chaîne (`"auto"`, `"required"`…) → cette
-valeur-là).
+valeur-là). Seule exception : si `BACKENDS` n'est pas défini du tout, le
+backend Albert par défaut est livré avec `"auto"`, puisque c'est lui que
+le correctif vise.
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
 `unknown_backend_prefix`. Seules les requêtes sans champ `model`
