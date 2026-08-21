@@ -21,6 +21,11 @@ Rôles :
   4. ne transmet QUE les routes nécessaires (FORWARD_POST_PATHS,
      /v1/chat/completions, /v1/models) — toute autre URL reçoit un 404
      local, rien n'est relayé aveuglément aux backends ;
+  4bis. GET /v1/stats : compteurs d'usage par modèle (nom préfixé),
+     alimentés en lisant l'`usage` des réponses upstream (ou par
+     estimation à défaut) ; un modèle n'y apparaît QUE s'il a servi au
+     moins une requête — voir stats.py. GET /ui en est le tableau de
+     bord HTML (HTMX, rafraîchi tout seul) — voir ui.py ;
   5. auth optionnelle du proxy lui-même : PROXY_API_KEY (env, vide par
      défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
      à la OpenAI (plusieurs clés séparées par des virgules, 401 sinon,
@@ -36,14 +41,20 @@ import hmac
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse, JSONResponse, RedirectResponse, Response as PlainResponse,
+    StreamingResponse,
+)
 from starlette.background import BackgroundTask
 
 import albert
+import stats
+import ui
 
 TOOL_CHOICE = os.environ.get("FORCE_TOOL_CHOICE", "auto")
 TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "600"))
@@ -286,12 +297,45 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="albert-proxy", lifespan=lifespan)
 
+# HTMX servi par le proxy lui-même (aucun CDN) ; lu une fois au démarrage.
+_HTMX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "static", "htmx.min.js")
+try:
+    with open(_HTMX_PATH, "rb") as fh:
+        HTMX_JS: bytes | None = fh.read()
+except OSError:
+    HTMX_JS = None
+    log.warning("static/htmx.min.js introuvable : /ui sera sans rafraîchissement")
+
+
+UI_PREFIX = "/ui"
+UI_COOKIE = "proxy_key"
+
+
+def is_ui_path(path: str) -> bool:
+    # «/» y est inclus : il ne fait que rediriger vers /ui, autant qu'un
+    # navigateur déjà porteur du cookie y arrive sans repasser par ?key=.
+    return path == "/" or path == UI_PREFIX or path.startswith(UI_PREFIX + "/")
+
+
+def client_token(request: Request) -> str:
+    """Clé présentée par le client. Les clients API l'envoient en
+    «Authorization: Bearer» ; un NAVIGATEUR ne le peut pas sur une simple
+    URL — les pages /ui acceptent donc «?key=…» (mémorisé ensuite en
+    cookie), et rien d'autre ne change."""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:]
+    if is_ui_path(request.url.path):
+        return (request.query_params.get("key")
+                or request.cookies.get(UI_COOKIE, ""))
+    return ""
+
 
 @app.middleware("http")
 async def require_proxy_key(request: Request, call_next):
     if PROXY_API_KEYS and request.url.path != "/healthz":
-        auth = request.headers.get("authorization", "")
-        token = auth[7:] if auth.lower().startswith("bearer ") else ""
+        token = client_token(request)
         if not any(hmac.compare_digest(token, k) for k in PROXY_API_KEYS):
             log.warning(
                 "clé proxy absente ou invalide : %s %s → 401",
@@ -367,11 +411,31 @@ def quota_exceeded_response(exc: albert.QuotaWaitTooLong,
     )
 
 
+def record_stat(model_key: str, b: Backend, endpoint: str, status: int,
+                latency: float, prompt_tokens: int = 0,
+                completion_tokens: int = 0, exact: bool = False,
+                streamed: bool = False) -> None:
+    """Alimente stats.py. `model_key` = modèle PRÉFIXÉ demandé par le
+    client ; vide (requête sans champ model) = rien n'est compté."""
+    if not model_key:
+        return
+    plain = model_key[len(b.name) + 1:] if model_key.lower().startswith(
+        b.name + "/") else model_key
+    stats.record(model_key, b.name, plain, endpoint, status, latency,
+                 prompt_tokens, completion_tokens, exact, streamed)
+
+
 async def forward(request: Request, path: str, content=None,
-                  backend: Backend | None = None) -> Response:
+                  backend: Backend | None = None,
+                  model_key: str = "") -> Response:
     b = backend or FALLBACK_BACKEND
     client: httpx.AsyncClient = b.client
     body = content if content is not None else await request.body()
+    endpoint = "/" + path.strip("/")
+    started = time.monotonic()
+    # Filet de sécurité si l'upstream ne renvoie aucun `usage` : même
+    # approximation que le limiteur (corps envoyé ≈ tokens d'entrée).
+    prompt_estimate = albert.estimate_chat_cost(body) if body else 0
 
     req = client.build_request(
         request.method,
@@ -386,8 +450,11 @@ async def forward(request: Request, path: str, content=None,
         # backend sans quota (local) : éteint fait partie du fonctionnement
         # normal → 503 parlant plutôt qu'un 502.
         if not b.quotas:
+            record_stat(model_key, b, endpoint, 503,
+                        time.monotonic() - started)
             return backend_offline_response(b, exc)
         log.error("backend %s injoignable : %s", b.name, exc)
+        record_stat(model_key, b, endpoint, 502, time.monotonic() - started)
         return JSONResponse(
             {"error": {"message": f"upstream unreachable: {exc}", "type": "proxy_error"}},
             status_code=502,
@@ -400,8 +467,26 @@ async def forward(request: Request, path: str, content=None,
             "(fixer via ROUTER_MODELS)"
         )
 
+    collector = stats.UsageCollector(upstream.headers.get("content-type", ""))
+
+    async def tapped():
+        """Relaie les octets tels quels et, au passage, en extrait l'usage.
+        Le `finally` compte aussi les flux interrompus (client parti)."""
+        try:
+            async for chunk in upstream.aiter_raw():
+                collector.feed(chunk)
+                yield chunk
+        finally:
+            collector.finish()
+            prompt, completion, exact = collector.tokens(prompt_estimate)
+            record_stat(
+                model_key, b, endpoint, upstream.status_code,
+                time.monotonic() - started, prompt, completion,
+                exact, collector.sse,
+            )
+
     return StreamingResponse(
-        upstream.aiter_raw(),
+        tapped(),
         status_code=upstream.status_code,
         headers=response_headers(upstream),
         background=BackgroundTask(upstream.aclose),
@@ -547,18 +632,25 @@ async def chat_completions(request: Request):
     backend, prefixed = route_backend(payload)
     if backend is None:
         return unknown_prefix_response(str(payload.get("model", "")))
+    # Nom PRÉFIXÉ tel que demandé : c'est la clé des stats (le corps, lui,
+    # est dé-préfixé juste après pour l'upstream).
+    model_key = str(payload.get("model", "") or "") if isinstance(payload, dict) else ""
     if prefixed:
         raw = strip_backend_prefix(payload, backend)
     if not backend.quotas:
         albert.maybe_log_status()
         return await forward(request, "v1/chat/completions", raw,
-                             backend=backend)
+                             backend=backend, model_key=model_key)
 
     limiter = backend.quota_state.get_limiter(payload)  # model dé-préfixé
     cost = albert.estimate_chat_cost(raw)
+    started = time.monotonic()
     try:
         waited = await limiter.acquire(cost)
     except albert.QuotaWaitTooLong as exc:
+        # Rejet local : compté comme requête en erreur du modèle visé.
+        record_stat(model_key, backend, "/v1/chat/completions", 429,
+                    time.monotonic() - started)
         return quota_exceeded_response(exc, limiter)
     albert.maybe_log_status()
     if waited:
@@ -567,7 +659,61 @@ async def chat_completions(request: Request):
             limiter.name, waited, cost,
         )
 
-    return await forward(request, "v1/chat/completions", raw, backend=backend)
+    return await forward(request, "v1/chat/completions", raw,
+                         backend=backend, model_key=model_key)
+
+
+@app.get("/v1/stats")
+async def usage_stats():
+    """Compteurs d'usage par modèle, DYNAMIQUES : un modèle n'apparaît
+    dans `data` qu'à partir de sa première requête servie (aucun bucket
+    n'est pré-créé depuis le catalogue). Les id sont les noms préfixés,
+    directement réutilisables comme `model`."""
+    return stats.snapshot()
+
+
+@app.get("/ui", response_class=HTMLResponse)
+async def ui_page(request: Request):
+    """Tableau de bord. Le contenu chiffré vient de /ui/stats, rafraîchi
+    par HTMX sans jamais recharger la page."""
+    response = HTMLResponse(ui.page())
+    # Auth active + clé passée en «?key=» : mémorisée pour que les appels
+    # HTMX suivants (sans en-tête possible) restent authentifiés.
+    key = request.query_params.get("key", "")
+    if PROXY_API_KEYS and key:
+        response.set_cookie(
+            UI_COOKIE, key, httponly=True, samesite="strict",
+            secure=request.url.scheme == "https", max_age=30 * 86400,
+        )
+    return response
+
+
+@app.get("/ui/stats", response_class=HTMLResponse)
+async def ui_stats():
+    """Fragment HTML rafraîchi par HTMX — même source que /v1/stats."""
+    return HTMLResponse(ui.fragment())
+
+
+@app.get("/ui/htmx.min.js")
+async def ui_htmx():
+    """HTMX vendorisé (static/htmx.min.js) : pas de CDN, le tableau de
+    bord fonctionne hors ligne."""
+    if HTMX_JS is None:
+        return JSONResponse(
+            {"error": {"message": "static/htmx.min.js absent du déploiement",
+                       "type": "proxy_error"}},
+            status_code=500,
+        )
+    return PlainResponse(
+        HTMX_JS,
+        media_type="application/javascript",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse("/ui")
 
 
 @app.api_route(
@@ -593,16 +739,20 @@ async def passthrough(path: str, request: Request):
     backend, prefixed = route_backend(payload)
     if backend is None:
         return unknown_prefix_response(str(payload.get("model", "")))
+    model_key = str(payload.get("model", "") or "") if isinstance(payload, dict) else ""
     if prefixed:
         raw = strip_backend_prefix(payload, backend)
     # Limiteur : seulement le backend à quotas, hors endpoints exemptés.
     if backend.quotas and not is_exempt(path):
         limiter = backend.quota_state.get_limiter(payload)
+        started = time.monotonic()
         try:
             waited = await limiter.acquire(
                 albert.estimate_generic_cost(raw, payload)
             )
         except albert.QuotaWaitTooLong as exc:
+            record_stat(model_key, backend, normalized, 429,
+                        time.monotonic() - started)
             return quota_exceeded_response(exc, limiter)
         if waited:
             log.info(
@@ -610,4 +760,5 @@ async def passthrough(path: str, request: Request):
                 limiter.name, normalized, waited,
             )
     albert.maybe_log_status()
-    return await forward(request, path, raw, backend=backend)
+    return await forward(request, path, raw, backend=backend,
+                         model_key=model_key)

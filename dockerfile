@@ -9,7 +9,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py albert.py .
+COPY main.py albert.py stats.py ui.py .
+COPY static/ static/
 
 RUN useradd --create-home --uid 10001 appuser
 USER appuser

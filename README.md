@@ -42,12 +42,24 @@ choisit le backend par le **préfixe du nom de modèle**
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
   (URL, quotas restants par fenêtre, derniers modèles vus) ; un résumé
   périodique des compteurs est loggé (`STATUS_INTERVAL`).
+- **Tableau de bord** — `GET /ui` (ou `/`) : page HTML + HTMX qui
+  consomme ces compteurs et se rafraîchit toute seule toutes les 5 s.
+  HTMX est servi par le proxy (`static/htmx.min.js`), aucun CDN.
+- **Statistiques d'usage** — `GET /v1/stats` : compteurs **par modèle**
+  (nom préfixé), alimentés en lisant l'`usage` des réponses upstream —
+  streaming SSE compris — avec repli sur une estimation quand l'upstream
+  n'en renvoie pas. Le retour est **dynamique** : un modèle n'apparaît
+  qu'à partir de sa première requête servie. En mémoire, remis à zéro au
+  redémarrage.
 
 ## Fichiers
 
 | Fichier | Rôle |
 |---|---|
 | `main.py` | La passerelle : backends, routage au préfixe, `/v1/models` fusionné, HTTP |
+| `stats.py` | Compteurs d'usage par modèle (requêtes, tokens, latences) et extraction de l'`usage` dans le flux de réponse |
+| `ui.py` | Tableau de bord HTML servi sur `/ui` : page + fragment rafraîchi par HTMX |
+| `static/htmx.min.js` | HTMX 2.0.4 vendorisé (le tableau de bord fonctionne hors ligne) |
 | `albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 
 `main.py` ne connaît d'Albert que « un backend `quotas: true` passe par
@@ -96,11 +108,13 @@ auto-signé).
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `BACKENDS` | *Albert seul* | Déclaration des backends (voir ci-dessus) |
-| `PROXY_API_KEY` | *(vide)* | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>`, à la OpenAI). Vide = proxy ouvert. Plusieurs clés séparées par des virgules ; 401 sinon, `/healthz` exempté |
+| `PROXY_API_KEY` | *(vide)* | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>`, à la OpenAI). Vide = proxy ouvert. Plusieurs clés séparées par des virgules ; 401 sinon, `/healthz` exempté ; `/ui` accepte aussi `?key=<clé>` (puis cookie) |
 | `UPSTREAM_TIMEOUT` | `600` | Secondes ; large pour les longues générations |
 | `FORCE_TOOL_CHOICE` | `auto` | Valeur injectée quand `tools` est présent sans `tool_choice` |
 | `FORWARD_POST_PATHS` | `/v1/completions,/v1/embeddings,/v1/rerank,/v1/audio/transcriptions,/v1/ocr` | Routes POST relayées en plus des handlers dédiés ; le reste → 404 |
 | `LOG_LEVEL` | `INFO` | `INFO` logue chaque injection et chaque mise en attente |
+| `STATS_LATENCY_SAMPLES` | `500` | Échantillons de latence gardés par modèle pour le p95 de `/v1/stats` |
+| `STATS_MAX_BODY_BYTES` | `2097152` | Taille max d'une réponse non streamée bufferisée pour y lire l'`usage` ; au-delà, estimation |
 
 ### Variables du limiteur (backends à quotas)
 
@@ -134,7 +148,10 @@ cumulables :
 - **`PROXY_API_KEY`** : exige des clients une clé à la OpenAI
   (`Authorization: Bearer <clé>`) — sans elle, 401. Quand l'auth est
   active, le Bearer du client n'est jamais relayé aux backends (c'est
-  la clé du proxy, pas de l'upstream).
+  la clé du proxy, pas de l'upstream). Le tableau de bord `/ui` est
+  soumis à la même clé : un navigateur ne pouvant pas poser d'en-tête,
+  elle s'y passe une fois en `?key=<clé>` puis est mémorisée dans un
+  cookie `HttpOnly` (`SameSite=Strict`).
 - **Le réseau** : Nginx Proxy Manager, Tailscale, réseau Docker partagé.
 
 ## Vérification
@@ -142,6 +159,14 @@ cumulables :
     curl http://localhost:8000/healthz
 
     curl -s http://localhost:8000/v1/models | jq '.data[].id'
+
+    # tableau de bord : http://localhost:8000/ui
+    # (si PROXY_API_KEY est défini : http://localhost:8000/ui?key=<clé>,
+    #  la clé est ensuite mémorisée en cookie)
+
+    # usage par modèle (seuls les modèles ayant généré apparaissent)
+    curl -s http://localhost:8000/v1/stats \
+      | jq '.data[] | {id, requests, tokens: .usage.total_tokens}'
 
     curl -s http://localhost:8000/v1/chat/completions \
       -H "Content-Type: application/json" \
