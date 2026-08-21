@@ -6,6 +6,8 @@ autre serveur compatible OpenAI. Le client parle à une seule URL et
 choisit le backend par le **préfixe du nom de modèle**
 (`albert/deepseek-v4-flash`, `bigchuck/qwen3-32b`).
 
+![Tableau de bord /ui : cartes de synthèse (requêtes, tokens, modèles actifs, erreurs) et détail par modèle](preview.jpg)
+
 ## Fonctionnalités
 
 - **Routage multi-backends** — `BACKENDS` (JSON en env) déclare les
@@ -43,12 +45,9 @@ choisit le backend par le **préfixe du nom de modèle**
   (URL, quotas restants par fenêtre, derniers modèles vus) ; un résumé
   périodique des compteurs est loggé (`STATUS_INTERVAL`).
 - **Tableau de bord** — `GET /ui` (ou `/`) : page HTML + HTMX qui
-  consomme ces compteurs. Le rafraîchissement est **différentiel** : le
-  sondage (5 s) envoie la révision affichée, le serveur répond `204` si
-  rien n'a bougé, sinon il ne renvoie **que les valeurs concernées**
-  (swaps *out of band* ciblés) — aucune ligne, aucune carte, aucune
-  structure n'est redessinée, et les « il y a 3 min » vieillissent côté
-  navigateur. HTMX est servi par le proxy, aucun CDN.
+  consomme ces compteurs, rafraîchie **en différentiel** (voir
+  [Tableau de bord](#tableau-de-bord)) : `204` quand rien n'a bougé,
+  sinon seules les valeurs concernées sont réécrites.
 - **Statistiques d'usage** — `GET /v1/stats` : compteurs **par modèle**
   (nom préfixé), alimentés en lisant l'`usage` des réponses upstream —
   streaming SSE compris — avec repli sur une estimation quand l'upstream
@@ -69,6 +68,31 @@ choisit le backend par le **préfixe du nom de modèle**
 
 `main.py` ne connaît d'Albert que « un backend `quotas: true` passe par
 sa `QuotaState` » ; toute la mécanique de quotas vit dans `albert.py`.
+
+## Tableau de bord
+
+`GET /ui` (ou `/`) affiche les compteurs de `/v1/stats` — c'est la copie
+d'écran ci-dessus. La page n'est envoyée qu'une fois ; ensuite un sondage
+HTMX toutes les 5 s transmet la **révision** déjà affichée :
+
+- rien n'a bougé → `204 No Content`, le DOM n'est pas touché ;
+- sinon la réponse ne contient **que des valeurs** — chaque nombre est un
+  `<span>` identifié, et seuls ceux des totaux et des modèles ayant
+  réellement servi une requête sont réécrits (swaps *out of band*
+  ciblés). Aucune carte, aucune ligne, aucune barre n'est reconstruite ;
+- une structure n'est insérée que si le client ne l'a pas encore
+  (premier modèle vu, modèle qui apparaît) — et seulement sa ligne ;
+- les « il y a 3 min » vieillissent dans le navigateur à partir d'un
+  timestamp : le temps qui passe ne déclenche ni requête ni redessin.
+
+Le balisage vit dans `templates/` (Jinja2), le style et le script dans
+`static/`, HTMX compris — aucun CDN, le tableau de bord fonctionne hors
+ligne. Si `PROXY_API_KEY` est défini, ouvrir `/ui?key=<clé>` une fois :
+la clé est ensuite mémorisée dans un cookie `HttpOnly`.
+
+Le badge **exact / estimé** de la colonne *Comptage* dit d'où viennent
+les tokens : le bloc `usage` de l'upstream, ou l'estimation de repli
+(streaming sans `stream_options.include_usage`).
 
 ## Déploiement
 
