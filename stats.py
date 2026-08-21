@@ -10,8 +10,7 @@ modèle sans génération.
 Comptage des tokens, par ordre de préférence :
   1. le bloc `usage` renvoyé par l'upstream (exact) — présent sur les
      réponses non streamées, et sur les flux SSE quand le client a
-     demandé `stream_options.include_usage` (ou que STATS_FORCE_USAGE
-     l'injecte) ;
+     demandé `stream_options.include_usage` ;
   2. à défaut, une estimation (CHARS_PER_TOKEN caractères par token) :
      corps de la requête pour l'entrée, deltas de contenu accumulés pour
      la sortie.

@@ -43,8 +43,9 @@ choisit le backend par le **préfixe du nom de modèle**
   toute autre URL → 404 local `unknown_route`. Le streaming SSE passe
   intact.
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
-  (URL, quotas restants par fenêtre, derniers modèles vus) ; un résumé
-  périodique des compteurs est loggé (`STATUS_INTERVAL`).
+  (URL, quotas restants par fenêtre, derniers modèles vus, réglage
+  `tool_choice`) ; un résumé périodique des compteurs est loggé
+  (`STATUS_INTERVAL`).
 - **Tableau de bord** — `GET /ui` (ou `/`) : une page HTML statique qui
   relit ces compteurs en JSON toutes les 5 s et se remplit côté client
   (voir [Tableau de bord](#tableau-de-bord)).
@@ -117,7 +118,7 @@ entrée est le préfixe de routage :
     BACKENDS: |
       {
         "albert":   {"url": "https://albert.api.etalab.gouv.fr",
-                     "quotas": true},
+                     "quotas": true, "force_tool_choice": "auto"},
         "bigchuck": {"url": "http://bigchuck:8009"}
       }
 
@@ -212,10 +213,13 @@ cumulables :
              "required":["path"]}}}]}' \
       | jq '.choices[0].finish_reason'
 
-Doit renvoyer `"tool_calls"`, avec dans les logs :
-`tool_choice=auto injecté (model=albert/deepseek-v4-flash, 1 tools)`.
-Même chose côté local : `"model":"bigchuck/qwen3-32b"` part vers
-llama.cpp (503 `backend_offline` si la machine est éteinte).
+Doit renvoyer `"tool_calls"`, avec dans les logs (si le backend a
+`force_tool_choice`) :
+`tool_choice=auto injecté (backend=albert, model=albert/deepseek-v4-flash, 1 tools)`.
+Le réglage de chaque backend est rappelé au démarrage et lisible dans
+`/healthz` (`tool_choice: false` = aucune injection). Même chose côté
+local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
+`backend_offline` si la machine est éteinte).
 
 ## Côté clients
 
