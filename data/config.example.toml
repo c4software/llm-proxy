@@ -1,0 +1,125 @@
+# ════════════════════════════════════════════════════════════════════════
+#  llm-proxy — configuration unique
+#
+#  Copié en data/config.toml au premier démarrage s'il n'existe pas.
+#  Toute chaîne peut contenir «${VARIABLE}» : la valeur est prise dans
+#  l'environnement au chargement. Les CLÉS D'API passent par là et ne
+#  sont donc jamais écrites dans ce fichier.
+#
+#  Emplacement surchargeable par la variable d'environnement CONFIG_PATH.
+# ════════════════════════════════════════════════════════════════════════
+
+[proxy]
+# Valeur injectée dans `tool_choice` quand un backend demande
+# force_tool_choice = true (voir [backends]).
+tool_choice = "auto"
+# Timeout (s) par défaut des appels vers les backends.
+upstream_timeout = 600
+# Timeout (s) des appels de méta-données (GET /v1/models, /v1/me/info…) :
+# court, un backend lent ne doit pas bloquer le catalogue.
+meta_timeout = 5
+log_level = "INFO"
+
+# Clé(s) exigée(s) DES CLIENTS pour appeler le proxy («Authorization:
+# Bearer <clé>»). Liste vide = proxy ouvert. /healthz reste toujours
+# accessible sans clé.
+api_keys = []
+# api_keys = ["${PROXY_API_KEY}"]
+
+# Seules routes POST relayées aux backends, en plus des handlers dédiés
+# (/v1/chat/completions, /v1/models). Toute autre URL → 404 local.
+forward_post_paths = [
+  "/v1/completions", "/v1/embeddings", "/v1/rerank",
+  "/v1/audio/transcriptions", "/v1/ocr",
+]
+# Endpoints hors quota chat côté Albert : jamais temporisés.
+exempt_paths = ["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]
+
+
+# ── Statistiques ────────────────────────────────────────────────────────
+[stats]
+# Base SQLite : une ligne par requête servie, d'où les vues All/Week/Day
+# et l'Usage API. Chemin relatif = à côté de CE fichier.
+database = "stats.db"
+# Purge des lignes plus vieilles que N jours (0 = ne jamais purger).
+retention_days = 90
+# Corps max bufferisé pour lire `usage` sur une réponse non streamée ;
+# au-delà on renonce (estimation) plutôt que de gonfler la RAM.
+max_body_bytes = 2097152
+
+
+# ── Quotas Albert ───────────────────────────────────────────────────────
+[quotas]
+# Marge de sécurité appliquée aux limites du compte (0.9 = 90 %).
+margin = 0.9
+# Rafraîchissement (s) des limites exactes via GET /v1/me/info.
+limits_refresh = 3600
+# Si l'attente nécessaire dépasse N secondes (quota JOURNALIER épuisé),
+# le proxy renvoie un 429 local avec Retry-After plutôt que de bloquer
+# la requête pendant des heures.
+max_queue_seconds = 900
+# Fallback n°3 : modèles ni dans /v1/me/info ni dans [quotas.family_limits].
+generic_rpm = 30
+generic_tpm = 128000
+# Cartouche d'état (fenêtre locale, aucun appel réseau) dans les logs :
+# au plus une toutes les N secondes, s'il y a du trafic (0 = désactivé).
+status_interval = 600
+
+# Mapping manuel routeur → préfixes de modèles, prioritaire sur la
+# détection par signature. À utiliser si les logs signalent une famille
+# non associée.
+# [quotas.router_models]
+# 3 = ["openweight-code", "qwen"]
+
+# Fallback n°2 : quotas par FAMILLE (palier Expérimentation 08/2026),
+# utilisés pour les modèles absents de /v1/me/info ou si l'endpoint est
+# injoignable. `models` = préfixes matchés contre le champ `model`
+# (le plus long gagne).
+[quotas.family_limits.deepseek]
+rpm = 50
+tpm = 246000
+models = ["deepseek"]
+
+[quotas.family_limits.mistral]
+rpm = 50
+tpm = 128000
+models = ["openweight-small", "openweight-medium", "mistral", "ministral"]
+
+[quotas.family_limits.qwen]
+rpm = 50
+tpm = 128000
+models = ["openweight-code", "qwen"]
+
+[quotas.family_limits.gptoss]
+rpm = 10
+tpm = 128000
+models = ["openweight-large", "gpt-oss"]
+
+
+# ── Backends ────────────────────────────────────────────────────────────
+# Le NOM de la table est le PRÉFIXE de routage : «albert/…» part vers
+# [backends.albert], «bigchuck/…» vers [backends.bigchuck], préfixe retiré
+# avant transfert. Tout modèle doit être préfixé : sans préfixe reconnu
+# → 400. GET /v1/models interroge les backends en direct et renvoie le
+# catalogue fusionné, ids préfixés.
+#
+# Champs : url (requis), api_key, quotas, timeout, meta_timeout,
+# verify_ssl, force_tool_choice.
+#
+# force_tool_choice — injection de `tool_choice` quand `tools` est présent
+# sans `tool_choice` : absent/false = AUCUNE injection (le défaut) ;
+# true = la valeur de proxy.tool_choice ; "auto"/"required"… = cette
+# valeur-là. Seul Albert en a besoin (son schéma déclare «default: none»,
+# ce qui casse le tool calling) ; llama.cpp non.
+
+[backends.albert]
+url = "https://albert.api.etalab.gouv.fr"
+api_key = "${ALBERT_API_KEY}"
+quotas = true
+force_tool_choice = "auto"
+
+# Backend local llama.cpp : sans quota, pas toujours allumé — contacté
+# uniquement à la demande, jamais sondé en tâche de fond ; éteint → 503
+# backend_offline, échec rapide en ~5 s.
+[backends.bigchuck]
+url = "http://bigchuck:8009"

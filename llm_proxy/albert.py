@@ -13,10 +13,10 @@ QuotaWaitTooLong et renvoie un 429 local avec Retry-After.
 (id + aliases) mais PAS leur router_id (vérifié sur l'API réelle). Le
 mapping est donc reconstruit ainsi, par priorité :
 
-  1. ROUTER_MODELS (env, JSON {"<router_id>": ["préfixe", ...]}) — mapping
-     manuel explicite, prioritaire sur tout ;
+  1. [quotas.router_models] (config.toml, <router_id> = ["préfixe", ...])
+     — mapping manuel explicite, prioritaire sur tout ;
   2. signature : chaque groupe de modèles est rattaché à une famille
-     (FAMILY_LIMITS, préfixes testés sur le nom complet, sa partie après
+     ([quotas.family_limits], préfixes testés sur le nom complet, sa partie après
      « / », et chaque alias) ; si un seul routeur du compte porte les
      (rpm, tpm) de cette famille, l'association est certaine. Si plusieurs
      routeurs candidats existent mais ont TOUTES leurs limites identiques
@@ -41,18 +41,19 @@ leur refresh. refresh() reçoit le Backend (attributs .client,
 import asyncio
 import json
 import logging
-import os
 import time
 from collections import deque
 
+from . import config
+
 log = logging.getLogger("albert-proxy")
 
-MARGIN = float(os.environ.get("RATE_LIMIT_MARGIN", "0.9"))
-LIMITS_REFRESH = float(os.environ.get("LIMITS_REFRESH", "3600"))
-MAX_QUEUE_SECONDS = float(os.environ.get("MAX_QUEUE_SECONDS", "900"))
-GENERIC_RPM = int(os.environ.get("GENERIC_RPM", "30"))
-GENERIC_TPM = int(os.environ.get("GENERIC_TPM", "128000"))
-STATUS_INTERVAL = float(os.environ.get("STATUS_INTERVAL", "600"))
+MARGIN = config.num("quotas.margin", 0.9)
+LIMITS_REFRESH = config.num("quotas.limits_refresh", 3600)
+MAX_QUEUE_SECONDS = config.num("quotas.max_queue_seconds", 900)
+GENERIC_RPM = config.integer("quotas.generic_rpm", 30)
+GENERIC_TPM = config.integer("quotas.generic_tpm", 128000)
+STATUS_INTERVAL = config.num("quotas.status_interval", 600)
 
 DEFAULT_FAMILY_LIMITS = {
     "deepseek": {"rpm": 50, "tpm": 246_000, "models": ["deepseek"]},
@@ -77,30 +78,30 @@ DAY = 86_400.0
 
 
 def load_family_limits() -> dict:
-    raw = os.environ.get("FAMILY_LIMITS", "")
-    if not raw:
+    parsed = config.get("quotas.family_limits")
+    if not parsed:
         return DEFAULT_FAMILY_LIMITS
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"FAMILY_LIMITS invalide (JSON attendu) : {exc}")
+    if not isinstance(parsed, dict):
+        raise SystemExit("quotas.family_limits : table attendue")
     for fam, cfg in parsed.items():
         for key in ("rpm", "tpm", "models"):
             if key not in cfg:
-                raise SystemExit(f"FAMILY_LIMITS[{fam}] : champ '{key}' manquant")
+                raise SystemExit(
+                    f"quotas.family_limits.{fam} : champ '{key}' manquant")
     return parsed
 
 
 def load_router_models() -> dict[int, list[str]]:
-    raw = os.environ.get("ROUTER_MODELS", "")
-    if not raw:
+    """Clés du TOML = router_id (en chaîne, un nom de clé TOML l'est
+    toujours), valeurs = préfixes de modèles."""
+    parsed = config.get("quotas.router_models")
+    if not parsed:
         return {}
     try:
-        parsed = json.loads(raw)
         return {int(rid): [str(p).lower() for p in prefixes]
                 for rid, prefixes in parsed.items()}
-    except (json.JSONDecodeError, ValueError, TypeError) as exc:
-        raise SystemExit(f"ROUTER_MODELS invalide : {exc}")
+    except (AttributeError, ValueError, TypeError) as exc:
+        raise SystemExit(f"quotas.router_models invalide : {exc}")
 
 
 class QuotaWaitTooLong(Exception):

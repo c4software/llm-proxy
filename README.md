@@ -10,9 +10,12 @@ choisit le backend par le **préfixe du nom de modèle**
 
 ## Fonctionnalités
 
-- **Routage multi-backends** — `BACKENDS` (JSON en env) déclare les
-  backends ; le préfixe du modèle est le discriminant de routage, retiré
-  avant transfert (llama.cpp reçoit `qwen3-32b`, pas `bigchuck/qwen3-32b`).
+- **Configuration en un seul fichier** — tout vit dans
+  `data/config.toml` (voir [Configuration](#configuration)). L'environnement
+  ne sert plus qu'aux **secrets**, injectés dans le TOML par `${VAR}`.
+- **Routage multi-backends** — une table `[backends.<nom>]` par backend ;
+  le nom est le discriminant de routage, retiré avant transfert
+  (llama.cpp reçoit `qwen3-32b`, pas `bigchuck/qwen3-32b`).
 - **Catalogue unifié** — `GET /v1/models` interroge tous les backends en
   direct, préfixe les ids et **normalise les entrées sur un schéma
   uniforme** (type, coûts, `max_context_length` dérivé du `--ctx-size`
@@ -22,7 +25,7 @@ choisit le backend par le **préfixe du nom de modèle**
 - **Limiteur de quotas Albert** — temporise les requêtes pour rester
   sous les limites du compte (fenêtres minute **et** jour, chargées via
   `/v1/me/info`, rafraîchies périodiquement). Retarde plutôt que
-  rejeter ; si l'attente dépasse `MAX_QUEUE_SECONDS` (quota journalier
+  rejeter ; si l'attente dépasse `quotas.max_queue_seconds` (quota journalier
   épuisé) → 429 local avec `Retry-After`. Plusieurs backends à quotas
   possibles (deux comptes Albert = deux jeux de limiteurs indépendants).
 - **Backends locaux à la demande** — jamais sondés en tâche de fond
@@ -45,52 +48,129 @@ choisit le backend par le **préfixe du nom de modèle**
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
   (URL, quotas restants par fenêtre, derniers modèles vus, réglage
   `tool_choice`) ; un résumé périodique des compteurs est loggé
-  (`STATUS_INTERVAL`).
+  (`quotas.status_interval`).
+- **Statistiques persistantes, à la forme d'OpenAI** —
+  `GET /v1/organization/usage/completions` : **l'Usage API d'OpenAI**,
+  servie depuis les compteurs du proxy. Une ligne SQLite par requête
+  (`data/stats.db`), donc les chiffres survivent au redémarrage et toute
+  fenêtre temporelle est calculable après coup. C'est la **seule**
+  lecture des statistiques — il n'existe pas de format privé, et le
+  SDK OpenAI officiel s'y branche tel quel (voir
+  [Statistiques](#statistiques-usage-api)).
 - **Tableau de bord** — `GET /ui` (ou `/`) : une page HTML statique qui
-  relit ces compteurs en JSON toutes les 5 s et se remplit côté client
+  consomme cette même Usage API, en vues **Jour / Semaine / Tout**
   (voir [Tableau de bord](#tableau-de-bord)).
-- **Statistiques d'usage** — `GET /v1/stats` : compteurs **par modèle**
-  (nom préfixé), alimentés en lisant l'`usage` des réponses upstream —
-  streaming SSE compris — avec repli sur une estimation quand l'upstream
-  n'en renvoie pas. Le retour est **dynamique** : un modèle n'apparaît
-  qu'à partir de sa première requête servie. En mémoire, remis à zéro au
-  redémarrage.
 
 ## Fichiers
 
 | Fichier | Rôle |
 |---|---|
-| `main.py` | La passerelle : backends, routage au préfixe, `/v1/models` fusionné, HTTP |
-| `stats.py` | Compteurs d'usage par modèle (requêtes, tokens, latences) et extraction de l'`usage` dans le flux de réponse |
-| `templates/index.html` | La page du tableau de bord : HTML statique, servi tel quel (aucun moteur de template) |
-| `static/` | `dashboard.css` et `dashboard.js` — ce dernier lit le JSON des stats et remplit la page |
-| `albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
+| `main.py` | Point d'entrée (`uvicorn main:app`) — trois lignes, tout le code est dans le paquet |
+| `llm_proxy/config.py` | Chargement de `data/config.toml` : substitution des `${VAR}`, accès typés, création du fichier depuis l'exemple au premier démarrage |
+| `llm_proxy/settings.py` | La table `[proxy]`, en constantes typées |
+| `llm_proxy/backends.py` | Déclaration des backends, clients HTTP, **routage au préfixe de modèle** |
+| `llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
+| `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête), extraction de l'`usage` dans le flux de réponse, et l'Usage API |
+| `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
+| `llm_proxy/web/` | Le tableau de bord : `templates/index.html` (HTML statique, aucun moteur de template) et `static/` (`dashboard.css`, `dashboard.js`) |
+| `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 
-`main.py` ne connaît d'Albert que « un backend `quotas: true` passe par
+`app.py` ne connaît d'Albert que « un backend `quotas = true` passe par
 sa `QuotaState` » ; toute la mécanique de quotas vit dans `albert.py`.
+
+`data/` est le seul dossier écrit à l'exécution (`config.toml`,
+`stats.db`) : c'est le volume à monter.
+
+## Statistiques (Usage API)
+
+Les compteurs sont **persistés** : une ligne SQLite par requête servie
+(`data/stats.db`), écrite hors de la boucle d'événements par un thread
+dédié. Ils survivent donc au redémarrage, et n'importe quelle fenêtre
+temporelle se calcule après coup. Purge automatique au-delà de
+`stats.retention_days` (90 jours par défaut, `0` = illimité).
+
+La seule route de lecture est **l'Usage API d'OpenAI** :
+
+    GET /v1/organization/usage/completions
+        ?start_time=<epoch>        (obligatoire)
+        &end_time=<epoch>
+        &bucket_width=1m|1h|1d|all
+        &group_by[]=model
+        &models[]=albert/openweight-large
+        &limit=<n>&page=<curseur>
+
+Réponse : `page` → `bucket` → `result`, au schéma OpenAI exact. Le SDK
+officiel s'y branche sans adaptation :
+
+```python
+from openai import OpenAI
+c = OpenAI(base_url="http://localhost:8000/v1", api_key="x", admin_api_key="x")
+page = c.admin.organization.usage.completions(
+    start_time=..., bucket_width="1d", group_by=["model"], limit=7)
+```
+
+Deux écarts, **tous deux additifs** — un SDK ignore ce qu'il ne connaît
+pas, la compatibilité reste entière :
+
+- `bucket_width=all` en plus de `1m`/`1h`/`1d` : un seul seau couvrant
+  toute la plage. Indispensable pour un total, et pour un p95 juste —
+  un p95 ne se recompose pas à partir de seaux plus fins ;
+- chaque `result` porte, en plus des champs du schéma, ce que le proxy
+  sait mesurer et qu'OpenAI n'expose pas : `num_errors`,
+  `num_streamed_requests`, `num_estimated_requests`,
+  `p95_latency_seconds`, `first_request_time`, `last_request_time`.
+
+Le champ `model` est le nom **préfixé** (`albert/openweight-large`),
+donc directement réutilisable comme `model` d'une requête. Les
+dimensions que le proxy ne possède pas (`project_id`, `user_id`,
+`api_key_id`, `batch`) valent `null` ; **filtrer** dessus rend une page
+vide, plutôt que d'ignorer le filtre en silence et de sur-déclarer
+l'usage.
+
+Comptage des tokens : le bloc `usage` de l'upstream quand il existe —
+streaming SSE compris —, sinon une estimation à ~4 caractères par
+token. Les deux sont comptés séparément (`num_estimated_requests`) pour
+que le chiffre affiché reste honnête.
 
 ## Tableau de bord
 
-`GET /ui` (ou `/`) affiche les compteurs de `/v1/stats` — c'est la copie
-d'écran ci-dessus. La page est un fichier HTML statique
-(`templates/index.html`) : le serveur ne calcule aucun balisage. Tout le
-reste tient dans `static/dashboard.js`, sans dépendance ni CDN :
+`GET /ui` (ou `/`) — c'est la copie d'écran ci-dessus. La page est un
+fichier HTML statique (`llm_proxy/web/templates/index.html`) : le serveur
+ne calcule aucun balisage. Tout le reste tient dans `dashboard.js`, sans
+dépendance ni CDN, et **ne consomme que l'Usage API ci-dessus** —
+exactement ce que verrait un client tiers.
 
-- toutes les 5 s, un `fetch` du JSON des stats ;
-- la charge porte un champ `revision`, incrémenté à chaque requête
-  servie : inchangé → rien n'a bougé, la page ne se redessine pas ;
-- sinon cartes, barre de répartition et tableau sont réécrits depuis le
-  JSON — et uniquement les valeurs qui diffèrent, donc pas de
-  clignotement ;
+Trois vues, sélecteur en haut de page :
+
+| Vue | Période | Découpage | Raccourci |
+|---|---|---|---|
+| Jour | 24 dernières heures | 1 heure | <kbd>D</kbd> |
+| Semaine | 7 derniers jours | 1 jour | <kbd>W</kbd> |
+| Tout | depuis le plus ancien enregistrement | 1 heure ou 1 jour, selon l'étendue | <kbd>A</kbd> |
+
+Le choix est mémorisé (`localStorage`). Deux appels par rafraîchissement :
+un `bucket_width=all&group_by[]=model` pour les totaux et la ligne par
+modèle, un second au découpage de la vue pour la courbe du trafic.
+
+- toutes les 5 s, la page rappelle `/ui/usage` ;
+- la réponse est comparée à la précédente : identique → aucun redessin ;
+- sinon seules les valeurs qui diffèrent sont réécrites, donc pas de
+  clignotement, et les barres glissent vers leur nouvelle hauteur au lieu
+  de sauter ;
 - les « il y a 3 min » vieillissent dans le navigateur à partir d'un
   timestamp : le temps qui passe ne déclenche aucune requête.
 
-Le JSON est lu sur `/ui/stats`, qui renvoie exactement `stats.snapshot()`
-— la réponse de `/v1/stats`. Ce doublon n'existe que pour l'auth : un
-`fetch` de navigateur ne peut pas porter l'en-tête `Authorization`, alors
-que le cookie posé par `/ui` vaut pour tout ce qui est sous `/ui`. Si
-`PROXY_API_KEY` est défini, ouvrir `/ui?key=<clé>` une fois : la clé est
-ensuite mémorisée dans un cookie `HttpOnly`.
+La courbe **Trafic** ne porte qu'une mesure — les requêtes —, donc un
+seul axe et une seule couleur ; les tokens sont dans l'infobulle. Les
+seaux vides sont dessinés eux aussi : un creux doit se voir comme un
+creux.
+
+`/ui/usage` est la même route que `/v1/organization/usage/completions`.
+Ce doublon n'existe que pour l'auth : un `fetch` de navigateur ne peut
+pas porter l'en-tête `Authorization`, alors que le cookie posé par `/ui`
+vaut pour tout ce qui est sous `/ui`. Si `proxy.api_keys` est renseigné,
+ouvrir `/ui?key=<clé>` une fois : la clé est ensuite mémorisée dans un
+cookie `HttpOnly`.
 
 Le badge **exact / estimé** de la colonne *Comptage* dit d'où viennent
 les tokens : le bloc `usage` de l'upstream, ou l'estimation de repli
@@ -100,38 +180,65 @@ les tokens : le bloc `usage` de l'upstream, ou l'estimation de repli
 
 ### Docker Compose
 
+    cp .env.example .env        # y mettre ALBERT_API_KEY
     docker compose up -d --build
+
+`./data` est monté comme volume : il porte la configuration
+(`config.toml`, créée au premier démarrage depuis l'exemple) **et** la
+base de statistiques (`stats.db`), qui survit ainsi aux redémarrages et
+aux reconstructions d'image.
 
 ### Coolify
 
 Nouvelle ressource → Dockerfile, pointer sur ce dépôt. Port 8000.
-Ajouter les variables d'environnement ci-dessous, puis exposer le
-service via Nginx Proxy Manager sur un sous-domaine interne.
+Déclarer un **volume persistant sur `/app/data`** (configuration et base
+de statistiques), ajouter les secrets en variables d'environnement
+(`ALBERT_API_KEY`…), puis exposer le service via Nginx Proxy Manager sur
+un sous-domaine interne. Les réglages se modifient ensuite dans
+`data/config.toml`, dans le volume.
 
 ## Configuration
 
+**Tout vit dans `data/config.toml`.** Le fichier est créé au premier
+démarrage à partir de `data/config.example.toml`, qui est documenté ligne
+à ligne — c'est la référence à lire. L'environnement ne sert plus qu'à
+deux choses :
+
+- `CONFIG_PATH` : où trouver le TOML (défaut `data/config.toml`) ;
+- les **secrets** : toute chaîne du TOML peut contenir `${VAR}`, remplacé
+  au chargement par la variable d'environnement. Les clés d'API restent
+  ainsi hors du fichier, donc hors du dépôt, tandis que la structure
+  reste versionnable.
+
+`data/config.toml` et `data/stats.db` sont dans `.gitignore` : le dépôt
+ne garde que l'exemple.
+
 ### Backends
 
-`BACKENDS` est la **seule source de vérité des URLs** — le nom de chaque
-entrée est le préfixe de routage :
+Une table `[backends.<nom>]` par backend — **le nom est le préfixe de
+routage**, et ces tables sont la seule source de vérité des URLs :
 
-    BACKENDS: |
-      {
-        "albert":   {"url": "https://albert.api.etalab.gouv.fr",
-                     "quotas": true, "force_tool_choice": "auto"},
-        "bigchuck": {"url": "http://bigchuck:8009"}
-      }
+```toml
+[backends.albert]
+url = "https://albert.api.etalab.gouv.fr"
+api_key = "${ALBERT_API_KEY}"
+quotas = true
+force_tool_choice = "auto"
 
-Options par backend : `api_key` (**la clé du backend vit ici**, et
-nulle part ailleurs — clé Albert, ou `--api-key` de llama-server ; si
-définie, elle remplace l'`Authorization` du client), `quotas` (active
-le limiteur Albert), `timeout` (secondes, défaut `UPSTREAM_TIMEOUT`),
-`meta_timeout` (secondes pour les appels de méta-données — `/v1/models`,
-`/v1/me/info` —, défaut `5`), `verify_ssl: false` (certificat
+[backends.bigchuck]
+url = "http://bigchuck:8009"
+```
+
+Champs : `api_key` (**la clé du backend vit ici**, et nulle part ailleurs
+— clé Albert, ou `--api-key` de llama-server ; si définie, elle remplace
+l'`Authorization` du client), `quotas` (active le limiteur Albert),
+`timeout` (secondes, défaut `proxy.upstream_timeout`), `meta_timeout`
+(secondes pour les appels de méta-données — `/v1/models`, `/v1/me/info`
+—, défaut `proxy.meta_timeout`), `verify_ssl = false` (certificat
 auto-signé), `force_tool_choice` (injection de `tool_choice` : absent ou
 `false` → **aucune injection**, c'est le défaut ; `true` → la valeur de
-`FORCE_TOOL_CHOICE` ; une chaîne (`"auto"`, `"required"`…) → cette
-valeur-là). Seule exception : si `BACKENDS` n'est pas défini du tout, le
+`proxy.tool_choice` ; une chaîne (`"auto"`, `"required"`…) → cette
+valeur-là). Seule exception : si `[backends]` est absent du TOML, le
 backend Albert par défaut est livré avec `"auto"`, puisque c'est lui que
 le correctif vise.
 
@@ -139,41 +246,47 @@ le correctif vise.
 `unknown_backend_prefix`. Seules les requêtes sans champ `model`
 (endpoints de compte, corps non JSON) partent vers le backend à quotas.
 
-### Variables générales
+### `[proxy]`
 
-| Variable | Défaut | Rôle |
+| Clé | Défaut | Rôle |
 |---|---|---|
-| `BACKENDS` | *Albert seul* | Déclaration des backends (voir ci-dessus) |
-| `PROXY_API_KEY` | *(vide)* | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>`, à la OpenAI). Vide = proxy ouvert. Plusieurs clés séparées par des virgules ; 401 sinon, `/healthz` exempté ; `/ui` accepte aussi `?key=<clé>` (puis cookie) |
-| `UPSTREAM_TIMEOUT` | `600` | Secondes ; large pour les longues générations |
-| `FORCE_TOOL_CHOICE` | `auto` | Valeur injectée quand `tools` est présent sans `tool_choice`, pour les backends ayant `force_tool_choice: true`. L'injection est désactivée par défaut : elle s'active dans `BACKENDS` |
-| `FORWARD_POST_PATHS` | `/v1/completions,/v1/embeddings,/v1/rerank,/v1/audio/transcriptions,/v1/ocr` | Routes POST relayées en plus des handlers dédiés ; le reste → 404 |
-| `LOG_LEVEL` | `INFO` | `INFO` logue chaque injection et chaque mise en attente |
-| `STATS_LATENCY_SAMPLES` | `500` | Échantillons de latence gardés par modèle pour le p95 de `/v1/stats` |
-| `STATS_MAX_BODY_BYTES` | `2097152` | Taille max d'une réponse non streamée bufferisée pour y lire l'`usage` ; au-delà, estimation |
+| `api_keys` | `[]` | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>`, à la OpenAI). Liste vide = proxy ouvert ; 401 sinon, `/healthz` exempté ; `/ui` accepte aussi `?key=<clé>` (puis cookie) |
+| `upstream_timeout` | `600` | Secondes ; large pour les longues générations |
+| `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info` — court, un backend lent ne doit pas bloquer le catalogue |
+| `tool_choice` | `"auto"` | Valeur injectée quand `tools` est présent sans `tool_choice`, pour les backends ayant `force_tool_choice = true`. L'injection est désactivée par défaut : elle s'active par backend |
+| `forward_post_paths` | `["/v1/completions", "/v1/embeddings", "/v1/rerank", "/v1/audio/transcriptions", "/v1/ocr"]` | Routes POST relayées en plus des handlers dédiés ; le reste → 404 |
+| `exempt_paths` | `["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]` | Suffixes de routes exclus du limiteur |
+| `log_level` | `"INFO"` | `INFO` logue chaque injection et chaque mise en attente |
 
-### Variables du limiteur (backends à quotas)
+### `[stats]`
 
-| Variable | Défaut | Rôle |
+| Clé | Défaut | Rôle |
 |---|---|---|
-| `RATE_LIMIT_MARGIN` | `0.9` | Fraction des limites réellement utilisée (marge de sécurité) |
-| `MAX_QUEUE_SECONDS` | `900` | Attente max avant 429 local (quota journalier épuisé) |
-| `LIMITS_REFRESH` | `3600` | Période de rechargement de `/v1/me/info` (0 = jamais) |
-| `GENERIC_RPM` / `GENERIC_TPM` | `30` / `128000` | Limites des modèles hors familles connues |
-| `FAMILY_LIMITS` | *intégré* | JSON `{"<famille>": {rpm, tpm, models: [préfixes]}}` — limites statiques de repli par famille |
-| `ROUTER_MODELS` | *(vide)* | JSON `{"<router_id>": ["préfixe", ...]}` — association manuelle routeurs ↔ modèles, prioritaire sur la détection par signature |
-| `EXEMPT_PATHS` | `/embeddings,/rerank,/audio/transcriptions,/ocr` | Suffixes de routes exclus du limiteur |
-| `STATUS_INTERVAL` | `600` | Période du résumé des compteurs dans les logs |
+| `database` |  `"stats.db"` | Base SQLite ; chemin relatif = à côté de `config.toml` |
+| `retention_days` | `90` | Purge des lignes plus anciennes (`0` = conservation illimitée) |
+| `max_body_bytes` | `2097152` | Taille max d'une réponse non streamée bufferisée pour y lire l'`usage` ; au-delà, estimation |
+
+### `[quotas]` (backends à quotas)
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `margin` | `0.9` | Fraction des limites réellement utilisée (marge de sécurité) |
+| `max_queue_seconds` | `900` | Attente max avant 429 local (quota journalier épuisé) |
+| `limits_refresh` | `3600` | Période de rechargement de `/v1/me/info` (0 = jamais) |
+| `generic_rpm` / `generic_tpm` | `30` / `128000` | Limites des modèles hors familles connues |
+| `status_interval` | `600` | Période du résumé des compteurs dans les logs |
+| `[quotas.family_limits.<famille>]` | *intégré* | `rpm`, `tpm`, `models = [préfixes]` — limites statiques de repli par famille |
+| `[quotas.router_models]` | *(vide)* | `<router_id> = ["préfixe", …]` — association manuelle routeurs ↔ modèles, prioritaire sur la détection par signature |
 
 ### Association routeurs ↔ modèles (Albert)
 
 `/v1/me/info` donne les limites par `router_id` mais pas quels modèles
 chaque routeur sert. Le proxy reconstruit le mapping par **signature** :
-chaque famille de modèles (`FAMILY_LIMITS`) est rattachée au routeur du
-compte qui porte ses (rpm, tpm). Si l'association est ambiguë, la
-famille reste sur ses limites statiques ; `ROUTER_MODELS` permet de la
-fixer manuellement. Id et alias (`openai/gpt-oss-120b` ↔
-`openweight-large`) partagent le même compteur.
+chaque famille de modèles (`[quotas.family_limits]`) est rattachée au
+routeur du compte qui porte ses (rpm, tpm). Si l'association est
+ambiguë, la famille reste sur ses limites statiques ;
+`[quotas.router_models]` permet de la fixer manuellement. Id et alias
+(`openai/gpt-oss-120b` ↔ `openweight-large`) partagent le même compteur.
 
 ## Sécurité
 
@@ -181,7 +294,7 @@ Avec une `api_key` configurée sur un backend, **le proxy devient une
 clé Albert ouverte pour quiconque peut l'atteindre**. Deux parades,
 cumulables :
 
-- **`PROXY_API_KEY`** : exige des clients une clé à la OpenAI
+- **`proxy.api_keys`** : exige des clients une clé à la OpenAI
   (`Authorization: Bearer <clé>`) — sans elle, 401. Quand l'auth est
   active, le Bearer du client n'est jamais relayé aux backends (c'est
   la clé du proxy, pas de l'upstream). Le tableau de bord `/ui` est
@@ -197,12 +310,20 @@ cumulables :
     curl -s http://localhost:8000/v1/models | jq '.data[].id'
 
     # tableau de bord : http://localhost:8000/ui
-    # (si PROXY_API_KEY est défini : http://localhost:8000/ui?key=<clé>,
-    #  la clé est ensuite mémorisée en cookie)
+    # (si proxy.api_keys est renseigné : http://localhost:8000/ui?key=<clé>,
+    #  la clé est ensuite mémorisée en cookie ; D / W / A changent de vue)
 
-    # usage par modèle (seuls les modèles ayant généré apparaissent)
-    curl -s http://localhost:8000/v1/stats \
-      | jq '.data[] | {id, requests, tokens: .usage.total_tokens}'
+    # usage par modèle, tout l'historique (Usage API OpenAI)
+    curl -s "http://localhost:8000/v1/organization/usage/completions\
+?start_time=0&bucket_width=all&group_by[]=model" \
+      | jq '.data[0].results[] | {model, num_model_requests,
+                                  tokens: (.input_tokens + .output_tokens)}'
+
+    # les 7 derniers jours, un seau par jour
+    curl -s "http://localhost:8000/v1/organization/usage/completions\
+?start_time=$(( $(date +%s) - 604800 ))&bucket_width=1d&limit=8" \
+      | jq '.data[] | {jour: (.start_time | todate),
+                       req: ([.results[].num_model_requests] | add // 0)}'
 
     curl -s http://localhost:8000/v1/chat/completions \
       -H "Content-Type: application/json" \

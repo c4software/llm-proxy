@@ -1,3 +1,9 @@
 .env
 __pycache__/
 *.pyc
+# Config réelle (elle porte les réglages du déploiement) et base de
+# statistiques : le dépôt ne garde que data/config.example.toml.
+data/config.toml
+data/stats.db
+data/stats.db-wal
+data/stats.db-shm

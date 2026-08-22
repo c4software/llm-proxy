@@ -1,0 +1,176 @@
+"""
+Les backends OpenAI-compatibles : leur déclaration ([backends.<nom>] du
+TOML), leur client HTTP, et le ROUTAGE — c'est-à-dire la seule règle qui
+compte ici, le PRÉFIXE du modèle désigne le backend.
+
+« albert/openweight-large » part vers [backends.albert], « bigchuck/qwen3 »
+vers [backends.bigchuck], préfixe retiré avant transfert. Tout modèle doit
+être préfixé : sans préfixe reconnu → 400. Seules les requêtes SANS champ
+model (endpoints de compte, corps non JSON) n'ont rien à router et
+tombent sur le backend de repli.
+"""
+
+import json
+
+import httpx
+from fastapi.responses import JSONResponse
+
+from . import albert
+from . import config
+from .settings import META_TIMEOUT, TIMEOUT, TOOL_CHOICE, log
+
+
+class Backend:
+    """Un backend OpenAI-compatible, identifié par son nom = préfixe de
+    routage. Celui marqué quotas=True (unique, Albert) passe par le
+    limiteur ; les autres sont illimités mais pas toujours allumés —
+    contactés uniquement à la demande, jamais sondés en tâche de fond."""
+
+    def __init__(self, name: str, cfg: dict):
+        self.name = name
+        self.url = str(cfg.get("url", "") or "").rstrip("/")
+        if not self.url:
+            raise SystemExit(f"backends.{name} : champ 'url' manquant")
+        self.api_key = str(cfg.get("api_key", "") or "")
+        self.verify_ssl = bool(cfg.get("verify_ssl", True))
+        self.quotas = bool(cfg.get("quotas", False))
+        self.timeout = float(cfg.get("timeout", TIMEOUT))
+        self.meta_timeout = float(cfg.get("meta_timeout", META_TIMEOUT))
+        # Injection de `tool_choice` : DÉSACTIVÉE PAR DÉFAUT. Le
+        # correctif ne vaut que pour les backends dont le schéma a
+        # "none" pour défaut (Albert) ; ailleurs il est au mieux inutile,
+        # au pire nuisible. On l'active donc backend par backend :
+        #   absent / false → aucune injection (défaut) ;
+        #   true           → valeur globale proxy.tool_choice ;
+        #   "auto", "required"… → cette valeur-là, pour ce backend.
+        self.tool_choice = self._tool_choice(cfg.get("force_tool_choice"))
+        # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
+        # Albert avec des clés différentes ne partagent rien).
+        self.quota_state = albert.QuotaState(name) if self.quotas else None
+        self.client: httpx.AsyncClient | None = None
+        # Dernier catalogue vu lors d'un GET /v1/models (informel, healthz).
+        self.models: set[str] = set()
+
+    @staticmethod
+    def _tool_choice(value) -> str | None:
+        """None = ne rien injecter pour ce backend (le défaut)."""
+        if value is None or value is False:
+            return None
+        if value is True:
+            return TOOL_CHOICE
+        return str(value)
+
+    def auth_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
+
+# Défaut si [backends] est absent du TOML : Albert seul. URLs ET clés ne
+# vivent QUE là (champ api_key par backend), rien ailleurs.
+DEFAULT_BACKENDS = {
+    # Albert est le seul à avoir besoin du correctif tool_choice (son
+    # schéma déclare «default: none») : ce fallback l'active donc, alors
+    # que l'option est à false partout ailleurs.
+    "albert": {"url": "https://albert.api.etalab.gouv.fr", "quotas": True,
+               "force_tool_choice": "auto"},
+}
+
+
+def load_backends() -> dict[str, Backend]:
+    """Une table [backends.<nom>] par backend ; <nom> EST le préfixe de
+    routage."""
+    parsed = config.section("backends") or DEFAULT_BACKENDS
+    if not isinstance(parsed, dict) or not parsed:
+        raise SystemExit("[backends] : au moins un backend attendu")
+    out: dict[str, Backend] = {}
+    for name, cfg in parsed.items():
+        key = str(name).strip().strip("/").lower()
+        if not key:
+            raise SystemExit("[backends] : nom de backend vide")
+        out[key] = Backend(key, cfg if isinstance(cfg, dict) else {})
+    return out
+
+
+BACKENDS: dict[str, Backend] = load_backends()
+# Les requêtes SANS champ model (endpoints de compte, corps non JSON)
+# n'ont pas de préfixe à router : elles partent vers le premier backend
+# à quotas (à défaut, le premier déclaré).
+FALLBACK_BACKEND = next(
+    (b for b in BACKENDS.values() if b.quotas),
+    next(iter(BACKENDS.values())),
+)
+
+def route_backend(payload) -> tuple[Backend | None, bool]:
+    """Discriminant de routage : le préfixe du modèle. «<nom>/…» part
+    vers le backend <nom> ; requête sans champ model → FALLBACK_BACKEND ;
+    modèle sans préfixe reconnu → None (400). Renvoie (backend, préfixé)
+    — préfixé impose de retirer «nom/»."""
+    model = ""
+    if isinstance(payload, dict):
+        model = str(payload.get("model", "") or "")
+    if not model:
+        return FALLBACK_BACKEND, False
+    m = model.lower()
+    for name, b in BACKENDS.items():
+        if m.startswith(name + "/"):
+            return b, True
+    return None, False
+
+
+def unknown_prefix_response(model: str) -> JSONResponse:
+    prefixes = ", ".join(f"«{n}/»" for n in BACKENDS)
+    log.warning("modèle %r sans préfixe backend reconnu → 400", model)
+    return JSONResponse(
+        {
+            "error": {
+                "message": (
+                    f"modèle «{model}» sans préfixe backend ; "
+                    f"préfixes attendus : {prefixes}"
+                ),
+                "type": "unknown_backend_prefix",
+            }
+        },
+        status_code=400,
+    )
+
+
+def strip_backend_prefix(payload: dict, b: Backend) -> bytes:
+    """Retire «<nom>/» du champ model (l'upstream ne connaît pas le
+    préfixe) et ré-encode le corps."""
+    payload["model"] = str(payload["model"])[len(b.name) + 1:]
+    return json.dumps(payload).encode()
+
+
+def backend_offline_response(b: Backend, exc: Exception) -> JSONResponse:
+    log.warning("backend %s (%s) injoignable : %s → 503", b.name, b.url, exc)
+    return JSONResponse(
+        {
+            "error": {
+                "message": (
+                    f"backend «{b.name}» ({b.url}) hors ligne : {exc}"
+                ),
+                "type": "backend_offline",
+            }
+        },
+        status_code=503,
+        headers={"Retry-After": "30"},
+    )
+
+
+
+async def open_clients() -> None:
+    """Un client HTTP par backend, ouvert au démarrage de l'application."""
+    for b in BACKENDS.values():
+        # connect court pour les backends sans quota : souvent éteints,
+        # échouer vite.
+        b.client = httpx.AsyncClient(
+            base_url=b.url,
+            timeout=httpx.Timeout(b.timeout, connect=15.0 if b.quotas else 5.0),
+            follow_redirects=False,
+            verify=b.verify_ssl,
+        )
+
+
+async def close_clients() -> None:
+    for b in BACKENDS.values():
+        if b.client is not None:
+            await b.client.aclose()

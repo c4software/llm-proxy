@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 README.md
 preview.jpg
+data/config.toml
+data/stats.db*

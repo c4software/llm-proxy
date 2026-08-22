@@ -2,8 +2,9 @@
 <!--
   Tableau de bord : du HTML statique, envoyé tel quel. Il n'y a pas de
   moteur de template — les chiffres sont remplis par dashboard.js, qui
-  lit /ui/stats (le JSON de /v1/stats, servi sous /ui pour que le cookie
-  de la page suffise à s'authentifier).
+  appelle /ui/usage, c'est-à-dire l'Usage API OpenAI du proxy
+  (/v1/organization/usage/completions) servie sous /ui pour que le cookie
+  de la page suffise à s'authentifier.
 -->
 <html lang="fr">
 <head>
@@ -18,10 +19,21 @@
   <header>
     <div class="brand"><span class="dot"></span> llm-proxy</div>
     <h1>Statistiques d'usage</h1>
-    <p class="sub">Compteurs tenus en mémoire depuis le démarrage du proxy.
-    Un modèle n'apparaît qu'à partir de sa première génération ; les mêmes
-    chiffres sont disponibles en JSON sur <code>/v1/stats</code>.</p>
+    <p class="sub">Compteurs persistés en base : ils survivent au
+    redémarrage du proxy. Un modèle n'apparaît qu'à partir de sa première
+    génération dans la période affichée ; les mêmes chiffres sont
+    disponibles en JSON sur
+    <code>/v1/organization/usage/completions</code>.</p>
   </header>
+
+  <div class="toolbar">
+    <div class="range" id="range" role="group" aria-label="Période">
+      <button type="button" data-window="day">Jour</button>
+      <button type="button" data-window="week">Semaine</button>
+      <button type="button" data-window="all">Tout</button>
+    </div>
+    <span class="range-note" id="range-note"></span>
+  </div>
 
   <div class="cards">
     <div class="card">
@@ -44,6 +56,20 @@
       <div class="value" id="c-err">—</div>
       <div class="hint" id="c-err-hint"></div>
     </div>
+  </div>
+
+  <!-- UNE mesure (les requêtes) : un seul axe, une seule couleur. Les
+       tokens vivent dans l'infobulle, jamais sur un second axe. -->
+  <div class="panel chart-panel" id="timeline" hidden>
+    <div class="panel-head">
+      <h2>Trafic</h2>
+      <span class="meta" id="chart-meta"></span>
+    </div>
+    <div class="chart" id="chart-body">
+      <div class="bars" id="bars"></div>
+      <div class="axis" id="axis"></div>
+    </div>
+    <div class="tip" id="tip" hidden></div>
   </div>
 
   <div id="share" class="panel share" hidden>
@@ -69,8 +95,8 @@
     </div>
   </div>
 
-  <footer>Rafraîchissement toutes les 5 s : la page relit
-  <code>/v1/stats</code> et ne se redessine que si les compteurs ont
+  <footer>Rafraîchissement toutes les 5 s : la page rappelle
+  <code>/ui/usage</code> et ne se redessine que si les compteurs ont
   bougé.</footer>
 </div>
 <script src="/ui/static/dashboard.js"></script>

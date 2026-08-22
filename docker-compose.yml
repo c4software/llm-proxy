@@ -4,85 +4,15 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    # Config (config.toml) et base de statistiques (stats.db) : le volume
+    # les garde au travers des redémarrages et des rebuilds d'image.
+    volumes:
+      - ./data:/app/data
     environment:
-      FORCE_TOOL_CHOICE: auto
-      UPSTREAM_TIMEOUT: "600"
-      LOG_LEVEL: INFO
-      RATE_LIMIT_MARGIN: "0.9"
-      # Limites exactes du compte : GET /v1/me/info (par routeur, y compris
-      # rpd/tpd journaliers). /v1/models n'exposant pas router_id (vérifié),
-      # l'association routeur↔modèles se fait par SIGNATURE : un routeur
-      # dont les (rpm, tpm) ne correspondent qu'à une seule famille de
-      # FAMILY_LIMITS lui est attribué. /v1/models sert aussi à unifier id
-      # et aliases dans un même bucket (openai/gpt-oss-120b ≡
-      # openweight-large). Rafraîchi toutes les N secondes.
-      LIMITS_REFRESH: "3600"
-      # Mapping manuel routeur→modèles, prioritaire sur la signature.
-      # À utiliser si les logs signalent une famille non associée :
-      # ROUTER_MODELS: '{"3": ["openweight-code", "qwen"]}'
-      # Si l'attente nécessaire dépasse N secondes (quota JOURNALIER
-      # épuisé), le proxy renvoie un 429 local avec Retry-After plutôt
-      # que de bloquer la requête pendant des heures.
-      MAX_QUEUE_SECONDS: "900"
-      # Fallback n°3 : modèles ni dans /v1/me/info ni dans FAMILY_LIMITS.
-      GENERIC_RPM: "30"
-      GENERIC_TPM: "128000"
-      # Cartouche d'état (fenêtre locale, aucun appel réseau) dans les
-      # logs : au plus un toutes les N secondes, uniquement s'il y a du
-      # trafic (0 = désactivé).
-      STATUS_INTERVAL: "600"
-      # Backends OpenAI-compatibles ; le PRÉFIXE du modèle est le
-      # discriminant de routage : «albert/…» → Albert (quotas: true →
-      # limiteur), «bigchuck/…» → llama.cpp local (sans quota, pas
-      # toujours allumé :
-      # contacté uniquement à la demande, jamais sondé en tâche de fond ;
-      # éteint → 503 backend_offline, échec rapide en ~5 s).
-      # TOUT modèle doit être préfixé : sans préfixe reconnu → 400.
-      # GET /v1/models interroge les backends en direct et renvoie le
-      # catalogue fusionné, ids préfixés (albert/…, bigchuck/…).
-      # Options par backend : "api_key" (LA clé du backend vit ici —
-      # ${ALBERT_API_KEY} est substitué par Compose depuis le .env),
-      # "quotas", "timeout" (secondes, défaut UPSTREAM_TIMEOUT),
-      # "meta_timeout" (secondes pour GET /v1/models & co, défaut 5),
-      # "verify_ssl": false (cert auto-signé), "force_tool_choice"
-      # (injection de tool_choice : absent/false = AUCUNE injection,
-      # c'est le défaut ; true = FORCE_TOOL_CHOICE ; "auto"/"required"…
-      # = cette valeur) — seul Albert en a besoin (son schéma déclare
-      # «default: none», ce qui casse le tool calling) ; llama.cpp non.
-      # Plusieurs backends du même type possibles — deux comptes Albert
-      # avec des clés différentes ("albert2": {..., "quotas": true,
-      # "api_key": "sk-…"}, limiteurs séparés) ou plusieurs machines
-      # llama.cpp — chaque nom est un préfixe de routage indépendant.
-      BACKENDS: |
-        {
-          "albert":   {"url": "https://albert.api.etalab.gouv.fr",
-                       "quotas": true, "api_key": "${ALBERT_API_KEY}",
-                       "force_tool_choice": "auto"},
-          "bigchuck": {"url": "http://bigchuck:8009"}
-        }
-      # Endpoints hors quota chat (500 RPM, TPM/TPD illimités côté Albert) :
-      # jamais temporisés.
-      EXEMPT_PATHS: /embeddings,/rerank,/audio/transcriptions,/ocr
-      # Seules routes POST relayées aux backends (en plus des handlers
-      # dédiés /v1/chat/completions et /v1/models). Toute autre URL,
-      # toute autre méthode → 404 local, rien n'est relayé aveuglément.
-      FORWARD_POST_PATHS: /v1/completions,/v1/embeddings,/v1/rerank,/v1/audio/transcriptions,/v1/ocr
-      # Fallback n°2 : quotas par FAMILLE (palier Expérimentation 08/2026),
-      # utilisés pour les modèles absents de /v1/me/info ou si l'endpoint
-      # est injoignable. `models` = préfixes matchés contre le champ
-      # `model` (le plus long gagne).
-      FAMILY_LIMITS: |
-        {
-          "deepseek": {"rpm": 50, "tpm": 246000,
-                       "models": ["deepseek"]},
-          "mistral":  {"rpm": 50, "tpm": 128000,
-                       "models": ["openweight-small", "openweight-medium",
-                                  "mistral", "ministral"]},
-          "qwen":     {"rpm": 50, "tpm": 128000,
-                       "models": ["openweight-code", "qwen"]},
-          "gptoss":   {"rpm": 10, "tpm": 128000,
-                       "models": ["openweight-large", "gpt-oss"]}
-        }
+      # Les SECRETS seulement : injectés dans le TOML par «${VAR}»
+      # (voir data/config.example.toml). Les réglages vivent dans le TOML.
+      ALBERT_API_KEY: "${ALBERT_API_KEY}"
+      # CONFIG_PATH: /app/data/config.toml
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status==200 else 1)"]
       interval: 30s
