@@ -57,8 +57,8 @@ choisit le backend par le **préfixe du nom de modèle**
   lecture des statistiques — il n'existe pas de format privé, et le
   SDK OpenAI officiel s'y branche tel quel (voir
   [Statistiques](#statistiques-usage-api)).
-- **Tableau de bord** — `GET /ui` (ou `/`) : une page HTML statique qui
-  consomme cette même Usage API, en vues **Jour / Semaine / Tout**
+- **Tableau de bord** — `GET /ui` (ou `/`) : une page Vue 3 qui consomme
+  cette même Usage API, en vues **Jour / Semaine / Tout**
   (voir [Tableau de bord](#tableau-de-bord)).
 
 ## Fichiers
@@ -72,7 +72,7 @@ choisit le backend par le **préfixe du nom de modèle**
 | `llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 | `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête), extraction de l'`usage` dans le flux de réponse, et l'Usage API |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
-| `llm_proxy/web/` | Le tableau de bord : `templates/index.html` (HTML statique, aucun moteur de template) et `static/` (`dashboard.css`, `dashboard.js`) |
+| `llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `dashboard.css`, `vue.global.prod.js`) |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 
 `app.py` ne connaît d'Albert que « un backend `quotas = true` passe par
@@ -113,12 +113,22 @@ Deux écarts, **tous deux additifs** — un SDK ignore ce qu'il ne connaît
 pas, la compatibilité reste entière :
 
 - `bucket_width=all` en plus de `1m`/`1h`/`1d` : un seul seau couvrant
-  toute la plage. Indispensable pour un total, et pour un p95 juste —
-  un p95 ne se recompose pas à partir de seaux plus fins ;
+  toute la plage, pour obtenir un total sans agréger soi-même ;
 - chaque `result` porte, en plus des champs du schéma, ce que le proxy
   sait mesurer et qu'OpenAI n'expose pas : `num_errors`,
   `num_streamed_requests`, `num_estimated_requests`,
-  `p95_latency_seconds`, `first_request_time`, `last_request_time`.
+  `total_latency_seconds`, `avg_latency_seconds`, `max_latency_seconds`,
+  `first_request_time`, `last_request_time`.
+
+**Toutes ces grandeurs s'agrègent sans perte** : elles s'additionnent
+(requêtes, tokens, somme des latences) ou se maximisent (latence max).
+Un client peut donc recomposer n'importe quelle période à partir de
+seaux plus fins et retrouver *exactement* ce qu'aurait rendu un seau
+unique — à condition d'aligner `start_time` sur la largeur des seaux,
+puisqu'ils se calent sur des multiples depuis l'epoch. C'est ce qui
+permet au tableau de bord de tout tirer d'un seul appel. Il n'y a
+volontairement **pas de percentile** : un p95 n'a pas cette propriété,
+il imposerait un appel séparé et une requête de tri par partition.
 
 Le champ `model` est le nom **préfixé** (`albert/openweight-large`),
 donc directement réutilisable comme `model` d'une requête. Les
@@ -134,11 +144,12 @@ que le chiffre affiché reste honnête.
 
 ## Tableau de bord
 
-`GET /ui` (ou `/`) — c'est la copie d'écran ci-dessus. La page est un
-fichier HTML statique (`llm_proxy/web/templates/index.html`) : le serveur
-ne calcule aucun balisage. Tout le reste tient dans `dashboard.js`, sans
-dépendance ni CDN, et **ne consomme que l'Usage API ci-dessus** —
-exactement ce que verrait un client tiers.
+`GET /ui` (ou `/`) — c'est la copie d'écran ci-dessus. La page est servie
+telle quelle : le serveur ne calcule aucun balisage. Le gabarit est
+**déclaratif, écrit dans le HTML**, et rendu par **Vue 3** — build complet
+embarqué localement (`/ui/static/vue.global.prod.js`), donc **aucun CDN et
+aucune étape de compilation**. `dashboard.js` ne contient que l'état et
+les valeurs dérivées ; rien n'y touche au DOM.
 
 Trois vues, sélecteur en haut de page :
 
@@ -148,32 +159,47 @@ Trois vues, sélecteur en haut de page :
 | Semaine | 7 derniers jours | 1 jour | <kbd>W</kbd> |
 | Tout | depuis le plus ancien enregistrement | 1 heure ou 1 jour, selon l'étendue | <kbd>A</kbd> |
 
-Le choix est mémorisé (`localStorage`). Deux appels par rafraîchissement :
-un `bucket_width=all&group_by[]=model` pour les totaux et la ligne par
-modèle, un second au découpage de la vue pour la courbe du trafic.
+Le choix est mémorisé (`localStorage`). **Un seul appel par
+rafraîchissement** : les seaux de la période, groupés par modèle. Totaux,
+ligne par modèle et courbe s'en déduisent, puisque tout ce qu'expose
+l'API s'additionne ou se maximise. La borne de départ est alignée sur la
+largeur des seaux, si bien que les chiffres du tableau portent exactement
+sur ce que montre la courbe. Un second appel, léger, sert uniquement à
+savoir jusqu'où remonte l'historique — au chargement et au changement de
+période, jamais dans la boucle.
 
-- toutes les 5 s, la page rappelle `/ui/usage` ;
-- la réponse est comparée à la précédente : identique → aucun redessin ;
-- sinon seules les valeurs qui diffèrent sont réécrites, donc pas de
-  clignotement, et les barres glissent vers leur nouvelle hauteur au lieu
-  de sauter ;
-- les « il y a 3 min » vieillissent dans le navigateur à partir d'un
-  timestamp : le temps qui passe ne déclenche aucune requête.
+Rien n'est demandé tant que l'onglet est masqué ; au retour, la page se
+rafraîchit immédiatement plutôt que d'afficher des chiffres périmés.
 
-La courbe **Trafic** ne porte qu'une mesure — les requêtes —, donc un
-seul axe et une seule couleur ; les tokens sont dans l'infobulle. Les
-seaux vides sont dessinés eux aussi : un creux doit se voir comme un
+Le rafraîchissement de 5 s ne clignote pas : Vue rapproche les listes par
+leur clé et ne réécrit que ce qui a changé, si bien que les nœuds
+survivent d'un cycle à l'autre. Ils gardent donc leurs transitions en
+cours, le survol et la sélection de texte — et les barres **glissent**
+vers leur nouvelle hauteur au lieu d'y sauter.
+
+Au changement de période, en revanche, le découpage change : les barres ne
+représentent plus les mêmes seaux, les faire glisser d'une valeur à
+l'autre n'aurait pas de sens. Elles remontent donc de zéro, en cascade
+(`@keyframes` armés par la classe `entering`, posée pour la seule durée de
+l'animation). La barre de répartition, elle, garde ses segments et glisse
+— rien à l'ouverture de la page, une barre qui se remplit au chargement se
+remarque pour rien.
+
+La courbe **Trafic** ne porte qu'une mesure — les requêtes —, donc un seul
+axe et une seule couleur ; les tokens sont dans l'infobulle, en CSS pur.
+Les seaux vides sont dessinés eux aussi : un creux doit se voir comme un
 creux.
 
-`/ui/usage` est la même route que `/v1/organization/usage/completions`.
-Ce doublon n'existe que pour l'auth : un `fetch` de navigateur ne peut
-pas porter l'en-tête `Authorization`, alors que le cookie posé par `/ui`
-vaut pour tout ce qui est sous `/ui`. Si `proxy.api_keys` est renseigné,
-ouvrir `/ui?key=<clé>` une fois : la clé est ensuite mémorisée dans un
-cookie `HttpOnly`.
+Les chiffres sont lus sur `/ui/usage`, qui est la même route que
+`/v1/organization/usage/completions`. Ce doublon n'existe que pour l'auth :
+un `fetch` de navigateur ne peut pas porter l'en-tête `Authorization`,
+alors que le cookie posé par `/ui` vaut pour tout ce qui est sous `/ui` —
+et pour rien d'autre, si bien qu'il ne peut jamais servir à dépenser des
+tokens. Si `proxy.api_keys` est renseigné, ouvrir `/ui?key=<clé>` une
+fois : la clé est ensuite mémorisée dans un cookie `HttpOnly`.
 
-Le badge **exact / estimé** de la colonne *Comptage* dit d'où viennent
-les tokens : le bloc `usage` de l'upstream, ou l'estimation de repli
+Le badge **exact / estimé** de la colonne *Comptage* dit d'où viennent les
+tokens : le bloc `usage` de l'upstream, ou l'estimation de repli
 (streaming sans `stream_options.include_usage`).
 
 ## Déploiement

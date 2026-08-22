@@ -1,448 +1,306 @@
 /*
-  Tout le tableau de bord tient ici. Il ne consomme QUE l'Usage API du
-  proxy (/ui/usage = /v1/organization/usage/completions servi sous /ui,
-  pour que le cookie de la page suffise).
+  L'application du tableau de bord. Elle ne contient que de l'état et des
+  valeurs dérivées : le rendu est déclaratif, dans le gabarit de la page
+  (templates/index.html). Rien ici ne touche au DOM.
 
-  Deux appels par rafraîchissement :
-    1. bucket_width=all&group_by=model → UN seau couvrant la période :
-       les totaux et la ligne par modèle. Un p95 ne se recompose pas à
-       partir de seaux plus fins, d'où cette passe. En vue « Tout », ce
-       seau révèle aussi la date du plus ancien enregistrement, qui sert
-       de départ au second appel.
-    2. bucket_width=1h|1d → la courbe du trafic, un point par seau.
+  Elle ne consomme que l'Usage API du proxy (/ui/usage =
+  /v1/organization/usage/completions servi sous /ui, pour que le cookie de
+  la page suffise) — exactement ce que verrait un client tiers.
 
-  Trois détails évitent le clignotement : la réponse est comparée à la
-  précédente ; une valeur n'est réécrite que si elle a changé (`set`) ;
-  les barres ne sont reconstruites que si le découpage change, sinon
-  seules leurs hauteurs bougent.
+  UN SEUL appel par rafraîchissement : les seaux de la période, groupés
+  par modèle. Tout le reste — totaux, ligne par modèle, courbe — s'en
+  déduit, parce que chaque grandeur exposée s'additionne (requêtes,
+  tokens, erreurs, somme des latences) ou se maximise (latence max). La
+  borne de départ est ALIGNÉE sur la largeur des seaux : les chiffres du
+  tableau portent alors exactement sur ce que montre la courbe.
+
+  Un second appel, léger, sert uniquement à savoir jusqu'où remonte
+  l'historique — au chargement et au changement de période, jamais dans
+  la boucle. La vue « Tout » en a besoin pour choisir son découpage.
+
+  Rien n'est demandé tant que l'onglet est masqué.
+
+  Le rafraîchissement ne clignote pas : Vue rapproche les listes par leur
+  clé et ne réécrit que ce qui a changé. Les nœuds survivants gardent donc
+  leurs transitions, le survol et la sélection de texte.
 */
-(function () {
-  var API = "/ui/usage";
-  var REFRESH = 5000;
-  var STORE = "llm-proxy-window";
-  // Tons chauds lisibles sur les deux thèmes, cyclés au-delà de six modèles.
-  var COLORS = ["#d97757", "#e0a458", "#7d9b76", "#6b8fa3", "#a37ba0",
-                "#c08552"];
+const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
 
-  // Les trois périodes, dans l'ordre du sélecteur. `span` en secondes,
-  // null = depuis le premier enregistrement connu.
-  var WINDOWS = {
-    day:  { span: 86400, note: "24 dernières heures", key: "D" },
-    week: { span: 604800, note: "7 derniers jours", key: "W" },
-    all:  { span: null, note: "tout l'historique conservé", key: "A" }
-  };
-  var current = WINDOWS[localStorage.getItem(STORE)] ?
-    localStorage.getItem(STORE) : "all";
-  var lastPayload = null;   // pour ne redessiner que si ça a bougé
-  var lastShape = null;     // découpage des barres du dernier rendu
-  var sharePainted = false; // la répartition a-t-elle déjà été peinte ?
+createApp({
+  setup() {
+    const API = "/ui/usage";
+    const REFRESH = 5000;
+    const STORE = "llm-proxy-window";
+    // Tons chauds lisibles sur les deux thèmes, cyclés au-delà de six modèles.
+    const COLORS = ["#d97757", "#e0a458", "#7d9b76", "#6b8fa3", "#a37ba0",
+                    "#c08552"];
+    // Les trois périodes, dans l'ordre du sélecteur. `span` en secondes,
+    // null = depuis le premier enregistrement connu.
+    const windows = [
+      { id: "day", label: "Jour", span: 86400, key: "D",
+        note: "24 dernières heures" },
+      { id: "week", label: "Semaine", span: 604800, key: "W",
+        note: "7 derniers jours" },
+      { id: "all", label: "Tout", span: null, key: "A",
+        note: "tout l'historique conservé" },
+    ];
+    const byId = Object.fromEntries(windows.map((w) => [w.id, w]));
 
-  // ── formatage ─────────────────────────────────────────────────────────
-  // Entier à la française : espace comme séparateur de milliers.
-  function n(v) {
-    return String(Math.round(v) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  }
-  function ms(s) {
-    return s >= 1 ? s.toFixed(1) + " s" : Math.round(s * 1000) + " ms";
-  }
-  function ago(s) {
-    s = Math.max(0, Math.round(s));
-    if (s < 5) return "à l'instant";
-    if (s < 60) return "il y a " + s + " s";
-    if (s < 3600) return "il y a " + Math.floor(s / 60) + " min";
-    if (s < 86400) return "il y a " + Math.floor(s / 3600) + " h";
-    return "il y a " + Math.floor(s / 86400) + " j";
-  }
-  function dur(s) {
-    s = Math.max(0, Math.round(s));
-    if (s < 60) return s + " s";
-    if (s < 3600) return Math.floor(s / 60) + " min";
-    if (s < 86400) return Math.floor(s / 3600) + " h " +
-      String(Math.floor((s % 3600) / 60)).padStart(2, "0");
-    return Math.floor(s / 86400) + " j";
-  }
-  function clock(ts) {
-    var d = new Date(ts * 1000);
-    return String(d.getHours()).padStart(2, "0") + " h";
-  }
-  function day(ts) {
-    return new Date(ts * 1000).toLocaleDateString("fr-FR",
-      { day: "numeric", month: "short" });
-  }
-  function esc(s) {
-    return String(s).replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-    });
-  }
-  function el(id) { return document.getElementById(id); }
-  function set(node, html) {  // n'écrit que si ça change
-    if (node && node.innerHTML !== html) node.innerHTML = html;
-  }
+    // ── état ────────────────────────────────────────────────────────────
+    const current = ref(byId[localStorage.getItem(STORE)] ? localStorage
+      .getItem(STORE) : "all");
+    const buckets = ref([]);      // seaux de la période, groupés par modèle
+    const bucketWidth = ref("1d");
+    const since = ref(0);         // plus ancien enregistrement connu
+    const loaded = ref(false);
+    // Horloge : fait vieillir les « il y a 3 min » sans aucune requête.
+    const now = ref(Date.now() / 1000);
+    // Armé au seul changement de période : c'est lui qui déclenche la
+    // cascade des barres (voir .bars.entering dans la feuille de style).
+    const entering = ref(false);
 
-  // ── lecture de l'Usage API ────────────────────────────────────────────
-  function ask(params) {
-    var q = Object.keys(params).filter(function (k) {
-      return params[k] !== null && params[k] !== undefined;
-    }).map(function (k) {
-      return k + "=" + encodeURIComponent(params[k]);
-    }).join("&");
-    return fetch(API + "?" + q, { headers: { accept: "application/json" } })
-      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); });
-  }
+    // ── formatage ───────────────────────────────────────────────────────
+    // Entier à la française : espace comme séparateur de milliers.
+    const num = (v) => String(Math.round(v) || 0)
+      .replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+    const ms = (s) => (s >= 1 ? s.toFixed(1) + " s" : Math.round(s * 1000) + " ms");
+    const ago = (ts) => {
+      const s = Math.max(0, Math.round(now.value - ts));
+      if (s < 5) return "à l'instant";
+      if (s < 60) return "il y a " + s + " s";
+      if (s < 3600) return "il y a " + Math.floor(s / 60) + " min";
+      if (s < 86400) return "il y a " + Math.floor(s / 3600) + " h";
+      return "il y a " + Math.floor(s / 86400) + " j";
+    };
+    const dur = (s) => {
+      s = Math.max(0, Math.round(s));
+      if (s < 60) return s + " s";
+      if (s < 3600) return Math.floor(s / 60) + " min";
+      if (s < 86400) return Math.floor(s / 3600) + " h " +
+        String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+      return Math.floor(s / 86400) + " j";
+    };
+    const moment = (ts) => new Date(ts * 1000).toLocaleString("fr-FR", {
+      day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    const tickLabel = (b) => bucketWidth.value === "1h"
+      ? String(new Date(b.start_time * 1000).getHours()).padStart(2, "0") + " h"
+      : new Date(b.start_time * 1000).toLocaleDateString("fr-FR",
+          { day: "numeric", month: "short" });
 
-  // Le seau unique de la période : totaux et détail par modèle.
-  function fetchRollup(win) {
-    var span = WINDOWS[win].span;
-    return ask({
-      start_time: span ? Math.floor(Date.now() / 1000) - span : 0,
-      bucket_width: "all",
-      group_by: "model",
-      limit: 1
-    });
-  }
-
-  // La courbe : un seau d'une heure sur la journée, d'un jour au-delà.
-  // Sur « Tout », le découpage suit l'étendue réelle des données.
-  function fetchSeries(win, since) {
-    var now = Math.floor(Date.now() / 1000);
-    var span = WINDOWS[win].span || Math.max(now - since, 3600);
-    var width = span <= 2 * 86400 ? "1h" : "1d";
-    var seconds = width === "1h" ? 3600 : 86400;
-    return ask({
-      start_time: now - span,
-      bucket_width: width,
-      limit: Math.min(Math.ceil(span / seconds) + 1, 180)
-    }).then(function (page) {
-      return { width: width, page: page };
-    });
-  }
-
-  // ── cartes ────────────────────────────────────────────────────────────
-  function totals(results) {
-    var t = { requests: 0, errors: 0, input: 0, output: 0, streamed: 0,
-              estimated: 0, backends: {} };
-    results.forEach(function (r) {
-      t.requests += r.num_model_requests;
-      t.errors += r.num_errors || 0;
-      t.input += r.input_tokens;
-      t.output += r.output_tokens;
-      t.streamed += r.num_streamed_requests || 0;
-      t.estimated += r.num_estimated_requests || 0;
-      // Le backend n'est pas un champ de l'API : c'est le préfixe du
-      // modèle, qui EST le discriminant de routage du proxy.
-      var backend = String(r.model || "").split("/")[0] || "—";
-      t.backends[backend] = (t.backends[backend] || 0) + r.num_model_requests;
-    });
-    return t;
-  }
-
-  function cards(t, results, since) {
-    var tokens = t.input + t.output;
-    var rate = t.requests
-      ? (100 * (t.requests - t.errors) / t.requests).toFixed(1) + "%" : "—";
-    var backends = Object.keys(t.backends).sort().map(function (name) {
-      return name + " : " + n(t.backends[name]) + " req";
-    }).join(" · ") || "aucun trafic";
-
-    set(el("c-req"), n(t.requests));
-    set(el("c-req-hint"), rate + " en succès · " + n(t.streamed) + " en flux");
-    set(el("c-tok"), n(tokens));
-    set(el("c-tok-hint"), n(t.input) + " entrée · " + n(t.output) + " sortie");
-    set(el("c-mod"), n(results.length));
-    set(el("c-mod-hint"), esc(backends));
-    set(el("c-err"), n(t.errors));
-    set(el("c-err-hint"), since
-      ? 'mesures depuis <span data-since="' + since + '"></span>'
-      : "aucune mesure enregistrée");
-  }
-
-  // ── répartition des tokens ────────────────────────────────────────────
-  function share(results, t) {
-    var total = t.input + t.output;
-    el("share").hidden = !total;
-    if (!total) return;
-    var host = el("share-bar"), legend = "";
-    var parts = results.map(function (m, i) {
-      var tokens = m.input_tokens + m.output_tokens;
-      var pct = 100 * tokens / total;
-      var color = COLORS[i % COLORS.length];
-      legend += '<span><b style="background:' + color + '"></b><em>' +
-        esc(m.model) + "</em>&nbsp;" + Math.round(pct) + "%</span>";
-      return { pct: pct, color: color,
-               title: esc(m.model) + " — " + n(tokens) + " tokens" };
-    });
-    // À la PREMIÈRE peinture, les segments sont posés à leur largeur
-    // finale : une barre qui se remplit à l'ouverture de la page se
-    // remarque pour rien. Ensuite seulement on anime — et là il faut
-    // partir de zéro puis forcer le rendu, sinon le navigateur fusionne
-    // les deux états dans la même frame et rien ne transitionne.
-    if (host.children.length !== parts.length) {
-      var animate = sharePainted;
-      host.innerHTML = parts.map(function (p, i) {
-        return '<i style="--i:' + i + ";width:" +
-          (animate ? "0" : p.pct.toFixed(2) + "%") + ";background:" +
-          p.color + '"></i>';
-      }).join("");
-      sharePainted = true;
-      if (animate) {
-        host.classList.add("entering");
-        void host.offsetHeight;
-        setTimeout(function () { host.classList.remove("entering"); },
-          700 + parts.length * 90);
+    // ── valeurs dérivées ────────────────────────────────────────────────
+    // Un modèle par clé, recomposé à partir de tous les seaux. Toutes ces
+    // grandeurs s'agrègent SANS PERTE : le total est celui qu'aurait rendu
+    // un seau unique couvrant la même plage.
+    const models = computed(() => {
+      const acc = new Map();
+      for (const b of buckets.value) {
+        for (const r of b.results) {
+          let m = acc.get(r.model);
+          if (!m) {
+            acc.set(r.model, m = {
+              id: r.model, requests: 0, errors: 0, streamed: 0, estimated: 0,
+              prompt: 0, completion: 0, latencySum: 0, maxLatency: 0, last: 0,
+            });
+          }
+          m.requests += r.num_model_requests;
+          m.errors += r.num_errors;
+          m.streamed += r.num_streamed_requests;
+          m.estimated += r.num_estimated_requests;
+          m.prompt += r.input_tokens;
+          m.completion += r.output_tokens;
+          m.latencySum += r.total_latency_seconds;
+          m.maxLatency = Math.max(m.maxLatency, r.max_latency_seconds);
+          m.last = Math.max(m.last, r.last_request_time);
+        }
       }
-    }
-    parts.forEach(function (p, i) {
-      var seg = host.children[i];
-      var w = p.pct.toFixed(2) + "%";
-      if (seg.style.width !== w) seg.style.width = w;
-      if (seg.style.background !== p.color) seg.style.background = p.color;
-      if (seg.title !== p.title) seg.title = p.title;
+      // Ordre ALPHABÉTIQUE : le seul qui ne dépende ni du trafic ni de la
+      // période. Trier par ordre d'apparition rangeait les modèles
+      // différemment dans chaque vue — les lignes se réordonnaient en
+      // changeant de période, les segments de la barre se croisaient au
+      // lieu de glisser, et un même modèle changeait de couleur puisque
+      // celle-ci suit le rang.
+      const list = [...acc.values()].sort((a, b) => a.id.localeCompare(b.id));
+      const grand = list.reduce((s, m) => s + m.prompt + m.completion, 0);
+      return list.map((m, i) => {
+        const tokens = m.prompt + m.completion;
+        const exact = m.requests - m.estimated;
+        return {
+          ...m,
+          // Le backend n'est pas un champ de l'API : c'est le préfixe du
+          // modèle, qui EST le discriminant de routage du proxy.
+          backend: String(m.id || "").split("/")[0] || "—",
+          color: COLORS[i % COLORS.length],
+          tokens,
+          avg: m.requests ? tokens / m.requests : 0,
+          avgLatency: m.requests ? m.latencySum / m.requests : 0,
+          exact,
+          exactPct: m.requests ? Math.round((100 * exact) / m.requests) : 0,
+          share: grand ? (100 * tokens) / grand : 0,
+        };
+      });
     });
-    set(el("share-legend"), legend);
-  }
 
-  // ── courbe du trafic ──────────────────────────────────────────────────
-  // Une seule mesure (les requêtes) : un seul axe, une seule couleur. Les
-  // tokens sont dans l'infobulle — jamais sur un second axe.
-  var buckets = [];
+    const totals = computed(() => models.value.reduce((t, m) => ({
+      requests: t.requests + m.requests,
+      errors: t.errors + m.errors,
+      streamed: t.streamed + m.streamed,
+      prompt: t.prompt + m.prompt,
+      completion: t.completion + m.completion,
+      tokens: t.tokens + m.tokens,
+    }), { requests: 0, errors: 0, streamed: 0, prompt: 0, completion: 0,
+          tokens: 0 }));
 
-  function chart(series) {
-    buckets = series.page.data || [];
-    var panel = el("timeline");
-    panel.hidden = !buckets.length;
-    if (!buckets.length) { lastShape = null; return; }
+    const successRate = computed(() => {
+      const t = totals.value;
+      return t.requests
+        ? ((100 * (t.requests - t.errors)) / t.requests).toFixed(1) + "%" : "—";
+    });
 
-    var peak = buckets.reduce(function (m, b) {
-      return Math.max(m, count(b));
-    }, 0);
-    var host = el("bars");
-    // Le découpage n'a pas changé → on ne refait pas le DOM, on laisse
-    // les hauteurs glisser vers leur nouvelle valeur.
-    var shape = series.width + ":" + buckets.length + ":" +
-      (buckets[0] ? buckets[0].start_time : 0);
-    var rebuild = shape !== lastShape;
-    lastShape = shape;
+    const backendSummary = computed(() => {
+      const per = {};
+      models.value.forEach((m) => {
+        per[m.backend] = (per[m.backend] || 0) + m.requests;
+      });
+      const names = Object.keys(per).sort();
+      return names.length
+        ? names.map((n) => n + " : " + num(per[n]) + " req").join(" · ")
+        : "aucun trafic";
+    });
 
-    if (rebuild) {
-      host.innerHTML = buckets.map(function (b, i) {
-        return '<i style="--i:' + i + '"' + (count(b) ? "" : ' class="zero"') +
-          '><b style="height:0;opacity:0"></b></i>';
-      }).join("");
-      host.classList.add("entering");
-      // Lecture de layout : elle force le rendu de l'état à zéro. Sans
-      // elle, le navigateur fusionne le 0 et la hauteur cible en une
-      // seule frame et AUCUNE transition ne se joue — c'est ce qui
-      // faisait apparaître les barres d'un coup en changeant de période.
-      void host.offsetHeight;
-      // La classe part une fois la cascade finie (durée + retard de la
-      // dernière barre) : les rafraîchissements suivants n'ont plus de
-      // décalage à subir.
-      setTimeout(function () { host.classList.remove("entering"); },
-        600 + buckets.length * 14);
-    }
-    var bars = host.children;
-    for (var i = 0; i < bars.length; i++) {
-      var value = count(buckets[i]);
-      // 2 px de socle : un seau non vide mais minuscule doit rester
-      // visible, et un seau vide doit rester vide.
-      var height = peak ? Math.max(100 * value / peak, value ? 2 : 0) : 0;
-      bars[i].classList.toggle("zero", !value);
-      var fill = bars[i].firstChild;
-      var css = height.toFixed(2) + "%";
-      if (fill.style.height !== css) fill.style.height = css;
-      if (fill.style.opacity !== "1") fill.style.opacity = "1";
-    }
+    const count = (b) => b.results.reduce((s, r) => s + r.num_model_requests, 0);
+    const peak = computed(() => buckets.value.reduce(
+      (m, b) => Math.max(m, count(b)), 0));
 
-    set(el("chart-meta"), buckets.length + " × " +
-      (series.width === "1h" ? "1 heure" : "1 jour") + " · pic " +
-      n(peak) + " req");
-    axis(series.width);
-  }
+    const bars = computed(() => buckets.value.map((b) => {
+      const requests = count(b);
+      return {
+        start_time: b.start_time,
+        requests,
+        tokens: b.results.reduce(
+          (s, r) => s + r.input_tokens + r.output_tokens, 0),
+        // 2 % de socle : un seau non vide mais minuscule doit rester
+        // visible, et un seau vide doit rester vide.
+        height: requests && peak.value
+          ? Math.max((100 * requests) / peak.value, 2) : 0,
+      };
+    }));
 
-  function count(b) {
-    return (b.results || []).reduce(function (s, r) {
-      return s + r.num_model_requests;
-    }, 0);
-  }
-  function tokensOf(b) {
-    return (b.results || []).reduce(function (s, r) {
-      return s + r.input_tokens + r.output_tokens;
-    }, 0);
-  }
-
-  function axis(width) {
     // Quatre repères suffisent : l'axe situe, il n'énumère pas.
-    var picks = [], step = Math.max(1, Math.floor(buckets.length / 3));
-    for (var i = 0; i < buckets.length; i += step) picks.push(buckets[i]);
-    if (picks[picks.length - 1] !== buckets[buckets.length - 1]) {
-      picks.push(buckets[buckets.length - 1]);
-    }
-    set(el("axis"), picks.map(function (b) {
-      return "<span>" + (width === "1h" ? clock(b.start_time)
-        : day(b.start_time)) + "</span>";
-    }).join(""));
-  }
-
-  function hover(event) {
-    var slot = event.target.closest ? event.target.closest(".bars > i") : null;
-    var tip = el("tip");
-    if (!slot) { tip.hidden = true; return; }
-    var i = Array.prototype.indexOf.call(slot.parentNode.children, slot);
-    var b = buckets[i];
-    if (!b) { tip.hidden = true; return; }
-    var start = new Date(b.start_time * 1000);
-    var when = start.toLocaleString("fr-FR", {
-      day: "numeric", month: "short",
-      hour: "2-digit", minute: "2-digit"
-    });
-    tip.innerHTML = '<div class="when">' + esc(when) + "</div>" +
-      '<div class="row"><span>Requêtes</span><b>' + n(count(b)) + "</b></div>" +
-      '<div class="row"><span>Tokens</span><b>' + n(tokensOf(b)) + "</b></div>";
-    var box = slot.getBoundingClientRect();
-    var host = el("timeline").getBoundingClientRect();
-    tip.style.left = (box.left - host.left + box.width / 2) + "px";
-    tip.style.top = (box.top - host.top - 10) + "px";
-    tip.hidden = false;
-  }
-
-  // ── tableau par modèle ────────────────────────────────────────────────
-  function rows(results, since) {
-    if (!results.length) {
-      set(el("rows"), '<tr><td colspan="10"><div class="empty">' +
-        '<div class="big">Aucune génération sur cette période</div>' +
-        "<div>" + (since
-          ? "Les mesures remontent à <span data-since=\"" + since +
-            "\"></span> ; essayez une période plus large."
-          : "Les modèles apparaîtront ici dès leur première requête.") +
-        "</div></div></td></tr>");
-      return;
-    }
-    set(el("rows"), results.map(function (m, i) {
-      var total = m.input_tokens + m.output_tokens;
-      var exact = m.num_model_requests - (m.num_estimated_requests || 0);
-      return "<tr>" +
-        '<td><div class="model"><b style="background:' +
-          COLORS[i % COLORS.length] + '"></b><span>' +
-          '<span class="id">' + esc(m.model) + "</span><br>" +
-          '<span class="backend">' +
-            esc(String(m.model || "").split("/")[0]) + " · " +
-            n(m.num_streamed_requests || 0) + " en flux</span></span></div></td>" +
-        "<td>" + n(m.num_model_requests) + "</td>" +
-        "<td>" + (m.num_errors
-          ? '<span class="err">' + n(m.num_errors) + "</span>"
-          : '<span class="dim">0</span>') + "</td>" +
-        "<td>" + n(m.input_tokens) + "</td>" +
-        "<td>" + n(m.output_tokens) + "</td>" +
-        "<td><strong>" + n(total) + "</strong></td>" +
-        "<td>" + n(m.num_model_requests ? total / m.num_model_requests : 0) +
-          "</td>" +
-        "<td>" + ms(m.p95_latency_seconds || 0) + "</td>" +
-        "<td>" + accounting(exact, m.num_estimated_requests || 0) + "</td>" +
-        '<td class="dim"><span data-ts="' + m.last_request_time +
-          '"></span></td>' +
-        "</tr>";
-    }).join(""));
-  }
-
-  // Provenance des tokens : `usage` de l'upstream, ou estimation. Le
-  // détail chiffré passe en infobulle — la colonne doit tenir sans
-  // pousser le tableau au défilement.
-  function accounting(exact, estimated) {
-    if (!estimated) return '<span class="tag exact">exact</span>';
-    if (!exact) return '<span class="tag est">estimé</span>';
-    return '<span class="tag est" title="' + n(exact) + " exactes · " +
-      n(estimated) + ' estimées">' +
-      Math.round(100 * exact / (exact + estimated)) + "% exact</span>";
-  }
-
-  // ── horloge relative ──────────────────────────────────────────────────
-  function tick() {
-    var now = Date.now() / 1000;
-    document.querySelectorAll("[data-ts]").forEach(function (e) {
-      e.textContent = ago(now - parseFloat(e.dataset.ts));
-    });
-    document.querySelectorAll("[data-since]").forEach(function (e) {
-      e.textContent = dur(now - parseFloat(e.dataset.since));
-    });
-  }
-
-  // ── sélecteur de période ──────────────────────────────────────────────
-  function select(win, force) {
-    if (!WINDOWS[win] || (win === current && !force)) return;
-    current = win;
-    localStorage.setItem(STORE, win);
-    lastPayload = null;   // période différente : on redessine forcément
-    lastShape = null;
-    document.querySelectorAll("#range button").forEach(function (b) {
-      b.setAttribute("aria-pressed", String(b.dataset.window === win));
-    });
-    set(el("range-note"), esc(WINDOWS[win].note) + " · raccourcis " +
-      Object.keys(WINDOWS).map(function (k) {
-        return WINDOWS[k].key;
-      }).join(" / "));
-    poll();
-  }
-
-  el("range").addEventListener("click", function (e) {
-    if (e.target.dataset.window) select(e.target.dataset.window);
-  });
-  // Raccourcis A / W / D. Ignorés dès qu'un modificateur est enfoncé ou
-  // qu'un champ a le focus : un raccourci ne doit jamais voler une frappe.
-  document.addEventListener("keydown", function (e) {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    var node = document.activeElement;
-    if (node && /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName)) return;
-    var letter = String(e.key || "").toUpperCase();
-    Object.keys(WINDOWS).forEach(function (win) {
-      if (WINDOWS[win].key === letter) { e.preventDefault(); select(win); }
-    });
-  });
-  el("bars").addEventListener("mousemove", hover);
-  el("chart-body").addEventListener("mouseleave", function () {
-    el("tip").hidden = true;
-  });
-
-  // ── boucle ────────────────────────────────────────────────────────────
-  function poll() {
-    var win = current;
-    fetchRollup(win).then(function (page) {
-      if (win !== current) return;          // période changée entre-temps
-      var bucket = (page.data || [])[0] || { results: [], start_time: 0 };
-      var results = (bucket.results || []).slice().sort(function (a, b) {
-        // Ordre d'APPARITION, volontairement stable : le tableau ne voit
-        // donc jamais ses lignes se réordonner sous le curseur.
-        return a.first_request_time - b.first_request_time;
-      });
-      var since = results.length ? bucket.start_time : 0;
-      if (!results.length) {
-        // Base vide : pas de série à demander (sans premier
-        // enregistrement, la fenêtre « Tout » remonterait à 1970).
-        if (win + "empty" === lastPayload) return;
-        lastPayload = win + "empty";
-        lastShape = null;
-        el("timeline").hidden = true;
-        cards(totals([]), [], 0);
-        share([], totals([]));
-        rows([], 0);
-        return;
+    const axis = computed(() => {
+      const list = bars.value;
+      if (!list.length) return [];
+      const step = Math.max(Math.floor(list.length / 3), 1);
+      const picks = [];
+      for (let i = 0; i < list.length; i += step) picks.push(list[i]);
+      if (picks[picks.length - 1] !== list[list.length - 1]) {
+        picks.push(list[list.length - 1]);
       }
-      return fetchSeries(win, bucket.start_time).then(function (series) {
-        if (win !== current) return;
-        var signature = win + JSON.stringify(results) +
-          JSON.stringify(series.page.data);
-        if (signature === lastPayload) return;   // rien n'a bougé
-        lastPayload = signature;
-        var t = totals(results);
-        cards(t, results, since);
-        share(results, t);
-        chart(series);
-        rows(results, since);
-        tick();
-      });
-    }).catch(function () { /* proxy injoignable : on retentera dans 5 s */ });
-  }
+      return picks;
+    });
 
-  select(current, true);
-  setInterval(poll, REFRESH);
-  setInterval(tick, 1000);
-})();
+    const note = computed(() => byId[current.value].note);
+    const shortcuts = computed(() => windows.map((w) => w.key).join(" / "));
+    const bucketLabel = computed(() => bucketWidth.value === "1h"
+      ? "1 heure" : "1 jour");
+
+    // ── lecture de l'Usage API ──────────────────────────────────────────
+    const ask = (params) => {
+      const q = Object.entries(params)
+        .filter(([, v]) => v !== null && v !== undefined)
+        .map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+      return fetch(API + "?" + q, { headers: { accept: "application/json" } })
+        .then((r) => (r.ok ? r.json() : Promise.reject(r.status)));
+    };
+
+    // Jusqu'où remonte l'historique. Un seul seau, sans regroupement :
+    // sa borne basse est la plus ancienne ligne de la plage.
+    async function refreshSince() {
+      const span = byId[current.value].span;
+      const page = await ask({
+        start_time: span ? Math.floor(Date.now() / 1000) - span : 0,
+        bucket_width: "all", limit: 1,
+      });
+      const bucket = (page.data || [])[0];
+      since.value = bucket && bucket.results.length ? bucket.start_time : 0;
+    }
+
+    async function poll() {
+      const win = current.value;
+      const span = byId[win].span;
+      const stamp = Math.floor(Date.now() / 1000);
+      try {
+        // La vue « Tout » ne sait pas d'avance quelle étendue couvrir.
+        if (!span && !since.value) await refreshSince();
+        if (win !== current.value) return;
+        const range = span || Math.max(stamp - (since.value || stamp), 3600);
+        const width = range <= 2 * 86400 ? "1h" : "1d";
+        const seconds = width === "1h" ? 3600 : 86400;
+        // Borne ALIGNÉE sur la largeur des seaux. Sans cela le premier
+        // seau commencerait avant la plage demandée et les totaux
+        // porteraient sur un peu plus que ce que la courbe montre.
+        const start = Math.floor((stamp - range) / seconds) * seconds;
+        const page = await ask({
+          start_time: start, bucket_width: width, "group_by[]": "model",
+          limit: Math.min(Math.ceil((stamp - start) / seconds) + 1, 180),
+        });
+        if (win !== current.value) return;   // période changée entre-temps
+        bucketWidth.value = width;
+        buckets.value = page.data || [];
+        loaded.value = true;
+        // Base vide au départ, puis du trafic arrive : on rattrape.
+        if (!since.value && totals.value.requests) refreshSince();
+      } catch (e) {
+        /* proxy injoignable : on retentera dans 5 s */
+      }
+    }
+
+    function select(id) {
+      if (!byId[id] || id === current.value) return;
+      current.value = id;
+      localStorage.setItem(STORE, id);
+      since.value = 0;   // recalculé pour la nouvelle période
+      // Le découpage change : les barres ne représentent plus les mêmes
+      // seaux, les faire glisser d'une valeur à l'autre n'aurait pas de
+      // sens. Elles remontent de zéro, en cascade.
+      entering.value = true;
+      poll().then(() => setTimeout(
+        () => { entering.value = false; }, 600 + bars.value.length * 14));
+    }
+
+    // Raccourcis A / W / D. Ignorés dès qu'un modificateur est enfoncé ou
+    // qu'un champ a le focus : un raccourci ne doit jamais voler une frappe.
+    function onKey(e) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
+      const hit = windows.find((w) => w.key === String(e.key || "").toUpperCase());
+      if (hit) { e.preventDefault(); select(hit.id); }
+    }
+
+    // Onglet masqué : plus aucune requête. Personne ne regarde, et au
+    // retour on rafraîchit immédiatement plutôt que d'afficher des
+    // chiffres vieux de plusieurs minutes.
+    function onVisibility() {
+      if (!document.hidden) poll();
+    }
+
+    let timers = [];
+    onMounted(() => {
+      poll();
+      timers = [
+        setInterval(() => { if (!document.hidden) poll(); }, REFRESH),
+        setInterval(() => { now.value = Date.now() / 1000; }, 1000),
+      ];
+      window.addEventListener("keydown", onKey);
+      document.addEventListener("visibilitychange", onVisibility);
+    });
+    onUnmounted(() => {
+      timers.forEach(clearInterval);
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("visibilitychange", onVisibility);
+    });
+
+    return { windows, current, models, totals, bars, axis, peak, since, now,
+             loaded, entering, note, shortcuts, bucketLabel, successRate,
+             backendSummary, num, ms, ago, dur, moment, tickLabel, select };
+  },
+}).mount("#app");

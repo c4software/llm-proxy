@@ -326,10 +326,15 @@ def record(model_key: str, backend: str, model: str, endpoint: str,
 # Deux écarts au schéma, tous deux additifs (un SDK OpenAI ignore ce
 # qu'il ne connaît pas, la compatibilité reste entière) :
 #   * bucket_width accepte « all » : un seul seau couvrant toute la
-#     plage — un p95 ne se recompose pas à partir de seaux plus fins ;
+#     plage, pour obtenir un total sans agréger soi-même ;
 #   * chaque `result` porte en plus num_errors, num_streamed_requests,
-#     num_estimated_requests, p95_latency_seconds, first_request_time
-#     et last_request_time.
+#     num_estimated_requests, les latences (total / moyenne / maximum)
+#     et first_request_time / last_request_time.
+#
+# Les latences exposées s'additionnent ou se maximisent, donc un client
+# peut agréger plusieurs seaux SANS perte : c'est ce qui permet au tableau
+# de bord de tout tirer d'un seul appel. Un percentile n'aurait pas cette
+# propriété.
 
 BUCKET_WIDTHS = {"1m": 60, "1h": 3600, "1d": 86_400}
 # Défauts d'OpenAI : une journée de minutes, une journée d'heures, une
@@ -353,27 +358,14 @@ SELECT CAST((ts - ?) / ? AS INTEGER)      AS b,
        SUM(status NOT BETWEEN 200 AND 399),
        SUM(streamed),
        SUM(NOT exact),
+       SUM(latency),
+       MAX(latency),
        MIN(ts),
        MAX(ts)
 FROM requests WHERE ts >= ? AND ts < ?{filter}
 GROUP BY b, mk
 ORDER BY b, mk
 """
-
-# p95 du même découpage : la latence dont le rang vaut
-# min(int(0,95·n), n−1) dans sa partition.
-_P95 = """
-SELECT b, mk, latency FROM (
-  SELECT CAST((ts - ?) / ? AS INTEGER) AS b, {model} AS mk, latency,
-         ROW_NUMBER() OVER (PARTITION BY CAST((ts - ?) / ? AS INTEGER),
-                                         {model} ORDER BY latency) - 1 AS rn,
-         COUNT(*)     OVER (PARTITION BY CAST((ts - ?) / ? AS INTEGER),
-                                         {model})                      AS n
-  FROM requests WHERE ts >= ? AND ts < ?{filter}
-)
-WHERE rn = MIN(CAST(n * 0.95 AS INTEGER), n - 1)
-"""
-
 
 def parse_group_by(values) -> list[str]:
     """`group_by` accepte la forme répétée (?group_by=a&group_by=b) et la
@@ -456,20 +448,14 @@ def usage_completions(start_time: int, end_time: int | None = None,
     if models:
         where = " AND model_key IN (%s)" % ", ".join("?" * len(models))
         tail = tuple(models)
-    args_agg = (origin, width, lo, hi) + tail
-    args_p95 = (origin, width, origin, width, origin, width, lo, hi) + tail
-
     with _reader() as conn:
         rows = conn.execute(_AGG.format(model=model_expr, filter=where),
-                            args_agg).fetchall()
-        p95 = {(b, mk): latency for b, mk, latency in
-               conn.execute(_P95.format(model=model_expr, filter=where),
-                            args_p95)}
+                            (origin, width, lo, hi) + tail).fetchall()
 
     grouped: dict[int, list] = {}
     seen_first: dict[int, float] = {}
     for (b, mk, prompt, completion, requests, errors, streamed, estimated,
-         first_ts, last_ts) in rows:
+         latency_sum, latency_max, first_ts, last_ts) in rows:
         grouped.setdefault(b, []).append({
             "object": "organization.usage.completions.result",
             "input_tokens": prompt or 0,
@@ -489,7 +475,13 @@ def usage_completions(start_time: int, end_time: int | None = None,
             "num_errors": errors or 0,
             "num_streamed_requests": streamed or 0,
             "num_estimated_requests": estimated or 0,
-            "p95_latency_seconds": round(p95.get((b, mk), 0.0), 3),
+            # Latences EXACTEMENT recomposables d'un seau à l'autre : la
+            # somme s'additionne, le maximum se maximise. Un percentile,
+            # lui, ne se recompose pas — c'est pourquoi il n'y en a pas.
+            "total_latency_seconds": round(latency_sum or 0.0, 3),
+            "avg_latency_seconds": round((latency_sum or 0.0) / requests, 3)
+            if requests else 0.0,
+            "max_latency_seconds": round(latency_max or 0.0, 3),
             "first_request_time": int(first_ts),
             "last_request_time": int(last_ts),
         })

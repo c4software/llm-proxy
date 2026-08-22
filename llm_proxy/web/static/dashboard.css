@@ -128,20 +128,15 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
   animation: pulse 2.4s ease-in-out infinite;
 }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
-/* Les valeurs réécrites le sont sans effet : un chiffre qui change se
-   remarque bien assez, un clignotement toutes les 5 s fatigue. Seule la
-   barre de répartition glisse vers sa nouvelle largeur, sur la même
-   courbe que les barres du graphe. */
+/* La répartition, elle, garde ses segments d'une période à l'autre :
+   ils glissent vers leur nouvelle largeur. Rien à l'ouverture de la
+   page — une barre qui se remplit au chargement se remarque pour rien. */
 .share-bar > i { transition: width .6s cubic-bezier(.22, .61, .36, 1); }
-/* À l'entrée, les segments se déploient l'un après l'autre : sur 10 px
-   de haut, une transition simultanée de 0,5 s passe inaperçue. */
-.share-bar.entering > i { transition-delay: calc(var(--i) * 90ms); }
-@media (prefers-reduced-motion: reduce) {
-  .share-bar > i { transition: none; }
-  .share-bar.entering > i { transition-delay: 0s; }
-}
 
 /* ── Période ──────────────────────────────────────────────────────────── */
+/* Le gabarit est écrit dans la page : on le cache jusqu'à ce que Vue
+   l'ait rendu, sinon les accolades apparaissent une fraction de seconde. */
+[v-cloak] { display: none; }
 .toolbar {
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px;
   margin-bottom: 18px;
@@ -175,7 +170,8 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
 .range-note { font-size: 12.5px; color: var(--muted); }
 
 /* ── Trafic dans le temps ─────────────────────────────────────────────── */
-.chart-panel { position: relative; margin-bottom: 26px; }
+/* Le panneau ne clippe pas : les infobulles débordent au-dessus des barres. */
+.chart-panel { position: relative; margin-bottom: 26px; overflow: visible; }
 .chart { padding: 20px 20px 14px; }
 .bars {
   display: flex; align-items: flex-end; gap: 2px; height: 132px;
@@ -195,35 +191,52 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
 .bars > i > b {
   display: block; width: 100%; border-radius: 4px 4px 0 0;
   background: var(--accent); position: relative;
-  /* Décélération franche puis pose douce : la barre « arrive » au lieu
-     de s'arrêter net. Les rafraîchissements de 5 s glissent avec la même
-     courbe, sans jamais repartir de zéro. */
+  /* Les nœuds survivent au morphing : une barre dont la valeur change
+     glisse vers sa nouvelle hauteur au lieu d'y sauter. */
   transition: height .55s cubic-bezier(.22, .61, .36, 1),
-              opacity .35s ease,
               background-color .2s ease;
 }
-/* Montée initiale, en cascade de gauche à droite : la classe est retirée
-   dès l'animation finie, les mises à jour suivantes n'ont plus de retard
-   à subir. */
-.bars.entering > i > b { transition-delay: calc(var(--i) * 14ms); }
 .bars > i:hover > b { background: color-mix(in srgb, var(--accent) 78%, var(--ink)); }
 .bars > i.zero > b { background: var(--line); }
-@media (prefers-reduced-motion: reduce) {
-  .bars > i > b { transition: none; }
-  .bars.entering > i > b { transition-delay: 0s; }
+
+/* Au CHANGEMENT DE PÉRIODE le découpage change : les barres ne
+   représentent plus les mêmes seaux, les faire glisser d'une valeur à
+   l'autre n'aurait aucun sens. Elles remontent donc de zéro, en
+   cascade. L'animation l'emporte sur la transition ci-dessus, et n'est
+   armée que par .entering — un rafraîchissement de routine ne rejoue
+   rien. */
+@keyframes bar-rise { from { height: 0; opacity: 0; } }
+.bars.entering > i > b {
+  animation: bar-rise .55s cubic-bezier(.22, .61, .36, 1) backwards;
+  animation-delay: calc(var(--i) * 14ms);
 }
+
 .axis {
   display: flex; justify-content: space-between; margin-top: 8px;
   font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
-.tip {
-  position: absolute; z-index: 2; pointer-events: none;
-  transform: translate(-50%, -100%);
+
+/* Infobulle : plus de positionnement en JavaScript, chaque barre porte
+   la sienne et le survol suffit. */
+.bars .tip {
+  position: absolute; bottom: 100%; left: 50%; z-index: 3;
+  transform: translateX(-50%); margin-bottom: 8px;
+  display: block; opacity: 0; pointer-events: none;
+  transition: opacity .15s ease;
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 10px; padding: 9px 12px; font-size: 12.5px;
   box-shadow: 0 6px 22px rgb(0 0 0 / .13); white-space: nowrap;
 }
-.tip .when { color: var(--muted); margin-bottom: 4px; }
-.tip .row { display: flex; gap: 14px; justify-content: space-between; }
-.tip .row span { color: var(--muted); }
-.tip .row b { font-weight: 500; font-variant-numeric: tabular-nums; }
+.bars > i:hover .tip { opacity: 1; }
+/* Aux extrémités, l'infobulle se cale sur le bord plutôt que de sortir. */
+.bars > i:first-child .tip { left: 0; transform: none; }
+.bars > i:last-child .tip { left: auto; right: 0; transform: none; }
+.bars .tip .when { color: var(--muted); margin-bottom: 4px; }
+.bars .tip .row { display: flex; gap: 14px; justify-content: space-between; }
+.bars .tip .row span { color: var(--muted); }
+.bars .tip .row b { font-weight: 500; font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bars.entering > i > b { animation: none; }
+  .bars > i > b, .share-bar > i, .bars .tip { transition: none; }
+}

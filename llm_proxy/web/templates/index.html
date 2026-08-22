@@ -1,10 +1,13 @@
 <!doctype html>
 <!--
-  Tableau de bord : du HTML statique, envoyé tel quel. Il n'y a pas de
-  moteur de template — les chiffres sont remplis par dashboard.js, qui
-  appelle /ui/usage, c'est-à-dire l'Usage API OpenAI du proxy
-  (/v1/organization/usage/completions) servie sous /ui pour que le cookie
-  de la page suffise à s'authentifier.
+  Le tableau de bord. Le gabarit est déclaratif, écrit ici même : Vue le
+  compile au chargement (build complet, embarqué localement — aucun CDN,
+  aucune étape de compilation). dashboard.js ne contient que l'état et
+  les valeurs dérivées ; plus une ligne ne touche au DOM à la main.
+
+  Les chiffres viennent de /ui/usage, c'est-à-dire l'Usage API OpenAI du
+  proxy (/v1/organization/usage/completions) servie sous /ui pour que le
+  cookie de la page suffise à s'authentifier.
 -->
 <html lang="fr">
 <head>
@@ -13,79 +16,150 @@
 <meta name="robots" content="noindex">
 <title>llm-proxy — statistiques</title>
 <link rel="stylesheet" href="/ui/static/dashboard.css">
+<script src="/ui/static/vue.global.prod.js"></script>
 </head>
 <body>
-<div class="wrap">
+<div class="wrap" id="app" v-cloak>
   <header>
     <div class="brand"><span class="dot"></span> llm-proxy</div>
     <h1>Statistiques d'usage</h1>
   </header>
 
   <div class="toolbar">
-    <div class="range" id="range" role="group" aria-label="Période">
-      <button type="button" data-window="day">Jour</button>
-      <button type="button" data-window="week">Semaine</button>
-      <button type="button" data-window="all">Tout</button>
+    <div class="range" role="group" aria-label="Période">
+      <button v-for="w in windows" :key="w.id" type="button"
+              :aria-pressed="String(w.id === current)"
+              @click="select(w.id)">{{ w.label }}</button>
     </div>
-    <span class="range-note" id="range-note"></span>
+    <span class="range-note">{{ note }} · raccourcis {{ shortcuts }}</span>
   </div>
 
   <div class="cards">
     <div class="card">
       <div class="label">Requêtes</div>
-      <div class="value" id="c-req">—</div>
-      <div class="hint" id="c-req-hint"></div>
+      <div class="value">{{ num(totals.requests) }}</div>
+      <div class="hint">
+        <template v-if="totals.requests">{{ successRate }} en succès · </template>
+        {{ num(totals.streamed) }} en flux
+      </div>
     </div>
     <div class="card">
       <div class="label">Tokens</div>
-      <div class="value" id="c-tok">—</div>
-      <div class="hint" id="c-tok-hint"></div>
+      <div class="value">{{ num(totals.tokens) }}</div>
+      <div class="hint">{{ num(totals.prompt) }} entrée ·
+        {{ num(totals.completion) }} sortie</div>
     </div>
     <div class="card">
       <div class="label">Modèles actifs</div>
-      <div class="value" id="c-mod">—</div>
-      <div class="hint" id="c-mod-hint"></div>
+      <div class="value">{{ num(models.length) }}</div>
+      <div class="hint">{{ backendSummary }}</div>
     </div>
     <div class="card">
       <div class="label">Erreurs</div>
-      <div class="value" id="c-err">—</div>
-      <div class="hint" id="c-err-hint"></div>
+      <div class="value">{{ num(totals.errors) }}</div>
+      <div class="hint">
+        <template v-if="since">mesures depuis {{ dur(now - since) }}</template>
+        <template v-else>aucune mesure enregistrée</template>
+      </div>
     </div>
   </div>
 
   <!-- UNE mesure (les requêtes) : un seul axe, une seule couleur. Les
        tokens vivent dans l'infobulle, jamais sur un second axe. -->
-  <div class="panel chart-panel" id="timeline" hidden>
+  <div class="panel chart-panel" v-if="bars.length">
     <div class="panel-head">
       <h2>Trafic</h2>
-      <span class="meta" id="chart-meta"></span>
+      <span class="meta">{{ bars.length }} × {{ bucketLabel }} ·
+        pic {{ num(peak) }} req</span>
     </div>
-    <div class="chart" id="chart-body">
-      <div class="bars" id="bars"></div>
-      <div class="axis" id="axis"></div>
+    <div class="chart">
+      <div class="bars" :class="{ entering }">
+        <i v-for="(b, i) in bars" :key="b.start_time"
+           :class="{ zero: !b.requests }" :style="{ '--i': i }">
+          <b :style="{ height: b.height.toFixed(2) + '%' }"></b>
+          <span class="tip">
+            <span class="when">{{ moment(b.start_time) }}</span>
+            <span class="row"><span>Requêtes</span><b>{{ num(b.requests) }}</b></span>
+            <span class="row"><span>Tokens</span><b>{{ num(b.tokens) }}</b></span>
+          </span>
+        </i>
+      </div>
+      <div class="axis">
+        <span v-for="b in axis" :key="b.start_time">{{ tickLabel(b) }}</span>
+      </div>
     </div>
-    <div class="tip" id="tip" hidden></div>
   </div>
 
-  <div id="share" class="panel share" hidden>
+  <div class="panel share" v-if="totals.tokens">
     <div class="label">Répartition des tokens</div>
-    <div class="share-bar" id="share-bar"></div>
-    <div class="legend" id="share-legend"></div>
+    <div class="share-bar">
+      <i v-for="m in models" :key="m.id"
+         :style="{ width: m.share.toFixed(2) + '%', background: m.color }"
+         :title="m.id + ' — ' + num(m.tokens) + ' tokens'"></i>
+    </div>
+    <div class="legend">
+      <span v-for="m in models" :key="m.id">
+        <b :style="{ background: m.color }"></b><em>{{ m.id }}</em>&nbsp;{{
+          Math.round(m.share) }}%
+      </span>
+    </div>
   </div>
 
   <div class="panel">
     <div class="panel-head">
       <h2>Par modèle</h2>
-      <span class="meta live"><i></i>par ordre d'apparition</span>
+      <span class="meta live"><i></i>par ordre alphabétique</span>
     </div>
     <div class="scroll">
       <table>
         <thead><tr>
           <th>Modèle</th><th>Requêtes</th><th>Erreurs</th><th>Entrée</th>
-          <th>Sortie</th><th>Total</th><th>Moy./req</th><th>p95</th>
+          <th>Sortie</th><th>Total</th><th>Moy./req</th>
+          <th>Lat. moy.</th><th>Lat. max</th>
           <th>Comptage</th><th>Dernière</th>
         </tr></thead>
-        <tbody id="rows"></tbody>
+        <tbody>
+          <tr v-for="m in models" :key="m.id">
+            <td>
+              <div class="model"><b :style="{ background: m.color }"></b><span>
+                <span class="id">{{ m.id }}</span><br>
+                <span class="backend">{{ m.backend }} ·
+                  {{ num(m.streamed) }} en flux</span>
+              </span></div>
+            </td>
+            <td>{{ num(m.requests) }}</td>
+            <td>
+              <span v-if="m.errors" class="err">{{ num(m.errors) }}</span>
+              <span v-else class="dim">0</span>
+            </td>
+            <td>{{ num(m.prompt) }}</td>
+            <td>{{ num(m.completion) }}</td>
+            <td><strong>{{ num(m.tokens) }}</strong></td>
+            <td>{{ num(m.avg) }}</td>
+            <td>{{ ms(m.avgLatency) }}</td>
+            <td class="dim">{{ ms(m.maxLatency) }}</td>
+            <!-- Provenance des tokens : `usage` de l'upstream, ou
+                 estimation. Le détail chiffré passe en infobulle — la
+                 colonne doit tenir sans pousser le tableau au défilement. -->
+            <td>
+              <span v-if="!m.estimated" class="tag exact">exact</span>
+              <span v-else-if="!m.exact" class="tag est">estimé</span>
+              <span v-else class="tag est"
+                    :title="num(m.exact) + ' exactes · ' + num(m.estimated) + ' estimées'">
+                {{ m.exactPct }}% exact</span>
+            </td>
+            <td class="dim">{{ ago(m.last) }}</td>
+          </tr>
+          <tr v-if="!models.length && loaded">
+            <td colspan="11"><div class="empty">
+              <div class="big">Aucune génération sur cette période</div>
+              <div v-if="since">Les mesures remontent à {{ dur(now - since) }} ;
+                essayez une période plus large.</div>
+              <div v-else>Les modèles apparaîtront ici dès leur première
+                requête.</div>
+            </div></td>
+          </tr>
+        </tbody>
       </table>
     </div>
   </div>
