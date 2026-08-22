@@ -35,6 +35,7 @@
     localStorage.getItem(STORE) : "all";
   var lastPayload = null;   // pour ne redessiner que si ça a bougé
   var lastShape = null;     // découpage des barres du dernier rendu
+  var sharePainted = false; // la répartition a-t-elle déjà été peinte ?
 
   // ── formatage ─────────────────────────────────────────────────────────
   // Entier à la française : espace comme séparateur de milliers.
@@ -160,17 +161,43 @@
     var total = t.input + t.output;
     el("share").hidden = !total;
     if (!total) return;
-    var bar = "", legend = "";
-    results.forEach(function (m, i) {
+    var host = el("share-bar"), legend = "";
+    var parts = results.map(function (m, i) {
       var tokens = m.input_tokens + m.output_tokens;
       var pct = 100 * tokens / total;
       var color = COLORS[i % COLORS.length];
-      bar += '<i style="width:' + pct.toFixed(2) + "%;background:" + color +
-        '" title="' + esc(m.model) + " — " + n(tokens) + ' tokens"></i>';
       legend += '<span><b style="background:' + color + '"></b><em>' +
         esc(m.model) + "</em>&nbsp;" + Math.round(pct) + "%</span>";
+      return { pct: pct, color: color,
+               title: esc(m.model) + " — " + n(tokens) + " tokens" };
     });
-    set(el("share-bar"), bar);
+    // À la PREMIÈRE peinture, les segments sont posés à leur largeur
+    // finale : une barre qui se remplit à l'ouverture de la page se
+    // remarque pour rien. Ensuite seulement on anime — et là il faut
+    // partir de zéro puis forcer le rendu, sinon le navigateur fusionne
+    // les deux états dans la même frame et rien ne transitionne.
+    if (host.children.length !== parts.length) {
+      var animate = sharePainted;
+      host.innerHTML = parts.map(function (p, i) {
+        return '<i style="--i:' + i + ";width:" +
+          (animate ? "0" : p.pct.toFixed(2) + "%") + ";background:" +
+          p.color + '"></i>';
+      }).join("");
+      sharePainted = true;
+      if (animate) {
+        host.classList.add("entering");
+        void host.offsetHeight;
+        setTimeout(function () { host.classList.remove("entering"); },
+          700 + parts.length * 90);
+      }
+    }
+    parts.forEach(function (p, i) {
+      var seg = host.children[i];
+      var w = p.pct.toFixed(2) + "%";
+      if (seg.style.width !== w) seg.style.width = w;
+      if (seg.style.background !== p.color) seg.style.background = p.color;
+      if (seg.title !== p.title) seg.title = p.title;
+    });
     set(el("share-legend"), legend);
   }
 
@@ -199,13 +226,19 @@
     if (rebuild) {
       host.innerHTML = buckets.map(function (b, i) {
         return '<i style="--i:' + i + '"' + (count(b) ? "" : ' class="zero"') +
-          '><b style="height:0"></b></i>';
+          '><b style="height:0;opacity:0"></b></i>';
       }).join("");
-      // Les barres montent une fois, en cascade, puis la classe s'en va :
-      // les rafraîchissements suivants n'ont plus de décalage à subir.
       host.classList.add("entering");
+      // Lecture de layout : elle force le rendu de l'état à zéro. Sans
+      // elle, le navigateur fusionne le 0 et la hauteur cible en une
+      // seule frame et AUCUNE transition ne se joue — c'est ce qui
+      // faisait apparaître les barres d'un coup en changeant de période.
+      void host.offsetHeight;
+      // La classe part une fois la cascade finie (durée + retard de la
+      // dernière barre) : les rafraîchissements suivants n'ont plus de
+      // décalage à subir.
       setTimeout(function () { host.classList.remove("entering"); },
-        280 + buckets.length * 14);
+        600 + buckets.length * 14);
     }
     var bars = host.children;
     for (var i = 0; i < bars.length; i++) {
@@ -217,8 +250,8 @@
       var fill = bars[i].firstChild;
       var css = height.toFixed(2) + "%";
       if (fill.style.height !== css) fill.style.height = css;
+      if (fill.style.opacity !== "1") fill.style.opacity = "1";
     }
-    requestAnimationFrame(function () { host.offsetHeight; });
 
     set(el("chart-meta"), buckets.length + " × " +
       (series.width === "1h" ? "1 heure" : "1 jour") + " · pic " +
@@ -311,12 +344,15 @@
     }).join(""));
   }
 
-  // Provenance des tokens : `usage` de l'upstream, ou estimation.
+  // Provenance des tokens : `usage` de l'upstream, ou estimation. Le
+  // détail chiffré passe en infobulle — la colonne doit tenir sans
+  // pousser le tableau au défilement.
   function accounting(exact, estimated) {
     if (!estimated) return '<span class="tag exact">exact</span>';
     if (!exact) return '<span class="tag est">estimé</span>';
-    return '<span class="tag est">' + n(exact) + " exact · " +
-      n(estimated) + " estimé</span>";
+    return '<span class="tag est" title="' + n(exact) + " exactes · " +
+      n(estimated) + ' estimées">' +
+      Math.round(100 * exact / (exact + estimated)) + "% exact</span>";
   }
 
   // ── horloge relative ──────────────────────────────────────────────────

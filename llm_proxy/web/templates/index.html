@@ -19,11 +19,6 @@
   <header>
     <div class="brand"><span class="dot"></span> llm-proxy</div>
     <h1>Statistiques d'usage</h1>
-    <p class="sub">Compteurs persistés en base : ils survivent au
-    redémarrage du proxy. Un modèle n'apparaît qu'à partir de sa première
-    génération dans la période affichée ; les mêmes chiffres sont
-    disponibles en JSON sur
-    <code>/v1/organization/usage/completions</code>.</p>
   </header>
 
   <div class="toolbar">
@@ -95,9 +90,7 @@
     </div>
   </div>
 
-  <footer>Rafraîchissement toutes les 5 s : la page rappelle
-  <code>/ui/usage</code> et ne se redessine que si les compteurs ont
-  bougé.</footer>
+  <footer>Rafraîchissement toutes les 5 s.</footer>
 </div>
 <script src="/ui/static/dashboard.js"></script>
 </body>

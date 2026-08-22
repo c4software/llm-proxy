@@ -8,6 +8,10 @@ services:
     # les garde au travers des redémarrages et des rebuilds d'image.
     volumes:
       - ./data:/app/data
+    # ./data appartient à l'hôte : le conteneur doit écrire config.toml et
+    # stats.db avec cet uid, sinon le montage n'est pas inscriptible et les
+    # fichiers créés ne seraient pas éditables sans sudo.
+    user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       # Les SECRETS seulement : injectés dans le TOML par «${VAR}»
       # (voir data/config.example.toml). Les réglages vivent dans le TOML.
