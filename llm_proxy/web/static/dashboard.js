@@ -17,6 +17,9 @@
   Un second appel, léger, sert uniquement à savoir jusqu'où remonte
   l'historique — au chargement et au changement de période, jamais dans
   la boucle. La vue « Tout » en a besoin pour choisir son découpage.
+  Un troisième, UNE fois au chargement, lit /healthz pour afficher si la
+  surface Anthropic (Claude Code) est active — ce n'est pas de l'usage,
+  ça ne bouge pas, ça ne se rafraîchit pas.
 
   Rien n'est demandé tant que l'onglet est masqué.
 
@@ -58,6 +61,11 @@ createApp({
     // Armé au seul changement de période : c'est lui qui déclenche la
     // cascade des barres (voir .bars.entering dans la feuille de style).
     const entering = ref(false);
+    // /healthz, lu une fois : surface Anthropic, auth, modèles connus.
+    // null tant qu'il n'a pas répondu.
+    const health = ref(null);
+    const anthropic = computed(() => health.value
+      ? !!(health.value.anthropic || {}).enabled : null);
 
     // ── formatage ───────────────────────────────────────────────────────
     // Entier à la française : espace comme séparateur de milliers.
@@ -99,13 +107,15 @@ createApp({
           if (!m) {
             acc.set(r.model, m = {
               id: r.model, requests: 0, errors: 0, streamed: 0, estimated: 0,
-              prompt: 0, completion: 0, latencySum: 0, maxLatency: 0, last: 0,
+              anthropic: 0, prompt: 0, completion: 0, latencySum: 0,
+              maxLatency: 0, last: 0,
             });
           }
           m.requests += r.num_model_requests;
           m.errors += r.num_errors;
           m.streamed += r.num_streamed_requests;
           m.estimated += r.num_estimated_requests;
+          m.anthropic += r.num_anthropic_requests || 0;
           m.prompt += r.input_tokens;
           m.completion += r.output_tokens;
           m.latencySum += r.total_latency_seconds;
@@ -144,11 +154,12 @@ createApp({
       requests: t.requests + m.requests,
       errors: t.errors + m.errors,
       streamed: t.streamed + m.streamed,
+      anthropic: t.anthropic + m.anthropic,
       prompt: t.prompt + m.prompt,
       completion: t.completion + m.completion,
       tokens: t.tokens + m.tokens,
-    }), { requests: 0, errors: 0, streamed: 0, prompt: 0, completion: 0,
-          tokens: 0 }));
+    }), { requests: 0, errors: 0, streamed: 0, anthropic: 0, prompt: 0,
+          completion: 0, tokens: 0 }));
 
     const successRate = computed(() => {
       const t = totals.value;
@@ -199,6 +210,41 @@ createApp({
     });
 
     const note = computed(() => byId[current.value].note);
+
+    // ── «Brancher un client» : des commandes prêtes à coller ──────────
+    // Tout est dérivé : l'URL de CETTE page, l'auth et les modèles vus
+    // par /healthz, le modèle le plus actif de la période en exemple.
+    const origin = window.location.origin;
+    const authRequired = computed(() => !!(health.value || {}).auth_required);
+    const apiKey = computed(() => authRequired.value ? "<clé du proxy>" : "unused");
+    const exampleModel = computed(() => {
+      const top = [...models.value].sort((a, b) => b.requests - a.requests)[0];
+      if (top) return top.id;
+      const seen = Object.values((health.value || {}).backends || {})
+        .flatMap((b) => b.last_seen_models || []);
+      return seen[0] || "albert/deepseek-v4-flash";
+    });
+    const snippets = computed(() => {
+      const key = apiKey.value, model = exampleModel.value;
+      const auth = authRequired.value;
+      return {
+        curl: `curl -s ${origin}/v1/chat/completions \\
+  -H "Content-Type: application/json"${auth ? ' \\\n  -H "Authorization: Bearer ' + key + '"' : ""} \\
+  -d '{"model":"${model}","messages":[{"role":"user","content":"Bonjour"}]}'`,
+        python: `from openai import OpenAI
+client = OpenAI(base_url="${origin}/v1", api_key="${key}")
+r = client.chat.completions.create(
+    model="${model}",
+    messages=[{"role": "user", "content": "Bonjour"}],
+)
+print(r.choices[0].message.content)`,
+        models: `curl -s ${origin}/v1/models${auth ? ' -H "Authorization: Bearer ' + key + '"' : ""} | jq '.data[].id'`,
+        claude: `export ANTHROPIC_BASE_URL=${origin}
+export ANTHROPIC_API_KEY=${key}
+export ANTHROPIC_MODEL=${model}
+claude`,
+      };
+    });
     const shortcuts = computed(() => windows.map((w) => w.key).join(" / "));
     const bucketLabel = computed(() => bucketWidth.value === "1h"
       ? "1 heure" : "1 jour");
@@ -283,9 +329,19 @@ createApp({
       if (!document.hidden) poll();
     }
 
+    // /healthz est toujours accessible sans clé : le badge ne dépend
+    // pas de l'auth de la page.
+    function loadHealth() {
+      fetch("/healthz", { headers: { accept: "application/json" } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((h) => { health.value = h; })
+        .catch(() => { health.value = null; });
+    }
+
     let timers = [];
     onMounted(() => {
       poll();
+      loadHealth();
       timers = [
         setInterval(() => { if (!document.hidden) poll(); }, REFRESH),
         setInterval(() => { now.value = Date.now() / 1000; }, 1000),
@@ -300,7 +356,8 @@ createApp({
     });
 
     return { windows, current, models, totals, bars, axis, peak, since, now,
-             loaded, entering, note, shortcuts, bucketLabel, successRate,
+             loaded, entering, anthropic, authRequired, exampleModel,
+             snippets, origin, note, shortcuts, bucketLabel, successRate,
              backendSummary, num, ms, ago, dur, moment, tickLabel, select };
   },
 }).mount("#app");

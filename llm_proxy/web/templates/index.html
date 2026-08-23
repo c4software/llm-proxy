@@ -21,7 +21,14 @@
 <body>
 <div class="wrap" id="app" v-cloak>
   <header>
-    <div class="brand"><span class="dot"></span> llm-proxy</div>
+    <div class="brand"><span class="dot"></span> llm-proxy
+      <!-- Surface Anthropic (Claude Code) : lu une fois sur /healthz. -->
+      <span v-if="anthropic !== null" class="tag"
+            :class="anthropic ? 'exact' : ''"
+            :title="anthropic ? 'POST /v1/messages actif — ANTHROPIC_BASE_URL peut pointer ici'
+                              : '[anthropic].enabled absent ou false dans config.toml'">
+        Claude Code {{ anthropic ? "actif" : "inactif" }}</span>
+    </div>
     <h1>Statistiques d'usage</h1>
   </header>
 
@@ -40,7 +47,8 @@
       <div class="value">{{ num(totals.requests) }}</div>
       <div class="hint">
         <template v-if="totals.requests">{{ successRate }} en succès · </template>
-        {{ num(totals.streamed) }} en flux
+        {{ num(totals.streamed) }} en flux<template v-if="totals.anthropic">
+        · {{ num(totals.anthropic) }} via Claude Code</template>
       </div>
     </div>
     <div class="card">
@@ -124,7 +132,8 @@
               <div class="model"><b :style="{ background: m.color }"></b><span>
                 <span class="id">{{ m.id }}</span><br>
                 <span class="backend">{{ m.backend }} ·
-                  {{ num(m.streamed) }} en flux</span>
+                  {{ num(m.streamed) }} en flux<template v-if="m.anthropic">
+                  · {{ num(m.anthropic) }} Claude Code</template></span>
               </span></div>
             </td>
             <td>{{ num(m.requests) }}</td>
@@ -163,6 +172,69 @@
       </table>
     </div>
   </div>
+
+  <!-- Brancher un client : replié par défaut, tout est dérivé de l'URL
+       de la page, de /healthz et des modèles de la période. -->
+  <details class="panel howto">
+    <summary>
+      <h2>Brancher un client</h2>
+      <span class="meta">OpenAI SDK, curl, Claude Code — commandes prêtes
+        à coller, sur <code>{{ exampleModel }}</code></span>
+    </summary>
+    <div class="howto-body">
+      <p class="lead">Le proxy expose une API OpenAI à
+        <code>{{ origin }}/v1</code>. Le <b>préfixe du modèle</b>
+        choisit le backend (<code>albert/…</code>, <code>bigchuck/…</code>) ;
+        un nom sans préfixe est refusé.
+        <template v-if="authRequired">L'auth est active : remplacer
+          <code>&lt;clé du proxy&gt;</code> par une clé de
+          <code>proxy.api_keys</code>.</template>
+        <template v-else>Le proxy est ouvert : la clé est libre, un SDK en
+          exige juste une.</template>
+      </p>
+
+      <section>
+        <h3>Catalogue</h3>
+        <pre>{{ snippets.models }}</pre>
+      </section>
+
+      <section>
+        <h3>curl</h3>
+        <pre>{{ snippets.curl }}</pre>
+      </section>
+
+      <section>
+        <h3>SDK OpenAI (Python)</h3>
+        <pre>{{ snippets.python }}</pre>
+        <p class="note">Même chose pour tout client OpenAI-compatible
+          (Hermes, pi, Open WebUI, Continue…) : base URL
+          <code>{{ origin }}/v1</code>, clé, nom de modèle préfixé.
+          Le streaming passe intact.</p>
+      </section>
+
+      <section>
+        <h3>Claude Code
+          <span class="tag" :class="anthropic ? 'exact' : 'est'">{{
+            anthropic === null ? "…" : anthropic ? "actif" : "inactif" }}</span>
+        </h3>
+        <template v-if="anthropic">
+          <pre>{{ snippets.claude }}</pre>
+          <p class="note">Claude Code parle l'API Anthropic ; le proxy la
+            traduit vers le backend du préfixe. Les noms
+            <code>claude-*</code> que Claude Code envoie en dur passent par
+            <code>[anthropic.model_map]</code> de <code>config.toml</code>.
+            Toute la conversation (outils compris) est relayée en flux ;
+            pendant une attente de quota, des <code>ping</code> tiennent
+            la connexion.</p>
+        </template>
+        <p v-else class="note">Surface désactivée : mettre
+          <code>[anthropic] enabled = true</code> dans
+          <code>config.toml</code> et redémarrer. Les noms
+          <code>claude-*</code> se traduisent dans
+          <code>[anthropic.model_map]</code>.</p>
+      </section>
+    </div>
+  </details>
 
   <footer>Rafraîchissement toutes les 5 s.</footer>
 </div>
