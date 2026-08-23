@@ -245,6 +245,8 @@ tout SDK Anthropic) se branche sur le proxy sans rien d'autre :
     export ANTHROPIC_BASE_URL=http://localhost:8000
     export ANTHROPIC_API_KEY=<clé de proxy.api_keys, ou n'importe quoi si ouvert>
     export ANTHROPIC_MODEL=albert/deepseek-v4-flash
+    # tâches d'arrière-plan (titres, résumés…) sur un backend local :
+    # export ANTHROPIC_SMALL_FAST_MODEL=bigchuck/qwen3-8b
     claude
 
 Ce qui se passe :
@@ -265,9 +267,18 @@ Ce qui se passe :
   un nom déjà préfixé passe tel quel ; `default` attrape le reste ; sans
   correspondance → 400. L'exemple livre tous les noms connus sur
   `albert/deepseek-v4-flash`.
-- `POST /v1/messages/count_tokens` : estimation locale (~4 caractères
-  par token, comme le limiteur) — Claude Code ne s'en sert que pour sa
-  jauge de contexte.
+- `POST /v1/messages/count_tokens` : **exact** si le backend visé a un
+  `tokenize_path` (llama.cpp : `/tokenize`), sinon estimation locale
+  (~4 caractères par token, comme le limiteur). Claude Code s'en sert
+  pour sa jauge de contexte et le moment de son `/compact`.
+- Images : transmises en `image_url` si le backend a `images = true`,
+  sinon remplacées par `[image ignorée : image/png, 12 Ko]` — y compris
+  dans un `tool_result` (Claude Code lisant un `.png`), où l'image suit
+  le message `tool` dans un message user. Un `document` texte passe tel
+  quel, un PDF devient `[document ignoré : …]`.
+- `reasoning_content` d'un backend (DeepSeek…) devient un bloc
+  `thinking` visible dans Claude Code (`reasoning_as_thinking = false`
+  pour le couper).
 - `GET /v1/models` : le même catalogue, à la forme Anthropic, quand la
   requête porte `anthropic-version` (le SDK Anthropic le pose toujours,
   le SDK OpenAI jamais).
@@ -286,9 +297,11 @@ Ce qui se passe :
 
 À savoir : le prompt système de Claude Code pèse plusieurs milliers de
 tokens, renvoyés à chaque tour sans cache exploitable côté OpenAI — le
-quota journalier Albert se consomme vite. Hors périmètre : Batches,
-Files, outils serveur (`web_search`, `code_execution`), blocs `document`
-PDF — aucun n'est nécessaire à Claude Code contre un backend OpenAI.
+quota journalier Albert se consomme vite ; `ANTHROPIC_SMALL_FAST_MODEL`
+vers un backend local soulage (les tâches d'arrière-plan sont
+nombreuses). Hors périmètre : Batches, Files, outils serveur
+(`web_search`, `code_execution`), PDF — aucun n'est nécessaire à Claude
+Code contre un backend OpenAI.
 
 ## Déploiement
 
@@ -359,7 +372,10 @@ valeur-là). Seule exception : si `[backends]` est absent du TOML, le
 backend Albert par défaut est livré avec `"auto"`, puisque c'est lui que
 le correctif vise. `max_tokens` (plafond, `0` ou absent = aucun : la
 valeur du client — `max_tokens` ou `max_completion_tokens` — est ramenée
-au plafond, jamais augmentée ni ajoutée).
+au plafond, jamais augmentée ni ajoutée). `images = true` (le backend
+accepte les `image_url` ; sinon les images d'un client Anthropic sont
+remplacées par un texte). `tokenize_path` (endpoint de tokenisation pour
+un `count_tokens` exact — llama.cpp : `"/tokenize"`).
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
 `unknown_backend_prefix`. Seules les requêtes sans champ `model`
@@ -391,6 +407,7 @@ au plafond, jamais augmentée ni ajoutée).
 | `enabled` | `false` | Ouvre la surface Anthropic (`/v1/messages`…). Table absente = inactive, dit au démarrage dans les logs et dans `/healthz` |
 | `model_map` | `{}` | Noms de modèles Anthropic → noms préfixés ; `default` attrape les inconnus. Voir [Claude Code](#claude-code) |
 | `ping_interval` | `10` | Secondes entre deux `event: ping` pendant l'attente du limiteur, en flux. `0` = attendre avant de répondre |
+| `reasoning_as_thinking` | `true` | `reasoning_content` du backend → bloc `thinking` pour le client |
 
 ### `[quotas]` (backends à quotas)
 
@@ -482,13 +499,9 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 
 ## À faire
 
-- Valider contre un **vrai** Claude Code (la séquence SSE est celle que
-  le SDK officiel accepte ; le client lui-même reste à tester en
-  conditions réelles : outils `Bash`/`Edit`, images, sessions longues).
-- Blocs `document` (PDF base64) et images dans les `tool_result` :
-  ignorés aujourd'hui, un backend multimodal pourrait les recevoir.
-- `count_tokens` : estimation à 4 caractères par token ; un backend qui
-  expose `/tokenize` (llama.cpp) pourrait donner un chiffre exact.
+- PDF (`document` base64) : remplacé par un texte. Un backend qui
+  accepte la partie `file` d'OpenAI pourrait le recevoir — à faire le
+  jour où il y en a un.
 - Le `cache_control` Anthropic est ignoré : rien d'équivalent côté
   OpenAI, mais un backend qui gère le cache de préfixe (vLLM, llama.cpp)
   en profite déjà implicitement si les messages sont stables.

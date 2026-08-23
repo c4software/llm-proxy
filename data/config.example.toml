@@ -57,6 +57,9 @@ enabled = true
 # `event: error` dans le flux. 0 = attendre AVANT de répondre, comme pour
 # un client OpenAI.
 ping_interval = 10
+# `reasoning_content` d'un backend (DeepSeek…) → bloc `thinking` visible
+# dans Claude Code. false = jeté.
+reasoning_as_thinking = true
 
 # Noms de modèles → noms PRÉFIXÉS du proxy. Claude Code envoie des noms
 # Claude en dur pour ses tâches d'arrière-plan (titres, résumés…), même
@@ -160,6 +163,13 @@ models = ["openweight-large", "gpt-oss"]
 # max_tokens — plafond (0 ou absent = aucun) : la valeur du client est
 # ramenée au plafond, jamais augmentée. Claude Code en demande 32 000
 # par défaut, que certains backends refusent.
+#
+# images — le backend accepte les images (`image_url`) : les blocs image
+# d'un client Anthropic (Claude Code lisant un .png) lui sont transmis ;
+# absent/false = remplacés par «[image ignorée : image/png, 12 Ko]».
+#
+# tokenize_path — endpoint de tokenisation pour un count_tokens EXACT
+# (llama.cpp : "/tokenize") ; absent = estimation à 4 caractères/token.
 
 [backends.albert]
 url = "https://albert.api.etalab.gouv.fr"
@@ -174,3 +184,5 @@ force_tool_choice = "auto"
 # un hôte allumé répond bien avant, même occupé à générer).
 [backends.bigchuck]
 url = "http://bigchuck:8009"
+# images = true
+# tokenize_path = "/tokenize"

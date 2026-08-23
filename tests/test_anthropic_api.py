@@ -121,16 +121,57 @@ def test_to_openai_assistant_only_tools_has_null_content():
     assert out["messages"][0]["content"] is None
 
 
-def test_to_openai_image_base64():
+IMG = {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                   "data": "A" * 4096}}
+
+
+def test_to_openai_image_base64_when_backend_accepts():
     out = A.to_openai({"model": "m", "messages": [{"role": "user", "content": [
-        {"type": "image", "source": {"type": "base64", "media_type": "image/png",
-                                     "data": "AAAA"}},
-        {"type": "text", "text": "Quoi ?"},
-    ]}]})
+        IMG, {"type": "text", "text": "Quoi ?"},
+    ]}]}, images=True)
     parts = out["messages"][0]["content"]
     assert parts[0] == {"type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,AAAA"}}
+                        "image_url": {"url": "data:image/png;base64," + "A" * 4096}}
     assert parts[1] == {"type": "text", "text": "Quoi ?"}
+
+
+def test_to_openai_image_placeholder_when_text_only_backend():
+    out = A.to_openai({"model": "m", "messages": [{"role": "user", "content": [
+        IMG, {"type": "text", "text": "Quoi ?"},
+    ]}]})
+    # Tout est texte → une chaîne, la forme que tout backend accepte.
+    assert out["messages"][0]["content"] == "[image ignorée : image/png, 3 Ko]Quoi ?"
+
+
+def test_to_openai_tool_result_with_image():
+    """Claude Code lit un .png : le tool_result porte une image. Le
+    message `tool` reste texte ; l'image suit dans un message user."""
+    msgs = {"model": "m", "messages": [{"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t1",
+         "content": [{"type": "text", "text": "lu"}, IMG]},
+    ]}]}
+    out = A.to_openai(msgs, images=True)["messages"]
+    assert out[0] == {"role": "tool", "tool_call_id": "t1", "content": "lu"}
+    assert out[1]["role"] == "user"
+    assert out[1]["content"][0] == {"type": "text", "text": "[résultat de l'outil t1]"}
+    assert out[1]["content"][1]["type"] == "image_url"
+    # Backend texte seul : l'image devient un mot dans le message `tool`
+    # lui-même — rien ne suit.
+    out = A.to_openai(msgs)["messages"]
+    assert out == [{"role": "tool", "tool_call_id": "t1",
+                    "content": "lu[image ignorée : image/png, 3 Ko]"}]
+
+
+def test_to_openai_documents():
+    out = A.to_openai({"model": "m", "messages": [{"role": "user", "content": [
+        {"type": "document", "source": {"type": "text", "media_type": "text/plain",
+                                        "data": "contenu"}},
+        {"type": "document", "source": {"type": "base64",
+                                        "media_type": "application/pdf",
+                                        "data": "B" * 2048}},
+    ]}]})
+    assert out["messages"][0]["content"] == \
+        "contenu[document ignoré : application/pdf, 1 Ko]"
 
 
 # ── réponse non streamée ────────────────────────────────────────────────
@@ -166,11 +207,14 @@ def test_from_openai_tool_calls_and_length():
     assert msg["stop_reason"] == "max_tokens"
 
 
-def test_from_openai_reasoning_becomes_thinking():
-    msg = A.from_openai({"choices": [{"message": {
-        "reasoning_content": "hmm", "content": "ok"}, "finish_reason": "stop"}]}, "m")
+def test_from_openai_reasoning_becomes_thinking(monkeypatch):
+    doc = {"choices": [{"message": {"reasoning_content": "hmm", "content": "ok"},
+                        "finish_reason": "stop"}]}
+    msg = A.from_openai(doc, "m")
     assert msg["content"][0] == {"type": "thinking", "thinking": "hmm", "signature": ""}
     assert msg["content"][1] == {"type": "text", "text": "ok"}
+    monkeypatch.setattr(A, "REASONING_AS_THINKING", False)
+    assert A.from_openai(doc, "m")["content"] == [{"type": "text", "text": "ok"}]
 
 
 # ── le robinet ──────────────────────────────────────────────────────────
@@ -346,6 +390,8 @@ def test_translator_stream_empty_upstream():
 def test_estimate_tokens():
     n = A.estimate_tokens({"system": "x" * 400, "messages": [], "stream": True})
     assert 100 <= n <= 120
+    # prompt_text : ce qui part à /tokenize — sans les champs hors prompt.
+    assert "stream" not in A.prompt_text({"system": "s", "stream": True})
 
 
 def test_models_list():

@@ -54,6 +54,13 @@ class Backend:
         # 32 000 par défaut, que certains backends refusent tout net. La
         # valeur du client est ramenée au plafond, jamais augmentée.
         self.max_tokens = int(cfg.get("max_tokens", 0) or 0)
+        # Le backend accepte les images (`image_url`) : les blocs image
+        # d'un client Anthropic lui sont transmis ; sinon remplacés par un
+        # texte qui dit qu'une image manque.
+        self.images = bool(cfg.get("images", False))
+        # Chemin d'un endpoint de tokenisation (llama.cpp : "/tokenize")
+        # pour un count_tokens EXACT ; vide = estimation locale.
+        self.tokenize_path = str(cfg.get("tokenize_path", "") or "").strip()
         # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
         # Albert avec des clés différentes ne partagent rien).
         self.quota_state = albert.QuotaState(name) if self.quotas else None

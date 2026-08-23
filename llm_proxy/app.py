@@ -503,6 +503,8 @@ async def healthz():
                 "key_injection": bool(b.api_key),
                 "tool_choice": b.tool_choice or False,
                 "max_tokens": b.max_tokens or None,
+                "images": b.images,
+                "tokenize_path": b.tokenize_path or None,
                 "timeout": b.timeout,
                 "meta_timeout": b.meta_timeout,
                 "connect_timeout": b.connect_timeout,
@@ -707,7 +709,7 @@ async def messages(request: Request):
     if requested and requested != resolved:
         log.info("anthropic : modèle %r → %r", requested, resolved)
 
-    openai_payload = anthropic_api.to_openai(payload)
+    openai_payload = anthropic_api.to_openai(payload, images=backend.images)
     if inject_tool_choice(openai_payload, backend):
         log.info(
             "tool_choice=%s injecté (backend=%s, model=%s, %d tools)",
@@ -792,15 +794,55 @@ async def pinged_stream(call: Call, request: Request, payload: dict,
 
 @app.post("/v1/messages/count_tokens")
 async def count_tokens(request: Request):
-    """Aucun équivalent OpenAI : estimation locale, sans appel upstream
-    — Claude Code ne s'en sert que pour sa jauge de contexte."""
+    """Aucun équivalent OpenAI. Exact si le backend visé expose un
+    endpoint de tokenisation ([backends.<nom>].tokenize_path — llama.cpp
+    a /tokenize) ; estimation locale sinon, ou s'il ne répond pas.
+    Claude Code s'en sert pour sa jauge de contexte (et le moment de
+    son /compact) : un chiffre juste évite qu'elle dérive."""
     if not anthropic_api.ENABLED:
         return anthropic_disabled("anthropic")
     payload = parse_json(await request.body())
     if not isinstance(payload, dict):
         return error_response("anthropic", 400, "invalid_request_error",
                               "corps JSON attendu")
+    resolved = anthropic_api.resolve_model(
+        str(payload.get("model", "") or ""), BACKENDS)
+    backend, _ = route_backend({"model": resolved}) if resolved else (None, False)
+    if backend is not None and backend.tokenize_path:
+        exact = await tokenize_upstream(backend, resolved, payload)
+        if exact is not None:
+            return {"input_tokens": exact}
     return {"input_tokens": anthropic_api.estimate_tokens(payload)}
+
+
+async def tokenize_upstream(b: Backend, model: str, payload: dict) -> int | None:
+    """POST tokenize_path du backend avec le texte du prompt ; rend le
+    nombre de tokens, ou None (injoignable, forme inattendue) — l'appelant
+    retombe sur l'estimation, jamais d'erreur pour un compteur."""
+    body = {"content": anthropic_api.prompt_text(payload),
+            "model": model[len(b.name) + 1:], "add_special": True}
+    try:
+        r = await b.client.post(
+            "/" + b.tokenize_path.strip("/"), json=body,
+            headers=b.auth_headers(), timeout=b.meta_timeout,
+        )
+        if r.status_code != 200:
+            log.warning("%s %s → %d, estimation", b.name, b.tokenize_path,
+                        r.status_code)
+            return None
+        doc = r.json()
+    except Exception as exc:
+        log.warning("%s %s injoignable : %s, estimation", b.name,
+                    b.tokenize_path, exc)
+        return None
+    # llama.cpp : {"tokens": [...]} ; d'autres rendent un compte direct.
+    tokens = doc.get("tokens") if isinstance(doc, dict) else None
+    if isinstance(tokens, list):
+        return len(tokens)
+    for key in ("count", "n_tokens", "input_tokens"):
+        if isinstance(doc, dict) and isinstance(doc.get(key), int):
+            return doc[key]
+    return None
 
 
 # ── Usage API ───────────────────────────────────────────────────────────

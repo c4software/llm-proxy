@@ -57,6 +57,10 @@ ENABLED = config.flag("anthropic.enabled", False)
 # l'API Anthropic elle-même envoie ces pings). 0 = attendre AVANT de
 # répondre, comme pour un client OpenAI.
 PING_INTERVAL = config.num("anthropic.ping_interval", 10)
+# `reasoning_content` d'un backend → bloc `thinking` pour le client. Le
+# bloc part sans signature (Claude Code le renvoie, on le jette à la
+# traduction) ; à couper si un client s'en plaint.
+REASONING_AS_THINKING = config.flag("anthropic.reasoning_as_thinking", True)
 CHARS_PER_TOKEN = 4
 
 # «claude-opus-5[1m]» : le suffixe entre crochets est un choix de
@@ -111,13 +115,18 @@ def error_body(message: str, type_: str) -> dict:
     return {"type": "error", "error": {"type": type_, "message": message}}
 
 
-def estimate_tokens(payload) -> int:
-    """count_tokens : la même approximation que le limiteur, sur le
-    corps sérialisé (system + messages + tools)."""
+def prompt_text(payload) -> str:
+    """count_tokens : ce qui est compté. Le corps sérialisé (system +
+    messages + tools) — c'est aussi ce que le limiteur approxime, et ce
+    qu'un /tokenize de backend reçoit."""
     doc = {k: payload.get(k) for k in ("system", "messages", "tools")
            if isinstance(payload, dict) and payload.get(k) is not None}
-    raw = json.dumps(doc, ensure_ascii=False)
-    return max(len(raw) // CHARS_PER_TOKEN, 1)
+    return json.dumps(doc, ensure_ascii=False)
+
+
+def estimate_tokens(payload) -> int:
+    """Approximation locale, même ratio que le limiteur."""
+    return max(len(prompt_text(payload)) // CHARS_PER_TOKEN, 1)
 
 
 def models_list(entries: list[dict]) -> dict:
@@ -173,10 +182,58 @@ def _image_part(block: dict) -> dict | None:
     return None
 
 
-def _user_message(content) -> list[dict]:
+def _placeholder(block: dict, what: str) -> dict:
+    """Ce qu'un backend texte seul reçoit à la place d'un média : un mot
+    qui dit qu'il manque quelque chose, plutôt que rien."""
+    src = block.get("source") or {}
+    media = src.get("media_type") if isinstance(src, dict) else None
+    size = len(src.get("data") or "") * 3 // 4 if isinstance(src, dict) else 0
+    detail = media or ""
+    if size:
+        detail += f", {size // 1024} Ko" if detail else f"{size // 1024} Ko"
+    return {"type": "text",
+            "text": f"[{what} ignoré{'e' if what == 'image' else ''}"
+                    f"{' : ' + detail if detail else ''}]"}
+
+
+def _blocks_to_parts(blocks, images: bool) -> list[dict]:
+    """Blocs de contenu (text / image / document) → parties OpenAI.
+    `images` = le backend accepte les `image_url` ; sinon un texte de
+    remplacement. Un `document` n'a d'équivalent OpenAI que s'il est du
+    texte ; un PDF devient un texte de remplacement."""
+    parts = []
+    for b in blocks if isinstance(blocks, list) else []:
+        if not isinstance(b, dict):
+            continue
+        t = b.get("type")
+        if t == "text":
+            parts.append({"type": "text", "text": b.get("text", "")})
+        elif t == "image":
+            part = _image_part(b) if images else None
+            parts.append(part or _placeholder(b, "image"))
+        elif t == "document":
+            src = b.get("source") or {}
+            if isinstance(src, dict) and src.get("type") == "text":
+                parts.append({"type": "text", "text": str(src.get("data", ""))})
+            else:
+                parts.append(_placeholder(b, "document"))
+    return parts
+
+
+def _content_of(parts: list[dict]):
+    """Une chaîne si tout est texte — la forme que tous les backends
+    acceptent —, la liste de parties sinon."""
+    if all(p["type"] == "text" for p in parts):
+        return "".join(p["text"] for p in parts)
+    return parts
+
+
+def _user_message(content, images: bool) -> list[dict]:
     """Un message user Anthropic peut mêler n tool_result et du contenu
     libre. OpenAI veut un message `tool` PAR résultat, placés juste après
-    l'assistant qui les a demandés — donc avant le reste."""
+    l'assistant qui les a demandés — donc avant le reste. Un `tool`
+    OpenAI n'a qu'un contenu TEXTE : les images d'un tool_result (Claude
+    Code lisant un .png) suivent dans un message user à part."""
     if isinstance(content, str):
         return [{"role": "user", "content": content}]
     if not isinstance(content, list):
@@ -188,30 +245,27 @@ def _user_message(content) -> list[dict]:
         t = b.get("type")
         if t == "tool_result":
             inner = b.get("content")
-            text = _text_of(inner) if not isinstance(inner, str) else inner
+            if isinstance(inner, str):
+                text, media = inner, []
+            else:
+                inner_parts = _blocks_to_parts(inner, images)
+                text = "".join(p["text"] for p in inner_parts
+                               if p["type"] == "text")
+                media = [p for p in inner_parts if p["type"] != "text"]
             if b.get("is_error") and text:
                 text = f"Error: {text}"
-            tools.append({"role": "tool",
-                          "tool_call_id": str(b.get("tool_use_id", "")),
+            call_id = str(b.get("tool_use_id", ""))
+            tools.append({"role": "tool", "tool_call_id": call_id,
                           "content": text})
-        elif t == "text":
-            parts.append({"type": "text", "text": b.get("text", "")})
-        elif t == "image":
-            part = _image_part(b)
-            if part:
-                parts.append(part)
-        elif t == "document":
-            # Pas d'équivalent OpenAI générique : le texte brut seulement.
-            src = b.get("source") or {}
-            if isinstance(src, dict) and src.get("type") == "text":
-                parts.append({"type": "text", "text": str(src.get("data", ""))})
+            if media:
+                parts.append({"type": "text",
+                              "text": f"[résultat de l'outil {call_id}]"})
+                parts.extend(media)
+        else:
+            parts.extend(_blocks_to_parts([b], images))
     out = tools
     if parts:
-        if all(p["type"] == "text" for p in parts):
-            out.append({"role": "user",
-                        "content": "".join(p["text"] for p in parts)})
-        else:
-            out.append({"role": "user", "content": parts})
+        out.append({"role": "user", "content": _content_of(parts)})
     return out
 
 
@@ -262,12 +316,14 @@ def _tool_choice(value, payload: dict) -> None:
         payload["parallel_tool_calls"] = False
 
 
-def to_openai(p: dict) -> dict:
+def to_openai(p: dict, images: bool = False) -> dict:
     """Corps /v1/messages → corps /v1/chat/completions. `model` est
     recopié tel quel : l'appelant l'a déjà résolu (resolve_model).
-    Tout ce qui n'a pas d'équivalent (thinking, top_k, cache_control,
-    metadata hors user_id, output_config, context_management…) est
-    ignoré plutôt que relayé à un backend qui le refuserait."""
+    `images` : le backend accepte les `image_url` (sinon, texte de
+    remplacement). Tout ce qui n'a pas d'équivalent (thinking, top_k,
+    cache_control, metadata hors user_id, output_config,
+    context_management…) est ignoré plutôt que relayé à un backend qui
+    le refuserait."""
     out: dict = {"model": p.get("model", "")}
     messages: list[dict] = []
     system = _text_of(p.get("system"))
@@ -280,7 +336,7 @@ def to_openai(p: dict) -> dict:
         if role == "assistant":
             messages.append(_assistant_message(content))
         elif role == "user":
-            messages.extend(_user_message(content))
+            messages.extend(_user_message(content, images))
         elif role == "system":
             text = _text_of(content)
             if text:
@@ -356,7 +412,7 @@ def from_openai(doc: dict, model: str) -> dict:
     msg = choice.get("message") or {}
     content: list[dict] = []
     reasoning = msg.get("reasoning_content") or msg.get("reasoning")
-    if isinstance(reasoning, str) and reasoning:
+    if REASONING_AS_THINKING and isinstance(reasoning, str) and reasoning:
         content.append({"type": "thinking", "thinking": reasoning,
                         "signature": ""})
     if isinstance(msg.get("content"), str) and msg["content"]:
@@ -558,7 +614,7 @@ class Translator:
                 continue
             delta = choice.get("delta") or {}
             reasoning = delta.get("reasoning_content") or delta.get("reasoning")
-            if isinstance(reasoning, str) and reasoning:
+            if REASONING_AS_THINKING and isinstance(reasoning, str) and reasoning:
                 if self._open != "thinking":
                     out += self._open_block("thinking", {
                         "type": "thinking", "thinking": "", "signature": ""})

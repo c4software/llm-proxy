@@ -224,8 +224,18 @@ createApp({
         .flatMap((b) => b.last_seen_models || []);
       return seen[0] || "albert/deepseek-v4-flash";
     });
+    // Un modèle d'un AUTRE backend que l'exemple, s'il y en a un : c'est
+    // l'usage typique du petit modèle rapide (local, sans quota).
+    const smallModel = computed(() => {
+      const main = exampleModel.value.split("/")[0];
+      const seen = Object.entries((health.value || {}).backends || {})
+        .filter(([name]) => name !== main)
+        .flatMap(([, b]) => b.last_seen_models || []);
+      return seen[0] || "bigchuck/qwen3-8b";
+    });
     const snippets = computed(() => {
       const key = apiKey.value, model = exampleModel.value;
+      const smallModel_ = smallModel.value;
       const auth = authRequired.value;
       return {
         curl: `curl -s ${origin}/v1/chat/completions \\
@@ -242,6 +252,8 @@ print(r.choices[0].message.content)`,
         claude: `export ANTHROPIC_BASE_URL=${origin}
 export ANTHROPIC_API_KEY=${key}
 export ANTHROPIC_MODEL=${model}
+# tâches d'arrière-plan (titres, résumés…) sur un backend local, au choix :
+# export ANTHROPIC_SMALL_FAST_MODEL=${smallModel_}
 claude`,
       };
     });
