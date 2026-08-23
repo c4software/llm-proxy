@@ -198,6 +198,10 @@ def clean_headers(request: Request, api_key: str) -> dict:
     skip = HOP_BY_HOP | (
         {"authorization"} if api_key or PROXY_API_KEYS else set()
     )
+    # Auth proxy active : le cookie posé par /ui porte la clé DU PROXY —
+    # même raison que l'Authorization, il ne doit pas fuiter en amont.
+    if PROXY_API_KEYS:
+        skip = skip | {"cookie"}
     headers = {
         k: v for k, v in request.headers.items()
         if k.lower() not in skip
@@ -248,6 +252,30 @@ def quota_exceeded_response(exc: albert.QuotaWaitTooLong,
         status_code=429,
         headers={"Retry-After": str(retry_after)},
     )
+
+
+# Convention nginx : le client a fermé la connexion avant la réponse.
+CLIENT_CLOSED = 499
+
+
+async def wait_disconnect(request: Request) -> None:
+    """Ne rend la main qu'à la déconnexion du client. Le corps ayant
+    déjà été lu, la seule chose que `receive()` puisse encore livrer est
+    `http.disconnect` — et il BLOQUE jusque-là, y compris à travers
+    BaseHTTPMiddleware (où `request.is_disconnected()`, lui, sonde sous
+    un délai si court qu'il ne voit jamais rien)."""
+    while True:
+        message = await request.receive()
+        if message.get("type") == "http.disconnect":
+            return
+
+
+def client_gone_response(limiter: albert.Limiter, endpoint: str) -> Response:
+    """Le client a raccroché pendant l'attente du quota : la requête n'a
+    PAS été envoyée à l'upstream. Personne ne lira cette réponse."""
+    log.info("[%s] client parti pendant l'attente : %s abandonné, "
+             "quota préservé", limiter.name, endpoint)
+    return Response(status_code=CLIENT_CLOSED)
 
 
 def record_stat(model_key: str, b: Backend, endpoint: str, status: int,
@@ -489,12 +517,16 @@ async def chat_completions(request: Request):
     cost = albert.estimate_chat_cost(raw)
     started = time.monotonic()
     try:
-        waited = await limiter.acquire(cost)
+        waited = await limiter.acquire(cost, lambda: wait_disconnect(request))
     except albert.QuotaWaitTooLong as exc:
         # Rejet local : compté comme requête en erreur du modèle visé.
         record_stat(model_key, backend, "/v1/chat/completions", 429,
                     time.monotonic() - started)
         return quota_exceeded_response(exc, limiter)
+    except albert.ClientGone:
+        record_stat(model_key, backend, "/v1/chat/completions",
+                    CLIENT_CLOSED, time.monotonic() - started)
+        return client_gone_response(limiter, "/v1/chat/completions")
     albert.maybe_log_status()
     if waited:
         log.info(
@@ -661,12 +693,17 @@ async def passthrough(path: str, request: Request):
         started = time.monotonic()
         try:
             waited = await limiter.acquire(
-                albert.estimate_generic_cost(raw, payload)
+                albert.estimate_generic_cost(raw, payload),
+                lambda: wait_disconnect(request),
             )
         except albert.QuotaWaitTooLong as exc:
             record_stat(model_key, backend, normalized, 429,
                         time.monotonic() - started)
             return quota_exceeded_response(exc, limiter)
+        except albert.ClientGone:
+            record_stat(model_key, backend, normalized, CLIENT_CLOSED,
+                        time.monotonic() - started)
+            return client_gone_response(limiter, normalized)
         if waited:
             log.info(
                 "[%s] POST %s relâché après %.1fs d'attente",

@@ -54,6 +54,10 @@ MAX_QUEUE_SECONDS = config.num("quotas.max_queue_seconds", 900)
 GENERIC_RPM = config.integer("quotas.generic_rpm", 30)
 GENERIC_TPM = config.integer("quotas.generic_tpm", 128000)
 STATUS_INTERVAL = config.num("quotas.status_interval", 600)
+# Buckets par backend au plus : au-delà, les modèles inconnus partagent
+# un générique commun — un client qui varie les noms ne fait pas
+# grossir la mémoire indéfiniment.
+MAX_BUCKETS = 64
 
 DEFAULT_FAMILY_LIMITS = {
     "deepseek": {"rpm": 50, "tpm": 246_000, "models": ["deepseek"]},
@@ -108,6 +112,13 @@ class QuotaWaitTooLong(Exception):
     def __init__(self, delay: float, window_name: str):
         self.delay = delay
         self.window_name = window_name
+
+
+class ClientGone(Exception):
+    """Le client a raccroché pendant l'attente : la requête quitte la
+    file SANS consommer de quota — l'envoyer quand même à Albert
+    coûterait une génération complète pour personne (et un SDK qui
+    retente sur timeout empilerait des doublons dans la file)."""
 
 
 class Window:
@@ -184,33 +195,57 @@ class Limiter:
         self.day.max_req, self.day.max_tok = rpd, tpd
         self.source = source
 
-    async def acquire(self, cost: int) -> float:
+    async def acquire(self, cost: int, wait_gone=None) -> float:
+        """Attend une place puis l'enregistre. `wait_gone` : coroutine
+        sans argument qui NE REND LA MAIN QU'À LA DÉCONNEXION du client
+        (pas de sondage : elle bloque). Mise en course avec l'attente —
+        si elle termine avant, la requête est abandonnée (ClientGone) et
+        le verrou rendu au suivant. Rien n'est lancé quand il n'y a pas
+        à attendre, le chemin sans contention ne coûte rien de plus."""
         waited = 0.0
-        async with self.lock:
-            while True:
+        watcher: asyncio.Future | None = None
+        try:
+            async with self.lock:
+                while True:
+                    now = time.monotonic()
+                    self.minute.evict(now)
+                    self.day.evict(now)
+                    delays = {
+                        "minute": self.minute.wait_needed(now, cost),
+                        "jour": self.day.wait_needed(now, cost),
+                    }
+                    worst = max(delays, key=delays.get)
+                    delay = delays[worst]
+                    if delay <= 0:
+                        break
+                    if waited + delay > MAX_QUEUE_SECONDS:
+                        raise QuotaWaitTooLong(delay, worst)
+                    step = min(delay, MINUTE)
+                    log.info(
+                        "[%s] quota %s atteint : temporisation %.1fs",
+                        self.name, worst, step,
+                    )
+                    if wait_gone is not None and watcher is None:
+                        watcher = asyncio.ensure_future(wait_gone())
+                    if watcher is None:
+                        await asyncio.sleep(step)
+                    else:
+                        done, _ = await asyncio.wait({watcher}, timeout=step)
+                        if done:
+                            if watcher.exception() is None:
+                                raise ClientGone()
+                            # Surveillance en échec : on continue d'attendre
+                            # comme avant, sans elle.
+                            log.debug("surveillance de déconnexion perdue : %r",
+                                      watcher.exception())
+                            wait_gone, watcher = None, None
+                    waited += step
                 now = time.monotonic()
-                self.minute.evict(now)
-                self.day.evict(now)
-                delays = {
-                    "minute": self.minute.wait_needed(now, cost),
-                    "jour": self.day.wait_needed(now, cost),
-                }
-                worst = max(delays, key=delays.get)
-                delay = delays[worst]
-                if delay <= 0:
-                    break
-                if waited + delay > MAX_QUEUE_SECONDS:
-                    raise QuotaWaitTooLong(delay, worst)
-                step = min(delay, MINUTE)
-                log.info(
-                    "[%s] quota %s atteint : temporisation %.1fs",
-                    self.name, worst, step,
-                )
-                await asyncio.sleep(step)
-                waited += step
-            now = time.monotonic()
-            self.minute.record(now, cost)
-            self.day.record(now, cost)
+                self.minute.record(now, cost)
+                self.day.record(now, cost)
+        finally:
+            if watcher is not None:
+                watcher.cancel()
         return waited
 
     def snapshot(self) -> dict:
@@ -505,6 +540,16 @@ class QuotaState:
             cfg = FAMILY_LIMITS[key]
             lim = Limiter(key, "famille", rpm=_m(cfg["rpm"]), tpm=_m(cfg["tpm"]))
         else:
+            if len(self.limiters) >= MAX_BUCKETS:
+                key = "generic:*"
+                lim = self.limiters.get(key)
+                if lim is not None:
+                    return lim
+                log.warning(
+                    "[%s] %d buckets atteints : les modèles inconnus "
+                    "partagent désormais un générique commun",
+                    self.name, MAX_BUCKETS,
+                )
             lim = Limiter(self.bucket_display.get(key, key), "générique",
                           rpm=_m(GENERIC_RPM), tpm=_m(GENERIC_TPM))
             log.info(

@@ -26,8 +26,11 @@ choisit le backend par le **préfixe du nom de modèle**
   sous les limites du compte (fenêtres minute **et** jour, chargées via
   `/v1/me/info`, rafraîchies périodiquement). Retarde plutôt que
   rejeter ; si l'attente dépasse `quotas.max_queue_seconds` (quota journalier
-  épuisé) → 429 local avec `Retry-After`. Plusieurs backends à quotas
-  possibles (deux comptes Albert = deux jeux de limiteurs indépendants).
+  épuisé) → 429 local avec `Retry-After`. Un client qui raccroche pendant
+  l'attente quitte la file sans rien consommer (compté `499`) : un SDK qui
+  retente sur timeout n'empile pas de doublons facturés. Plusieurs backends
+  à quotas possibles (deux comptes Albert = deux jeux de limiteurs
+  indépendants).
 - **Backends locaux à la demande** — jamais sondés en tâche de fond
   (souvent éteints) : connexion coupée à 5 s, backend éteint → 503
   `backend_offline` avec `Retry-After`, et simplement absent de
@@ -321,8 +324,8 @@ cumulables :
 
 - **`proxy.api_keys`** : exige des clients une clé à la OpenAI
   (`Authorization: Bearer <clé>`) — sans elle, 401. Quand l'auth est
-  active, le Bearer du client n'est jamais relayé aux backends (c'est
-  la clé du proxy, pas de l'upstream). Le tableau de bord `/ui` est
+  active, ni le Bearer du client ni ses cookies ne sont relayés aux
+  backends (c'est la clé du proxy, pas de l'upstream). Le tableau de bord `/ui` est
   soumis à la même clé : un navigateur ne pouvant pas poser d'en-tête,
   elle s'y passe une fois en `?key=<clé>` puis est mémorisée dans un
   cookie `HttpOnly` (`SameSite=Strict`).
