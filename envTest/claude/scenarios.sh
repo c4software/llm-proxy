@@ -16,7 +16,15 @@ result() { node -e '
   process.stdout.write(String(j.is_error ? "ERROR: " + j.result : j.result));'; }
 run() { claude -p --dangerously-skip-permissions --output-format json "$@" 2>/dev/null | result; }
 
-echo "Claude Code $(claude --version 2>/dev/null | head -1) → $ANTHROPIC_BASE_URL | modèle $ANTHROPIC_MODEL"
+version=$(claude --version 2>/dev/null | head -1)
+summary=""
+
+for model in $MODELS; do
+export ANTHROPIC_MODEL="$model"
+fails_before=$fails
+echo
+echo "════ Claude Code $version → $ANTHROPIC_BASE_URL | modèle $model ════"
+rm -rf /work/* 2>/dev/null
 
 echo "1. Réponse simple (POST /v1/messages, flux SSE)"
 out=$(run "Réponds en un seul mot : quelle est la capitale de la France ?")
@@ -150,5 +158,11 @@ echo "13. Bash : pipeline et chiffre vérifiable"
 out=$(run "Avec une seule commande shell, compte le nombre total de lignes des fichiers du dossier docs et réponds uniquement par ce nombre.")
 case "$out" in *3*) pass "$out" ;; *) fail "$out" ;; esac
 
+failed=$((fails - fails_before))
+summary="$summary
+  $model : $((13 - failed))/13"
+done
+
 echo
+echo "Résumé :$summary"
 [ "$fails" -eq 0 ] && echo "Tout passe." || { echo "$fails scénario(s) en échec."; exit 1; }

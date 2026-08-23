@@ -1,21 +1,24 @@
 #!/bin/sh
-# Les scénarios de validation pi → proxy, joués DEUX fois : par l'API
-# OpenAI (provider llm-proxy) puis par l'API Anthropic (provider
-# llm-proxy-anthropic) — un second client Anthropic, indépendant du SDK
-# officiel, sur la même traduction. PASS/FAIL par scénario, sortie en
-# erreur si l'un échoue. Tout se passe dans /work du conteneur.
+# Les scénarios de validation pi → proxy, par l'API OpenAI (provider
+# llm-proxy), rejoués pour chaque modèle de MODELS. PASS/FAIL par
+# scénario, sortie en erreur si l'un échoue. Tout se passe dans /work du
+# conteneur. (Le provider llm-proxy-anthropic de models.json n'est pas
+# joué ici — il reste disponible pour un essai à la main.)
 set -u
 cd /work
 fails=0
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails + 1)); }
 
-echo "pi $(pi --version 2>/dev/null | head -1) → $PROXY_URL | modèle $MODEL"
+version=$(pi --version 2>/dev/null | head -1)
+summary=""
 
-for provider in llm-proxy llm-proxy-anthropic; do
+for MODEL in $MODELS; do
   echo
-  echo "── provider $provider ──"
-  run() { pi -p --no-session --provider "$provider" --model "$MODEL" "$@" 2>&1 | tail -n 20; }
+  echo "════ pi $version → $PROXY_URL | modèle $MODEL ════"
+  rm -rf /work/* 2>/dev/null
+  fails_before=$fails
+  run() { pi -p --no-session --provider llm-proxy --model "$MODEL" "$@" 2>&1 | tail -n 20; }
 
   echo "1. Réponse simple"
   out=$(run "Réponds en un seul mot : quelle est la capitale de la France ?")
@@ -57,7 +60,10 @@ JS
   if [ "$(cksum slugify.test.js)" != "$sum" ]; then fail "test modifié — $out"
   elif node slugify.test.js >/dev/null 2>&1; then pass "slugify.js corrigé — $(echo "$out" | tail -n 1)"; else fail "$out"; fi
   cd /work
+  summary="$summary
+  $MODEL : $((5 - fails + fails_before))/5"
 done
 
 echo
+echo "Résumé :$summary"
 [ "$fails" -eq 0 ] && echo "Tout passe." || { echo "$fails scénario(s) en échec."; exit 1; }

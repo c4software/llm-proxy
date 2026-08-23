@@ -6,7 +6,7 @@
 #
 #   cp .env.example .env          # PROXY_URL, MODEL…
 #   docker compose run --rm claude            # tous les scénarios Claude Code
-#   docker compose run --rm pi                # tous les scénarios pi
+#   docker compose run --rm pi                # tous les scénarios pi (API OpenAI)
 #   docker compose run --rm claude claude     # Claude Code interactif
 #   docker compose run --rm pi pi             # pi interactif
 #
@@ -19,7 +19,6 @@ services:
     environment:
       ANTHROPIC_BASE_URL: "${PROXY_URL}"
       ANTHROPIC_API_KEY: "${PROXY_API_KEY}"
-      ANTHROPIC_MODEL: "${MODEL}"
       ANTHROPIC_SMALL_FAST_MODEL: "${SMALL_MODEL}"
     command: ["./scenarios.sh"]
 
