@@ -479,7 +479,7 @@ async def chat_completions(request: Request):
     if prefixed:
         raw = strip_backend_prefix(payload, backend)
     elif injected:
-        raw = json.dumps(payload).encode()
+        raw = json.dumps(payload, ensure_ascii=False).encode()
     if not backend.quotas:
         albert.maybe_log_status()
         return await forward(request, "v1/chat/completions", raw,

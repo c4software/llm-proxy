@@ -135,9 +135,11 @@ def unknown_prefix_response(model: str) -> JSONResponse:
 
 def strip_backend_prefix(payload: dict, b: Backend) -> bytes:
     """Retire «<nom>/» du champ model (l'upstream ne connaît pas le
-    préfixe) et ré-encode le corps."""
+    préfixe) et ré-encode le corps. ensure_ascii=False : sans lui, chaque
+    accent partirait en «\\uXXXX» — corps gonflé sur des prompts français,
+    pour un JSON strictement équivalent."""
     payload["model"] = str(payload["model"])[len(b.name) + 1:]
-    return json.dumps(payload).encode()
+    return json.dumps(payload, ensure_ascii=False).encode()
 
 
 def backend_offline_response(b: Backend, exc: Exception) -> JSONResponse:
