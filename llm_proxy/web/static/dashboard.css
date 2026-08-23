@@ -22,11 +22,9 @@ body {
 header { margin-bottom: 34px; }
 .brand {
   display: inline-flex; align-items: center; gap: 9px;
-  /* Le badge de surface Anthropic suit le titre, en retrait. */
   font-size: 13px; letter-spacing: .13em; text-transform: uppercase;
   color: var(--muted); margin-bottom: 18px;
 }
-.brand .tag { margin-left: 10px; text-transform: none; letter-spacing: .02em; }
 .dot {
   width: 9px; height: 9px; border-radius: 50%; background: var(--accent);
   box-shadow: 0 0 0 4px var(--accent-soft);

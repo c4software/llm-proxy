@@ -21,14 +21,7 @@
 <body>
 <div class="wrap" id="app" v-cloak>
   <header>
-    <div class="brand"><span class="dot"></span> llm-proxy
-      <!-- Surface Anthropic (Claude Code) : lu une fois sur /healthz. -->
-      <span v-if="anthropic !== null" class="tag"
-            :class="anthropic ? 'exact' : ''"
-            :title="anthropic ? 'POST /v1/messages actif — ANTHROPIC_BASE_URL peut pointer ici'
-                              : '[anthropic].enabled absent ou false dans config.toml'">
-        Claude Code {{ anthropic ? "actif" : "inactif" }}</span>
-    </div>
+    <div class="brand"><span class="dot"></span> llm-proxy</div>
     <h1>Statistiques d'usage</h1>
   </header>
 

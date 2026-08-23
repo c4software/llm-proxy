@@ -228,15 +228,14 @@ Le badge **exact / estimé** de la colonne *Comptage* dit d'où viennent les
 tokens : le bloc `usage` de l'upstream, ou l'estimation de repli
 (streaming sans `stream_options.include_usage`).
 
-Un badge **Claude Code actif / inactif** dans l'en-tête dit si la
-surface Anthropic est ouverte (lu une fois sur `/healthz`, jamais dans
-la boucle) ; la carte *Requêtes* et la ligne de chaque modèle comptent
-celles arrivées par `/v1/messages`.
+La carte *Requêtes* et la ligne de chaque modèle comptent celles
+arrivées par `/v1/messages` (Claude Code).
 
 En bas de page, le panneau repliable **Brancher un client** donne des
-commandes prêtes à coller — catalogue, `curl`, SDK OpenAI, Claude Code —
-dérivées de l'URL de la page, de l'auth (`/healthz`) et du modèle le
-plus actif de la période.
+commandes prêtes à coller — catalogue, `curl`, SDK OpenAI, Claude Code
+(avec l'état actif / inactif de la surface Anthropic) — dérivées de
+l'URL de la page, de l'auth et des modèles connus (`/healthz`, lu une
+fois, jamais dans la boucle) et du modèle le plus actif de la période.
 
 ## Claude Code
 

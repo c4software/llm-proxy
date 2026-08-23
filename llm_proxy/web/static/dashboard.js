@@ -17,9 +17,9 @@
   Un second appel, léger, sert uniquement à savoir jusqu'où remonte
   l'historique — au chargement et au changement de période, jamais dans
   la boucle. La vue « Tout » en a besoin pour choisir son découpage.
-  Un troisième, UNE fois au chargement, lit /healthz pour afficher si la
-  surface Anthropic (Claude Code) est active — ce n'est pas de l'usage,
-  ça ne bouge pas, ça ne se rafraîchit pas.
+  Un troisième, UNE fois au chargement, lit /healthz pour le panneau
+  « Brancher un client » (auth, surface Anthropic, modèles connus) — ce
+  n'est pas de l'usage, ça ne bouge pas, ça ne se rafraîchit pas.
 
   Rien n'est demandé tant que l'onglet est masqué.
 
