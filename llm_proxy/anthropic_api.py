@@ -435,13 +435,25 @@ def _msg_id() -> str:
     return "msg_" + uuid.uuid4().hex[:24]
 
 
+def _cached(u) -> int:
+    details = u.get("prompt_tokens_details") if isinstance(u, dict) else None
+    if isinstance(details, dict) and isinstance(details.get("cached_tokens"), int):
+        return max(details["cached_tokens"], 0)
+    return 0
+
+
 def _usage(u) -> dict:
+    """Usage Anthropic. Chez Anthropic, input_tokens EXCLUT les tokens
+    lus en cache ; chez OpenAI, prompt_tokens les inclut — on soustrait,
+    pour que le client (Claude Code) additionne juste."""
     u = u if isinstance(u, dict) else {}
+    cached = _cached(u)
+    prompt = int(u.get("prompt_tokens") or 0)
     return {
-        "input_tokens": int(u.get("prompt_tokens") or 0),
+        "input_tokens": max(prompt - cached, 0),
         "output_tokens": int(u.get("completion_tokens") or 0),
         "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 0,
+        "cache_read_input_tokens": cached,
     }
 
 
@@ -592,6 +604,9 @@ class Translator:
         msg = from_openai(doc, self.model)
         self.out_chars = sum(len(b.get("text", "")) for b in msg["content"])
         return json.dumps(msg, ensure_ascii=False).encode()
+
+    def cached(self) -> int:
+        return _cached(self.usage)
 
     def tokens(self, fallback_prompt: int) -> tuple[int, int, bool]:
         u = self.usage or {}

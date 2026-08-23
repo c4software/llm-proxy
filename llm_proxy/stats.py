@@ -204,6 +204,21 @@ class UsageCollector:
                     True)
         return fallback_prompt, _est(self.out_chars), False
 
+    def cached(self) -> int:
+        return cached_tokens(self.usage)
+
+
+def cached_tokens(usage) -> int:
+    """Tokens d'entrée servis depuis le cache de préfixe du backend :
+    `prompt_tokens_details.cached_tokens` (OpenAI, llama.cpp, vLLM…).
+    0 si l'upstream ne le dit pas — jamais une valeur inventée."""
+    if not isinstance(usage, dict):
+        return 0
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict) and isinstance(details.get("cached_tokens"), int):
+        return max(details["cached_tokens"], 0)
+    return 0
+
 
 # ── Base ────────────────────────────────────────────────────────────────
 
@@ -220,7 +235,8 @@ CREATE TABLE IF NOT EXISTS requests (
   prompt_tokens     INTEGER NOT NULL,
   completion_tokens INTEGER NOT NULL,
   exact             INTEGER NOT NULL,
-  streamed          INTEGER NOT NULL
+  streamed          INTEGER NOT NULL,
+  cached_tokens     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS requests_ts       ON requests(ts);
 CREATE INDEX IF NOT EXISTS requests_ts_model ON requests(ts, model_key);
@@ -229,13 +245,32 @@ CREATE INDEX IF NOT EXISTS requests_ts_model ON requests(ts, model_key);
 INSERT = """
 INSERT INTO requests (ts, model_key, backend, model, endpoint, status,
                       latency, prompt_tokens, completion_tokens, exact,
-                      streamed)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      streamed, cached_tokens)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
+# Colonnes ajoutées après coup : une base existante les reçoit par ALTER
+# TABLE au démarrage, avec leur défaut — aucune migration à jouer à la
+# main. (nom, définition)
+ADDED_COLUMNS = (
+    ("cached_tokens", "INTEGER NOT NULL DEFAULT 0"),
+)
 
-def _connect(path: str = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, timeout=10.0, check_same_thread=False)
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    present = {row[1] for row in conn.execute("PRAGMA table_info(requests)")}
+    for name, ddl in ADDED_COLUMNS:
+        if name not in present:
+            conn.execute(f"ALTER TABLE requests ADD COLUMN {name} {ddl}")
+            log.info("stats : colonne %s ajoutée à la base existante", name)
+    conn.commit()
+
+
+def _connect(path: str | None = None) -> sqlite3.Connection:
+    # Résolu à l'appel, pas à la définition : un test qui remplace
+    # DB_PATH doit ouvrir SA base, jamais celle du déploiement.
+    conn = sqlite3.connect(path or DB_PATH, timeout=10.0,
+                           check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=10000")
@@ -312,6 +347,7 @@ def init() -> None:
         conn = _connect()
         conn.executescript(SCHEMA)
         conn.commit()
+        _migrate(conn)
         _purge(conn)
         _writer = threading.Thread(target=_write_loop, args=(conn,),
                                    name="stats-writer", daemon=True)
@@ -352,7 +388,8 @@ class _reader:
 
 def record(model_key: str, backend: str, model: str, endpoint: str,
            status: int, latency: float, prompt_tokens: int,
-           completion_tokens: int, exact: bool, streamed: bool) -> None:
+           completion_tokens: int, exact: bool, streamed: bool,
+           cached_tokens: int = 0) -> None:
     """Enregistre UNE requête. `model_key` est le nom préfixé demandé par
     le client. Non bloquant : la ligne part dans la file d'écriture."""
     if not model_key:
@@ -361,7 +398,7 @@ def record(model_key: str, backend: str, model: str, endpoint: str,
     row = (time.time(), model_key, backend, model, "/" + endpoint.strip("/"),
            int(status), max(float(latency), 0.0), max(int(prompt_tokens), 0),
            max(int(completion_tokens), 0), int(bool(exact)),
-           int(bool(streamed)))
+           int(bool(streamed)), max(int(cached_tokens), 0))
     try:
         _pending.put_nowait(row)
     except queue.Full:
@@ -410,6 +447,7 @@ SELECT CAST((ts - ?) / ? AS INTEGER)      AS b,
        SUM(streamed),
        SUM(NOT exact),
        SUM(endpoint = '/v1/messages'),
+       SUM(cached_tokens),
        SUM(latency),
        MAX(latency),
        MIN(ts),
@@ -507,14 +545,17 @@ def usage_completions(start_time: int, end_time: int | None = None,
     grouped: dict[int, list] = {}
     seen_first: dict[int, float] = {}
     for (b, mk, prompt, completion, requests, errors, streamed, estimated,
-         anthropic, latency_sum, latency_max, first_ts, last_ts) in rows:
+         anthropic, cached, latency_sum, latency_max, first_ts, last_ts) in rows:
         grouped.setdefault(b, []).append({
             "object": "organization.usage.completions.result",
             "input_tokens": prompt or 0,
             "output_tokens": completion or 0,
-            # Le proxy ne sait rien du cache ni de l'audio : 0, jamais
-            # une valeur inventée.
-            "input_cached_tokens": 0,
+            # Tokens d'entrée servis depuis le cache de préfixe du
+            # backend, quand l'upstream le dit (prompt_tokens_details.
+            # cached_tokens — llama.cpp, vLLM, OpenAI) ; 0 sinon, jamais
+            # une valeur inventée. Inclus dans input_tokens, comme chez
+            # OpenAI. L'audio, lui, reste inconnu : 0.
+            "input_cached_tokens": cached or 0,
             "input_audio_tokens": 0,
             "output_audio_tokens": 0,
             "num_model_requests": requests,

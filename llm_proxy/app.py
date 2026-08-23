@@ -327,7 +327,7 @@ class Call:
 
     def done(self, status: int, prompt_tokens: int = 0,
              completion_tokens: int = 0, exact: bool = False,
-             streamed: bool = False) -> None:
+             streamed: bool = False, cached_tokens: int = 0) -> None:
         if self._done or not self.model_key:
             return
         self._done = True
@@ -337,11 +337,12 @@ class Call:
         # de Claude Code et faisait passer ces lignes pour des mesures
         # approximatives — ce sont des zéros exacts.
         if status >= 400 and not exact:
-            prompt_tokens = completion_tokens = 0
+            prompt_tokens = completion_tokens = cached_tokens = 0
             exact = True
         stats.record(self.model_key, self.backend.name, self.plain_model,
                      self.endpoint, status, time.monotonic() - self.started,
-                     prompt_tokens, completion_tokens, exact, streamed)
+                     prompt_tokens, completion_tokens, exact, streamed,
+                     cached_tokens)
 
     def error(self, status: int, type_: str, message: str,
               headers: dict | None = None) -> JSONResponse:
@@ -488,7 +489,7 @@ async def relay(call: Call, upstream: httpx.Response, robinet,
             )
         prompt, completion, exact = robinet.tokens(prompt_estimate)
         call.done(upstream.status_code, prompt, completion, exact,
-                  robinet.sse)
+                  robinet.sse, robinet.cached())
         await upstream.aclose()
 
 

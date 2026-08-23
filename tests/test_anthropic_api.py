@@ -221,6 +221,17 @@ def test_from_openai_text():
     assert msg["usage"]["output_tokens"] == 3
 
 
+def test_from_openai_cached_tokens_split_like_anthropic():
+    """OpenAI : prompt_tokens INCLUT le cache ; Anthropic : input_tokens
+    l'EXCLUT, cache_read_input_tokens le porte. Le total reste égal."""
+    msg = A.from_openai({"choices": [{"message": {"content": "x"},
+                                      "finish_reason": "stop"}],
+                         "usage": {"prompt_tokens": 20000, "completion_tokens": 5,
+                                   "prompt_tokens_details": {"cached_tokens": 18000}}}, "m")
+    assert msg["usage"]["input_tokens"] == 2000
+    assert msg["usage"]["cache_read_input_tokens"] == 18000
+
+
 def test_from_openai_tool_calls_and_length():
     msg = A.from_openai({"choices": [{"message": {
         "content": None,

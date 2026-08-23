@@ -48,7 +48,9 @@
       <div class="label">Tokens</div>
       <div class="value">{{ num(totals.tokens) }}</div>
       <div class="hint">{{ num(totals.prompt) }} entrée ·
-        {{ num(totals.completion) }} sortie</div>
+        {{ num(totals.completion) }} sortie<template v-if="totals.cached">
+        · {{ Math.round(100 * totals.cached / totals.prompt) || "<1" }}% de
+        l'entrée en cache</template></div>
     </div>
     <div class="card">
       <div class="label">Modèles actifs</div>
@@ -125,6 +127,7 @@
         <thead><tr>
           <th>Modèle</th><th>Requêtes</th><th>Erreurs</th><th>Entrée</th>
           <th>Sortie</th><th>Total</th><th>Moy./req</th>
+          <th>Cache</th>
           <th>Lat. moy.</th><th>Lat. max</th>
           <th>Comptage</th><th>Dernière</th>
         </tr></thead>
@@ -147,6 +150,12 @@
             <td>{{ num(m.completion) }}</td>
             <td><strong>{{ num(m.tokens) }}</strong></td>
             <td>{{ num(m.avg) }}</td>
+            <!-- Cache de préfixe du backend : part de l'entrée qu'il n'a
+                 pas eu à recalculer. «—» quand il ne le dit pas. -->
+            <td :title="m.cached ? num(m.cached) + ' tokens d\'entrée lus en cache' : 'le backend ne remonte pas de cached_tokens'">
+              <span v-if="m.cached">{{ m.cachePct }}%</span>
+              <span v-else class="dim">—</span>
+            </td>
             <td>{{ ms(m.avgLatency) }}</td>
             <td class="dim">{{ ms(m.maxLatency) }}</td>
             <!-- Provenance des tokens : `usage` de l'upstream, ou
@@ -162,7 +171,7 @@
             <td class="dim">{{ ago(m.last) }}</td>
           </tr>
           <tr v-if="!models.length && loaded">
-            <td colspan="11"><div class="empty">
+            <td colspan="12"><div class="empty">
               <div class="big">Aucune génération sur cette période</div>
               <div v-if="since">Les mesures remontent à {{ dur(now - since) }} ;
                 essayez une période plus large.</div>

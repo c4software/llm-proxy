@@ -107,8 +107,8 @@ createApp({
           if (!m) {
             acc.set(r.model, m = {
               id: r.model, requests: 0, errors: 0, streamed: 0, estimated: 0,
-              anthropic: 0, prompt: 0, completion: 0, latencySum: 0,
-              maxLatency: 0, last: 0,
+              anthropic: 0, prompt: 0, cached: 0, completion: 0,
+              latencySum: 0, maxLatency: 0, last: 0,
             });
           }
           m.requests += r.num_model_requests;
@@ -117,6 +117,7 @@ createApp({
           m.estimated += r.num_estimated_requests;
           m.anthropic += r.num_anthropic_requests || 0;
           m.prompt += r.input_tokens;
+          m.cached += r.input_cached_tokens || 0;
           m.completion += r.output_tokens;
           m.latencySum += r.total_latency_seconds;
           m.maxLatency = Math.max(m.maxLatency, r.max_latency_seconds);
@@ -145,6 +146,10 @@ createApp({
           avgLatency: m.requests ? m.latencySum / m.requests : 0,
           exact,
           exactPct: m.requests ? Math.round((100 * exact) / m.requests) : 0,
+          // Part de l'entrée servie depuis le cache de préfixe du backend
+          // (quand il le dit) : c'est ce qui fait qu'un prompt système de
+          // 20 k tokens ne coûte pas 20 k tokens de calcul à chaque tour.
+          cachePct: m.prompt ? Math.round((100 * m.cached) / m.prompt) : 0,
           share: grand ? (100 * tokens) / grand : 0,
         };
       });
@@ -156,10 +161,11 @@ createApp({
       streamed: t.streamed + m.streamed,
       anthropic: t.anthropic + m.anthropic,
       prompt: t.prompt + m.prompt,
+      cached: t.cached + m.cached,
       completion: t.completion + m.completion,
       tokens: t.tokens + m.tokens,
     }), { requests: 0, errors: 0, streamed: 0, anthropic: 0, prompt: 0,
-          completion: 0, tokens: 0 }));
+          cached: 0, completion: 0, tokens: 0 }));
 
     const successRate = computed(() => {
       const t = totals.value;

@@ -88,7 +88,7 @@ l'API Anthropic — **Claude Code** — s'y branche aussi, le proxy traduit.
 | `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête), extraction de l'`usage` dans le flux de réponse, et l'Usage API |
 | `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
-| `tests/` | Tests du traducteur (`pytest`, `requirements-dev.txt`) — sur des octets, sans réseau |
+| `tests/` | Tests du traducteur et des stats (`pytest`, `requirements-dev.txt`) — sur des octets et une base temporaire, sans réseau |
 | `envTest/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code et pi, scénarios PASS/FAIL — voir `envTest/README.md` |
 | `llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `dashboard.css`, `vue.global.prod.js`) |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
@@ -142,6 +142,10 @@ pas, la compatibilité reste entière :
 
 - `bucket_width=all` en plus de `1m`/`1h`/`1d` : un seul seau couvrant
   toute la plage, pour obtenir un total sans agréger soi-même ;
+- `input_cached_tokens` est **renseigné** quand le backend dit ce qu'il a
+  servi depuis son cache de préfixe (`prompt_tokens_details.cached_tokens`
+  — llama.cpp, vLLM, OpenAI) ; `0` sinon, jamais une valeur inventée.
+  Inclus dans `input_tokens`, comme chez OpenAI ;
 - chaque `result` porte, en plus des champs du schéma, ce que le proxy
   sait mesurer et qu'OpenAI n'expose pas : `num_errors`,
   `num_streamed_requests`, `num_estimated_requests`,
@@ -238,6 +242,12 @@ tokens : le bloc `usage` de l'upstream, ou l'estimation de repli
 
 La carte *Requêtes* et la ligne de chaque modèle comptent celles
 arrivées par `/v1/messages` (Claude Code).
+
+La colonne **Cache** dit quelle part de l'entrée le backend a servie
+depuis son cache de préfixe, quand il le remonte (llama.cpp, vLLM) ;
+`—` sinon (Albert). C'est la réponse à « le cache marche-t-il ? » : avec
+Claude Code, un second tour qui rejoue les ~20 k tokens du prompt
+système doit approcher 100 %.
 
 En bas de page, le panneau repliable **Brancher un client** donne des
 commandes prêtes à coller — catalogue, `curl`, SDK OpenAI, Claude Code
@@ -516,11 +526,16 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 
 ## Limites connues
 
-- **Pas de cache de prompt explicite** : `cache_control` est ignoré,
-  rien d'équivalent côté OpenAI. Un backend à cache de préfixe (vLLM,
-  llama.cpp) en profite implicitement quand les messages sont stables ;
-  Albert, non — le prompt système de Claude Code (~18 k tokens) est
-  facturé à chaque tour.
+- **Pas de cache côté proxy** : `cache_control` est ignoré, rien
+  d'équivalent côté OpenAI, et le cache KV appartient au serveur
+  d'inférence. Un backend à cache de préfixe (vLLM, llama.cpp) en
+  profite implicitement quand le début de la conversation ne change pas
+  d'un tour à l'autre — le proxy y veille (sérialisation stable,
+  `system` en tête, injections toujours au même endroit) et le **mesure**
+  (`input_cached_tokens`, colonne *Cache*). Albert, lui, facture le
+  prompt système de Claude Code (~20 k tokens) à chaque tour. Un client
+  Anthropic reçoit `cache_read_input_tokens` et un `input_tokens` qui
+  l'exclut, comme chez Anthropic.
 - **PDF** (`document` base64) : remplacé par un texte. Un backend qui
   accepterait la partie `file` d'OpenAI pourrait le recevoir — le jour
   où il y en a un.
