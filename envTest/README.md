@@ -62,6 +62,7 @@ Pour essayer à la main, même image, même configuration :
 | `.env.example` | `PROXY_URL` (le proxy vu des conteneurs), `PROXY_API_KEY`, `MODELS` (préfixés, séparés par des espaces), `SMALL_MODEL` — copié en `.env`, ignoré par git |
 | `docker-compose.yml` | Les deux services, en **réseau hôte** (`127.0.0.1:8000` = le proxy de la racine) |
 | `claude/Dockerfile` | `node:22-slim` + `@anthropic-ai/claude-code`, utilisateur non root (requis par `--dangerously-skip-permissions`), télémétrie et mises à jour coupées |
+| `claude/settings.json` | Le `~/.claude/settings.json` **du conteneur** : `CLAUDE_CODE_ATTRIBUTION_HEADER=0`, pour que l'attribution (variable d'une requête à l'autre) ne décale pas le préfixe et ne fasse pas manquer le cache du backend |
 | `claude/scenarios.sh` | Les 13 scénarios Claude Code, rejoués pour chaque modèle de `MODELS` (`ANTHROPIC_MODEL` posé par le script) |
 | `pi/Dockerfile` | `node:22-slim` + `@earendil-works/pi-coding-agent`, `PI_CODING_AGENT_DIR=/pi/agent` |
 | `pi/models.json.tpl` | Les providers pi : `llm-proxy` (`openai-completions`, `${PROXY_URL}/v1`) — le seul joué — et `llm-proxy-anthropic` (`anthropic-messages`), gardé pour un essai à la main |

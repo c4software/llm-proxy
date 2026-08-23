@@ -267,6 +267,11 @@ tout SDK Anthropic) se branche sur le proxy sans rien d'autre :
     # export ANTHROPIC_SMALL_FAST_MODEL=bigchuck/qwen3-8b
     claude
 
+Dans `~/.claude/settings.json`, `{"env": {"CLAUDE_CODE_ATTRIBUTION_HEADER":
+"0"}}` retire l'attribution que Claude Code ajoute à ses requêtes —
+variable d'une fois à l'autre, elle décale le préfixe et fait manquer le
+cache du backend (colonne *Cache* du tableau de bord pour le vérifier).
+
 Validé avec un vrai Claude Code et avec pi, en conteneurs, sur des
 scénarios d'outils et de création de code — voir `envTest/`.
 
