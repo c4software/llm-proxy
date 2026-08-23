@@ -101,7 +101,7 @@ models = ["openweight-large", "gpt-oss"]
 # catalogue fusionné, ids préfixés.
 #
 # Champs : url (requis), api_key, quotas, timeout, meta_timeout,
-# verify_ssl, force_tool_choice.
+# connect_timeout, verify_ssl, force_tool_choice.
 #
 # force_tool_choice — injection de `tool_choice` quand `tools` est présent
 # sans `tool_choice` : absent/false = AUCUNE injection (le défaut) ;
@@ -117,6 +117,7 @@ force_tool_choice = "auto"
 
 # Backend local llama.cpp : sans quota, pas toujours allumé — contacté
 # uniquement à la demande, jamais sondé en tâche de fond ; éteint → 503
-# backend_offline, échec rapide en ~5 s.
+# backend_offline en 1 s (connect_timeout, poignée de main TCP seule —
+# un hôte allumé répond bien avant, même occupé à générer).
 [backends.bigchuck]
 url = "http://bigchuck:8009"

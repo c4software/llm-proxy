@@ -374,6 +374,7 @@ async def healthz():
                 "tool_choice": b.tool_choice or False,
                 "timeout": b.timeout,
                 "meta_timeout": b.meta_timeout,
+                "connect_timeout": b.connect_timeout,
                 "last_seen_models": sorted(f"{name}/{m}" for m in b.models),
                 **(b.quota_state.snapshot() if b.quotas else {}),
             }

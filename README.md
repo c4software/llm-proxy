@@ -32,7 +32,7 @@ choisit le backend par le **préfixe du nom de modèle**
   à quotas possibles (deux comptes Albert = deux jeux de limiteurs
   indépendants).
 - **Backends locaux à la demande** — jamais sondés en tâche de fond
-  (souvent éteints) : connexion coupée à 5 s, backend éteint → 503
+  (souvent éteints) : connexion coupée à 1 s, backend éteint → 503
   `backend_offline` avec `Retry-After`, et simplement absent de
   `/v1/models`.
 - **Clé centralisée** — la clé Albert ne vit que dans le proxy ;
@@ -263,7 +263,10 @@ Champs : `api_key` (**la clé du backend vit ici**, et nulle part ailleurs
 l'`Authorization` du client), `quotas` (active le limiteur Albert),
 `timeout` (secondes, défaut `proxy.upstream_timeout`), `meta_timeout`
 (secondes pour les appels de méta-données — `/v1/models`, `/v1/me/info`
-—, défaut `proxy.meta_timeout`), `verify_ssl = false` (certificat
+—, défaut `proxy.meta_timeout`), `connect_timeout` (secondes pour la
+seule poignée de main TCP — défaut `1` sans quota, `15` avec : un
+backend local éteint échoue en 1 s, un hôte vivant répond bien avant
+même occupé), `verify_ssl = false` (certificat
 auto-signé), `force_tool_choice` (injection de `tool_choice` : absent ou
 `false` → **aucune injection**, c'est le défaut ; `true` → la valeur de
 `proxy.tool_choice` ; une chaîne (`"auto"`, `"required"`…) → cette

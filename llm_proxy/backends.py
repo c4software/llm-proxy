@@ -36,6 +36,13 @@ class Backend:
         self.quotas = bool(cfg.get("quotas", False))
         self.timeout = float(cfg.get("timeout", TIMEOUT))
         self.meta_timeout = float(cfg.get("meta_timeout", META_TIMEOUT))
+        # Poignée de main TCP seulement — traitée par le noyau, même si
+        # le serveur derrière est occupé à générer. Un hôte vivant répond
+        # en < 50 ms sur LAN, < 300 ms via Tailscale : 1 s suffit à un
+        # backend local, souvent ÉTEINT, pour échouer vite (503 en 1 s
+        # plutôt qu'en 5). Plus large vers l'Internet.
+        self.connect_timeout = float(cfg.get(
+            "connect_timeout", 15.0 if self.quotas else 1.0))
         # Injection de `tool_choice` : DÉSACTIVÉE PAR DÉFAUT. Le
         # correctif ne vaut que pour les backends dont le schéma a
         # "none" pour défaut (Albert) ; ailleurs il est au mieux inutile,
@@ -162,11 +169,9 @@ def backend_offline_response(b: Backend, exc: Exception) -> JSONResponse:
 async def open_clients() -> None:
     """Un client HTTP par backend, ouvert au démarrage de l'application."""
     for b in BACKENDS.values():
-        # connect court pour les backends sans quota : souvent éteints,
-        # échouer vite.
         b.client = httpx.AsyncClient(
             base_url=b.url,
-            timeout=httpx.Timeout(b.timeout, connect=15.0 if b.quotas else 5.0),
+            timeout=httpx.Timeout(b.timeout, connect=b.connect_timeout),
             follow_redirects=False,
             verify=b.verify_ssl,
         )
