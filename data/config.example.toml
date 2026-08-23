@@ -165,8 +165,10 @@ models = ["openweight-large", "gpt-oss"]
 # par défaut, que certains backends refusent.
 #
 # images — le backend accepte les images (`image_url`) : les blocs image
-# d'un client Anthropic (Claude Code lisant un .png) lui sont transmis ;
-# absent/false = remplacés par «[image ignorée : image/png, 12 Ko]».
+# d'un client Anthropic (Claude Code lisant un .png) sont transmis aux
+# modèles que SON catalogue déclare multimodaux (type image-text-to-text)
+# — un modèle texte seul recevant une image est un 500 chez llama.cpp ;
+# absent/false, ou modèle texte = «[image ignorée : image/png, 12 Ko]».
 #
 # tokenize_path — endpoint de tokenisation pour un count_tokens EXACT
 # (llama.cpp : "/tokenize") ; absent = estimation à 4 caractères/token.

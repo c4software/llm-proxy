@@ -86,6 +86,7 @@ l'API Anthropic — **Claude Code** — s'y branche aussi, le proxy traduit.
 | `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
 | `tests/` | Tests du traducteur (`pytest`, `requirements-dev.txt`) — sur des octets, sans réseau |
+| `envTest/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code et pi, scénarios PASS/FAIL — voir `envTest/README.md` |
 | `llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `dashboard.css`, `vue.global.prod.js`) |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 
@@ -271,8 +272,11 @@ Ce qui se passe :
   `tokenize_path` (llama.cpp : `/tokenize`), sinon estimation locale
   (~4 caractères par token, comme le limiteur). Claude Code s'en sert
   pour sa jauge de contexte et le moment de son `/compact`.
-- Images : transmises en `image_url` si le backend a `images = true`,
-  sinon remplacées par `[image ignorée : image/png, 12 Ko]` — y compris
+- Images : transmises en `image_url` si le backend a `images = true`
+  **et** que le modèle est multimodal à son catalogue (type
+  `image-text-to-text`, chargé à la demande — un modèle texte recevant
+  une image est un 500 chez llama.cpp), sinon remplacées par
+  `[image ignorée : image/png, 12 Ko]` — y compris
   dans un `tool_result` (Claude Code lisant un `.png`), où l'image suit
   le message `tool` dans un message user. Un `document` texte passe tel
   quel, un PDF devient `[document ignoré : …]`.
@@ -372,9 +376,9 @@ valeur-là). Seule exception : si `[backends]` est absent du TOML, le
 backend Albert par défaut est livré avec `"auto"`, puisque c'est lui que
 le correctif vise. `max_tokens` (plafond, `0` ou absent = aucun : la
 valeur du client — `max_tokens` ou `max_completion_tokens` — est ramenée
-au plafond, jamais augmentée ni ajoutée). `images = true` (le backend
-accepte les `image_url` ; sinon les images d'un client Anthropic sont
-remplacées par un texte). `tokenize_path` (endpoint de tokenisation pour
+au plafond, jamais augmentée ni ajoutée). `images = true` (les modèles
+multimodaux au catalogue du backend reçoivent les `image_url` ; sinon
+les images d'un client Anthropic sont remplacées par un texte). `tokenize_path` (endpoint de tokenisation pour
 un `count_tokens` exact — llama.cpp : `"/tokenize"`).
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
@@ -497,8 +501,16 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
     python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
     .venv/bin/python -m pytest -q tests
 
+    # validation avec de vrais clients (Claude Code, pi), en conteneurs
+    cd envTest && cp .env.example .env && docker compose run --rm claude && docker compose run --rm pi
+
 ## À faire
 
+- Images : un backend `images = true` n'envoie une image qu'aux modèles
+  que son catalogue déclare `image-text-to-text` ; llama.cpp ne le
+  déclare pas toujours (dépend du `mmproj` chargé) — un modèle vision
+  vu comme texte recevra un texte de remplacement. À affiner si le cas
+  se présente.
 - PDF (`document` base64) : remplacé par un texte. Un backend qui
   accepte la partie `file` d'OpenAI pourrait le recevoir — à faire le
   jour où il y en a un.

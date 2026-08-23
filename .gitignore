@@ -9,3 +9,4 @@ data/stats.db-wal
 data/stats.db-shm
 .venv/
 .pytest_cache/
+envTest/.env

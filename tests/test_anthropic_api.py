@@ -162,6 +162,13 @@ def test_to_openai_tool_result_with_image():
                     "content": "lu[image ignorée : image/png, 3 Ko]"}]
 
 
+def test_has_images():
+    assert not A.has_images({"messages": [{"role": "user", "content": "x"}]})
+    assert A.has_images({"messages": [{"role": "user", "content": [IMG]}]})
+    assert A.has_images({"messages": [{"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t", "content": [IMG]}]}]})
+
+
 def test_to_openai_documents():
     out = A.to_openai({"model": "m", "messages": [{"role": "user", "content": [
         {"type": "document", "source": {"type": "text", "media_type": "text/plain",

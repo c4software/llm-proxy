@@ -422,7 +422,10 @@ async def send_upstream(call: Call, request: Request, path: str,
         f"/{path}",
         content=body or None,
         headers=clean_headers(request, b.api_key),
-        params=request.query_params,
+        # Un client Anthropic ajoute «?beta=true» et consorts à SES URLs :
+        # sans sens pour l'upstream. Un client OpenAI, lui, est relayé
+        # tel quel.
+        params=request.query_params if call.dialect == "openai" else None,
     )
     try:
         upstream = await b.client.send(req, stream=True)
@@ -556,54 +559,79 @@ def _model_type(m: dict) -> str:
     return "text-generation"
 
 
+async def fetch_models(b: Backend, request: Request | None = None) -> list | None:
+    """Le catalogue d'UN backend, normalisé et préfixé ; None s'il ne
+    répond pas. Met à jour b.models et b.model_types au passage."""
+    headers = b.auth_headers() or (
+        clean_headers(request, "") if request is not None else {})
+    try:
+        r = await b.client.get(
+            "/v1/models", headers=headers, timeout=b.meta_timeout,
+        )
+        if r.status_code != 200:
+            log.warning("/v1/models %s → %d", b.name, r.status_code)
+            return None
+        data = r.json().get("data") or []
+    except Exception as exc:
+        log.warning("/v1/models %s injoignable : %s", b.name, exc)
+        return None
+    # Entrées NORMALISÉES sur un schéma UNIFORME (celui d'Albert),
+    # id/aliases préfixés, champs manquants dérivés ou par défaut.
+    # Le reste (status, args, preset, chemins de .gguf, meta… —
+    # détail interne llama.cpp) est écarté : illisible pour les
+    # clients, et à ne pas publier.
+    entries = []
+    types: dict[str, str] = {}
+    for m in data:
+        if isinstance(m, dict) and m.get("id"):
+            costs = m.get("costs")
+            kind = _model_type(m)
+            types[str(m["id"]).lower()] = kind
+            for a in m.get("aliases") or []:
+                if isinstance(a, str):
+                    types[a.lower()] = kind
+            entries.append({
+                "object": "model",
+                "id": f"{b.name}/{m['id']}",
+                "created": m.get("created") or 0,
+                "owned_by": m.get("owned_by") or b.name,
+                "type": kind,
+                "costs": costs if isinstance(costs, dict)
+                else {"prompt_tokens": 0.0, "completion_tokens": 0.0},
+                "max_context_length": _model_max_context(m),
+                "aliases": [
+                    f"{b.name}/{a}" for a in (m.get("aliases") or [])
+                    if isinstance(a, str)
+                ],
+            })
+    b.models = {
+        str(m.get("id")).lower() for m in data
+        if isinstance(m, dict) and m.get("id")
+    }
+    b.model_types = types
+    return entries
+
+
+async def accepts_images(b: Backend, plain_model: str) -> bool:
+    """Le modèle verra-t-il une image ? Jamais sans `images = true` sur
+    le backend ; avec, c'est le TYPE du modèle au catalogue qui décide
+    (chargé à la demande s'il ne l'a pas encore été). Modèle absent du
+    catalogue : on fait confiance au flag."""
+    if not b.images:
+        return False
+    if not b.model_types:
+        await fetch_models(b)
+    kind = b.model_types.get(plain_model.lower())
+    return kind is None or kind == "image-text-to-text"
+
+
 async def merged_models(request: Request) -> list[dict] | None:
     """Catalogue unifié : chaque backend en ligne est interrogé, ses
     modèles exposés préfixés par son nom («albert/…», «bigchuck/…») —
     les noms renvoyés sont directement routables. None = aucun backend
     joignable."""
-    async def fetch(b: Backend) -> list | None:
-        headers = b.auth_headers() or clean_headers(request, "")
-        try:
-            r = await b.client.get(
-                "/v1/models", headers=headers, timeout=b.meta_timeout,
-            )
-            if r.status_code != 200:
-                log.warning("/v1/models %s → %d", b.name, r.status_code)
-                return None
-            data = r.json().get("data") or []
-        except Exception as exc:
-            log.warning("/v1/models %s injoignable : %s", b.name, exc)
-            return None
-        b.models = {
-            str(m.get("id")).lower() for m in data
-            if isinstance(m, dict) and m.get("id")
-        }
-        # Entrées NORMALISÉES sur un schéma UNIFORME (celui d'Albert),
-        # id/aliases préfixés, champs manquants dérivés ou par défaut.
-        # Le reste (status, args, preset, chemins de .gguf, meta… —
-        # détail interne llama.cpp) est écarté : illisible pour les
-        # clients, et à ne pas publier.
-        entries = []
-        for m in data:
-            if isinstance(m, dict) and m.get("id"):
-                costs = m.get("costs")
-                entries.append({
-                    "object": "model",
-                    "id": f"{b.name}/{m['id']}",
-                    "created": m.get("created") or 0,
-                    "owned_by": m.get("owned_by") or b.name,
-                    "type": _model_type(m),
-                    "costs": costs if isinstance(costs, dict)
-                    else {"prompt_tokens": 0.0, "completion_tokens": 0.0},
-                    "max_context_length": _model_max_context(m),
-                    "aliases": [
-                        f"{b.name}/{a}" for a in (m.get("aliases") or [])
-                        if isinstance(a, str)
-                    ],
-                })
-        return entries
-
-    results = await asyncio.gather(*(fetch(b) for b in BACKENDS.values()))
+    results = await asyncio.gather(
+        *(fetch_models(b, request) for b in BACKENDS.values()))
     if all(lst is None for lst in results):
         return None
     return [e for lst in results if lst for e in lst]
@@ -709,7 +737,10 @@ async def messages(request: Request):
     if requested and requested != resolved:
         log.info("anthropic : modèle %r → %r", requested, resolved)
 
-    openai_payload = anthropic_api.to_openai(payload, images=backend.images)
+    images = False
+    if backend.images and anthropic_api.has_images(payload):
+        images = await accepts_images(backend, resolved[len(backend.name) + 1:])
+    openai_payload = anthropic_api.to_openai(payload, images=images)
     if inject_tool_choice(openai_payload, backend):
         log.info(
             "tool_choice=%s injecté (backend=%s, model=%s, %d tools)",

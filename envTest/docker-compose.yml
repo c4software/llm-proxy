@@ -1,0 +1,30 @@
+# Deux clients jetables pour valider le proxy : Claude Code (API Anthropic,
+# traduite) et pi (pi.dev — API OpenAI, et API Anthropic aussi). Rien n'est
+# installé sur l'hôte, rien ne touche ~/.claude ni ~/.pi : chaque client
+# vit dans son image, avec SA configuration, et son dossier de travail
+# disparaît avec le conteneur.
+#
+#   cp .env.example .env          # PROXY_URL, MODEL…
+#   docker compose run --rm claude            # tous les scénarios Claude Code
+#   docker compose run --rm pi                # tous les scénarios pi
+#   docker compose run --rm claude claude     # Claude Code interactif
+#   docker compose run --rm pi pi             # pi interactif
+#
+# Réseau HÔTE : 127.0.0.1:8000 est le proxy de la racine du dépôt.
+services:
+  claude:
+    build: ./claude
+    network_mode: host
+    env_file: .env
+    environment:
+      ANTHROPIC_BASE_URL: "${PROXY_URL}"
+      ANTHROPIC_API_KEY: "${PROXY_API_KEY}"
+      ANTHROPIC_MODEL: "${MODEL}"
+      ANTHROPIC_SMALL_FAST_MODEL: "${SMALL_MODEL}"
+    command: ["./scenarios.sh"]
+
+  pi:
+    build: ./pi
+    network_mode: host
+    env_file: .env
+    command: ["./scenarios.sh"]

@@ -182,6 +182,26 @@ def _image_part(block: dict) -> dict | None:
     return None
 
 
+def has_images(payload: dict) -> bool:
+    """Y a-t-il au moins un bloc image dans la requête (messages, y
+    compris à l'intérieur des tool_result) ? Évite de charger un
+    catalogue pour rien."""
+    for m in payload.get("messages") or []:
+        content = m.get("content") if isinstance(m, dict) else None
+        for b in content if isinstance(content, list) else []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "image":
+                return True
+            if b.get("type") == "tool_result":
+                inner = b.get("content")
+                if isinstance(inner, list) and any(
+                        isinstance(x, dict) and x.get("type") == "image"
+                        for x in inner):
+                    return True
+    return False
+
+
 def _placeholder(block: dict, what: str) -> dict:
     """Ce qu'un backend texte seul reçoit à la place d'un média : un mot
     qui dit qu'il manque quelque chose, plutôt que rien."""

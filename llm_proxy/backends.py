@@ -54,9 +54,9 @@ class Backend:
         # 32 000 par défaut, que certains backends refusent tout net. La
         # valeur du client est ramenée au plafond, jamais augmentée.
         self.max_tokens = int(cfg.get("max_tokens", 0) or 0)
-        # Le backend accepte les images (`image_url`) : les blocs image
-        # d'un client Anthropic lui sont transmis ; sinon remplacés par un
-        # texte qui dit qu'une image manque.
+        # Le backend accepte les images (`image_url`) — pour les modèles
+        # que son catalogue déclare multimodaux ; un modèle texte seul y
+        # reçoit un texte de remplacement. false = jamais d'image.
         self.images = bool(cfg.get("images", False))
         # Chemin d'un endpoint de tokenisation (llama.cpp : "/tokenize")
         # pour un count_tokens EXACT ; vide = estimation locale.
@@ -67,6 +67,11 @@ class Backend:
         self.client: httpx.AsyncClient | None = None
         # Dernier catalogue vu lors d'un GET /v1/models (informel, healthz).
         self.models: set[str] = set()
+        # id (minuscule) → type normalisé («image-text-to-text»…), rempli
+        # avec le catalogue : c'est lui qui dit si UN modèle voit les
+        # images — un backend llama.cpp en sert de toutes sortes, et
+        # envoyer une image à un modèle texte seul est un 500 assuré.
+        self.model_types: dict[str, str] = {}
 
     @staticmethod
     def _tool_choice(value) -> str | None:
