@@ -507,10 +507,11 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 ## À faire
 
 - Images : un backend `images = true` n'envoie une image qu'aux modèles
-  que son catalogue déclare `image-text-to-text` ; llama.cpp ne le
-  déclare pas toujours (dépend du `mmproj` chargé) — un modèle vision
-  vu comme texte recevra un texte de remplacement. À affiner si le cas
-  se présente.
+  que son catalogue déclare `image-text-to-text` — chez llama.cpp, c'est
+  `architecture.input_modalities`, qui ne contient `image` que si le
+  modèle est chargé avec son `--mmproj`. Un modèle vision servi sans
+  mmproj est un modèle texte, et reçoit un texte de remplacement :
+  c'est le bon comportement, rien à affiner côté proxy.
 - PDF (`document` base64) : remplacé par un texte. Un backend qui
   accepte la partie `file` d'OpenAI pourrait le recevoir — à faire le
   jour où il y en a un.
