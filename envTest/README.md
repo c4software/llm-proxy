@@ -29,7 +29,7 @@ Chiffres lus sur l'Usage API du proxy (`bucket_width=all`,
 Le proxy doit tourner (depuis la racine : `docker compose up -d`). Puis :
 
     cd envTest
-    cp .env.example .env        # PROXY_URL, MODEL, clé — voir le fichier
+    cp .env.example .env        # PROXY_URL, MODELS, clé — voir le fichier
     docker compose run --rm claude    # scénarios Claude Code, pour chaque modèle
     docker compose run --rm pi        # scénarios pi (API OpenAI), pour chaque modèle
 
@@ -55,6 +55,12 @@ Pour essayer à la main, même image, même configuration :
     docker compose run --rm pi pi                  # pi interactif (/model pour changer de modèle ou de provider)
     docker compose run --rm claude claude -p "…"   # une question
 
+Variables utiles à `docker compose run -e …` : `MODELS` (un seul modèle
+pour aller vite), `ONLY=5` (ne joue que les N premiers scénarios Claude
+Code), `MAX_TURNS` (plafond de tours par scénario, 40 par défaut). Avec
+`[anthropic] trace = true` dans le `config.toml` du proxy, chaque réponse
+du modèle apparaît dans `docker compose logs` (outils appelés, tokens).
+
 ## Fichiers
 
 | Fichier | Rôle |
@@ -63,7 +69,7 @@ Pour essayer à la main, même image, même configuration :
 | `docker-compose.yml` | Les deux services, en **réseau hôte** (`127.0.0.1:8000` = le proxy de la racine) |
 | `claude/Dockerfile` | `node:22-slim` + `@anthropic-ai/claude-code`, utilisateur non root (requis par `--dangerously-skip-permissions`), télémétrie et mises à jour coupées |
 | `claude/settings.json` | Le `~/.claude/settings.json` **du conteneur** : `CLAUDE_CODE_ATTRIBUTION_HEADER=0`, pour que l'attribution (variable d'une requête à l'autre) ne décale pas le préfixe et ne fasse pas manquer le cache du backend |
-| `claude/scenarios.sh` | Les 13 scénarios Claude Code, rejoués pour chaque modèle de `MODELS` (`ANTHROPIC_MODEL` posé par le script) |
+| `claude/scenarios.sh` | Les 13 scénarios Claude Code, rejoués pour chaque modèle de `MODELS` (`ANTHROPIC_MODEL` posé par le script) ; `ONLY=N` pour n'en jouer que N |
 | `pi/Dockerfile` | `node:22-slim` + `@earendil-works/pi-coding-agent`, `PI_CODING_AGENT_DIR=/pi/agent` |
 | `pi/models.json.tpl` | Les providers pi : `llm-proxy` (`openai-completions`, `${PROXY_URL}/v1`) — le seul joué — et `llm-proxy-anthropic` (`anthropic-messages`), gardé pour un essai à la main |
 | `pi/entrypoint.sh` | Substitue `${PROXY_URL}` et génère une entrée de modèle par élément de `MODELS` → `models.json` du conteneur |
@@ -75,8 +81,9 @@ Pour essayer à la main, même image, même configuration :
 --output-format json`, donc sans aucune question, le champ `result` est
 lu ; `--max-turns` parce qu'en mode `-p` Claude Code ne plafonne pas les
 tours — un modèle qui répète le même appel d'outil tournerait à l'infini,
-c'est arrivé : 755 tours sur un 27B. `MAX_TURNS` dans l'environnement
-pour changer le plafond) :
+c'est arrivé : 754 tours identiques sur un 27B, une heure de GPU, avant
+que ce plafond n'existe. `MAX_TURNS` dans l'environnement pour le
+changer) :
 
 1. **Réponse simple** — `POST /v1/messages` en flux SSE, traduction de la
    réponse (`message_start` → `text_delta` → `message_stop`).
