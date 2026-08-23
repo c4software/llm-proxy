@@ -481,6 +481,9 @@ async def relay(call: Call, upstream: httpx.Response, robinet,
         if out:
             yield out
     finally:
+        if anthropic_api.TRACE and hasattr(robinet, "summary"):
+            log.info("[%s] %s → %s", call.backend.name, call.model_key,
+                     robinet.summary())
         if failed:
             log.warning(
                 "[%s] %s → %d upstream pour %s : %s", call.backend.name,

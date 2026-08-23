@@ -70,8 +70,12 @@ Pour essayer à la main, même image, même configuration :
 
 ## Ce que les scénarios vérifient
 
-**Claude Code** (`claude -p --dangerously-skip-permissions --output-format json`,
-donc sans aucune question, le champ `result` est lu) :
+**Claude Code** (`claude -p --dangerously-skip-permissions --max-turns 40
+--output-format json`, donc sans aucune question, le champ `result` est
+lu ; `--max-turns` parce qu'en mode `-p` Claude Code ne plafonne pas les
+tours — un modèle qui répète le même appel d'outil tournerait à l'infini,
+c'est arrivé : 755 tours sur un 27B. `MAX_TURNS` dans l'environnement
+pour changer le plafond) :
 
 1. **Réponse simple** — `POST /v1/messages` en flux SSE, traduction de la
    réponse (`message_start` → `text_delta` → `message_stop`).

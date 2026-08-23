@@ -60,6 +60,10 @@ ping_interval = 10
 # `reasoning_content` d'un backend (DeepSeek…) → bloc `thinking` visible
 # dans Claude Code. false = jeté.
 reasoning_as_thinking = true
+# Une ligne de log par réponse /v1/messages : stop_reason, outils appelés
+# (nom et extrait des arguments), tokens. À activer pour comprendre ce
+# qu'un agent fait — ou répète — derrière le proxy.
+trace = false
 
 # Noms de modèles → noms PRÉFIXÉS du proxy. Claude Code envoie des noms
 # Claude en dur pour ses tâches d'arrière-plan (titres, résumés…), même

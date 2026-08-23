@@ -432,6 +432,7 @@ url = "http://bigchuck:8009"
 | `model_map` | `{}` | Noms de modèles Anthropic → noms préfixés ; `default` attrape les inconnus. Voir [Claude Code](#claude-code) |
 | `ping_interval` | `10` | Secondes entre deux `event: ping` pendant l'attente du limiteur, en flux. `0` = attendre avant de répondre |
 | `reasoning_as_thinking` | `true` | `reasoning_content` du backend → bloc `thinking` pour le client |
+| `trace` | `false` | Une ligne de log par réponse `/v1/messages` : `stop_reason`, outils appelés (nom + extrait des arguments), tokens. Pour voir ce qu'un agent fait — ou répète — derrière le proxy |
 
 ### `[quotas]` (backends à quotas)
 

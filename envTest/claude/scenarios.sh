@@ -13,8 +13,16 @@ fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails + 1)); }
 result() { node -e '
   const raw = require("fs").readFileSync(0, "utf8");
   const j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
-  process.stdout.write(String(j.is_error ? "ERROR: " + j.result : j.result));'; }
-run() { claude -p --dangerously-skip-permissions --output-format json "$@" 2>/dev/null | result; }
+  const tag = j.subtype === "error_max_turns" ? "ERROR: plafond de tours atteint (boucle du modèle) — "
+            : j.is_error ? "ERROR: " : "";
+  process.stdout.write(tag + String(j.result ?? j.subtype ?? ""));'; }
+# --max-turns : en mode -p, Claude Code ne plafonne PAS les tours. Un
+# modèle qui s'emballe (même appel d'outil répété à l'infini — vu sur
+# un 27B : 755 tours, contexte à 114 k tokens, GPU occupé une heure)
+# tournerait jusqu'à ce qu'on le tue. Le scénario le plus long en prend
+# une vingtaine ; au-delà de 40, c'est un échec, dit comme tel.
+MAX_TURNS=${MAX_TURNS:-40}
+run() { claude -p --dangerously-skip-permissions --max-turns "$MAX_TURNS" --output-format json "$@" 2>/dev/null | result; }
 
 version=$(claude --version 2>/dev/null | head -1)
 summary=""

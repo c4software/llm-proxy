@@ -52,6 +52,11 @@ MODEL_MAP: dict[str, str] = {
 # Absente du TOML = surface inactive : un déploiement existant n'expose
 # rien de nouveau sans l'avoir demandé.
 ENABLED = config.flag("anthropic.enabled", False)
+# Une ligne de log par réponse /v1/messages : stop_reason, outils appelés
+# (nom + extrait des arguments), tokens. C'est ce qui manque quand un
+# agent s'emballe — les compteurs disent «754 requêtes», pas ce que le
+# modèle répétait. Coût : quelques centaines d'octets par réponse.
+TRACE = config.flag("anthropic.trace", False)
 # En flux, pendant l'attente du limiteur : un `event: ping` toutes les N
 # secondes garde la connexion vivante (Claude Code coupe un flux muet ;
 # l'API Anthropic elle-même envoie ces pings). 0 = attendre AVANT de
@@ -566,6 +571,10 @@ class Translator:
         self._tools: dict[int, int] = {}  # index OpenAI → index de bloc
         self._finish_reason: str | None = None
         self._saw_tool = False
+        # Pour la trace : ce que la réponse contenait, en résumé.
+        self._trace_tools: list[str] = []
+        self._trace_args: dict[int, list[str]] = {}
+        self._trace_text = 0
 
     # ── interface robinet ──
     def feed(self, chunk: bytes) -> bytes:
@@ -603,10 +612,36 @@ class Translator:
             else None
         msg = from_openai(doc, self.model)
         self.out_chars = sum(len(b.get("text", "")) for b in msg["content"])
+        self._finish_reason = (doc.get("choices") or [{}])[0].get("finish_reason")
+        for i, b in enumerate(msg["content"]):
+            if b["type"] == "tool_use":
+                self._saw_tool = True
+                self._trace_tools.append(b["name"])
+                self._trace_args[i] = [json.dumps(b["input"], ensure_ascii=False)]
         return json.dumps(msg, ensure_ascii=False).encode()
 
     def cached(self) -> int:
         return _cached(self.usage)
+
+    def summary(self) -> str:
+        """Une ligne : ce que le modèle a répondu, pour les logs."""
+        stop = STOP_REASONS.get(self._finish_reason, "end_turn")
+        if self._saw_tool and self._finish_reason != "length":
+            stop = "tool_use"
+        u = self.usage or {}
+        parts = [f"stop={stop}",
+                 f"in={u.get('prompt_tokens', '?')} out={u.get('completion_tokens', '?')}"]
+        if self._trace_tools:
+            calls = []
+            for i, name in enumerate(self._trace_tools):
+                args = "".join(self._trace_args.get(i, []))
+                calls.append(f"{name}({args[:120]}{'…' if len(args) > 120 else ''})")
+            parts.append("tools: " + " ; ".join(calls))
+        elif self.out_chars:
+            parts.append(f"text: {self.out_chars} car.")
+        if not self.ok:
+            parts.append(f"HTTP {self.status}")
+        return " | ".join(parts)
 
     def tokens(self, fallback_prompt: int) -> tuple[int, int, bool]:
         u = self.usage or {}
@@ -704,12 +739,15 @@ class Translator:
                         "input": {},
                     })
                     self._tools[idx] = self._open_index
+                    self._trace_tools.append(str(fn.get("name") or "?"))
+                    self._trace_args[idx] = []
                 elif self._open != "tool" or self._open_index != self._tools[idx]:
                     # Fragment tardif d'un outil déjà fermé : impossible
                     # en pratique, ignoré plutôt que de casser le flux.
                     continue
                 args = fn.get("arguments")
                 if isinstance(args, str) and args:
+                    self._trace_args.setdefault(idx, []).append(args)
                     out += self._delta({"type": "input_json_delta",
                                         "partial_json": args})
             if choice.get("finish_reason"):
