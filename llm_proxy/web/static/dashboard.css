@@ -15,6 +15,8 @@
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
+  /* Rien ne doit faire défiler la page horizontalement. */
+  overflow-x: clip;
   font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -269,15 +271,24 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 10px; padding: 9px 12px; font-size: 12.5px;
   box-shadow: 0 6px 22px rgb(0 0 0 / .13); white-space: nowrap;
+  /* Même invisible, l'infobulle occupe sa place : avec des noms de
+     modèles longs elle déborderait de la fenêtre et ferait apparaître
+     un défilement horizontal. Bornée, et les noms se tronquent. */
+  max-width: min(340px, 80vw);
 }
 .bars > i:hover .tip { opacity: 1; }
-/* Aux extrémités, l'infobulle se cale sur le bord plutôt que de sortir. */
-.bars > i:first-child .tip { left: 0; transform: none; }
-.bars > i:last-child .tip { left: auto; right: 0; transform: none; }
+/* Moitié gauche du graphe : l'infobulle part du bord gauche de la barre
+   vers la droite ; moitié droite : du bord droit vers la gauche. Elle
+   reste ainsi toujours au-dessus du graphe, jamais hors de la page. */
+.bars > i.left .tip { left: 0; transform: none; }
+.bars > i.right .tip { left: auto; right: 0; transform: none; }
 .bars .tip .when { color: var(--muted); margin-bottom: 4px; }
 .bars .tip .row { display: flex; gap: 14px; justify-content: space-between; }
-.bars .tip .row span { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
-.bars .tip .row em { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
+.bars .tip .row span {
+  color: var(--muted); display: inline-flex; align-items: center; gap: 6px;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.bars .tip .row em { width: 7px; height: 7px; border-radius: 2px; display: inline-block; flex: none; }
 .bars .tip .row.total { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
 .bars .tip .row b { font-weight: 500; font-variant-numeric: tabular-nums; }
 

@@ -77,7 +77,8 @@
     <div class="chart">
       <div class="bars" :class="{ entering }">
         <i v-for="(b, i) in bars" :key="b.start_time"
-           :class="{ zero: !b.requests }" :style="{ '--i': i }">
+           :class="{ zero: !b.requests, left: i < bars.length / 2, right: i >= bars.length / 2 }"
+           :style="{ '--i': i }">
           <b :style="{ height: b.height.toFixed(2) + '%' }">
             <s v-for="seg in b.segments" :key="seg.id"
                :style="{ height: seg.share.toFixed(2) + '%', background: seg.color }"></s>
