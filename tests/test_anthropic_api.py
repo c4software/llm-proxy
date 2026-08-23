@@ -114,6 +114,30 @@ def test_to_openai_tool_round_trip():
     assert "thinking" not in json.dumps(out)
 
 
+def test_to_openai_mid_conversation_system_folds_into_next_user():
+    """Un system en cours de conversation (rappels de Claude Code) n'est
+    pas relayé tel quel — les gabarits Qwen/Mistral le refusent — mais
+    fondu en tête du user suivant ; après des tool_result seuls, il
+    suit en message user ; en dernière position, il devient un user."""
+    out = A.to_openai({"model": "m", "messages": [
+        {"role": "user", "content": "Salut"},
+        {"role": "assistant", "content": "Oui ?"},
+        {"role": "system", "content": "Rappel : sois bref."},
+        {"role": "user", "content": [{"type": "text", "text": "Question"}]},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t", "name": "f", "input": {}}]},
+        {"role": "system", "content": [{"type": "text", "text": "Rappel 2"}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t", "content": "ok"}]},
+        {"role": "system", "content": "Rappel final"},
+    ]})["messages"]
+    assert [m["role"] for m in out] == [
+        "user", "assistant", "user", "assistant", "tool", "user", "user"]
+    assert out[2]["content"] == "Rappel : sois bref.\n\nQuestion"
+    assert out[5] == {"role": "user", "content": "Rappel 2"}
+    assert out[6] == {"role": "user", "content": "Rappel final"}
+
+
 def test_to_openai_assistant_only_tools_has_null_content():
     out = A.to_openai({"model": "m", "messages": [
         {"role": "assistant", "content": [

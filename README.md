@@ -58,9 +58,12 @@ l'API Anthropic — **Claude Code** — s'y branche aussi, le proxy traduit.
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
-  (URL, quotas restants par fenêtre, derniers modèles vus, réglage
-  `tool_choice`) ; un résumé périodique des compteurs est loggé
-  (`quotas.status_interval`).
+  (URL, quotas restants par fenêtre, derniers modèles vus, réglages
+  `tool_choice` / `max_tokens` / `images` / `tokenize_path`) et de la
+  surface Anthropic ; un résumé périodique des compteurs est loggé
+  (`quotas.status_interval`), et toute erreur upstream (4xx/5xx) l'est
+  avec le début de son corps — le client, lui, ne voit souvent qu'un
+  statut.
 - **Statistiques persistantes, à la forme d'OpenAI** —
   `GET /v1/organization/usage/completions` : **l'Usage API d'OpenAI**,
   servie depuis les compteurs du proxy. Une ligne SQLite par requête
@@ -166,7 +169,10 @@ l'usage.
 Comptage des tokens : le bloc `usage` de l'upstream quand il existe —
 streaming SSE compris —, sinon une estimation à ~4 caractères par
 token. Les deux sont comptés séparément (`num_estimated_requests`) pour
-que le chiffre affiché reste honnête.
+que le chiffre affiché reste honnête. Une requête **en erreur** sans
+`usage` (500 upstream, 429 local, client parti) compte **0 token,
+exact** : rien n'a été consommé de mesurable, et le corps envoyé n'a pas
+à gonfler l'entrée.
 
 ## Tableau de bord
 
@@ -249,17 +255,34 @@ tout SDK Anthropic) se branche sur le proxy sans rien d'autre :
     # export ANTHROPIC_SMALL_FAST_MODEL=bigchuck/qwen3-8b
     claude
 
+Validé avec un vrai Claude Code et avec pi, en conteneurs, sur des
+scénarios d'outils et de création de code — voir `envTest/`.
+
 Ce qui se passe :
 
-- `POST /v1/messages` est traduit en `/v1/chat/completions` — `system`,
-  blocs `text`/`image`/`tool_use`/`tool_result`, `tools`, `tool_choice`,
-  `stop_sequences`, `metadata.user_id` ; les blocs `thinking`, `top_k`,
-  `cache_control` et les outils serveur Anthropic sont ignorés. La
-  réponse est retraduite : objet `Message` ou suite d'événements SSE
+- `POST /v1/messages` est traduit en `/v1/chat/completions`, la réponse
+  retraduite : objet `Message`, ou suite d'événements SSE
   (`message_start` → blocs → `message_delta` → `message_stop`), outils
-  fragmentés compris ; `reasoning_content` d'un backend devient un bloc
-  `thinking`. En flux, `stream_options.include_usage` est demandé : les
-  stats sont **exactes**.
+  fragmentés compris. En flux, `stream_options.include_usage` est
+  demandé : les stats sont **exactes**.
+
+  | Côté Anthropic | Côté OpenAI |
+  |---|---|
+  | `system` (chaîne ou blocs) | message `system` en tête |
+  | `system` **en cours** de conversation (rappels de Claude Code) | fondu en tête du message `user` suivant — les gabarits Qwen / Mistral refusent un `system` ailleurs qu'en tête (500) |
+  | bloc `text` | texte |
+  | bloc `image` | `image_url` (data URI) si le backend a `images = true` **et** que le modèle est multimodal à son catalogue ; sinon `[image ignorée : image/png, 12 Ko]` |
+  | bloc `document` | le texte s'il en est ; un PDF → `[document ignoré : …]` |
+  | `tool_use` (assistant) | `tool_calls[]`, arguments sérialisés |
+  | `tool_result` (user) | un message `tool` **par résultat**, placés avant le reste du message ; une image dans le résultat suit dans un message `user` |
+  | `thinking` / `redacted_thinking` | jetés (aucun backend ne les rejoue) |
+  | `tools[{name, input_schema}]` | `tools[{type: function, …parameters}]` ; outils serveur Anthropic (`web_search`…) ignorés |
+  | `tool_choice` `auto` / `any` / `tool` / `none`, `disable_parallel_tool_use` | `auto` / `required` / `{function}` / `none`, `parallel_tool_calls: false` |
+  | `stop_sequences`, `metadata.user_id`, `temperature`, `top_p`, `max_tokens` | `stop`, `user`, idem (plafond `max_tokens` du backend appliqué) |
+  | `top_k`, `cache_control`, `thinking`, `output_config`, `context_management`, paramètres d'URL (`?beta=true`) | ignorés |
+  | `finish_reason` `stop` / `length` / `tool_calls` | `stop_reason` `end_turn` / `max_tokens` / `tool_use` |
+  | `reasoning_content` du backend | bloc `thinking` (`reasoning_as_thinking`) |
+  | erreur OpenAI `{"error": {…}}` | `{"type": "error", "error": {type, message}}`, type déduit du statut |
 - **Le modèle passe par `[anthropic.model_map]`**. Claude Code envoie
   des noms Claude en dur pour ses tâches d'arrière-plan (titres,
   résumés…), même avec `ANTHROPIC_MODEL` défini : la table les traduit en
@@ -271,17 +294,10 @@ Ce qui se passe :
   `tokenize_path` (llama.cpp : `/tokenize`), sinon estimation locale
   (~4 caractères par token, comme le limiteur). Claude Code s'en sert
   pour sa jauge de contexte et le moment de son `/compact`.
-- Images : transmises en `image_url` si le backend a `images = true`
-  **et** que le modèle est multimodal à son catalogue (type
-  `image-text-to-text`, chargé à la demande — un modèle texte recevant
-  une image est un 500 chez llama.cpp), sinon remplacées par
-  `[image ignorée : image/png, 12 Ko]` — y compris
-  dans un `tool_result` (Claude Code lisant un `.png`), où l'image suit
-  le message `tool` dans un message user. Un `document` texte passe tel
-  quel, un PDF devient `[document ignoré : …]`.
-- `reasoning_content` d'un backend (DeepSeek…) devient un bloc
-  `thinking` visible dans Claude Code (`reasoning_as_thinking = false`
-  pour le couper).
+- Images : «multimodal au catalogue» = type `image-text-to-text`, que
+  le proxy dérive d'`architecture.input_modalities` chez llama.cpp —
+  présent seulement si le modèle est chargé avec son `--mmproj`. Le
+  catalogue est chargé à la demande à la première image.
 - `GET /v1/models` : le même catalogue, à la forme Anthropic, quand la
   requête porte `anthropic-version` (le SDK Anthropic le pose toujours,
   le SDK OpenAI jamais).
@@ -359,26 +375,19 @@ force_tool_choice = "auto"
 url = "http://bigchuck:8009"
 ```
 
-Champs : `api_key` (**la clé du backend vit ici**, et nulle part ailleurs
-— clé Albert, ou `--api-key` de llama-server ; si définie, elle remplace
-l'`Authorization` du client), `quotas` (active le limiteur Albert),
-`timeout` (secondes, défaut `proxy.upstream_timeout`), `meta_timeout`
-(secondes pour les appels de méta-données — `/v1/models`, `/v1/me/info`
-—, défaut `proxy.meta_timeout`), `connect_timeout` (secondes pour la
-seule poignée de main TCP — défaut `1` sans quota, `15` avec : un
-backend local éteint échoue en 1 s, un hôte vivant répond bien avant
-même occupé), `verify_ssl = false` (certificat
-auto-signé), `force_tool_choice` (injection de `tool_choice` : absent ou
-`false` → **aucune injection**, c'est le défaut ; `true` → la valeur de
-`proxy.tool_choice` ; une chaîne (`"auto"`, `"required"`…) → cette
-valeur-là). Seule exception : si `[backends]` est absent du TOML, le
-backend Albert par défaut est livré avec `"auto"`, puisque c'est lui que
-le correctif vise. `max_tokens` (plafond, `0` ou absent = aucun : la
-valeur du client — `max_tokens` ou `max_completion_tokens` — est ramenée
-au plafond, jamais augmentée ni ajoutée). `images = true` (les modèles
-multimodaux au catalogue du backend reçoivent les `image_url` ; sinon
-les images d'un client Anthropic sont remplacées par un texte). `tokenize_path` (endpoint de tokenisation pour
-un `count_tokens` exact — llama.cpp : `"/tokenize"`).
+| Champ | Défaut | Rôle |
+|---|---|---|
+| `url` | *(requis)* | Base du backend |
+| `api_key` | *(aucune)* | **La clé du backend vit ici**, et nulle part ailleurs — clé Albert, ou `--api-key` de llama-server. Si définie, elle remplace l'`Authorization` du client |
+| `quotas` | `false` | Active le limiteur Albert (fenêtres minute et jour, `/v1/me/info`) |
+| `timeout` | `proxy.upstream_timeout` | Secondes, pour la génération |
+| `meta_timeout` | `proxy.meta_timeout` | Secondes, pour `/v1/models`, `/v1/me/info`, `tokenize_path` |
+| `connect_timeout` | `1` sans quota, `15` avec | Poignée de main TCP seule : un backend local éteint échoue en 1 s, un hôte vivant répond bien avant, même occupé |
+| `verify_ssl` | `true` | `false` pour un certificat auto-signé |
+| `force_tool_choice` | *(aucune injection)* | `true` → `proxy.tool_choice` ; `"auto"`, `"required"`… → cette valeur. Seule exception : `[backends]` absent du TOML → Albert par défaut avec `"auto"`, c'est lui que le correctif vise |
+| `max_tokens` | `0` = aucun | Plafond : `max_tokens` / `max_completion_tokens` du client ramené au plafond, jamais augmenté ni ajouté |
+| `images` | `false` | Les modèles multimodaux au catalogue du backend reçoivent les `image_url` d'un client Anthropic ; sinon texte de remplacement |
+| `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact — llama.cpp : `"/tokenize"` |
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
 `unknown_backend_prefix`. Seules les requêtes sans champ `model`
@@ -503,22 +512,21 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
     # validation avec de vrais clients (Claude Code, pi), en conteneurs
     cd envTest && cp .env.example .env && docker compose run --rm claude && docker compose run --rm pi
 
-## À faire
+## Limites connues
 
-- Images : un backend `images = true` n'envoie une image qu'aux modèles
-  que son catalogue déclare `image-text-to-text` — chez llama.cpp, c'est
-  `architecture.input_modalities`, qui ne contient `image` que si le
-  modèle est chargé avec son `--mmproj`. Un modèle vision servi sans
-  mmproj est un modèle texte, et reçoit un texte de remplacement :
-  c'est le bon comportement, rien à affiner côté proxy.
-- PDF (`document` base64) : remplacé par un texte. Un backend qui
-  accepte la partie `file` d'OpenAI pourrait le recevoir — à faire le
-  jour où il y en a un.
-- Le `cache_control` Anthropic est ignoré : rien d'équivalent côté
-  OpenAI, mais un backend qui gère le cache de préfixe (vLLM, llama.cpp)
-  en profite déjà implicitement si les messages sont stables.
-- Hors périmètre, volontairement : Batches, Files, outils serveur
-  (`web_search`, `code_execution`), et le sens proxy → backend Anthropic.
+- **Pas de cache de prompt explicite** : `cache_control` est ignoré,
+  rien d'équivalent côté OpenAI. Un backend à cache de préfixe (vLLM,
+  llama.cpp) en profite implicitement quand les messages sont stables ;
+  Albert, non — le prompt système de Claude Code (~18 k tokens) est
+  facturé à chaque tour.
+- **PDF** (`document` base64) : remplacé par un texte. Un backend qui
+  accepterait la partie `file` d'OpenAI pourrait le recevoir — le jour
+  où il y en a un.
+- **Images** : seul le catalogue du backend décide ; un modèle vision
+  servi sans `--mmproj` est un modèle texte.
+- **Hors périmètre, volontairement** : Batches, Files, outils serveur
+  Anthropic (`web_search`, `code_execution`…), et le sens proxy →
+  backend Anthropic.
 
 ## Côté clients
 
@@ -526,6 +534,9 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   `ANTHROPIC_MODEL=<backend>/<modèle>` — voir [Claude Code](#claude-code).
 - Hermes : retirer `extra_body.tool_choice` du provider dans
   `~/.hermes/config.yaml`, pointer `api` sur le proxy.
-- pi : retirer `patchFetchForAlbert()` de l'extension, pointer
-  `ENDPOINT` sur le proxy ; `apiKey` reste obligatoire dans
-  `registerProvider()` — `"unused"` suffit.
+- pi : un provider dans `~/.pi/agent/models.json` — `api:
+  "openai-completions"` sur `http://…:8000/v1`, ou `api:
+  "anthropic-messages"` sur `http://…:8000` (les deux marchent ; voir
+  `envTest/pi/models.json.tpl`). `apiKey` reste obligatoire — `"unused"`
+  suffit si le proxy est ouvert. L'ancienne extension
+  `patchFetchForAlbert()` n'a plus lieu d'être.

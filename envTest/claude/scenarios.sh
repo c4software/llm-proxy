@@ -69,5 +69,86 @@ out=$(node -e '
   }).then(r => r.text().then(t => process.stdout.write(r.status + " " + t)));')
 case "$out" in "400 "*'"type":"error"'*) pass "$out" ;; *) fail "$out" ;; esac
 
+echo "8. Création de code : module Node + tests, exécutés par le modèle"
+rm -rf stats && mkdir stats && cd stats
+out=$(run "Crée un module CommonJS stats.js qui exporte mean(tableau) et median(tableau) (médiane correcte pour un nombre pair d'éléments), puis un fichier test.js qui les vérifie avec node:assert sur au moins quatre cas (dont un tableau pair pour median), exécute node test.js et ne t'arrête que quand il passe. Termine par une phrase.")
+if node test.js >/dev/null 2>&1 && node -e 'const s=require("./stats");process.exit(s.mean([1,2,3,4])===2.5&&s.median([1,2,3,4])===2.5&&s.median([3,1,2])===2?0:1)'; then pass "stats.js correct, test.js passe — $out"; else fail "$out"; fi
+cd /work
+
+echo "9. Corriger un bug pour faire passer un test existant, sans toucher au test"
+rm -rf slug && mkdir slug && cd slug
+cat > slugify.js <<'JS'
+// Transforme un titre en identifiant d'URL.
+module.exports = function slugify(title) {
+  return title.toLowerCase().replace(/ /g, "-");
+};
+JS
+cat > slugify.test.js <<'JS'
+const assert = require("node:assert");
+const slugify = require("./slugify");
+assert.strictEqual(slugify("Hello World"), "hello-world");
+assert.strictEqual(slugify("  Déjà   vu ! "), "deja-vu");
+assert.strictEqual(slugify("C'est l'été"), "c-est-l-ete");
+assert.strictEqual(slugify("--a--b--"), "a-b");
+console.log("ok");
+JS
+sum=$(cksum slugify.test.js)
+out=$(run "Lance node slugify.test.js : il échoue. Corrige slugify.js pour qu'il passe (accents retirés, tout caractère non alphanumérique devient un tiret, tirets fusionnés et retirés aux extrémités). Interdiction de modifier slugify.test.js. Relance le test jusqu'à ce qu'il passe.")
+if [ "$(cksum slugify.test.js)" != "$sum" ]; then fail "le test a été modifié — $out"
+elif node slugify.test.js >/dev/null 2>&1; then pass "slugify.js corrigé, test intact — $out"; else fail "test toujours en échec — $out"; fi
+cd /work
+
+echo "10. Refactor multi-fichiers : extraire une fonction partagée, tests inchangés"
+rm -rf shop && mkdir shop && cd shop
+cat > cart.js <<'JS'
+function cartTotal(items) {
+  let t = 0;
+  for (const i of items) t += Math.round(i.price * i.qty * 100) / 100;
+  return t;
+}
+module.exports = { cartTotal };
+JS
+cat > invoice.js <<'JS'
+function invoiceTotal(lines) {
+  let t = 0;
+  for (const l of lines) t += Math.round(l.price * l.qty * 100) / 100;
+  return t;
+}
+module.exports = { invoiceTotal };
+JS
+cat > shop.test.js <<'JS'
+const assert = require("node:assert");
+const { cartTotal } = require("./cart");
+const { invoiceTotal } = require("./invoice");
+const lines = [{ price: 1.1, qty: 3 }, { price: 2.05, qty: 2 }];
+assert.strictEqual(cartTotal(lines), 7.4);
+assert.strictEqual(invoiceTotal(lines), 7.4);
+assert.ok(require("fs").existsSync("./money.js"), "money.js attendu");
+console.log("ok");
+JS
+out=$(run "cart.js et invoice.js dupliquent le même calcul de total. Extrais-le dans un nouveau module money.js (fonction sumLines(lines)) et fais-le utiliser par les deux fichiers avec l'outil Edit. Ne modifie pas shop.test.js. Lance node shop.test.js et assure-toi qu'il passe.")
+if node shop.test.js >/dev/null 2>&1 && grep -q "require(\"./money\")\|require('./money')" cart.js invoice.js; then pass "money.js extrait, tests verts — $out"; else fail "$out"; fi
+cd /work
+
+echo "11. Plusieurs lectures dans un tour (outils en parallèle) et réponse factuelle"
+rm -rf docs && mkdir docs
+printf 'Le port SSH est 22.\n' > docs/a.txt; printf 'Le port HTTPS est 443.\n' > docs/b.txt; printf 'Le port Postgres est 5432.\n' > docs/c.txt
+out=$(run "Lis les trois fichiers du dossier docs (tu peux les lire en parallèle) et réponds uniquement par le numéro du port Postgres.")
+case "$out" in *5432*) pass "$out" ;; *) fail "$out" ;; esac
+
+echo "12. Write : accents, guillemets, antislashs — l'échappement JSON des arguments d'outil"
+rm -f exact.txt
+out=$(run "Crée le fichier exact.txt contenant ces trois lignes, caractères compris (guillemets, antislashs, accents) :
+« élève » et l'été
+\"guillemets\" et \\antislash\\
+fin")
+# Ce qu'on vérifie, c'est que les caractères délicats traversent la
+# traduction intacts — pas que le modèle recopie mot pour mot.
+if grep -q 'élève' exact.txt 2>/dev/null && grep -q "l'été" exact.txt && grep -q '"guillemets"' exact.txt && grep -q '\\antislash\\' exact.txt; then pass "exact.txt : $(tr '\n' '|' < exact.txt)"; else fail "contenu : $(cat exact.txt 2>/dev/null | head -5 | tr '\n' '|') — $out"; fi
+
+echo "13. Bash : pipeline et chiffre vérifiable"
+out=$(run "Avec une seule commande shell, compte le nombre total de lignes des fichiers du dossier docs et réponds uniquement par ce nombre.")
+case "$out" in *3*) pass "$out" ;; *) fail "$out" ;; esac
+
 echo
 [ "$fails" -eq 0 ] && echo "Tout passe." || { echo "$fails scénario(s) en échec."; exit 1; }

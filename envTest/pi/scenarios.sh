@@ -30,6 +30,33 @@ for provider in llm-proxy llm-proxy-anthropic; do
   mkdir -p src && printf 'def add(a, b):\n    return a - b\n' > src/calc.py
   out=$(run "Lis src/calc.py, corrige le bug évident avec l'outil edit, puis affiche le fichier corrigé avec cat.")
   if grep -q 'return a + b' src/calc.py; then pass "src/calc.py corrigé — $(echo "$out" | tail -n 1)"; else fail "src/calc.py non corrigé — $out"; fi
+
+  echo "4. Création de code : module Node + tests"
+  rm -rf stats && mkdir stats && cd stats
+  out=$(run "Crée un module CommonJS stats.js qui exporte mean(tableau) et median(tableau) (médiane correcte pour un nombre pair d'éléments), puis test.js qui les vérifie avec node:assert sur quatre cas, exécute node test.js jusqu'à ce qu'il passe.")
+  if node test.js >/dev/null 2>&1 && node -e 'const s=require("./stats");process.exit(s.median([1,2,3,4])===2.5?0:1)'; then pass "stats.js + test.js — $(echo "$out" | tail -n 1)"; else fail "$out"; fi
+  cd /work
+
+  echo "5. Corriger un bug sans toucher au test"
+  rm -rf slug && mkdir slug && cd slug
+  cat > slugify.js <<'JS'
+module.exports = function slugify(title) {
+  return title.toLowerCase().replace(/ /g, "-");
+};
+JS
+  cat > slugify.test.js <<'JS'
+const assert = require("node:assert");
+const slugify = require("./slugify");
+assert.strictEqual(slugify("Hello World"), "hello-world");
+assert.strictEqual(slugify("  Déjà   vu ! "), "deja-vu");
+assert.strictEqual(slugify("--a--b--"), "a-b");
+console.log("ok");
+JS
+  sum=$(cksum slugify.test.js)
+  out=$(run "Lance node slugify.test.js : il échoue. Corrige slugify.js (accents retirés, tout caractère non alphanumérique devient un tiret, tirets fusionnés et retirés aux extrémités) sans modifier slugify.test.js, et relance jusqu'à ce que ça passe.")
+  if [ "$(cksum slugify.test.js)" != "$sum" ]; then fail "test modifié — $out"
+  elif node slugify.test.js >/dev/null 2>&1; then pass "slugify.js corrigé — $(echo "$out" | tail -n 1)"; else fail "$out"; fi
+  cd /work
 done
 
 echo

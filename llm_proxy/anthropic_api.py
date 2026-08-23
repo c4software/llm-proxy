@@ -289,6 +289,18 @@ def _user_message(content, images: bool) -> list[dict]:
     return out
 
 
+def _prepend_text(msg: dict, text: str) -> None:
+    """Glisse `text` en tête du contenu d'un message user OpenAI (chaîne
+    ou liste de parties)."""
+    content = msg.get("content")
+    if isinstance(content, list):
+        content.insert(0, {"type": "text", "text": text + "\n\n"})
+    elif isinstance(content, str) and content:
+        msg["content"] = text + "\n\n" + content
+    else:
+        msg["content"] = text
+
+
 def _assistant_message(content) -> dict:
     """thinking / redacted_thinking sont JETÉS : aucun backend OpenAI ne
     les rejoue, et leur signature n'a de sens que chez Anthropic."""
@@ -349,6 +361,12 @@ def to_openai(p: dict, images: bool = False) -> dict:
     system = _text_of(p.get("system"))
     if system:
         messages.append({"role": "system", "content": system})
+    # Un message `system` EN COURS de conversation (Claude Code s'en sert
+    # pour ses rappels) : beaucoup de gabarits de chat (Qwen, Mistral…)
+    # n'acceptent un system qu'en tête et répondent 500 sinon. Son texte
+    # est donc fondu en tête du message user qui le suit — l'ordre des
+    # tours reste strict, rien n'est perdu.
+    pending: list[str] = []
     for m in p.get("messages") or []:
         if not isinstance(m, dict):
             continue
@@ -356,11 +374,22 @@ def to_openai(p: dict, images: bool = False) -> dict:
         if role == "assistant":
             messages.append(_assistant_message(content))
         elif role == "user":
-            messages.extend(_user_message(content, images))
+            batch = _user_message(content, images)
+            if pending:
+                text = "\n\n".join(pending)
+                pending = []
+                if batch and batch[-1]["role"] == "user":
+                    _prepend_text(batch[-1], text)
+                else:
+                    # Que des tool_result : le texte suit, en message user.
+                    batch.append({"role": "user", "content": text})
+            messages.extend(batch)
         elif role == "system":
             text = _text_of(content)
             if text:
-                messages.append({"role": "system", "content": text})
+                pending.append(text)
+    if pending:
+        messages.append({"role": "user", "content": "\n\n".join(pending)})
     out["messages"] = messages
 
     if isinstance(p.get("max_tokens"), int):

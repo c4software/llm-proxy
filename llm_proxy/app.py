@@ -331,6 +331,14 @@ class Call:
         if self._done or not self.model_key:
             return
         self._done = True
+        # Erreur sans `usage` upstream (500, 429 local, client parti…) :
+        # rien n'a été consommé de mesurable. Compter le corps envoyé en
+        # tokens «estimés» gonflait l'entrée de ~20 k tokens par erreur
+        # de Claude Code et faisait passer ces lignes pour des mesures
+        # approximatives — ce sont des zéros exacts.
+        if status >= 400 and not exact:
+            prompt_tokens = completion_tokens = 0
+            exact = True
         stats.record(self.model_key, self.backend.name, self.plain_model,
                      self.endpoint, status, time.monotonic() - self.started,
                      prompt_tokens, completion_tokens, exact, streamed)
@@ -448,13 +456,23 @@ async def send_upstream(call: Call, request: Request, path: str,
     return upstream
 
 
+# Corps d'une réponse d'erreur upstream retenu pour le log : assez pour
+# lire le message, pas plus.
+ERROR_EXCERPT = 600
+
+
 async def relay(call: Call, upstream: httpx.Response, robinet,
                 prompt_estimate: int):
     """Les octets upstream, passés par le robinet. Le `finally` compte
     aussi les flux interrompus (client parti) ; l'upstream est fermé
-    quoi qu'il arrive."""
+    quoi qu'il arrive. Une erreur upstream (4xx/5xx) est loggée avec le
+    début de son corps — le client, lui, ne voit souvent qu'un statut."""
+    failed = upstream.status_code >= 400
+    excerpt = bytearray()
     try:
         async for chunk in upstream.aiter_raw():
+            if failed and len(excerpt) < ERROR_EXCERPT:
+                excerpt += chunk[:ERROR_EXCERPT - len(excerpt)]
             out = robinet.feed(chunk)
             if out:
                 yield out
@@ -462,6 +480,12 @@ async def relay(call: Call, upstream: httpx.Response, robinet,
         if out:
             yield out
     finally:
+        if failed:
+            log.warning(
+                "[%s] %s → %d upstream pour %s : %s", call.backend.name,
+                call.endpoint, upstream.status_code, call.model_key,
+                excerpt.decode("utf-8", "replace").replace("\n", " "),
+            )
         prompt, completion, exact = robinet.tokens(prompt_estimate)
         call.done(upstream.status_code, prompt, completion, exact,
                   robinet.sse)
