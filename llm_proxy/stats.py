@@ -131,7 +131,10 @@ class UsageCollector:
         self.usage: dict | None = None
         self.out_chars = 0
 
-    def feed(self, chunk: bytes) -> None:
+    def feed(self, chunk: bytes) -> bytes:
+        """Inspecte `chunk` et le rend TEL QUEL : ce robinet est
+        l'identité. (Même interface qu'anthropic_api.Translator, qui
+        lui réécrit — app.forward ne distingue pas les deux.)"""
         try:
             if self.sse:
                 self._feed_sse(chunk)
@@ -147,6 +150,7 @@ class UsageCollector:
             self.sse = self.json = False
             self._buf.clear()
             self._head.clear()
+        return chunk
 
     def _feed_sse(self, chunk: bytes) -> None:
         # Cas courant (un flush par événement, tampon vide) : le chunk
@@ -170,10 +174,11 @@ class UsageCollector:
             if usage is not None:
                 self.usage = usage
 
-    def finish(self) -> None:
+    def finish(self) -> bytes:
         """Fin du flux : sur une réponse JSON, cherche `usage` dans la
         queue puis la tête conservées — dernière occurrence d'abord,
-        c'est celle du niveau racine."""
+        c'est celle du niveau racine. Rien à émettre : tout est déjà
+        parti par feed()."""
         if self.json:
             for part in (self._buf, self._head):
                 if self.usage is not None:
@@ -186,6 +191,7 @@ class UsageCollector:
                         break
         self._buf.clear()
         self._head.clear()
+        return b""
 
     def tokens(self, fallback_prompt: int) -> tuple[int, int, bool]:
         """(prompt_tokens, completion_tokens, exact)."""
@@ -372,8 +378,9 @@ def record(model_key: str, backend: str, model: str, endpoint: str,
 #   * bucket_width accepte « all » : un seul seau couvrant toute la
 #     plage, pour obtenir un total sans agréger soi-même ;
 #   * chaque `result` porte en plus num_errors, num_streamed_requests,
-#     num_estimated_requests, les latences (total / moyenne / maximum)
-#     et first_request_time / last_request_time.
+#     num_estimated_requests, num_anthropic_requests, les latences
+#     (total / moyenne / maximum) et first_request_time /
+#     last_request_time.
 #
 # Les latences exposées s'additionnent ou se maximisent, donc un client
 # peut agréger plusieurs seaux SANS perte : c'est ce qui permet au tableau
@@ -402,6 +409,7 @@ SELECT CAST((ts - ?) / ? AS INTEGER)      AS b,
        SUM(status NOT BETWEEN 200 AND 399),
        SUM(streamed),
        SUM(NOT exact),
+       SUM(endpoint = '/v1/messages'),
        SUM(latency),
        MAX(latency),
        MIN(ts),
@@ -499,7 +507,7 @@ def usage_completions(start_time: int, end_time: int | None = None,
     grouped: dict[int, list] = {}
     seen_first: dict[int, float] = {}
     for (b, mk, prompt, completion, requests, errors, streamed, estimated,
-         latency_sum, latency_max, first_ts, last_ts) in rows:
+         anthropic, latency_sum, latency_max, first_ts, last_ts) in rows:
         grouped.setdefault(b, []).append({
             "object": "organization.usage.completions.result",
             "input_tokens": prompt or 0,
@@ -519,6 +527,9 @@ def usage_completions(start_time: int, end_time: int | None = None,
             "num_errors": errors or 0,
             "num_streamed_requests": streamed or 0,
             "num_estimated_requests": estimated or 0,
+            # Requêtes arrivées par la surface Anthropic (/v1/messages,
+            # c'est-à-dire Claude Code) : la colonne `endpoint` suffit.
+            "num_anthropic_requests": anthropic or 0,
             # Latences EXACTEMENT recomposables d'un seau à l'autre : la
             # somme s'additionne, le maximum se maximise. Un percentile,
             # lui, ne se recompose pas — c'est pourquoi il n'y en a pas.

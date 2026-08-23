@@ -13,7 +13,6 @@ tombent sur le backend de repli.
 import json
 
 import httpx
-from fastapi.responses import JSONResponse
 
 from . import albert
 from . import config
@@ -51,6 +50,10 @@ class Backend:
         #   true           → valeur globale proxy.tool_choice ;
         #   "auto", "required"… → cette valeur-là, pour ce backend.
         self.tool_choice = self._tool_choice(cfg.get("force_tool_choice"))
+        # Plafond de `max_tokens` (0 = aucun) : Claude Code en demande
+        # 32 000 par défaut, que certains backends refusent tout net. La
+        # valeur du client est ramenée au plafond, jamais augmentée.
+        self.max_tokens = int(cfg.get("max_tokens", 0) or 0)
         # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
         # Albert avec des clés différentes ne partagent rien).
         self.quota_state = albert.QuotaState(name) if self.quotas else None
@@ -123,21 +126,12 @@ def route_backend(payload) -> tuple[Backend | None, bool]:
     return None, False
 
 
-def unknown_prefix_response(model: str) -> JSONResponse:
+def unknown_prefix_message(model: str) -> str:
+    """Texte du 400 «modèle sans préfixe» ; la réponse elle-même est
+    construite par app.error_response, dans le dialecte du client."""
     prefixes = ", ".join(f"«{n}/»" for n in BACKENDS)
     log.warning("modèle %r sans préfixe backend reconnu → 400", model)
-    return JSONResponse(
-        {
-            "error": {
-                "message": (
-                    f"modèle «{model}» sans préfixe backend ; "
-                    f"préfixes attendus : {prefixes}"
-                ),
-                "type": "unknown_backend_prefix",
-            }
-        },
-        status_code=400,
-    )
+    return f"modèle «{model}» sans préfixe backend ; préfixes attendus : {prefixes}"
 
 
 def strip_backend_prefix(payload: dict, b: Backend) -> bytes:
@@ -149,21 +143,9 @@ def strip_backend_prefix(payload: dict, b: Backend) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode()
 
 
-def backend_offline_response(b: Backend, exc: Exception) -> JSONResponse:
+def backend_offline_message(b: Backend, exc: Exception) -> str:
     log.warning("backend %s (%s) injoignable : %s → 503", b.name, b.url, exc)
-    return JSONResponse(
-        {
-            "error": {
-                "message": (
-                    f"backend «{b.name}» ({b.url}) hors ligne : {exc}"
-                ),
-                "type": "backend_offline",
-            }
-        },
-        status_code=503,
-        headers={"Retry-After": "30"},
-    )
-
+    return f"backend «{b.name}» ({b.url}) hors ligne : {exc}"
 
 
 async def open_clients() -> None:

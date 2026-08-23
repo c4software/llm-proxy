@@ -4,7 +4,8 @@ Passerelle OpenAI-compatible qui expose **plusieurs backends LLM derrière
 un seul endpoint** : Albert (DINUM), machines llama.cpp locales, ou tout
 autre serveur compatible OpenAI. Le client parle à une seule URL et
 choisit le backend par le **préfixe du nom de modèle**
-(`albert/deepseek-v4-flash`, `bigchuck/qwen3-32b`).
+(`albert/deepseek-v4-flash`, `bigchuck/qwen3-32b`). Un client écrit pour
+l'API Anthropic — **Claude Code** — s'y branche aussi, le proxy traduit.
 
 ![Tableau de bord /ui : cartes de synthèse (requêtes, tokens, modèles actifs, erreurs) et détail par modèle](preview.jpg)
 
@@ -48,6 +49,14 @@ choisit le backend par le **préfixe du nom de modèle**
   `GET /v1/models` et les chemins de `FORWARD_POST_PATHS` sont relayés ;
   toute autre URL → 404 local `unknown_route`. Le streaming SSE passe
   intact.
+- **Compatible Claude Code** — si `[anthropic].enabled`, le proxy parle
+  aussi l'**API Messages d'Anthropic** : `POST /v1/messages` (JSON et
+  flux SSE, outils compris), `/v1/messages/count_tokens`, et
+  `GET /v1/models` à la forme Anthropic. Traduit vers
+  `/v1/chat/completions` du backend visé — **uniquement dans ce sens**,
+  aucun backend Anthropic. Voir [Claude Code](#claude-code).
+- **Plafond `max_tokens`** — optionnel, par backend : la valeur du
+  client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
   (URL, quotas restants par fenêtre, derniers modèles vus, réglage
   `tool_choice`) ; un résumé périodique des compteurs est loggé
@@ -74,12 +83,24 @@ choisit le backend par le **préfixe du nom de modèle**
 | `llm_proxy/backends.py` | Déclaration des backends, clients HTTP, **routage au préfixe de modèle** |
 | `llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 | `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête), extraction de l'`usage` dans le flux de réponse, et l'Usage API |
+| `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
+| `tests/` | Tests du traducteur (`pytest`, `requirements-dev.txt`) — sur des octets, sans réseau |
 | `llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `dashboard.css`, `vue.global.prod.js`) |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 
 `app.py` ne connaît d'Albert que « un backend `quotas = true` passe par
 sa `QuotaState` » ; toute la mécanique de quotas vit dans `albert.py`.
+
+Chaque requête relayée est portée par un objet `Call` (backend, modèle
+demandé, endpoint, dialecte du client) : c'est lui qui écrit la ligne de
+stats — une fois, quel que soit le chemin de sortie — et construit les
+erreurs à la forme attendue (`{"error": {…}}` ou, pour un client
+Anthropic, `{"type": "error", …}`). La porte de quota (`gate`) et le
+relais (`forward`) sont communs à toutes les routes ; `forward` fait
+passer les octets upstream par un « robinet » — `stats.UsageCollector`
+(identité, lit l'`usage` au passage) ou `anthropic_api.Translator`
+(réécrit la réponse).
 
 `data/` est le seul dossier écrit à l'exécution (`config.toml`,
 `stats.db`) : c'est le volume à monter.
@@ -120,8 +141,9 @@ pas, la compatibilité reste entière :
 - chaque `result` porte, en plus des champs du schéma, ce que le proxy
   sait mesurer et qu'OpenAI n'expose pas : `num_errors`,
   `num_streamed_requests`, `num_estimated_requests`,
-  `total_latency_seconds`, `avg_latency_seconds`, `max_latency_seconds`,
-  `first_request_time`, `last_request_time`.
+  `num_anthropic_requests` (arrivées par `/v1/messages`, donc Claude
+  Code), `total_latency_seconds`, `avg_latency_seconds`,
+  `max_latency_seconds`, `first_request_time`, `last_request_time`.
 
 **Toutes ces grandeurs s'agrègent sans perte** : elles s'additionnent
 (requêtes, tokens, somme des latences) ou se maximisent (latence max).
@@ -205,6 +227,69 @@ Le badge **exact / estimé** de la colonne *Comptage* dit d'où viennent les
 tokens : le bloc `usage` de l'upstream, ou l'estimation de repli
 (streaming sans `stream_options.include_usage`).
 
+Un badge **Claude Code actif / inactif** dans l'en-tête dit si la
+surface Anthropic est ouverte (lu une fois sur `/healthz`, jamais dans
+la boucle) ; la carte *Requêtes* et la ligne de chaque modèle comptent
+celles arrivées par `/v1/messages`.
+
+En bas de page, le panneau repliable **Brancher un client** donne des
+commandes prêtes à coller — catalogue, `curl`, SDK OpenAI, Claude Code —
+dérivées de l'URL de la page, de l'auth (`/healthz`) et du modèle le
+plus actif de la période.
+
+## Claude Code
+
+Avec `[anthropic].enabled = true` dans `config.toml`, Claude Code (ou
+tout SDK Anthropic) se branche sur le proxy sans rien d'autre :
+
+    export ANTHROPIC_BASE_URL=http://localhost:8000
+    export ANTHROPIC_API_KEY=<clé de proxy.api_keys, ou n'importe quoi si ouvert>
+    export ANTHROPIC_MODEL=albert/deepseek-v4-flash
+    claude
+
+Ce qui se passe :
+
+- `POST /v1/messages` est traduit en `/v1/chat/completions` — `system`,
+  blocs `text`/`image`/`tool_use`/`tool_result`, `tools`, `tool_choice`,
+  `stop_sequences`, `metadata.user_id` ; les blocs `thinking`, `top_k`,
+  `cache_control` et les outils serveur Anthropic sont ignorés. La
+  réponse est retraduite : objet `Message` ou suite d'événements SSE
+  (`message_start` → blocs → `message_delta` → `message_stop`), outils
+  fragmentés compris ; `reasoning_content` d'un backend devient un bloc
+  `thinking`. En flux, `stream_options.include_usage` est demandé : les
+  stats sont **exactes**.
+- **Le modèle passe par `[anthropic.model_map]`**. Claude Code envoie
+  des noms Claude en dur pour ses tâches d'arrière-plan (titres,
+  résumés…), même avec `ANTHROPIC_MODEL` défini : la table les traduit en
+  noms préfixés, routés comme d'habitude. Un suffixe `[1m]` est ignoré ;
+  un nom déjà préfixé passe tel quel ; `default` attrape le reste ; sans
+  correspondance → 400. L'exemple livre tous les noms connus sur
+  `albert/deepseek-v4-flash`.
+- `POST /v1/messages/count_tokens` : estimation locale (~4 caractères
+  par token, comme le limiteur) — Claude Code ne s'en sert que pour sa
+  jauge de contexte.
+- `GET /v1/models` : le même catalogue, à la forme Anthropic, quand la
+  requête porte `anthropic-version` (le SDK Anthropic le pose toujours,
+  le SDK OpenAI jamais).
+- L'auth du proxy accepte `x-api-key` en plus de `Authorization: Bearer`
+  ; les en-têtes `x-api-key`, `anthropic-version`, `anthropic-beta` ne
+  sont jamais relayés. Toutes les erreurs (401, 400, 429 du limiteur,
+  503 backend éteint…) sortent à la forme Anthropic.
+- Le limiteur, les stats (`endpoint = /v1/messages`), `force_tool_choice`
+  et `max_tokens` s'appliquent comme pour tout autre client. En flux,
+  derrière un backend à quotas, le `200` part **tout de suite** et des
+  `event: ping` (toutes les `ping_interval` s) tiennent la connexion
+  pendant l'attente du limiteur — Claude Code coupe un flux muet. Un 429
+  local devient alors un `event: error` (`rate_limit_error`) dans le
+  flux ; un client qui raccroche pendant l'attente quitte la file sans
+  consommer de quota (499), comme ailleurs.
+
+À savoir : le prompt système de Claude Code pèse plusieurs milliers de
+tokens, renvoyés à chaque tour sans cache exploitable côté OpenAI — le
+quota journalier Albert se consomme vite. Hors périmètre : Batches,
+Files, outils serveur (`web_search`, `code_execution`), blocs `document`
+PDF — aucun n'est nécessaire à Claude Code contre un backend OpenAI.
+
 ## Déploiement
 
 ### Docker Compose
@@ -272,7 +357,9 @@ auto-signé), `force_tool_choice` (injection de `tool_choice` : absent ou
 `proxy.tool_choice` ; une chaîne (`"auto"`, `"required"`…) → cette
 valeur-là). Seule exception : si `[backends]` est absent du TOML, le
 backend Albert par défaut est livré avec `"auto"`, puisque c'est lui que
-le correctif vise.
+le correctif vise. `max_tokens` (plafond, `0` ou absent = aucun : la
+valeur du client — `max_tokens` ou `max_completion_tokens` — est ramenée
+au plafond, jamais augmentée ni ajoutée).
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
 `unknown_backend_prefix`. Seules les requêtes sans champ `model`
@@ -282,7 +369,7 @@ le correctif vise.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `api_keys` | `[]` | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>`, à la OpenAI). Liste vide = proxy ouvert ; 401 sinon, `/healthz` exempté ; `/ui` accepte aussi `?key=<clé>` (puis cookie) |
+| `api_keys` | `[]` | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>` à la OpenAI, ou `x-api-key: <clé>` à l'Anthropic). Liste vide = proxy ouvert ; 401 sinon, `/healthz` exempté ; `/ui` accepte aussi `?key=<clé>` (puis cookie) |
 | `upstream_timeout` | `600` | Secondes ; large pour les longues générations |
 | `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info` — court, un backend lent ne doit pas bloquer le catalogue |
 | `tool_choice` | `"auto"` | Valeur injectée quand `tools` est présent sans `tool_choice`, pour les backends ayant `force_tool_choice = true`. L'injection est désactivée par défaut : elle s'active par backend |
@@ -296,6 +383,14 @@ le correctif vise.
 |---|---|---|
 | `database` |  `"stats.db"` | Base SQLite ; chemin relatif = à côté de `config.toml` |
 | `retention_days` | `90` | Purge des lignes plus anciennes (`0` = conservation illimitée) |
+
+### `[anthropic]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Ouvre la surface Anthropic (`/v1/messages`…). Table absente = inactive, dit au démarrage dans les logs et dans `/healthz` |
+| `model_map` | `{}` | Noms de modèles Anthropic → noms préfixés ; `default` attrape les inconnus. Voir [Claude Code](#claude-code) |
+| `ping_interval` | `10` | Secondes entre deux `event: ping` pendant l'attente du limiteur, en flux. `0` = attendre avant de répondre |
 
 ### `[quotas]` (backends à quotas)
 
@@ -326,9 +421,10 @@ clé Albert ouverte pour quiconque peut l'atteindre**. Deux parades,
 cumulables :
 
 - **`proxy.api_keys`** : exige des clients une clé à la OpenAI
-  (`Authorization: Bearer <clé>`) — sans elle, 401. Quand l'auth est
-  active, ni le Bearer du client ni ses cookies ne sont relayés aux
-  backends (c'est la clé du proxy, pas de l'upstream). Le tableau de bord `/ui` est
+  (`Authorization: Bearer <clé>`) ou à l'Anthropic (`x-api-key`) — sans
+  elle, 401. Quand l'auth est active, ni le Bearer du client ni ses
+  cookies ne sont relayés aux backends (c'est la clé du proxy, pas de
+  l'upstream) ; `x-api-key` ne l'est jamais. Le tableau de bord `/ui` est
   soumis à la même clé : un navigateur ne pouvant pas poser d'en-tête,
   elle s'y passe une fois en `?key=<clé>` puis est mémorisée dans un
   cookie `HttpOnly` (`SameSite=Strict`).
@@ -373,8 +469,36 @@ Le réglage de chaque backend est rappelé au démarrage et lisible dans
 local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 `backend_offline` si la machine est éteinte).
 
+    # surface Anthropic (si [anthropic].enabled) : un Message, puis un flux
+    curl -s http://localhost:8000/v1/messages \
+      -H "Content-Type: application/json" -H "anthropic-version: 2023-06-01" \
+      -d '{"model":"claude-opus-5","max_tokens":64,
+           "messages":[{"role":"user","content":"Bonjour"}]}' \
+      | jq '{model, stop_reason, text: .content[0].text}'
+
+    # tests du traducteur
+    python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+    .venv/bin/python -m pytest -q tests
+
+## À faire
+
+- Valider contre un **vrai** Claude Code (la séquence SSE est celle que
+  le SDK officiel accepte ; le client lui-même reste à tester en
+  conditions réelles : outils `Bash`/`Edit`, images, sessions longues).
+- Blocs `document` (PDF base64) et images dans les `tool_result` :
+  ignorés aujourd'hui, un backend multimodal pourrait les recevoir.
+- `count_tokens` : estimation à 4 caractères par token ; un backend qui
+  expose `/tokenize` (llama.cpp) pourrait donner un chiffre exact.
+- Le `cache_control` Anthropic est ignoré : rien d'équivalent côté
+  OpenAI, mais un backend qui gère le cache de préfixe (vLLM, llama.cpp)
+  en profite déjà implicitement si les messages sont stables.
+- Hors périmètre, volontairement : Batches, Files, outils serveur
+  (`web_search`, `code_execution`), et le sens proxy → backend Anthropic.
+
 ## Côté clients
 
+- Claude Code : `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_MODEL=<backend>/<modèle>` — voir [Claude Code](#claude-code).
 - Hermes : retirer `extra_body.tool_choice` du provider dans
   `~/.hermes/config.yaml`, pointer `api` sur le proxy.
 - pi : retirer `patchFetchForAlbert()` de l'extension, pointer

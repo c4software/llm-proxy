@@ -7,3 +7,5 @@ data/config.toml
 data/stats.db
 data/stats.db-wal
 data/stats.db-shm
+.venv/
+.pytest_cache/

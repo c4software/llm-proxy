@@ -36,6 +36,53 @@ forward_post_paths = [
 exempt_paths = ["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]
 
 
+# ── Surface Anthropic (Claude Code) ─────────────────────────────────────
+# Un client écrit pour l'API Messages d'Anthropic — Claude Code — peut
+# parler au proxy comme s'il était api.anthropic.com :
+#
+#   ANTHROPIC_BASE_URL=http://localhost:8000
+#   ANTHROPIC_API_KEY=<clé du proxy, ou n'importe quoi si proxy ouvert>
+#   ANTHROPIC_MODEL=albert/deepseek-v4-flash
+#
+# Le proxy traduit /v1/messages en /v1/chat/completions (et la réponse,
+# flux SSE compris) vers le backend que désigne le préfixe, comme pour
+# tout autre client. Uniquement dans ce sens : aucun backend Anthropic.
+# Table absente ou enabled = false → surface inactive (404), rien ne
+# change pour les clients OpenAI.
+[anthropic]
+enabled = true
+# En flux, pendant l'attente du limiteur : un `event: ping` toutes les
+# N secondes tient la connexion (Claude Code coupe un flux muet ; l'API
+# Anthropic envoie ces mêmes pings). Un 429 local devient alors un
+# `event: error` dans le flux. 0 = attendre AVANT de répondre, comme pour
+# un client OpenAI.
+ping_interval = 10
+
+# Noms de modèles → noms PRÉFIXÉS du proxy. Claude Code envoie des noms
+# Claude en dur pour ses tâches d'arrière-plan (titres, résumés…), même
+# avec ANTHROPIC_MODEL défini : sans cette table ils partiraient en 400.
+# Un suffixe entre crochets («claude-opus-5[1m]») est ignoré à la
+# recherche. Un nom déjà préfixé par un backend passe tel quel.
+# «default» attrape tout nom inconnu ; sans lui → 400.
+[anthropic.model_map]
+default = "albert/deepseek-v4-flash"
+"claude-fable-5" = "albert/deepseek-v4-flash"
+"claude-mythos-5" = "albert/deepseek-v4-flash"
+"claude-opus-5" = "albert/deepseek-v4-flash"
+"claude-opus-4-8" = "albert/deepseek-v4-flash"
+"claude-opus-4-7" = "albert/deepseek-v4-flash"
+"claude-opus-4-6" = "albert/deepseek-v4-flash"
+"claude-opus-4-5" = "albert/deepseek-v4-flash"
+"claude-sonnet-5" = "albert/deepseek-v4-flash"
+"claude-sonnet-4-6" = "albert/deepseek-v4-flash"
+"claude-sonnet-4-5" = "albert/deepseek-v4-flash"
+"claude-haiku-4-5" = "albert/deepseek-v4-flash"
+# Alias génériques que Claude Code accepte dans ANTHROPIC_MODEL.
+"opus" = "albert/deepseek-v4-flash"
+"sonnet" = "albert/deepseek-v4-flash"
+"haiku" = "albert/deepseek-v4-flash"
+
+
 # ── Statistiques ────────────────────────────────────────────────────────
 [stats]
 # Base SQLite : une ligne par requête servie, d'où les vues All/Week/Day
@@ -109,11 +156,17 @@ models = ["openweight-large", "gpt-oss"]
 # valeur-là. Seul Albert en a besoin (son schéma déclare «default: none»,
 # ce qui casse le tool calling) ; llama.cpp non.
 
+#
+# max_tokens — plafond (0 ou absent = aucun) : la valeur du client est
+# ramenée au plafond, jamais augmentée. Claude Code en demande 32 000
+# par défaut, que certains backends refusent.
+
 [backends.albert]
 url = "https://albert.api.etalab.gouv.fr"
 api_key = "${ALBERT_API_KEY}"
 quotas = true
 force_tool_choice = "auto"
+# max_tokens = 8192
 
 # Backend local llama.cpp : sans quota, pas toujours allumé — contacté
 # uniquement à la demande, jamais sondé en tâche de fond ; éteint → 503
