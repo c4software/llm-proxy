@@ -43,9 +43,6 @@ exempt_paths = ["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]
 database = "stats.db"
 # Purge des lignes plus vieilles que N jours (0 = ne jamais purger).
 retention_days = 90
-# Corps max bufferisé pour lire `usage` sur une réponse non streamée ;
-# au-delà on renonce (estimation) plutôt que de gonfler la RAM.
-max_body_bytes = 2097152
 
 
 # ── Quotas Albert ───────────────────────────────────────────────────────

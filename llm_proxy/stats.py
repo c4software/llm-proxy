@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import queue
+import re
 import sqlite3
 import threading
 import time
@@ -48,9 +49,15 @@ log = logging.getLogger("albert-proxy")
 DB_PATH = config.resolve(config.text("stats.database", "stats.db"))
 # Purge des lignes plus vieilles que N jours (0 = conservation illimitée).
 RETENTION_DAYS = config.num("stats.retention_days", 90)
-# Taille max du corps bufferisé pour lire `usage` sur une réponse non
-# streamée ; au-delà on renonce (estimation) plutôt que de gonfler la RAM.
-MAX_BODY_BYTES = config.integer("stats.max_body_bytes", 2 << 20)
+# Réponse non streamée : seuls la TÊTE et la QUEUE du corps sont
+# retenues, TAIL_BYTES chacune — `usage` vit à l'une ou l'autre (OpenAI,
+# vLLM/Albert et llama.cpp le sérialisent après `choices`/`data`), jamais
+# au milieu d'une réponse volumineuse. 64 Kio couvrent largement l'objet
+# et ce qui l'entoure.
+TAIL_BYTES = 64 << 10
+# Flux SSE : une ligne sans retour chariot ne peut pas dépasser ceci —
+# au-delà ce n'est pas du SSE, on cesse de l'inspecter.
+MAX_LINE_BYTES = 1 << 20
 # Même approximation que le limiteur (albert.CHARS_PER_TOKEN).
 CHARS_PER_TOKEN = 4
 
@@ -62,23 +69,65 @@ def _est(chars: int) -> int:
     return max(chars // CHARS_PER_TOKEN, 1) if chars else 0
 
 
-class UsageCollector:
-    """Lit les tokens dans le flux de réponse upstream, sans le retenir.
+# Ce qu'on cherche dans le flux, SANS le parser : json.loads sur chaque
+# événement SSE coûtait ~4 µs par token généré, sur la boucle d'événements.
+#   * _CONTENT_RE : la valeur de `content` quand c'est une chaîne — on
+#     n'en retient que la longueur. `"content":null` ne matche pas, ni
+#     `"reasoning_content"` (le guillemet ouvrant est exigé), ni un
+#     `\"content\"` échappé dans un texte ;
+#   * _USAGE_RE : `"usage":{` — l'OBJET, pas le `"usage":null` qu'OpenAI
+#     répète sur chaque chunk quand include_usage est demandé.
+_CONTENT_RE = re.compile(rb'"content"\s*:\s*"((?:[^"\\]|\\.)*)"')
+_USAGE_RE = re.compile(rb'"usage"\s*:\s*\{')
+_DECODER = json.JSONDecoder()
 
-    - réponse JSON (non streamée) : le corps est bufferisé (borné) puis
-      parsé à la fin pour son `usage` ;
-    - flux SSE : parsing incrémental ligne à ligne — on retient le dernier
-      `usage` non nul vu, et on accumule la longueur des deltas de contenu
-      comme filet de sécurité quand l'upstream n'envoie aucun `usage`.
+
+def _chars(raw: bytes) -> int:
+    """Longueur en CARACTÈRES d'une chaîne JSON encore échappée, sans la
+    désérialiser : octets décodés, moins un par échappement («\\n»,
+    «\\"»…). Un «\\uXXXX» reste compté 5 — rare, l'upstream envoie de
+    l'UTF-8 brut — et c'est une estimation à 4 caractères par token."""
+    text = raw.decode("utf-8", "ignore")
+    return len(text) - text.count("\\")
+
+
+def _usage_at(buf: bytes, pos: int) -> dict | None:
+    """Décode l'objet JSON ouvert en `pos` (un `{`) ; None s'il n'est pas
+    un `usage` plausible. raw_decode s'arrête à l'accolade fermante : le
+    reste du corps n'est jamais parsé."""
+    try:
+        obj, _ = _DECODER.raw_decode(
+            buf[pos:pos + TAIL_BYTES].decode(errors="replace"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if isinstance(obj, dict) and (
+        isinstance(obj.get("prompt_tokens"), int)
+        or isinstance(obj.get("completion_tokens"), int)
+        or isinstance(obj.get("total_tokens"), int)
+    ):
+        return obj
+    return None
+
+
+class UsageCollector:
+    """Lit les tokens dans le flux de réponse upstream, sans le retenir et
+    SANS le désérialiser — le relais doit rester le plus léger possible.
+
+    - réponse JSON (non streamée) : seules la tête et la queue du corps
+      (TAIL_BYTES chacune) sont conservées ; à la fin, on y cherche
+      `"usage":{` et on ne décode que cet objet-là ;
+    - flux SSE : sur chaque lot de lignes complètes, une regex accumule
+      la longueur des deltas de contenu (filet de sécurité quand
+      l'upstream n'envoie aucun `usage`) et une autre repère l'éventuel
+      objet `usage`, seul morceau décodé.
     """
 
     def __init__(self, content_type: str):
         ct = (content_type or "").lower()
         self.sse = "text/event-stream" in ct
         self.json = not self.sse and "json" in ct
-        self._line = bytearray()
-        self._body = bytearray()
-        self._overflow = False
+        self._buf = bytearray()   # SSE : ligne en cours ; JSON : queue
+        self._head = bytearray()  # JSON : tête du corps
         self.usage: dict | None = None
         self.out_chars = 0
 
@@ -86,62 +135,57 @@ class UsageCollector:
         try:
             if self.sse:
                 self._feed_sse(chunk)
-            elif self.json and not self._overflow:
-                if len(self._body) + len(chunk) > MAX_BODY_BYTES:
-                    self._overflow = True
-                    self._body.clear()
-                else:
-                    self._body += chunk
+            elif self.json:
+                if len(self._head) < TAIL_BYTES:
+                    self._head += chunk[:TAIL_BYTES - len(self._head)]
+                self._buf += chunk
+                # Amorti : on ne tronque qu'une fois sur deux tailles.
+                if len(self._buf) > 2 * TAIL_BYTES:
+                    del self._buf[:-TAIL_BYTES]
         except Exception:
             # Une réponse au schéma inattendu ne doit jamais casser le relais.
             self.sse = self.json = False
+            self._buf.clear()
+            self._head.clear()
 
     def _feed_sse(self, chunk: bytes) -> None:
-        self._line += chunk
-        while True:
-            nl = self._line.find(b"\n")
+        # Cas courant (un flush par événement, tampon vide) : le chunk
+        # est inspecté tel quel, sans passer par le tampon.
+        if not self._buf and chunk.endswith(b"\n"):
+            done = chunk
+        else:
+            self._buf += chunk
+            nl = self._buf.rfind(b"\n")
             if nl < 0:
-                break
-            line = bytes(self._line[:nl]).strip()
-            del self._line[: nl + 1]
-            if not line.startswith(b"data:"):
-                continue
-            payload = line[5:].strip()
-            if not payload or payload == b"[DONE]":
-                continue
-            try:
-                event = json.loads(payload)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            if not isinstance(event, dict):
-                continue
-            usage = event.get("usage")
-            if isinstance(usage, dict):
+                if len(self._buf) > MAX_LINE_BYTES:
+                    self.sse = False
+                    self._buf.clear()
+                return
+            done = bytes(self._buf[:nl + 1])
+            del self._buf[:nl + 1]
+        for m in _CONTENT_RE.finditer(done):
+            self.out_chars += _chars(m.group(1))
+        for m in _USAGE_RE.finditer(done):
+            usage = _usage_at(done, m.end() - 1)
+            if usage is not None:
                 self.usage = usage
-            for choice in event.get("choices") or []:
-                if not isinstance(choice, dict):
-                    continue
-                delta = choice.get("delta") or choice.get("message") or {}
-                content = delta.get("content") if isinstance(delta, dict) else None
-                if isinstance(content, str):
-                    self.out_chars += len(content)
 
     def finish(self) -> None:
-        """Fin du flux : parse le corps JSON bufferisé le cas échéant."""
-        if self.json and not self._overflow and self._body:
-            try:
-                doc = json.loads(bytes(self._body))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                doc = None
-            if isinstance(doc, dict):
-                usage = doc.get("usage")
-                if isinstance(usage, dict):
-                    self.usage = usage
-                else:
-                    # /v1/embeddings & co. : pas d'usage → longueur du corps.
-                    self.out_chars = self.out_chars or 0
-        self._body.clear()
-        self._line.clear()
+        """Fin du flux : sur une réponse JSON, cherche `usage` dans la
+        queue puis la tête conservées — dernière occurrence d'abord,
+        c'est celle du niveau racine."""
+        if self.json:
+            for part in (self._buf, self._head):
+                if self.usage is not None:
+                    break
+                buf = bytes(part)
+                for m in reversed(list(_USAGE_RE.finditer(buf))):
+                    usage = _usage_at(buf, m.end() - 1)
+                    if usage is not None:
+                        self.usage = usage
+                        break
+        self._buf.clear()
+        self._head.clear()
 
     def tokens(self, fallback_prompt: int) -> tuple[int, int, bool]:
         """(prompt_tokens, completion_tokens, exact)."""

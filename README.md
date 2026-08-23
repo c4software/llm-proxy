@@ -290,7 +290,6 @@ le correctif vise.
 |---|---|---|
 | `database` |  `"stats.db"` | Base SQLite ; chemin relatif = à côté de `config.toml` |
 | `retention_days` | `90` | Purge des lignes plus anciennes (`0` = conservation illimitée) |
-| `max_body_bytes` | `2097152` | Taille max d'une réponse non streamée bufferisée pour y lire l'`usage` ; au-delà, estimation |
 
 ### `[quotas]` (backends à quotas)
 
