@@ -218,7 +218,9 @@ l'animation). La barre de répartition, elle, garde ses segments et glisse
 remarque pour rien.
 
 La courbe **Trafic** ne porte qu'une mesure — les requêtes —, donc un seul
-axe et une seule couleur ; les tokens sont dans l'infobulle, en CSS pur.
+axe ; chaque barre est **empilée par modèle**, aux couleurs de la
+répartition, le même modèle toujours au même étage d'un seau à l'autre.
+Les tokens et le détail par modèle sont dans l'infobulle, en CSS pur.
 Les seaux vides sont dessinés eux aussi : un creux doit se voir comme un
 creux.
 

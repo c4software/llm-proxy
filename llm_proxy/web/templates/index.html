@@ -65,22 +65,30 @@
     </div>
   </div>
 
-  <!-- UNE mesure (les requêtes) : un seul axe, une seule couleur. Les
-       tokens vivent dans l'infobulle, jamais sur un second axe. -->
+  <!-- UNE mesure (les requêtes) : un seul axe. Chaque barre est empilée
+       par modèle, aux couleurs de la répartition ci-dessous. Les tokens
+       vivent dans l'infobulle, jamais sur un second axe. -->
   <div class="panel chart-panel" v-if="bars.length">
     <div class="panel-head">
       <h2>Trafic</h2>
       <span class="meta">{{ bars.length }} × {{ bucketLabel }} ·
-        pic {{ num(peak) }} req</span>
+        pic {{ num(peak) }} req · empilé par modèle</span>
     </div>
     <div class="chart">
       <div class="bars" :class="{ entering }">
         <i v-for="(b, i) in bars" :key="b.start_time"
            :class="{ zero: !b.requests }" :style="{ '--i': i }">
-          <b :style="{ height: b.height.toFixed(2) + '%' }"></b>
+          <b :style="{ height: b.height.toFixed(2) + '%' }">
+            <s v-for="seg in b.segments" :key="seg.id"
+               :style="{ height: seg.share.toFixed(2) + '%', background: seg.color }"></s>
+          </b>
           <span class="tip">
             <span class="when">{{ moment(b.start_time) }}</span>
-            <span class="row"><span>Requêtes</span><b>{{ num(b.requests) }}</b></span>
+            <span class="row" v-for="seg in b.segments" :key="seg.id">
+              <span><em :style="{ background: seg.color }"></em>{{ seg.id }}</span>
+              <b>{{ num(seg.requests) }}</b>
+            </span>
+            <span class="row total"><span>Requêtes</span><b>{{ num(b.requests) }}</b></span>
             <span class="row"><span>Tokens</span><b>{{ num(b.tokens) }}</b></span>
           </span>
         </i>

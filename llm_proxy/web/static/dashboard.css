@@ -225,14 +225,21 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
   background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
 }
 .bars > i > b {
-  display: block; width: 100%; border-radius: 4px 4px 0 0;
-  background: var(--accent); position: relative;
+  display: flex; flex-direction: column-reverse; width: 100%;
+  border-radius: 4px 4px 0 0; overflow: hidden; position: relative;
+  background: var(--line);
   /* Les nœuds survivent au morphing : une barre dont la valeur change
      glisse vers sa nouvelle hauteur au lieu d'y sauter. */
-  transition: height .55s cubic-bezier(.22, .61, .36, 1),
-              background-color .2s ease;
+  transition: height .55s cubic-bezier(.22, .61, .36, 1);
 }
-.bars > i:hover > b { background: color-mix(in srgb, var(--accent) 78%, var(--ink)); }
+/* La pile : un segment par modèle, du bas vers le haut dans l'ordre de
+   la liste des modèles. Les segments glissent eux aussi. */
+.bars > i > b > s {
+  display: block; width: 100%; flex: none; text-decoration: none;
+  transition: height .55s cubic-bezier(.22, .61, .36, 1), filter .2s ease;
+}
+.bars > i > b > s + s { border-top: 1px solid var(--panel); }
+.bars > i:hover > b > s { filter: brightness(.85); }
 .bars > i.zero > b { background: var(--line); }
 
 /* Au CHANGEMENT DE PÉRIODE le découpage change : les barres ne
@@ -269,10 +276,12 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
 .bars > i:last-child .tip { left: auto; right: 0; transform: none; }
 .bars .tip .when { color: var(--muted); margin-bottom: 4px; }
 .bars .tip .row { display: flex; gap: 14px; justify-content: space-between; }
-.bars .tip .row span { color: var(--muted); }
+.bars .tip .row span { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.bars .tip .row em { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
+.bars .tip .row.total { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
 .bars .tip .row b { font-weight: 500; font-variant-numeric: tabular-nums; }
 
 @media (prefers-reduced-motion: reduce) {
   .bars.entering > i > b { animation: none; }
-  .bars > i > b, .share-bar > i, .bars .tip { transition: none; }
+  .bars > i > b, .bars > i > b > s, .share-bar > i, .bars .tip { transition: none; }
 }

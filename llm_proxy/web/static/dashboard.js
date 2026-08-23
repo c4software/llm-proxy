@@ -182,19 +182,40 @@ createApp({
     const peak = computed(() => buckets.value.reduce(
       (m, b) => Math.max(m, count(b)), 0));
 
-    const bars = computed(() => buckets.value.map((b) => {
-      const requests = count(b);
-      return {
-        start_time: b.start_time,
-        requests,
-        tokens: b.results.reduce(
-          (s, r) => s + r.input_tokens + r.output_tokens, 0),
-        // 2 % de socle : un seau non vide mais minuscule doit rester
-        // visible, et un seau vide doit rester vide.
-        height: requests && peak.value
-          ? Math.max((100 * requests) / peak.value, 2) : 0,
-      };
-    }));
+    // Chaque barre est EMPILÉE par modèle : un segment par modèle ayant
+    // servi dans le seau, dans l'ordre (et la couleur) de la liste des
+    // modèles — le bas de la pile est toujours le même modèle d'un seau
+    // à l'autre, l'œil suit une couche sans la chercher.
+    const bars = computed(() => {
+      const palette = new Map(models.value.map((m) => [m.id, m.color]));
+      return buckets.value.map((b) => {
+        const requests = count(b);
+        const byModel = new Map(b.results.map((r) => [r.model, r]));
+        const segments = models.value
+          .filter((m) => byModel.has(m.id))
+          .map((m) => {
+            const r = byModel.get(m.id);
+            return {
+              id: m.id, color: palette.get(m.id),
+              requests: r.num_model_requests,
+              tokens: r.input_tokens + r.output_tokens,
+              // Part du seau : les segments se partagent la hauteur
+              // de la barre, qui porte seule l'échelle.
+              share: requests ? (100 * r.num_model_requests) / requests : 0,
+            };
+          });
+        return {
+          start_time: b.start_time,
+          requests,
+          tokens: segments.reduce((s, x) => s + x.tokens, 0),
+          segments,
+          // 2 % de socle : un seau non vide mais minuscule doit rester
+          // visible, et un seau vide doit rester vide.
+          height: requests && peak.value
+            ? Math.max((100 * requests) / peak.value, 2) : 0,
+        };
+      });
+    });
 
     // Quatre repères suffisent : l'axe situe, il n'énumère pas.
     const axis = computed(() => {
