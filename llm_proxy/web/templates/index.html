@@ -31,6 +31,13 @@
               :aria-pressed="String(w.id === current)"
               @click="select(w.id)">{{ w.label }}</button>
     </div>
+    <!-- La MESURE portée par la courbe. Les deux grandeurs sont déjà dans
+         la réponse : basculer ne redemande rien au proxy. -->
+    <div class="range" role="group" aria-label="Mesure">
+      <button v-for="m in metrics" :key="m.id" type="button"
+              :aria-pressed="String(m.id === metric)"
+              @click="selectMetric(m.id)">{{ m.label }}</button>
+    </div>
     <span class="range-note">{{ note }} · raccourcis {{ shortcuts }}</span>
   </div>
 
@@ -67,19 +74,21 @@
     </div>
   </div>
 
-  <!-- UNE mesure (les requêtes) : un seul axe. Chaque barre est empilée
-       par modèle, aux couleurs de la répartition ci-dessous. Les tokens
-       vivent dans l'infobulle, jamais sur un second axe. -->
+  <!-- UNE mesure à la fois — requêtes OU tokens, au choix du sélecteur :
+       un seul axe. Chaque barre est empilée par modèle, aux couleurs de la
+       répartition ci-dessous. L'autre grandeur vit dans l'infobulle,
+       jamais sur un second axe. -->
   <div class="panel chart-panel" v-if="bars.length">
     <div class="panel-head">
       <h2>Trafic</h2>
       <span class="meta">{{ bars.length }} × {{ bucketLabel }} ·
-        pic {{ num(peak) }} req · empilé par modèle</span>
+        en {{ metricLabel }} · pic {{ num(peak) }} {{ metricUnit }} ·
+        empilé par modèle</span>
     </div>
     <div class="chart">
       <div class="bars" :class="{ entering }">
         <i v-for="(b, i) in bars" :key="b.start_time"
-           :class="{ zero: !b.requests, left: i < bars.length / 2, right: i >= bars.length / 2 }"
+           :class="{ zero: !b.value, left: i < bars.length / 2, right: i >= bars.length / 2 }"
            :style="{ '--i': i }">
           <b :style="{ height: b.height.toFixed(2) + '%' }">
             <s v-for="seg in b.segments" :key="seg.id"
@@ -89,10 +98,18 @@
             <span class="when">{{ moment(b.start_time) }}</span>
             <span class="row" v-for="seg in b.segments" :key="seg.id">
               <span><em :style="{ background: seg.color }"></em>{{ seg.id }}</span>
-              <b>{{ num(seg.requests) }}</b>
+              <b>{{ num(seg.value) }}</b>
             </span>
-            <span class="row total"><span>Requêtes</span><b>{{ num(b.requests) }}</b></span>
-            <span class="row"><span>Tokens</span><b>{{ num(b.tokens) }}</b></span>
+            <!-- Le total de la mesure affichée d'abord, l'autre juste
+                 en dessous : l'infobulle reste la vue complète du seau. -->
+            <template v-if="metric === 'tokens'">
+              <span class="row total"><span>Tokens</span><b>{{ num(b.tokens) }}</b></span>
+              <span class="row"><span>Requêtes</span><b>{{ num(b.requests) }}</b></span>
+            </template>
+            <template v-else>
+              <span class="row total"><span>Requêtes</span><b>{{ num(b.requests) }}</b></span>
+              <span class="row"><span>Tokens</span><b>{{ num(b.tokens) }}</b></span>
+            </template>
           </span>
         </i>
       </div>

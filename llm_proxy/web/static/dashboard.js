@@ -9,7 +9,9 @@
 
   UN SEUL appel par rafraîchissement : les seaux de la période, groupés
   par modèle. Tout le reste — totaux, ligne par modèle, courbe — s'en
-  déduit, parce que chaque grandeur exposée s'additionne (requêtes,
+  déduit, et la courbe se lit indifféremment en requêtes ou en tokens :
+  la même réponse porte les deux grandeurs, changer de mesure ne
+  redemande rien, parce que chaque grandeur exposée s'additionne (requêtes,
   tokens, erreurs, somme des latences) ou se maximise (latence max). La
   borne de départ est ALIGNÉE sur la largeur des seaux : les chiffres du
   tableau portent alors exactement sur ce que montre la courbe.
@@ -34,6 +36,7 @@ createApp({
     const API = "/ui/usage";
     const REFRESH = 5000;
     const STORE = "llm-proxy-window";
+    const STORE_METRIC = "llm-proxy-metric";
     // Tons chauds lisibles sur les deux thèmes, cyclés au-delà de six modèles.
     const COLORS = ["#d97757", "#e0a458", "#7d9b76", "#6b8fa3", "#a37ba0",
                     "#c08552"];
@@ -48,10 +51,24 @@ createApp({
         note: "tout l'historique conservé" },
     ];
     const byId = Object.fromEntries(windows.map((w) => [w.id, w]));
+    // Les deux lectures du même trafic. `pick` extrait la grandeur d'une
+    // ligne de résultat : c'est le SEUL endroit qui sait ce que « mesure »
+    // veut dire — barres, pic, infobulle et axe en découlent.
+    const metrics = [
+      { id: "requests", label: "Requêtes", key: "R", unit: "req",
+        pick: (r) => r.num_model_requests },
+      { id: "tokens", label: "Tokens", key: "T", unit: "tokens",
+        pick: (r) => r.input_tokens + r.output_tokens },
+    ];
+    const metricById = Object.fromEntries(metrics.map((m) => [m.id, m]));
 
     // ── état ────────────────────────────────────────────────────────────
     const current = ref(byId[localStorage.getItem(STORE)] ? localStorage
       .getItem(STORE) : "all");
+    // Mesure portée par la courbe : requêtes servies ou tokens échangés.
+    // Les deux viennent de la même réponse — basculer ne relance rien.
+    const metric = ref(metricById[localStorage.getItem(STORE_METRIC)]
+      ? localStorage.getItem(STORE_METRIC) : "requests");
     const buckets = ref([]);      // seaux de la période, groupés par modèle
     const bucketWidth = ref("1d");
     const since = ref(0);         // plus ancien enregistrement connu
@@ -184,18 +201,27 @@ createApp({
         : "aucun trafic";
     });
 
-    const count = (b) => b.results.reduce((s, r) => s + r.num_model_requests, 0);
+    // Valeur d'un seau DANS LA MESURE COURANTE : c'est elle qui donne
+    // l'échelle de la courbe et le partage de chaque barre.
+    const pick = computed(() => metricById[metric.value].pick);
+    const count = (b) => b.results.reduce((s, r) => s + pick.value(r), 0);
     const peak = computed(() => buckets.value.reduce(
       (m, b) => Math.max(m, count(b)), 0));
+    const metricUnit = computed(() => metricById[metric.value].unit);
+    const metricLabel = computed(() =>
+      metricById[metric.value].label.toLowerCase());
 
     // Chaque barre est EMPILÉE par modèle : un segment par modèle ayant
     // servi dans le seau, dans l'ordre (et la couleur) de la liste des
     // modèles — le bas de la pile est toujours le même modèle d'un seau
-    // à l'autre, l'œil suit une couche sans la chercher.
+    // à l'autre, l'œil suit une couche sans la chercher. Hauteur et
+    // partage suivent la mesure choisie ; l'infobulle, elle, montre
+    // toujours les deux grandeurs.
     const bars = computed(() => {
       const palette = new Map(models.value.map((m) => [m.id, m.color]));
+      const take = pick.value;
       return buckets.value.map((b) => {
-        const requests = count(b);
+        const value = count(b);
         const byModel = new Map(b.results.map((r) => [r.model, r]));
         const segments = models.value
           .filter((m) => byModel.has(m.id))
@@ -205,20 +231,22 @@ createApp({
               id: m.id, color: palette.get(m.id),
               requests: r.num_model_requests,
               tokens: r.input_tokens + r.output_tokens,
+              value: take(r),
               // Part du seau : les segments se partagent la hauteur
               // de la barre, qui porte seule l'échelle.
-              share: requests ? (100 * r.num_model_requests) / requests : 0,
+              share: value ? (100 * take(r)) / value : 0,
             };
           });
         return {
           start_time: b.start_time,
-          requests,
+          value,
+          requests: segments.reduce((s, x) => s + x.requests, 0),
           tokens: segments.reduce((s, x) => s + x.tokens, 0),
           segments,
           // 2 % de socle : un seau non vide mais minuscule doit rester
           // visible, et un seau vide doit rester vide.
-          height: requests && peak.value
-            ? Math.max((100 * requests) / peak.value, 2) : 0,
+          height: value && peak.value
+            ? Math.max((100 * value) / peak.value, 2) : 0,
         };
       });
     });
@@ -284,7 +312,8 @@ export ANTHROPIC_MODEL=${model}
 claude`,
       };
     });
-    const shortcuts = computed(() => windows.map((w) => w.key).join(" / "));
+    const shortcuts = computed(() => windows.map((w) => w.key).join(" / ") +
+      " · " + metrics.map((m) => m.key).join(" / "));
     const bucketLabel = computed(() => bucketWidth.value === "1h"
       ? "1 heure" : "1 jour");
 
@@ -352,13 +381,25 @@ claude`,
         () => { entering.value = false; }, 600 + bars.value.length * 14));
     }
 
-    // Raccourcis A / W / D. Ignorés dès qu'un modificateur est enfoncé ou
+    // La mesure ne change ni les seaux ni l'échelle de temps : les mêmes
+    // barres glissent vers leur nouvelle hauteur (transition CSS), sans
+    // cascade et sans nouvelle requête.
+    function selectMetric(id) {
+      if (!metricById[id] || id === metric.value) return;
+      metric.value = id;
+      localStorage.setItem(STORE_METRIC, id);
+    }
+
+    // Raccourcis A / W / D, R / T. Ignorés dès qu'un modificateur est enfoncé ou
     // qu'un champ a le focus : un raccourci ne doit jamais voler une frappe.
     function onKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
-      const hit = windows.find((w) => w.key === String(e.key || "").toUpperCase());
-      if (hit) { e.preventDefault(); select(hit.id); }
+      const key = String(e.key || "").toUpperCase();
+      const hit = windows.find((w) => w.key === key);
+      if (hit) { e.preventDefault(); select(hit.id); return; }
+      const met = metrics.find((m) => m.key === key);
+      if (met) { e.preventDefault(); selectMetric(met.id); }
     }
 
     // Onglet masqué : plus aucune requête. Personne ne regarde, et au
@@ -394,9 +435,11 @@ claude`,
       document.removeEventListener("visibilitychange", onVisibility);
     });
 
-    return { windows, current, models, totals, bars, axis, peak, since, now,
+    return { windows, current, metrics, metric, metricUnit, metricLabel,
+             models, totals, bars, axis, peak, since, now,
              loaded, entering, anthropic, authRequired, exampleModel,
              snippets, origin, note, shortcuts, bucketLabel, successRate,
-             backendSummary, num, ms, ago, dur, moment, tickLabel, select };
+             backendSummary, num, ms, ago, dur, moment, tickLabel, select,
+             selectMetric };
   },
 }).mount("#app");

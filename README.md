@@ -195,7 +195,14 @@ Trois vues, sélecteur en haut de page :
 | Semaine | 7 derniers jours | 1 jour | <kbd>W</kbd> |
 | Tout | depuis le plus ancien enregistrement | 1 heure ou 1 jour, selon l'étendue | <kbd>A</kbd> |
 
-Le choix est mémorisé (`localStorage`). **Un seul appel par
+Et **deux lectures du même trafic**, second sélecteur juste à côté :
+*Requêtes* (<kbd>R</kbd>) ou *Tokens* (<kbd>T</kbd>). C'est la mesure que
+porte la courbe **Trafic** — hauteur des barres, partage entre modèles,
+pic annoncé. Les deux grandeurs sont déjà dans la réponse : basculer ne
+redemande rien au proxy, les mêmes barres glissent simplement vers leur
+nouvelle hauteur.
+
+Les deux choix sont mémorisés (`localStorage`). **Un seul appel par
 rafraîchissement** : les seaux de la période, groupés par modèle. Totaux,
 ligne par modèle et courbe s'en déduisent, puisque tout ce qu'expose
 l'API s'additionne ou se maximise. La borne de départ est alignée sur la
@@ -221,10 +228,12 @@ l'animation). La barre de répartition, elle, garde ses segments et glisse
 — rien à l'ouverture de la page, une barre qui se remplit au chargement se
 remarque pour rien.
 
-La courbe **Trafic** ne porte qu'une mesure — les requêtes —, donc un seul
-axe ; chaque barre est **empilée par modèle**, aux couleurs de la
+La courbe **Trafic** ne porte **qu'une mesure à la fois** — requêtes *ou*
+tokens, au choix du sélecteur —, donc un seul axe, jamais deux échelles
+superposées ; chaque barre est **empilée par modèle**, aux couleurs de la
 répartition, le même modèle toujours au même étage d'un seau à l'autre.
-Les tokens et le détail par modèle sont dans l'infobulle, en CSS pur.
+L'autre grandeur et le détail par modèle sont dans l'infobulle, en CSS
+pur.
 Les seaux vides sont dessinés eux aussi : un creux doit se voir comme un
 creux.
 
