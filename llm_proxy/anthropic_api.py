@@ -371,12 +371,22 @@ def to_openai(p: dict, images: bool = False) -> dict:
     # n'acceptent un system qu'en tête et répondent 500 sinon. Son texte
     # est donc fondu en tête du message user qui le suit — l'ordre des
     # tours reste strict, rien n'est perdu.
+    # Suivi d'un assistant, il est posé en message user À SA PLACE, avant
+    # lui : c'est là qu'il était au tour précédent, quand il fermait la
+    # requête (voir la fin de la boucle). Reporté après le tool_result
+    # suivant, il changeait de position d'un tour à l'autre : le préfixe
+    # rendu divergeait juste avant la dernière génération, et un backend à
+    # cache de préfixe (gufo, llama.cpp) recalculait le dernier échange à
+    # chaque tour (64k tokens sur 125k en session réelle Claude Code).
     pending: list[str] = []
     for m in p.get("messages") or []:
         if not isinstance(m, dict):
             continue
         role, content = m.get("role"), m.get("content")
         if role == "assistant":
+            if pending:
+                messages.append({"role": "user", "content": "\n\n".join(pending)})
+                pending = []
             messages.append(_assistant_message(content))
         elif role == "user":
             batch = _user_message(content, images)

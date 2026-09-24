@@ -474,3 +474,29 @@ def test_drop_fields_noop_when_absent_or_unset():
         {"role": "user", "content": "Bonjour"}]})
     assert A.drop_fields(out, ["stop"]) == []
     assert A.drop_fields(out, []) == []
+
+
+def test_mid_conversation_system_keeps_its_place_across_turns():
+    """Un rappel system qui ferme la requête N doit rester à la même place
+    dans la requête N+1 (avant l'assistant qui le suit), sinon le préfixe
+    rendu diverge et le cache de préfixe du backend est perdu."""
+    tu = {"type": "tool_use", "id": "t1", "name": "Read", "input": {"p": "a"}}
+    tr = {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+    turn_n = [
+        {"role": "user", "content": "Lis a"},
+        {"role": "assistant", "content": [tu]},
+        {"role": "user", "content": [tr]},
+        {"role": "system", "content": "<total_tokens>1</total_tokens>"},
+    ]
+    tu2 = dict(tu, id="t2")
+    tr2 = dict(tr, tool_use_id="t2")
+    turn_n1 = turn_n + [
+        {"role": "assistant", "content": [tu2]},
+        {"role": "user", "content": [tr2]},
+        {"role": "system", "content": "<total_tokens>2</total_tokens>"},
+    ]
+    a = A.to_openai({"model": "m", "messages": turn_n})["messages"]
+    b = A.to_openai({"model": "m", "messages": turn_n1})["messages"]
+    assert b[:len(a)] == a
+    assert a[-1] == {"role": "user", "content": "<total_tokens>1</total_tokens>"}
+    assert b[len(a)]["role"] == "assistant"
