@@ -176,6 +176,12 @@ models = ["openweight-large", "gpt-oss"]
 #
 # tokenize_path — endpoint de tokenisation pour un count_tokens EXACT
 # (llama.cpp : "/tokenize") ; absent = estimation à 4 caractères/token.
+#
+# anthropic_drop_fields — champs retirés du corps traduit d'une requête
+# Anthropic (/v1/messages) avant envoi, pour un backend qui REFUSE un
+# champ au lieu de l'ignorer. gufo refuse `stop` (les stop_sequences de
+# Claude Code) en 400 unsupported_field : ["stop"]. Les clients OpenAI
+# directs ne sont pas touchés. Absent = rien de retiré.
 
 [backends.albert]
 url = "https://albert.api.etalab.gouv.fr"
@@ -192,3 +198,4 @@ force_tool_choice = "auto"
 url = "http://bigchuck:8009"
 # images = true
 # tokenize_path = "/tokenize"
+# anthropic_drop_fields = ["stop"]   # si c'est gufo qui sert :8009

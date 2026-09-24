@@ -96,6 +96,9 @@ async def lifespan(app: FastAPI):
             if b.tool_choice else "aucune injection de tool_choice",
             f" | max_tokens plafonné à {b.max_tokens}" if b.max_tokens else "",
         )
+        if b.anthropic_drop_fields:
+            log.info("backend %s : champs retirés des requêtes Anthropic : %s",
+                     name, ", ".join(b.anthropic_drop_fields))
     if PROXY_API_KEYS:
         log.info(
             "auth proxy ACTIVE : %d clé(s) acceptée(s), /healthz exempté",
@@ -534,6 +537,7 @@ async def healthz():
                 "key_injection": bool(b.api_key),
                 "tool_choice": b.tool_choice or False,
                 "max_tokens": b.max_tokens or None,
+                "anthropic_drop_fields": b.anthropic_drop_fields,
                 "images": b.images,
                 "tokenize_path": b.tokenize_path or None,
                 "timeout": b.timeout,
@@ -776,6 +780,11 @@ async def messages(request: Request):
             len(openai_payload["tools"]),
         )
     cap_max_tokens(openai_payload, backend)
+    dropped = anthropic_api.drop_fields(
+        openai_payload, backend.anthropic_drop_fields)
+    if dropped:
+        log.info("anthropic : %s retiré(s) (backend=%s, model=%s)",
+                 ", ".join(dropped), backend.name, resolved)
     raw = strip_backend_prefix(openai_payload, backend)
 
     call = Call(backend, resolved, "/v1/messages", dialect)

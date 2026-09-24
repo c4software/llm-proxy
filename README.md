@@ -414,6 +414,7 @@ url = "http://bigchuck:8009"
 | `max_tokens` | `0` = aucun | Plafond : `max_tokens` / `max_completion_tokens` du client ramené au plafond, jamais augmenté ni ajouté |
 | `images` | `false` | Les modèles multimodaux au catalogue du backend reçoivent les `image_url` d'un client Anthropic ; sinon texte de remplacement |
 | `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact — llama.cpp : `"/tokenize"` |
+| `anthropic_drop_fields` | `[]` | Champs retirés du corps traduit d'une requête Anthropic avant envoi, pour un backend qui refuse un champ au lieu de l'ignorer. gufo refuse `stop` (les `stop_sequences` de Claude Code) : `["stop"]`. Les clients OpenAI directs ne sont pas touchés |
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
 `unknown_backend_prefix`. Seules les requêtes sans champ `model`

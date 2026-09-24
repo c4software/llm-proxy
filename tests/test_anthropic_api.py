@@ -457,3 +457,20 @@ def test_error_type():
     assert A.error_type(429) == "rate_limit_error"
     assert A.error_type(418) == "invalid_request_error"
     assert A.error_type(502) == "api_error"
+
+
+def test_drop_fields_removes_stop_for_refusing_backend():
+    out = A.to_openai({
+        "model": "m", "max_tokens": 5, "stop_sequences": ["\n\nHuman:"],
+        "messages": [{"role": "user", "content": "Bonjour"}],
+    })
+    assert out["stop"] == ["\n\nHuman:"]
+    assert A.drop_fields(out, ["stop"]) == ["stop"]
+    assert "stop" not in out and out["max_tokens"] == 5
+
+
+def test_drop_fields_noop_when_absent_or_unset():
+    out = A.to_openai({"model": "m", "messages": [
+        {"role": "user", "content": "Bonjour"}]})
+    assert A.drop_fields(out, ["stop"]) == []
+    assert A.drop_fields(out, []) == []

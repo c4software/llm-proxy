@@ -54,6 +54,13 @@ class Backend:
         # 32 000 par défaut, que certains backends refusent tout net. La
         # valeur du client est ramenée au plafond, jamais augmentée.
         self.max_tokens = int(cfg.get("max_tokens", 0) or 0)
+        # Champs retirés du corps OpenAI issu d'une requête Anthropic
+        # (/v1/messages) avant envoi, pour un backend qui REFUSE un champ
+        # au lieu de l'ignorer. gufo : `stop` (les stop_sequences de
+        # Claude Code) → 400 unsupported_field, requête perdue. Chemin
+        # Anthropic seulement : un client OpenAI direct garde ses champs.
+        self.anthropic_drop_fields = [
+            str(f) for f in cfg.get("anthropic_drop_fields", []) or []]
         # Le backend accepte les images (`image_url`) — pour les modèles
         # que son catalogue déclare multimodaux ; un modèle texte seul y
         # reçoit un texte de remplacement. false = jamais d'image.
