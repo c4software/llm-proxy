@@ -22,7 +22,8 @@ FORWARD_POST_PATHS = frozenset(
     "/" + p.strip("/") for p in config.strings(
         "proxy.forward_post_paths",
         ("/v1/completions", "/v1/embeddings", "/v1/rerank",
-         "/v1/audio/transcriptions", "/v1/ocr"),
+         "/v1/audio/transcriptions", "/v1/audio/speech",
+         "/v1/images/generations", "/v1/images/edits", "/v1/ocr"),
     )
 )
 

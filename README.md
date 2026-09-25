@@ -49,6 +49,13 @@ l'API Anthropic — **Claude Code** — s'y branche aussi, le proxy traduit.
   `GET /v1/models` et les chemins de `FORWARD_POST_PATHS` sont relayés ;
   toute autre URL → 404 local `unknown_route`. Le streaming SSE passe
   intact.
+- **Audio et images** — synthèse (`/v1/audio/speech`), transcription,
+  génération et édition d'image passent par le même routage au préfixe
+  de modèle. Les corps multipart (transcription, édition) sont routés
+  d'après leur champ `model`, préfixe retiré, le reste recopié octet pour
+  octet (`llm_proxy/multipart.py`) ; sans cela ils partaient vers le
+  backend de repli. `GET /v1/audio/voices?model=<backend>/<modèle>` liste
+  les voix du modèle de synthèse.
 - **Compatible Claude Code** — si `[anthropic].enabled`, le proxy parle
   aussi l'**API Messages d'Anthropic** : `POST /v1/messages` (JSON et
   flux SSE, outils compris), `/v1/messages/count_tokens`, et
@@ -87,6 +94,7 @@ l'API Anthropic — **Claude Code** — s'y branche aussi, le proxy traduit.
 | `llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 | `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête), extraction de l'`usage` dans le flux de réponse, et l'Usage API |
 | `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` |
+| `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
 | `tests/` | Tests du traducteur et des stats (`pytest`, `requirements-dev.txt`) — sur des octets et une base temporaire, sans réseau |
 | `envTest/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code et pi, scénarios PASS/FAIL — voir `envTest/README.md` |
@@ -428,7 +436,7 @@ url = "http://bigchuck:8009"
 | `upstream_timeout` | `600` | Secondes ; large pour les longues générations |
 | `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info` — court, un backend lent ne doit pas bloquer le catalogue |
 | `tool_choice` | `"auto"` | Valeur injectée quand `tools` est présent sans `tool_choice`, pour les backends ayant `force_tool_choice = true`. L'injection est désactivée par défaut : elle s'active par backend |
-| `forward_post_paths` | `["/v1/completions", "/v1/embeddings", "/v1/rerank", "/v1/audio/transcriptions", "/v1/ocr"]` | Routes POST relayées en plus des handlers dédiés ; le reste → 404 |
+| `forward_post_paths` | `["/v1/completions", "/v1/embeddings", "/v1/rerank", "/v1/audio/transcriptions", "/v1/audio/speech", "/v1/images/generations", "/v1/images/edits", "/v1/ocr"]` | Routes POST relayées en plus des handlers dédiés ; le reste → 404 |
 | `exempt_paths` | `["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]` | Suffixes de routes exclus du limiteur |
 | `log_level` | `"INFO"` | `INFO` logue chaque injection et chaque mise en attente |
 

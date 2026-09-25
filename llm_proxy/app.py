@@ -11,8 +11,10 @@ Rôles :
      GET /v1/models interroge les backends en direct et fusionne les
      catalogues, chaque id exposé préfixé ;
   4. ne transmet QUE les routes nécessaires (proxy.forward_post_paths,
-     /v1/chat/completions, /v1/models) — toute autre URL reçoit un 404
-     local, rien n'est relayé aveuglément aux backends ;
+     /v1/chat/completions, /v1/models, GET /v1/audio/voices) — toute autre
+     URL reçoit un 404 local, rien n'est relayé aveuglément aux backends.
+     Un corps multipart (transcription audio, édition d'image) est routé
+     par son champ model, préfixe retiré, comme un corps JSON (multipart.py) ;
   4bis. GET /v1/organization/usage/completions : l'Usage API d'OpenAI,
      servie depuis les compteurs du proxy (SQLite, une ligne par requête
      — voir stats.py). C'est la SEULE lecture des statistiques. GET /ui
@@ -60,6 +62,7 @@ from starlette.concurrency import run_in_threadpool
 from . import albert
 from . import anthropic_api
 from . import config
+from . import multipart
 from . import stats
 from .backends import (
     BACKENDS, Backend, FALLBACK_BACKEND, backend_offline_message,
@@ -1026,6 +1029,34 @@ async def root():
     return RedirectResponse("/ui")
 
 
+@app.get("/v1/audio/voices")
+async def audio_voices(request: Request):
+    """Voix d'un modèle de synthèse (GET, ?model=<backend>/<modèle>) : routé
+    par le préfixe du paramètre, retiré avant relais comme pour un corps. Le
+    relais générique ne transmet que des POST."""
+    dialect = dialect_of(request)
+    model = request.query_params.get("model", "")
+    backend, prefixed = route_backend({"model": model} if model else None)
+    if backend is None:
+        return error_response(dialect, 400, "unknown_backend_prefix",
+                              unknown_prefix_message(model))
+    params = dict(request.query_params)
+    if prefixed:
+        params["model"] = model[len(backend.name) + 1:]
+    try:
+        upstream = await backend.client.get(
+            "/v1/audio/voices", params=params,
+            headers=clean_headers(request, backend.api_key),
+            timeout=backend.meta_timeout)
+    except httpx.RequestError as exc:
+        if not backend.quotas:
+            return error_response(dialect, 503, "backend_offline",
+                                  backend_offline_message(backend, exc))
+        return error_response(dialect, 502, "proxy_error", f"upstream unreachable: {exc}")
+    return Response(content=upstream.content, status_code=upstream.status_code,
+                    headers=response_headers(upstream))
+
+
 @app.api_route(
     "/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
@@ -1042,16 +1073,30 @@ async def passthrough(path: str, request: Request):
 
     raw = await request.body()
     payload = parse_json(raw)
-    backend, prefixed = route_backend(payload)
-    if backend is None:
-        return error_response(dialect, 400, "unknown_backend_prefix",
-                              unknown_prefix_message(str(payload.get("model", ""))))
-    model_key = str(payload.get("model", "") or "") if isinstance(payload, dict) else ""
-    modified = isinstance(payload, dict) and cap_max_tokens(payload, backend)
-    if prefixed:
-        raw = strip_backend_prefix(payload, backend)
-    elif modified:
-        raw = json.dumps(payload, ensure_ascii=False).encode()
+    content_type = request.headers.get("content-type", "")
+    if payload is None and multipart.is_multipart(content_type):
+        # Formulaire (transcription audio, édition d'image) : le préfixe du
+        # champ model route aussi, et se retire comme en JSON. Sans lui, la
+        # requête partait vers le backend de repli quel que soit le modèle.
+        model_key = multipart.model_field(raw, content_type) or ""
+        backend, prefixed = route_backend({"model": model_key} if model_key else None)
+        if backend is None:
+            return error_response(dialect, 400, "unknown_backend_prefix",
+                                  unknown_prefix_message(model_key))
+        if prefixed:
+            raw = multipart.rewrite_model_field(
+                raw, content_type, model_key[len(backend.name) + 1:])
+    else:
+        backend, prefixed = route_backend(payload)
+        if backend is None:
+            return error_response(dialect, 400, "unknown_backend_prefix",
+                                  unknown_prefix_message(str(payload.get("model", ""))))
+        model_key = str(payload.get("model", "") or "") if isinstance(payload, dict) else ""
+        modified = isinstance(payload, dict) and cap_max_tokens(payload, backend)
+        if prefixed:
+            raw = strip_backend_prefix(payload, backend)
+        elif modified:
+            raw = json.dumps(payload, ensure_ascii=False).encode()
 
     call = Call(backend, model_key, normalized, dialect)
     blocked = await gate(call, request, payload,

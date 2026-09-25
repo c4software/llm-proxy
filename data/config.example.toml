@@ -30,7 +30,8 @@ api_keys = []
 # (/v1/chat/completions, /v1/models). Toute autre URL → 404 local.
 forward_post_paths = [
   "/v1/completions", "/v1/embeddings", "/v1/rerank",
-  "/v1/audio/transcriptions", "/v1/ocr",
+  "/v1/audio/transcriptions", "/v1/audio/speech",
+  "/v1/images/generations", "/v1/images/edits", "/v1/ocr",
 ]
 # Endpoints hors quota chat côté Albert : jamais temporisés.
 exempt_paths = ["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]
