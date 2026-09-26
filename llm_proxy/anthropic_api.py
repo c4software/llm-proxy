@@ -440,15 +440,6 @@ def to_openai(p: dict, images: bool = False) -> dict:
     return out
 
 
-def drop_fields(payload: dict, fields) -> list[str]:
-    """Retire du corps traduit les champs que le backend refuse
-    ([backends.<nom>].anthropic_drop_fields). Renvoie ceux retirés."""
-    dropped = [f for f in fields if f in payload]
-    for f in dropped:
-        del payload[f]
-    return dropped
-
-
 # ── Réponse : OpenAI → Anthropic ────────────────────────────────────────
 
 def _tool_id() -> str:

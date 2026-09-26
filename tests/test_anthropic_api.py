@@ -459,23 +459,6 @@ def test_error_type():
     assert A.error_type(502) == "api_error"
 
 
-def test_drop_fields_removes_stop_for_refusing_backend():
-    out = A.to_openai({
-        "model": "m", "max_tokens": 5, "stop_sequences": ["\n\nHuman:"],
-        "messages": [{"role": "user", "content": "Bonjour"}],
-    })
-    assert out["stop"] == ["\n\nHuman:"]
-    assert A.drop_fields(out, ["stop"]) == ["stop"]
-    assert "stop" not in out and out["max_tokens"] == 5
-
-
-def test_drop_fields_noop_when_absent_or_unset():
-    out = A.to_openai({"model": "m", "messages": [
-        {"role": "user", "content": "Bonjour"}]})
-    assert A.drop_fields(out, ["stop"]) == []
-    assert A.drop_fields(out, []) == []
-
-
 def test_mid_conversation_system_keeps_its_place_across_turns():
     """Un rappel system qui ferme la requête N doit rester à la même place
     dans la requête N+1 (avant l'assistant qui le suit), sinon le préfixe
