@@ -1,7 +1,9 @@
 """Le traducteur Anthropic ↔ OpenAI, testé sur des octets : aucun
 réseau, aucun serveur — anthropic_api ne connaît ni FastAPI ni httpx.
 La recherche hébergée (outil serveur `web_search_…`) est testée en fin
-de fichier, jusqu'à la route entière par le client de test de Starlette."""
+de fichier, jusqu'à la route entière par le client de test de Starlette ;
+la boucle d'app.py, commune aux deux surfaces traduites, est déroulée
+scénario par scénario dans test_responses_api.py."""
 
 import asyncio
 import json
@@ -9,12 +11,14 @@ import types
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
+from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, RESULTS, SEARCH_DOC,
+                   SEARCH_TURN, FakeUpstream, chat_doc, chunk, feed,
+                   hosted_tools, sse, stream, tool_call, usage)
+from fakes import sse_events as events
 from llm_proxy import anthropic_api as A
 from llm_proxy import app
 from llm_proxy import tools
-from llm_proxy.backends import Backend
 from llm_proxy.tools import web_search
 
 BACKENDS = {"albert": None, "bigchuck": None}
@@ -271,18 +275,7 @@ def test_from_openai_reasoning_becomes_thinking(monkeypatch):
 
 # ── le robinet ──────────────────────────────────────────────────────────
 
-def events(raw: bytes) -> list[tuple[str, dict]]:
-    out = []
-    for block in raw.decode().split("\n\n"):
-        if not block.strip():
-            continue
-        lines = dict(l.split(": ", 1) for l in block.split("\n"))
-        out.append((lines["event"], json.loads(lines["data"])))
-    return out
-
-
-def sse(*docs) -> bytes:
-    return b"".join(b"data: " + json.dumps(d).encode() + b"\n\n" for d in docs)
+# `events` et `sse` : tests/fakes.py, partagés avec test_responses_api.py.
 
 
 def test_translator_json_mode():
@@ -497,18 +490,11 @@ def test_mid_conversation_system_keeps_its_place_across_turns():
 
 # ── recherche hébergée ──────────────────────────────────────────────────
 # L'outil serveur `web_search_…` d'un client Anthropic, exécuté par le
-# proxy. Aucun réseau : le module de tools/ avec un `run` de remplacement
-# (ses fonctions de texte, elles, sont les vraies), et une mémoire propre
-# à chaque test — qui doit rester vide, cette surface n'y range rien.
+# proxy. Aucun réseau : les faux outils de tests/fakes.py (leurs fonctions
+# de texte sont les vraies), et une mémoire propre à chaque test — qui
+# doit rester vide, cette surface n'y range rien.
 
-RESULTS = [
-    {"title": "Releases · ggml-org/llama.cpp", "date": "2026-10-03",
-     "url": "https://github.com/ggml-org/llama.cpp/releases",
-     "snippet": "LLM inference in C/C++ — b6789, «latest»…"},
-    {"title": "llama.cpp (blog)", "date": "",
-     "url": "https://example.org/blog/llama", "snippet": ""},
-]
-FOUND = web_search.render("llama.cpp latest release", RESULTS)
+# Ce que le client reçoit pour fakes.RESULTS.
 BLOCKS = [
     {"type": "web_search_result", "title": "Releases · ggml-org/llama.cpp",
      "url": "https://github.com/ggml-org/llama.cpp/releases",
@@ -520,22 +506,8 @@ BLOCKS = [
 ]
 
 
-def search_tool(run=None, name="web_search"):
-    async def found(args, **options):
-        return FOUND
-
-    return types.SimpleNamespace(
-        NAME=name, KINDS=web_search.KINDS, ITEM_TYPE=web_search.ITEM_TYPE,
-        ENABLED=True, DEFINITION=web_search.DEFINITION,
-        definition=web_search.definition, action=web_search.action,
-        parse=web_search.parse, render=web_search.render, run=run or found)
-
-
-def hosted_tools(run=None):
-    # `web_fetch` est actif lui aussi, comme sur un proxy réel : il ne doit
-    # jamais être présenté sur cette surface.
-    return tools.Hosted(modules=[search_tool(run), search_tool(name="web_fetch")],
-                        memory=tools.Memory(8, 60))
+def search_error(code):
+    return {"type": "web_search_tool_result_error", "error_code": code}
 
 
 def claude_code_search(**extra):
@@ -561,41 +533,7 @@ def claude_code_search(**extra):
         "stream": True, **extra}
 
 
-def chunk(delta=None, finish=None, **extra):
-    return {"id": "c1", "choices": [{"delta": delta or {},
-                                     "finish_reason": finish}], **extra}
-
-
-def tool_call(index, call_id, name, arguments):
-    return chunk({"tool_calls": [{"index": index, "id": call_id, "function": {
-        "name": name, "arguments": arguments}}]})
-
-
-def usage(prompt, completion, cached=0):
-    return {"choices": [], "usage": {
-        "prompt_tokens": prompt, "completion_tokens": completion,
-        "prompt_tokens_details": {"cached_tokens": cached}}}
-
-
-def turn(t, *docs, cut: int = 7):
-    """Un tour upstream entier passé au robinet `t`, finish() compris."""
-    stream = sse(*docs) + b"data: [DONE]\n\n"
-    out = b"".join(t.feed(stream[i:i + cut]) for i in range(0, len(stream), cut))
-    return events(out + t.finish())
-
-
-QUERY = "{\"query\": \"llama.cpp latest release\"}"
-SEARCH_TURN = (
-    chunk({"content": "Je cherche."}),
-    tool_call(0, "call_x", "web_search", ""),
-    chunk({"tool_calls": [{"index": 0, "function": {"arguments": "{\"query\":"}}]}),
-    chunk({"tool_calls": [{"index": 0, "function": {
-        "arguments": " \"llama.cpp latest release\"}"}}]}),
-    chunk(finish="tool_calls"),
-    usage(100, 10, cached=40),
-)
-ANSWER_TURN = (chunk({"content": "b6789."}), chunk(finish="stop"),
-               usage(150, 5, cached=100))
+READ = {"name": "Read", "description": "", "input_schema": {"type": "object"}}
 
 
 def translator(request=None, hosted=None, content_type="text/event-stream"):
@@ -604,101 +542,13 @@ def translator(request=None, hosted=None, content_type="text/event-stream"):
     return A.Translator(200, content_type, request["model"], ctx)
 
 
-def test_search_text_and_structure_say_the_same_thing():
-    """`parse` est l'inverse de `render` : c'est ce qui permet de tirer
-    les blocs du client du texte du modèle, et l'inverse au rejeu."""
-    assert web_search.parse(FOUND) == RESULTS
-    assert web_search.render("q", web_search.parse(FOUND)) == FOUND
-    assert FOUND.split("\n") == [
-        "[1] Releases · ggml-org/llama.cpp (2026-10-03)",
-        "    https://github.com/ggml-org/llama.cpp/releases",
-        "    LLM inference in C/C++ — b6789, «latest»…",
-        "[2] llama.cpp (blog)",
-        "    https://example.org/blog/llama"]
-    # Ni une erreur, ni «aucun résultat», ni la marque de troncature ne
-    # sont des résultats ; une entrée coupée avant son URL est écartée.
-    assert web_search.parse("Error: search engine returned HTTP 500.") == []
-    assert web_search.parse(web_search.render("q", [])) == []
-    assert web_search.parse(FOUND + "\n[3] coupé\n[truncated]") == RESULTS
-    # Un titre qui finit de lui-même par une date est lu comme daté, une
-    # date d'une autre forme reste dans le titre : dans les deux cas le
-    # texte, lui, revient à l'identique.
-    for title, date in (("Notes (2024-05-01)", ""), ("Notes", "Jan 5, 202")):
-        odd = web_search.render("q", [{"title": title, "date": date,
-                                       "url": "https://x.test", "snippet": "s"}])
-        assert web_search.render("q", web_search.parse(odd)) == odd
-    assert web_search.parse(odd)[0]["title"] == "Notes (Jan 5, 202)"
-    # La même liste que format_results tire des résultats bruts de SearXNG.
-    raw = [{"title": " Un  titre ", "url": "https://a.test/x",
-            "publishedDate": "2026-01-02T03:04:05", "content": " du\ntexte "},
-           {"title": "sans url"}]
-    assert web_search.entries(raw, 5) == [{
-        "title": "Un titre", "url": "https://a.test/x", "date": "2026-01-02",
-        "snippet": "du texte"}]
-    assert web_search.format_results("q", raw, 5) == web_search.render(
-        "q", web_search.entries(raw, 5))
+def turn(t, *docs):
+    """Un tour upstream entier passé au robinet `t`, finish() compris."""
+    return events(feed(t, stream(*docs)))
 
 
-def test_search_domain_filters():
-    raw = [{"title": str(n), "url": u} for n, u in enumerate([
-        "https://github.com/ggml-org/llama.cpp",
-        "https://docs.github.com/en/rest",
-        "https://notgithub.com/x",
-        "https://example.org/blog/post-1",
-        "https://example.org/shop",
-    ])]
-    urls = lambda **kw: [e["url"] for e in web_search.entries(raw, 20, **kw)]
-    # Sous-domaines couverts, pas les homonymes ; un sous-domaine précis ne
-    # couvre pas son parent ; un chemin restreint à ce qui le prolonge.
-    assert urls(allowed=["github.com"]) == [raw[0]["url"], raw[1]["url"]]
-    assert urls(allowed=["docs.github.com"]) == [raw[1]["url"]]
-    assert urls(allowed=["example.org/blog"]) == [raw[3]["url"]]
-    assert urls(allowed=["https://Example.org/blog/*"]) == [raw[3]["url"]]
-    assert urls(blocked=["github.com", "example.org/shop"]) == [
-        raw[2]["url"], raw[3]["url"]]
-    # Le filtre passe AVANT la limite.
-    assert [e["url"] for e in web_search.entries(
-        raw, 1, allowed=["example.org"])] == [raw[3]["url"]]
-
-    def handler(request):
-        assert request.url.params["q"] == "x"   # la requête n'est pas réécrite
-        return httpx.Response(200, json={"results": raw})
-
-    go = lambda **kw: asyncio.run(web_search.run(
-        {"query": "x"}, transport=httpx.MockTransport(handler), **kw))
-    old = web_search.SEARXNG_URL
-    web_search.SEARXNG_URL = "http://searxng.test"
-    try:
-        assert go(allowed_domains=["example.org"], blocked_domains=[
-            "example.org/shop"]) == "[1] 3\n    https://example.org/blog/post-1"
-        assert go(allowed_domains=["nulle-part.test"]) == "No results for «x»."
-        assert go().count("https://") == 5
-    finally:
-        web_search.SEARXNG_URL = old
-
-
-def test_hosted_run_passes_client_options_and_limit(monkeypatch):
-    seen = []
-
-    async def run(args, **options):
-        seen.append((args, options))
-        return "ok"
-
-    h = hosted_tools(run)
-    go = lambda *a, **kw: asyncio.run(h.run("web_search", "{\"query\":\"x\"}",
-                                            *a, **kw))
-    assert go(0) == "ok" and seen == [({"query": "x"}, {})]
-    opts = {"web_search": {"allowed_domains": ["a.test"]}, "autre": {"x": 1}}
-    assert go(0, options=opts) == "ok"
-    assert seen[1] == ({"query": "x"}, {"allowed_domains": ["a.test"]})
-    # La limite du client ne fait que BAISSER celle du proxy.
-    monkeypatch.setattr(tools, "MAX_CALLS", 3)
-    assert (h.cap(), h.cap(2), h.cap(99), h.cap(0), h.cap(-1), h.cap("2"),
-            h.cap(True)) == (3, 2, 3, 0, 0, 3, 3)
-    assert go(1, limit=2) == "ok"
-    assert go(2, limit=2).startswith("Error: the limit of 2 web tool calls")
-    assert go(2, limit=99) == "ok" and go(3, limit=99).startswith(
-        "Error: the limit of 3 ")
+def blocks_of(ev) -> list[dict]:
+    return [d["content_block"] for e, d in ev if e == "content_block_start"]
 
 
 def test_to_openai_declares_hosted_search_from_claude_code_request():
@@ -707,13 +557,10 @@ def test_to_openai_declares_hosted_search_from_claude_code_request():
     out = A.to_openai(request, hosted=hosted)
     # La fonction du paquet tools/ à la place de l'outil serveur : la même
     # que sur la surface Responses, moins le renvoi à web_fetch — qui
-    # n'est PAS présenté (Claude Code lit les pages chez le client).
+    # n'est PAS présenté (Claude Code lit les pages chez le client), bien
+    # que l'annuaire le porte, comme sur un proxy réel.
     assert out["tools"] == [web_search.definition(fetch=False)]
-    f = out["tools"][0]["function"]
-    assert f["name"] == "web_search" and "web_fetch" not in json.dumps(out)
-    assert f["parameters"] == web_search.DEFINITION["function"]["parameters"]
-    assert f["description"] == web_search.DEFINITION["function"][
-        "description"].replace("Use web_fetch to read a result page. ", "")
+    assert "web_fetch" not in json.dumps(out)
     assert out["tool_choice"] == "auto" and out["stream"] is True
     assert out["messages"][0]["role"] == "system"
     assert out["messages"][1] == {
@@ -722,22 +569,20 @@ def test_to_openai_declares_hosted_search_from_claude_code_request():
     ctx = A.Context(request, hosted)
     assert list(ctx.hosted) == ["web_search"] and ctx.limit == 8
     assert ctx.options == {}
-    assert ctx.hosted["web_search"] is hosted.by_name["web_search"]
 
     # Sans annuaire, ou annuaire sans recherche : ignoré, comme avant.
     for h in (None, tools.Hosted(modules=[]),
-              tools.Hosted(modules=[search_tool(name="web_fetch")])):
-        assert "tools" not in A.to_openai(request, hosted=h)
-        assert "tool_choice" not in A.to_openai(request, hosted=h)
+              tools.Hosted(modules=hosted.modules[1:])):
+        out = A.to_openai(request, hosted=h)
+        assert "tools" not in out and "tool_choice" not in out
         assert not A.Context(request, h).hosted
 
 
 def test_to_openai_hosted_search_variants(monkeypatch):
     hosted = hosted_tools()
-    fn = {"name": "Read", "description": "", "input_schema": {"type": "object"}}
 
     def req(*server, **extra):
-        return {"model": "m", "messages": [], "tools": [fn, *server], **extra}
+        return {"model": "m", "messages": [], "tools": [READ, *server], **extra}
 
     def names(request):
         return [t["function"]["name"]
@@ -745,7 +590,7 @@ def test_to_openai_hosted_search_variants(monkeypatch):
 
     # Toute version datée de l'outil ; à sa place dans la liste ; une fois.
     r = {"model": "m", "messages": [], "tools": [
-        {"type": "web_search_20260209", "name": "web_search"}, fn,
+        {"type": "web_search_20260209", "name": "web_search"}, READ,
         {"type": "web_search_20250305", "name": "web_search", "max_uses": 2}]}
     assert names(r) == ["web_search", "Read"]
     assert A.Context(r, hosted).limit == 8      # le premier déclaré fait foi
@@ -754,9 +599,10 @@ def test_to_openai_hosted_search_variants(monkeypatch):
             {"type": "code_execution_20250825", "name": "code_execution"},
             {"type": "web_search", "name": "web_search"})
     assert names(r) == ["Read"] and not A.Context(r, hosted).hosted
-    # max_uses : respecté, borné par tools.MAX_CALLS.
+    # max_uses : ne fait que BAISSER la limite du proxy (tools.MAX_CALLS).
     monkeypatch.setattr(tools, "MAX_CALLS", 5)
-    for asked, limit in ((3, 3), (50, 5), (None, 5), ("3", 5)):
+    for asked, limit in ((3, 3), (50, 5), (None, 5), ("3", 5), (True, 5),
+                         (0, 0), (-1, 0)):
         r = req({"type": "web_search_20250305", "name": "web_search",
                  "max_uses": asked})
         assert A.Context(r, hosted).limit == limit
@@ -799,9 +645,9 @@ def test_stream_hosted_search_blocks():
     assert ev[5][1] == {"type": "content_block_delta", "index": 1, "delta": {
         "type": "input_json_delta", "partial_json": QUERY}}
     assert ev[6][1] == {"type": "content_block_stop", "index": 1}
-    assert t.pending == [{"id": use["id"], "name": "web_search",
-                          "arguments": QUERY, "announced": True}]
-    assert t.client_calls == 0 and t.finish() == b""
+    assert [(c["id"], c["name"], c["arguments"]) for c in t.pending] == [
+        (use["id"], "web_search", QUERY)]
+    assert t.client_calls == 0
 
     done = events(t.resolve(t.pending[0], FOUND))
     assert [e for e, _ in done] == ["content_block_start", "content_block_stop"]
@@ -810,7 +656,7 @@ def test_stream_hosted_search_blocks():
                               "type": "web_search_tool_result",
                               "tool_use_id": use["id"], "content": BLOCKS}}
     assert done[1][1] == {"type": "content_block_stop", "index": 2}
-    assert not t.pending and t.results == {use["id"]: FOUND}
+    assert not t.pending
 
     t.next_turn()
     end = turn(t, *ANSWER_TURN)
@@ -832,7 +678,7 @@ def test_stream_hosted_search_blocks():
          "input": {"query": "llama.cpp latest release"}},
         {"type": "web_search_tool_result", "tool_use_id": use["id"],
          "content": BLOCKS},
-        {"type": "text", "text": "b6789."}]
+        {"type": "text", "text": "Voilà."}]
     assert t.summary() == ("stop=end_turn | in=250 out=15 | tools: "
                            "web_search(" + QUERY + ")")
     assert t.finalize() == b"" and t.fail("trop tard") == b""
@@ -843,7 +689,7 @@ def test_stream_hosted_search_blocks():
 def test_stream_two_searches_come_out_as_pairs():
     """Deux recherches lancées d'un coup : le second server_tool_use ne
     sort qu'après le résultat du premier — chaque résultat suit son
-    appel, comme chez Anthropic. Puis une troisième au tour suivant."""
+    appel, comme chez Anthropic."""
     t = translator()
     ev = turn(t,
               tool_call(0, "call_a", "web_search", "{\"query\":\"un\"}"),
@@ -853,26 +699,19 @@ def test_stream_two_searches_come_out_as_pairs():
               chunk(finish="tool_calls"), usage(10, 2))
     assert [c["arguments"] for c in t.pending] == [
         "{\"query\":\"un\"}", "{\"query\":\"deux\",\"limit\":3}"]
-    assert [c["announced"] for c in t.pending] == [True, False]
+    assert len(blocks_of(ev)) == 1
     first, second = t.pending
     ev += events(t.resolve(first, FOUND))
     ev += events(t.resolve(second, "No results for «deux»."))
     t.next_turn()
-    ev += turn(t, chunk({"reasoning_content": "Encore."}),
-               tool_call(0, "call_c", "web_search", "{\"query\":\"trois\"}"),
-               chunk(finish="tool_calls"), usage(20, 3))
-    ev += events(t.resolve(t.pending[0], FOUND))
-    t.next_turn()
-    ev += turn(t, *ANSWER_TURN)
+    ev += turn(t, chunk({"reasoning_content": "Bien."}), *ANSWER_TURN)
     starts = [(d["index"], d["content_block"]["type"]) for e, d in ev
               if e == "content_block_start"]
     assert starts == [
         (0, "server_tool_use"), (1, "web_search_tool_result"),
         (2, "server_tool_use"), (3, "web_search_tool_result"),
-        (4, "thinking"),
-        (5, "server_tool_use"), (6, "web_search_tool_result"), (7, "text")]
-    stops = [d["index"] for e, d in ev if e == "content_block_stop"]
-    assert stops == list(range(8))
+        (4, "thinking"), (5, "text")]
+    assert [d["index"] for e, d in ev if e == "content_block_stop"] == list(range(6))
     kinds = [e for e, _ in ev]
     assert kinds.count("message_start") == 1 and kinds[-2:] == [
         "message_delta", "message_stop"]
@@ -880,13 +719,11 @@ def test_stream_two_searches_come_out_as_pairs():
     # Chaque résultat renvoie à l'appel qui le précède ; aucun résultat =
     # liste vide, pas une erreur.
     c = t.content
-    assert [c[i + 1]["tool_use_id"] for i in (0, 2, 5)] == [
-        c[i]["id"] for i in (0, 2, 5)]
+    assert [c[i + 1]["tool_use_id"] for i in (0, 2)] == [c[i]["id"] for i in (0, 2)]
     assert c[2]["input"] == {"query": "deux", "limit": 3}
-    assert c[3]["content"] == [] and c[6]["content"] == BLOCKS
-    assert ev[-2][1]["usage"]["server_tool_use"] == {"web_search_requests": 3}
-    assert ev[-2][1]["usage"]["input_tokens"] == 80
-    assert t.turns == 3 and t.summary().count("web_search(") == 3
+    assert c[1]["content"] == BLOCKS and c[3]["content"] == []
+    assert ev[-2][1]["usage"]["server_tool_use"] == {"web_search_requests": 2}
+    assert t.summary().count("web_search(") == 2
 
 
 def test_stream_search_errors_become_error_blocks():
@@ -904,18 +741,14 @@ def test_stream_search_errors_become_error_blocks():
                    "Error: the tool arguments are not a JSON object.",
                    "Error: the limit of 3 web tool calls for one answer is "
                    "reached. Answer now with what you already have."):
-        ev = events(t.resolve(t.pending[0], result))
-        blocks.append(ev[0][1]["content_block"])
+        blocks += blocks_of(events(t.resolve(t.pending[0], result)))[:1]
         assert blocks[-1]["type"] == "web_search_tool_result"
-    assert [b["content"] for b in blocks] == [
-        {"type": "web_search_tool_result_error", "error_code": code}
-        for code in ("unavailable", "invalid_tool_input", "invalid_tool_input",
-                     "max_uses_exceeded")]
+    assert [b["content"] for b in blocks] == [search_error(code) for code in (
+        "unavailable", "invalid_tool_input", "invalid_tool_input",
+        "max_uses_exceeded")]
     # Arguments illisibles : un input vide, jamais du JSON cassé au client.
     assert [b["input"] for b in t.content if b["type"] == "server_tool_use"] == [
         {"query": "un"}, {"q": "sans query"}, {}, {"query": "de trop"}]
-    # Le modèle, lui, lira le texte exact de l'erreur au tour suivant.
-    assert list(t.results.values())[0].startswith("Error: search engine")
     # Aucune recherche aboutie : pas de `server_tool_use` dans l'usage, et
     # un dernier tour clos sur tool_calls sans outil client = end_turn.
     end = events(t.finalize())
@@ -923,108 +756,35 @@ def test_stream_search_errors_become_error_blocks():
     assert "server_tool_use" not in end[0][1]["usage"]
 
 
-def test_stream_hosted_and_client_calls_in_one_turn():
+def test_search_and_client_tool_in_one_turn():
+    """L'outil du client est rendu au fil de l'eau ; la recherche attend
+    la fin du tour, puis sort avec son résultat — et le message se clôt
+    sur `tool_use` : la main revient au client. En flux, puis en JSON."""
     request = claude_code_search()
-    request["tools"].append({"name": "Read", "input_schema": {}})
+    request["tools"].append(READ)
+    expected = ["tool_use", "server_tool_use", "web_search_tool_result"]
     t = translator(request)
     ev = turn(t, tool_call(0, "call_x", "web_search", "{\"query\":\"un\"}"),
               tool_call(1, "toolu_1", "Read", "{\"p\":\"a\"}"),
               chunk(finish="tool_calls"), usage(10, 2))
-    # L'outil du client est rendu au fil de l'eau ; la recherche attend la
-    # fin du tour, puis sort avec son résultat.
     assert t.client_calls == 1 and len(t.pending) == 1
     ev += events(t.resolve(t.pending[0], FOUND))
     ev += events(t.finalize())
-    assert [d["content_block"]["type"] for e, d in ev
-            if e == "content_block_start"] == [
-        "tool_use", "server_tool_use", "web_search_tool_result"]
+    assert [b["type"] for b in blocks_of(ev)] == expected
     assert ev[-2][1]["delta"]["stop_reason"] == "tool_use"
     assert t.content[0] == {"type": "tool_use", "id": "toolu_1", "name": "Read",
                             "input": {"p": "a"}}
 
-
-def test_stream_failure_and_mid_flow_error_with_hosted_search():
-    t = translator()
-    ev = turn(t, *SEARCH_TURN)
-    ev += events(t.resolve(t.pending[0], FOUND))
-    ev += events(t.fail("backend «essai» hors ligne", 503))
-    assert ev[-1] == ("error", {"type": "error", "error": {
-        "type": "api_error", "message": "backend «essai» hors ligne"}})
-    assert t.finalize() == b"" and t.tokens(0) == (100, 10, True)
-    assert events(translator().fail("quota", 429))[-1][1]["error"]["type"] \
-        == "rate_limit_error"
-    # Erreur DANS le flux d'un tour : la recherche demandée n'est pas
-    # exécutée, le message est clos comme avant.
-    t = translator()
-    ev = turn(t, tool_call(0, "call_x", "web_search", "{}"),
-              {"error": {"message": "GPU perdu"}})
-    assert not t.pending
-    assert [e for e, _ in ev] == ["message_start", "error", "message_delta",
-                                  "message_stop"]
-
-
-def chat_doc(message, finish, prompt, completion, cached=0):
-    return json.dumps({
-        "id": "chatcmpl-1",
-        "choices": [{"finish_reason": finish, "message": message}],
-        "usage": {"prompt_tokens": prompt, "completion_tokens": completion,
-                  "prompt_tokens_details": {"cached_tokens": cached}},
-    }).encode()
-
-
-SEARCH_DOC = chat_doc({"content": "Je cherche.", "tool_calls": [
-    {"id": "call_x", "function": {"name": "web_search", "arguments": QUERY}}]},
-    "tool_calls", 100, 10, cached=40)
-ANSWER_DOC = chat_doc({"content": "b6789."}, "stop", 150, 5, cached=100)
-
-
-def test_json_hosted_search_then_answer():
-    t = translator(claude_code_search(stream=False),
-                   content_type="application/json")
-    t.feed(SEARCH_DOC)
-    # Rien ne part : le message n'est pas fini.
-    assert t.finish() == b"" and t.client_calls == 0
-    call = t.pending[0]
-    assert t.resolve(call, FOUND) == b"" and not t.pending
-    t.next_turn()
-    t.feed(ANSWER_DOC)
-    msg = json.loads(t.finish())
-    assert msg["type"] == "message" and msg["id"] == "chatcmpl-1"
-    assert msg["stop_reason"] == "end_turn"
-    assert msg["content"] == [
-        {"type": "text", "text": "Je cherche."},
-        {"type": "server_tool_use", "id": call["id"], "name": "web_search",
-         "input": {"query": "llama.cpp latest release"}},
-        {"type": "web_search_tool_result", "tool_use_id": call["id"],
-         "content": BLOCKS},
-        {"type": "text", "text": "b6789."}]
-    assert msg["usage"] == {
-        "input_tokens": 110, "output_tokens": 15,
-        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 140,
-        "server_tool_use": {"web_search_requests": 1}}
-    assert t.tokens(0) == (250, 15, True) and t.finalize() == b""
-
-    # Recherche et outil du client dans le même tour, puis échec.
-    request = claude_code_search(stream=False)
-    request["tools"].append({"name": "Read", "input_schema": {}})
-    doc = chat_doc({"content": None, "tool_calls": [
+    t = translator(request, content_type="application/json")
+    t.feed(chat_doc({"content": None, "tool_calls": [
         {"id": "call_x", "function": {"name": "web_search", "arguments": QUERY}},
         {"id": "toolu_1", "function": {"name": "Read", "arguments": "{}"}}]},
-        "tool_calls", 10, 2)
-    t = translator(request, content_type="application/json")
-    t.feed(doc)
+        "tool_calls", 10, 2))
     assert t.finish() == b"" and t.client_calls == 1
-    t.resolve(t.pending[0], FOUND)
+    assert t.resolve(t.pending[0], FOUND) == b""
     msg = json.loads(t.finalize())
-    assert [b["type"] for b in msg["content"]] == [
-        "tool_use", "server_tool_use", "web_search_tool_result"]
+    assert [b["type"] for b in msg["content"]] == expected
     assert msg["stop_reason"] == "tool_use"
-    t = translator(request, content_type="application/json")
-    t.feed(doc)
-    t.finish()
-    assert json.loads(t.fail("quota épuisé", 429)) == {
-        "type": "error", "error": {"type": "rate_limit_error",
-                                   "message": "quota épuisé"}}
 
 
 def test_json_trace_keeps_arguments_after_text():
@@ -1056,8 +816,7 @@ def test_to_openai_replays_search_blocks_without_memory():
             {"type": "server_tool_use", "id": "srvtoolu_3", "name": "web_search",
              "input": {"query": "panne"}},
             {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_3",
-             "content": {"type": "web_search_tool_result_error",
-                         "error_code": "unavailable"}},
+             "content": search_error("unavailable")},
             {"type": "text", "text": "b6789."},
             # Appel sans résultat, résultat sans appel, autre outil serveur :
             # écartés — un appel sans message `tool` casserait le backend.
@@ -1129,7 +888,7 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
     encode = lambda messages: json.dumps(messages, ensure_ascii=False)
     assert encode(again["messages"][:n]) == encode(looped["messages"])
     assert again["messages"][n:] == [
-        {"role": "assistant", "content": "b6789."},
+        {"role": "assistant", "content": "Voilà."},
         {"role": "user", "content": "Merci"}]
     assert encode(again["tools"]) == encode(looped["tools"]) == encode(first["tools"])
     # Dans la boucle, le modèle lit le texte EXACT d'une erreur ; au rejeu
@@ -1144,269 +903,149 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
         "Error: the web search failed (unavailable)."
 
 
-# ── la boucle d'app.py ──────────────────────────────────────────────────
-# La route entière, par le client de test de Starlette ; seul l'envoi au
-# backend (app.send_upstream) est remplacé : aucun réseau.
+# ── la route /v1/messages ───────────────────────────────────────────────
+# La boucle d'app.py est commune aux deux surfaces traduites : ses
+# scénarios sont déroulés dans test_responses_api.py. Ici, par la route
+# entière (fixture `proxy` de conftest.py), ce qui est propre à celle-ci :
+# les blocs rendus, les réglages du client sur son outil, la forme des
+# erreurs, les pings.
 
-class FakeUpstream:
-    def __init__(self, body: bytes, status=200, content_type="text/event-stream"):
-        self.body, self.status_code = body, status
-        self.headers = {"content-type": content_type}
-        self.closed = False
-
-    async def aiter_raw(self):
-        for i in range(0, len(self.body), 64):
-            yield self.body[i:i + 64]
-
-    async def aread(self):
-        return self.body
-
-    async def aclose(self):
-        self.closed = True
-
-
-def stream_of(*docs):
-    return FakeUpstream(sse(*docs) + b"data: [DONE]\n\n")
-
-
-@pytest.fixture
-def proxy(monkeypatch):
-    """Un backend de test sans quota, la recherche factice, et de quoi
-    lire ce qui part au backend (`sent`) et aux stats (`lines`)."""
-    env = types.SimpleNamespace(replies=[], sent=[], lines=[], runs=[],
-                                result=FOUND)
-
-    async def run(args, **options):
-        env.runs.append((args, options))
-        return env.result
-
-    env.hosted = hosted_tools(run)
-
-    async def send_upstream(call, request, path, body):
-        env.sent.append(json.loads(body))
-        reply = env.replies.pop(0)
-        if isinstance(reply, tuple):       # backend injoignable
-            return call.error(*reply)
-        return reply
-
-    monkeypatch.setitem(app.BACKENDS, "essai",
-                        Backend("essai", {"url": "http://backend.invalid"}))
-    monkeypatch.setattr(app, "PROXY_API_KEYS", [])
-    monkeypatch.setattr(app.anthropic_api, "ENABLED", True)
-    monkeypatch.setattr(app.tools, "Hosted", lambda: env.hosted)
-    monkeypatch.setattr(app, "send_upstream", send_upstream)
-    monkeypatch.setattr(app.stats, "record", lambda *a: env.lines.append(a))
-    env.client = TestClient(app.app)
-    env.post = lambda **extra: env.client.post(
+def post(proxy, **extra):
+    return proxy.client.post(
         "/v1/messages", json=claude_code_search(model="essai/qwen", **extra))
-    return env
 
 
-def test_app_loop_runs_the_search_claude_code_asks_for(proxy):
-    ups = [stream_of(*SEARCH_TURN), stream_of(*ANSWER_TURN)]
-    proxy.replies = list(ups)
-    r = proxy.post()
-    assert r.status_code == 200
-    ev = events(r.content)
-    kinds = [e for e, _ in ev]
-    assert kinds.count("message_start") == 1
-    assert kinds[-2:] == ["message_delta", "message_stop"]
-    blocks = [d["content_block"] for e, d in ev if e == "content_block_start"]
-    assert [b["type"] for b in blocks] == [
-        "text", "server_tool_use", "web_search_tool_result", "text"]
-    assert blocks[2] == {"type": "web_search_tool_result",
-                         "tool_use_id": blocks[1]["id"], "content": BLOCKS}
-    assert ev[-2][1]["usage"]["server_tool_use"] == {"web_search_requests": 1}
-    assert ev[-2][1]["delta"]["stop_reason"] == "end_turn"
-    assert proxy.runs == [({"query": "llama.cpp latest release"}, {})]
-    # Deux envois au backend, préfixe retiré ; le second porte l'appel et
-    # son résultat — le texte du modèle, le même que sur la surface
-    # Responses —, et rien d'autre ne change avant eux.
-    one, two = proxy.sent
-    assert one["model"] == two["model"] == "qwen" and one["tools"] == two["tools"]
-    assert [t["function"]["name"] for t in one["tools"]] == ["web_search"]
-    assert two["messages"][:len(one["messages"])] == one["messages"]
-    assert two["messages"][len(one["messages"]):] == [
-        {"role": "assistant", "content": "Je cherche.", "tool_calls": [
-            {"id": blocks[1]["id"], "type": "function", "function": {
-                "name": "web_search", "arguments": QUERY}}]},
-        {"role": "tool", "tool_call_id": blocks[1]["id"], "content": FOUND}]
-    # UNE ligne de stats, usage cumulé : (clé, backend, modèle, endpoint,
-    # statut, durée, prompt, completion, exact, flux, cache).
-    assert len(proxy.lines) == 1
-    line = proxy.lines[0]
-    assert line[:5] == ("essai/qwen", "essai", "qwen", "/v1/messages", 200)
-    assert line[6:] == (250, 15, True, True, 140)
-    assert all(u.closed for u in ups) and not proxy.replies
+def searching(proxy, streamed=True):
+    """Le décor : un tour où le modèle cherche, puis celui où il conclut."""
+    proxy.replies = [FakeUpstream(stream(*SEARCH_TURN)),
+                     FakeUpstream(stream(*ANSWER_TURN))] if streamed \
+        else [FakeUpstream(SEARCH_DOC), FakeUpstream(ANSWER_DOC)]
+    return list(proxy.replies)
+
+
+def test_app_runs_the_search_claude_code_asks_for(proxy):
+    """La sous-requête WebSearch de Claude Code, par la route : les deux
+    blocs qu'elle attend, et le backend relancé avec l'appel et le texte
+    du résultat. Une recherche en échec est un bloc d'erreur, pas une
+    erreur HTTP — le modèle, lui, lit pourquoi."""
+    failed = "Error: search engine unreachable (ConnectError)."
+    for result, content, counted in (
+            (FOUND, BLOCKS, {"web_search_requests": 1}),
+            (failed, search_error("unavailable"), None)):
+        proxy.hosted.result = result
+        proxy.sent.clear()
+        searching(proxy)
+        r = post(proxy)
+        ev = events(r.content)
+        assert r.status_code == 200 and ev[-1][0] == "message_stop"
+        blocks = blocks_of(ev)
+        assert [b["type"] for b in blocks] == [
+            "text", "server_tool_use", "web_search_tool_result", "text"]
+        assert blocks[2] == {"type": "web_search_tool_result",
+                             "tool_use_id": blocks[1]["id"], "content": content}
+        assert ev[-2][1]["delta"]["stop_reason"] == "end_turn"
+        assert ev[-2][1]["usage"].get("server_tool_use") == counted
+        one, two = proxy.sent
+        assert [t["function"]["name"] for t in one["tools"]] == ["web_search"]
+        assert two["messages"][len(one["messages"]):] == [
+            {"role": "assistant", "content": "Je cherche.", "tool_calls": [
+                {"id": blocks[1]["id"], "type": "function", "function": {
+                    "name": "web_search", "arguments": QUERY}}]},
+            {"role": "tool", "tool_call_id": blocks[1]["id"], "content": result}]
+    assert proxy.hosted.runs == [
+        ("web_search", {"query": "llama.cpp latest release"}, {})] * 2
+    assert [line[3:5] for line in proxy.lines] == [("/v1/messages", 200)] * 2
     assert len(proxy.hosted.memory) == 0
 
 
-def test_app_loop_json_mode_and_client_domains(proxy):
-    proxy.replies = [FakeUpstream(SEARCH_DOC, content_type="application/json"),
-                     FakeUpstream(ANSWER_DOC, content_type="application/json")]
-    r = proxy.post(stream=False, tools=[{
+def test_app_json_mode_and_client_domains(proxy):
+    searching(proxy, streamed=False)
+    r = post(proxy, stream=False, tools=[{
         "type": "web_search_20250305", "name": "web_search",
         "allowed_domains": ["github.com"], "blocked_domains": ["x.test"]}])
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/json"
     msg = r.json()
-    assert [b["type"] for b in msg["content"]] == [
-        "text", "server_tool_use", "web_search_tool_result", "text"]
-    assert msg["content"][2]["content"] == BLOCKS
+    use = msg["content"][1]["id"]
+    assert msg["type"] == "message" and msg["id"] == "chatcmpl-1"
+    assert msg["content"] == [
+        {"type": "text", "text": "Je cherche."},
+        {"type": "server_tool_use", "id": use, "name": "web_search",
+         "input": {"query": "llama.cpp latest release"}},
+        {"type": "web_search_tool_result", "tool_use_id": use,
+         "content": BLOCKS},
+        {"type": "text", "text": "Voilà."}]
     assert msg["stop_reason"] == "end_turn"
-    assert msg["usage"]["server_tool_use"] == {"web_search_requests": 1}
+    assert msg["usage"] == {
+        "input_tokens": 110, "output_tokens": 15,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 140,
+        "server_tool_use": {"web_search_requests": 1}}
     assert "stream" not in proxy.sent[0]
     # Les listes de domaines du client arrivent à l'exécution.
-    assert proxy.runs == [({"query": "llama.cpp latest release"}, {
+    assert proxy.hosted.runs == [("web_search", {
+        "query": "llama.cpp latest release"}, {
         "allowed_domains": ["github.com"], "blocked_domains": ["x.test"]})]
     assert proxy.lines[0][4] == 200
     assert proxy.lines[0][6:10] == (250, 15, True, False)
 
 
-def test_app_loop_honors_max_uses_then_stops(proxy):
+def test_app_honors_max_uses_then_stops(proxy):
     """max_uses = 2 : deux recherches exécutées, les suivantes rendues en
     `max_uses_exceeded` sans être lancées ; le modèle qui insiste encore
     est arrêté 4 appels plus loin."""
-    again = lambda i: stream_of(
+    proxy.replies = [FakeUpstream(stream(
         tool_call(0, f"call_{i}", "web_search", "{\"query\":\"encore\"}"),
-        chunk(finish="tool_calls"), usage(10, 1))
-    proxy.replies = [again(i) for i in range(9)]
-    r = proxy.post(tools=[{"type": "web_search_20250305", "name": "web_search",
-                           "max_uses": 2}], tool_choice={"type": "any"})
+        chunk(finish="tool_calls"), usage(10, 1))) for i in range(9)]
+    r = post(proxy, tools=[{"type": "web_search_20250305", "name": "web_search",
+                            "max_uses": 2}])
     ev = events(r.content)
-    results = [d["content_block"]["content"] for e, d in ev
-               if e == "content_block_start"
-               and d["content_block"]["type"] == "web_search_tool_result"]
-    assert results == [BLOCKS, BLOCKS] + [
-        {"type": "web_search_tool_result_error",
-         "error_code": "max_uses_exceeded"}] * 4
-    assert len(proxy.runs) == 2 and len(proxy.sent) == 6
+    results = [b["content"] for b in blocks_of(ev)
+               if b["type"] == "web_search_tool_result"]
+    assert results == [BLOCKS, BLOCKS] + [search_error("max_uses_exceeded")] * 4
+    assert len(proxy.hosted.runs) == 2 and len(proxy.sent) == 6
     assert "the limit of 2 web tool calls" in proxy.sent[3]["messages"][-1]["content"]
     assert ev[-2][1]["delta"]["stop_reason"] == "end_turn"
     assert ev[-2][1]["usage"]["server_tool_use"] == {"web_search_requests": 2}
     assert proxy.lines[0][6:8] == (60, 6)
-    # `tool_choice` forcé : appliqué au premier tour seulement, sinon le
-    # modèle ne pourrait jamais conclure.
-    assert [s["tool_choice"] for s in proxy.sent] == ["required"] + ["auto"] * 5
 
 
-def test_app_loop_search_error_is_a_block_not_an_http_error(proxy):
-    proxy.result = "Error: search engine unreachable (ConnectError)."
-    proxy.replies = [stream_of(*SEARCH_TURN), stream_of(*ANSWER_TURN)]
-    r = proxy.post()
-    ev = events(r.content)
-    assert r.status_code == 200 and ev[-1][0] == "message_stop"
-    block = next(d["content_block"] for e, d in ev if e == "content_block_start"
-                 and d["content_block"]["type"] == "web_search_tool_result")
-    assert block["content"] == {"type": "web_search_tool_result_error",
-                                "error_code": "unavailable"}
-    # Le modèle, lui, lit pourquoi.
-    assert proxy.sent[1]["messages"][-1]["content"] == proxy.result
-    assert "server_tool_use" not in ev[-2][1]["usage"]
-
-
-def test_app_loop_hands_back_when_the_client_is_called_too(proxy):
-    up = stream_of(
-        tool_call(0, "call_x", "web_search", "{\"query\":\"un\"}"),
-        tool_call(1, "toolu_1", "Read", "{}"),
-        chunk(finish="tool_calls"), usage(10, 2))
-    proxy.replies = [up]
-    r = proxy.post(tools=[
-        {"type": "web_search_20250305", "name": "web_search"},
-        {"name": "Read", "input_schema": {"type": "object"}}])
-    ev = events(r.content)
-    assert [d["content_block"]["type"] for e, d in ev
-            if e == "content_block_start"] == [
-        "tool_use", "server_tool_use", "web_search_tool_result"]
-    assert ev[-2][1]["delta"]["stop_reason"] == "tool_use"
-    # La recherche est exécutée, mais pas de second tour : au client.
-    assert len(proxy.runs) == 1 and len(proxy.sent) == 1 and up.closed
-    assert proxy.lines[0][6:8] == (10, 2)
-
-
-def test_app_loop_failure_on_a_later_turn(proxy):
-    # Backend éteint au tour 2, en flux : `event: error` (le 200 est
-    # parti), et la ligne de stats garde ce que le tour 1 a consommé.
-    proxy.replies = [stream_of(*SEARCH_TURN),
-                     (503, "backend_offline", "backend «essai» hors ligne")]
-    r = proxy.post()
-    ev = events(r.content)
-    assert r.status_code == 200
-    assert ev[-1] == ("error", {"type": "error", "error": {
-        "type": "api_error", "message": "backend «essai» hors ligne"}})
-    assert len(proxy.lines) == 1
-    assert proxy.lines[0][4] == 503 and proxy.lines[0][6:9] == (100, 10, True)
-
-    # Statut d'erreur upstream au tour 2.
-    proxy.lines.clear()
-    bad = FakeUpstream(json.dumps({"error": {"message": "contexte dépassé"}})
-                       .encode(), status=400, content_type="application/json")
-    proxy.replies = [stream_of(*SEARCH_TURN), bad]
-    ev = events(proxy.post().content)
-    assert ev[-1] == ("error", {"type": "error", "error": {
-        "type": "invalid_request_error", "message": "contexte dépassé"}})
-    assert bad.closed and proxy.lines[0][4] == 400
-
+def test_app_failure_takes_the_anthropic_error_form(proxy):
+    offline = (503, "backend_offline", "backend «essai» hors ligne")
+    refused = FakeUpstream(json.dumps(
+        {"error": {"message": "contexte dépassé"}}).encode(), status=400)
+    error = lambda kind, message: {"type": "error", "error": {
+        "type": kind, "message": message}}
+    # Au tour 2, en flux : `event: error` (le 200 est parti), au type que
+    # donne le statut.
+    for second, body in (
+            (offline, error("api_error", "backend «essai» hors ligne")),
+            (refused, error("invalid_request_error", "contexte dépassé"))):
+        proxy.replies = [FakeUpstream(stream(*SEARCH_TURN)), second]
+        r = post(proxy)
+        assert r.status_code == 200 and events(r.content)[-1] == ("error", body)
     # En JSON rien n'est parti : la réponse prend le vrai statut.
-    proxy.lines.clear()
-    proxy.replies = [FakeUpstream(SEARCH_DOC, content_type="application/json"),
-                     (503, "backend_offline", "backend «essai» hors ligne")]
-    r = proxy.post(stream=False)
-    assert r.status_code == 503 and r.json() == {"type": "error", "error": {
-        "type": "api_error", "message": "backend «essai» hors ligne"}}
-    assert len(proxy.lines) == 1 and proxy.lines[0][4] == 503
-
-    # Erreur dès le PREMIER tour : le statut et le corps d'erreur habituels.
-    proxy.lines.clear()
-    proxy.replies = [FakeUpstream(b'{"error": {"message": "non"}}', status=500,
-                                  content_type="application/json")]
-    r = proxy.post()
-    assert r.status_code == 500 and r.json()["error"] == {
-        "type": "api_error", "message": "non"}
-    assert len(proxy.lines) == 1 and proxy.lines[0][4] == 500
-    proxy.lines.clear()
-    proxy.replies = [(503, "backend_offline", "éteint")]
-    r = proxy.post()
-    assert r.status_code == 503 and r.json()["type"] == "error"
-    assert len(proxy.lines) == 1 and not proxy.runs[4:]
+    proxy.replies = [FakeUpstream(SEARCH_DOC), offline]
+    r = post(proxy, stream=False)
+    assert r.status_code == 503
+    assert r.json() == error("api_error", "backend «essai» hors ligne")
+    # Dès le PREMIER tour : le statut et le corps d'erreur habituels.
+    proxy.replies = [FakeUpstream(b'{"error": {"message": "non"}}', status=500)]
+    r = post(proxy)
+    assert r.status_code == 500 and r.json() == error("api_error", "non")
+    # Erreur DANS le flux d'un tour : la recherche qu'il demandait n'est
+    # pas exécutée, le message est clos comme avant.
+    proxy.replies = [FakeUpstream(stream(
+        tool_call(0, "call_x", "web_search", "{}"),
+        {"error": {"message": "GPU perdu"}}))]
+    assert [e for e, _ in events(post(proxy).content)] == [
+        "message_start", "error", "message_delta", "message_stop"]
+    # Une ligne de stats par requête, au statut de son issue ; seules les
+    # trois premières ont exécuté leur recherche.
+    assert [line[4] for line in proxy.lines] == [503, 400, 503, 500, 200]
+    assert len(proxy.hosted.runs) == 3
 
 
-def test_app_without_hosted_search_takes_the_plain_path(proxy, monkeypatch):
-    answer = lambda: stream_of(chunk({"content": "Bonjour"}),
-                               chunk(finish="stop"), usage(5, 1))
-    expected = [
-        "message_start", "content_block_start", "content_block_delta",
-        "content_block_stop", "message_delta", "message_stop"]
-    # Le client ne déclare pas la recherche : relais ordinaire, un tour.
-    proxy.replies = [answer()]
-    r = proxy.post(tools=[{"name": "Read", "input_schema": {"type": "object"}}])
-    ev = events(r.content)
-    assert [e for e, _ in ev] == expected
-    assert "server_tool_use" not in ev[-2][1]["usage"]
-    assert [t["function"]["name"] for t in proxy.sent[0]["tools"]] == ["Read"]
-    assert len(proxy.lines) == 1
-    # Il la déclare, mais le proxy n'héberge rien : ignorée comme avant —
-    # ni `tools` ni `tool_choice` ne partent au backend.
-    empty = type(proxy.hosted)(modules=[])
-    monkeypatch.setattr(app.tools, "Hosted", lambda: empty)
-    proxy.replies = [answer()]
-    r = proxy.post()
-    assert [e for e, _ in events(r.content)] == expected
-    assert "tools" not in proxy.sent[1] and "tool_choice" not in proxy.sent[1]
-    assert len(proxy.lines) == 2
-    # Il la déclare, le proxy l'héberge, le modèle ne cherche pas : un
-    # tour, le même flux, aucun compte de recherche.
-    monkeypatch.setattr(app.tools, "Hosted", lambda: proxy.hosted)
-    proxy.replies = [answer()]
-    ev = events(proxy.post().content)
-    assert [e for e, _ in ev] == expected
-    assert ev[-2][1]["usage"] == {
-        "input_tokens": 5, "output_tokens": 1,
-        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
-    assert not proxy.runs and len(proxy.sent) == 3 and len(proxy.lines) == 3
-
-
-def test_app_loop_pings_while_the_search_runs(proxy, monkeypatch):
+def test_app_pings_while_the_search_runs(proxy, monkeypatch):
     """En flux, des `ping` tiennent la connexion pendant l'exécution
     (Claude Code coupe un flux muet) ; aucun en JSON."""
     async def slow(args, **options):
@@ -1415,20 +1054,19 @@ def test_app_loop_pings_while_the_search_runs(proxy, monkeypatch):
 
     proxy.hosted.by_name["web_search"].run = slow
     monkeypatch.setattr(app.anthropic_api, "PING_INTERVAL", 0.02)
-    proxy.replies = [stream_of(*SEARCH_TURN), stream_of(*ANSWER_TURN)]
-    kinds = [e for e, _ in events(proxy.post().content)]
+    searching(proxy)
+    kinds = [e for e, _ in events(post(proxy).content)]
     assert "ping" in kinds and kinds[-1] == "message_stop"
     # Entre l'annonce de la recherche et son résultat, nulle part ailleurs.
     first, last = kinds.index("ping"), len(kinds) - kinds[::-1].index("ping")
     assert kinds[first - 1] == "content_block_stop"
     assert set(kinds[first:last]) == {"ping"}
     assert kinds[last] == "content_block_start"
-    proxy.replies = [FakeUpstream(SEARCH_DOC, content_type="application/json"),
-                     FakeUpstream(ANSWER_DOC, content_type="application/json")]
-    assert proxy.post(stream=False).json()["stop_reason"] == "end_turn"
+    searching(proxy, streamed=False)
+    assert post(proxy, stream=False).json()["stop_reason"] == "end_turn"
 
 
-def test_app_loop_behind_quotas_goes_through_the_pinged_stream(proxy, monkeypatch):
+def test_app_behind_quotas_goes_through_the_pinged_stream(proxy, monkeypatch):
     """Backend à quotas, en flux : le premier tour passe par pinged_stream
     (200 immédiat, pings pendant l'attente du quota), puis la même boucle."""
     class Limiter:
@@ -1441,87 +1079,28 @@ def test_app_loop_behind_quotas_goes_through_the_pinged_stream(proxy, monkeypatc
     monkeypatch.setattr(backend, "quotas", True)
     monkeypatch.setattr(backend, "quota_state", types.SimpleNamespace(
         get_limiter=lambda payload: Limiter()), raising=False)
-    ups = [stream_of(*SEARCH_TURN), stream_of(*ANSWER_TURN)]
-    proxy.replies = list(ups)
-    r = proxy.post()
+    ups = searching(proxy)
+    r = post(proxy)
     assert r.headers["content-type"].startswith("text/event-stream")
     ev = events(r.content)
-    assert [d["content_block"]["type"] for e, d in ev
-            if e == "content_block_start"] == [
+    assert [b["type"] for b in blocks_of(ev)] == [
         "text", "server_tool_use", "web_search_tool_result", "text"]
     assert ev[-1][0] == "message_stop" and len(proxy.sent) == 2
     assert len(proxy.lines) == 1 and proxy.lines[0][6:8] == (250, 15)
     assert all(u.closed for u in ups)
 
 
-def test_app_loop_client_gone_cancels_the_search(proxy):
-    """Le client raccroche pendant la recherche : elle est annulée,
-    l'upstream fermé, la ligne de stats écrite une fois."""
-    started, cancelled = [], []
-
-    async def endless(args, **options):
-        started.append(args)
-        try:
-            await asyncio.sleep(60)
-        except asyncio.CancelledError:
-            cancelled.append(args)
-            raise
-
-    proxy.hosted.by_name["web_search"].run = endless
-    up = stream_of(*SEARCH_TURN)
-    request = claude_code_search(model="essai/qwen")
-    ctx = A.Context(request, proxy.hosted)
-    robinet = A.Translator(200, "text/event-stream", "essai/qwen", ctx)
-    call = app.Call(app.BACKENDS["essai"], "essai/qwen", "/v1/messages",
-                    "anthropic")
-
-    async def scenario():
-        stream = app.hosted_loop(call, None, proxy.hosted, robinet, up, 0,
-                                 lambda r: {}, limit=ctx.limit,
-                                 ping=A.ping_event())
-        old, A.PING_INTERVAL = A.PING_INTERVAL, 0.01
-        try:
-            async for out in stream:
-                if out == A.ping_event():
-                    break
-            await stream.aclose()
-            await asyncio.sleep(0)      # laisse l'annulation arriver à la tâche
-        finally:
-            A.PING_INTERVAL = old
-
-    asyncio.run(scenario())
-    assert started and cancelled == started
-    assert up.closed and len(proxy.lines) == 1
-    assert proxy.lines[0][4] == 200 and proxy.lines[0][6:8] == (100, 10)
-    assert not proxy.sent
-
-
 # ── blancs seuls avant un appel d'outil ─────────────────────────────────
 
-def test_stream_whitespace_before_tool_call_is_not_a_text_block():
-    t = A.Translator(200, "text/event-stream", "b/m")
-    lines = [
-        {"choices": [{"delta": {"content": "\n\n"}}]},
-        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {
-            "name": "Read", "arguments": "{}"}}]}}]},
-        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
-    ]
-    raw = b"".join(b"data: " + json.dumps(x).encode() + b"\n\n" for x in lines)
-    out = (t.feed(raw + b"data: [DONE]\n\n") + t.finish()).decode()
-    starts = [json.loads(line[5:])["content_block"]["type"]
-              for line in out.split("\n")
-              if line.startswith("data:") and '"content_block_start"' in line]
-    assert starts == ["tool_use"]
-
-
-def test_stream_leading_whitespace_is_kept_when_text_follows():
-    t = A.Translator(200, "text/event-stream", "b/m")
-    lines = [{"choices": [{"delta": {"content": "\n"}}]},
-             {"choices": [{"delta": {"content": "Paris"}}]},
-             {"choices": [{"delta": {}, "finish_reason": "stop"}]}]
-    raw = b"".join(b"data: " + json.dumps(x).encode() + b"\n\n" for x in lines)
-    out = (t.feed(raw + b"data: [DONE]\n\n") + t.finish()).decode()
-    deltas = [json.loads(line[5:])["delta"].get("text", "")
-              for line in out.split("\n")
-              if line.startswith("data:") and '"content_block_delta"' in line]
-    assert "".join(deltas) == "\nParis"
+def test_stream_whitespace_alone_before_a_tool_call_is_not_a_text_block():
+    """Un bloc de texte vide, l'API Anthropic le refuse au rejeu ; suivis
+    d'un texte, les blancs sont gardés."""
+    ev = turn(A.Translator(200, "text/event-stream", "b/m"),
+              chunk({"content": "\n\n"}), tool_call(0, "c1", "Read", "{}"),
+              chunk(finish="tool_calls"))
+    assert [b["type"] for b in blocks_of(ev)] == ["tool_use"]
+    ev = turn(A.Translator(200, "text/event-stream", "b/m"),
+              chunk({"content": "\n"}), chunk({"content": "Paris"}),
+              chunk(finish="stop"))
+    assert "".join(d["delta"]["text"] for e, d in ev
+                   if e == "content_block_delta") == "\nParis"
