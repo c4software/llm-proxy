@@ -256,8 +256,8 @@
   <details class="panel howto">
     <summary>
       <h2>Brancher un client</h2>
-      <span class="meta">OpenAI SDK, curl, Claude Code — commandes prêtes
-        à coller, sur <code>{{ exampleModel }}</code></span>
+      <span class="meta">OpenAI SDK, curl, Claude Code, Codex, pi / omp —
+        commandes prêtes à coller, sur <code>{{ exampleModel }}</code></span>
     </summary>
     <div class="howto-body">
       <p class="lead">Le proxy expose une API OpenAI à
@@ -310,6 +310,44 @@
           <code>config.toml</code> et redémarrer. Les noms
           <code>claude-*</code> se traduisent dans
           <code>[anthropic.model_map]</code>.</p>
+      </section>
+
+      <section>
+        <h3>Codex CLI
+          <span class="tag" :class="responses ? 'exact' : 'est'">{{
+            responses === null ? "…" : responses ? "actif" : "inactif" }}</span>
+        </h3>
+        <template v-if="responses">
+          <p class="note">Dans <code>~/.codex/config.toml</code> :</p>
+          <pre>{{ snippets.codex }}</pre>
+          <p class="note">Codex parle l'API Responses ; le proxy la traduit
+            vers le backend du préfixe, sans table de correspondance : le
+            modèle porte son préfixe.</p>
+        </template>
+        <p v-else class="note">Surface désactivée : mettre
+          <code>[responses] enabled = true</code> dans
+          <code>config.toml</code> et redémarrer.</p>
+      </section>
+
+      <section>
+        <h3>pi / omp</h3>
+        <pre>{{ snippets.pi }}</pre>
+        <p class="note">Les deux extensions sont dans le dépôt
+          <code>llmsetup</code> (<code>tools/</code>). Le provider
+          s'appelle <code>albert</code> : les modèles s'y nomment
+          <code>albert/&lt;backend&gt;/&lt;modèle&gt;</code>.</p>
+      </section>
+
+      <section v-if="hostedTools.length">
+        <h3>Outils hébergés
+          <span class="tag exact">{{ hostedTools.join(", ") }}</span>
+        </h3>
+        <p class="note">Le proxy exécute ces outils lui-même. Codex et
+          Claude Code s'en servent sans réglage (leur recherche web passe
+          par le proxy) ; pi et omp par l'extension
+          <code>llm-proxy-web.ts</code> ; tout autre client en déclarant
+          <code>{"type": "web_search"}</code> dans <code>tools</code>.
+          Leur usage est dans le panneau <em>Outils</em>.</p>
       </section>
     </div>
   </details>

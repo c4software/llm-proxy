@@ -93,6 +93,11 @@ createApp({
     const health = ref(null);
     const anthropic = computed(() => health.value
       ? !!(health.value.anthropic || {}).enabled : null);
+    const responses = computed(() => health.value
+      ? !!(health.value.responses || {}).enabled : null);
+    // Outils que le proxy exécute lui-même (recherche web, lecture de page…).
+    const hostedTools = computed(() =>
+      ((health.value || {}).tools || {}).enabled || []);
 
     // ── formatage ───────────────────────────────────────────────────────
     // Entier à la française : espace comme séparateur de milliers.
@@ -322,12 +327,23 @@ createApp({
     const origin = window.location.origin;
     const authRequired = computed(() => !!(health.value || {}).auth_required);
     const apiKey = computed(() => authRequired.value ? "<clé du proxy>" : "unused");
+    // Les exemples sont des commandes de CHAT : seuls les modèles de
+    // conversation y ont leur place — pas un modèle d'image, de voix ou
+    // d'embeddings, même s'il est le plus actif de la période. /healthz
+    // les liste par backend (`chat_models`, d'après le type au catalogue) ;
+    // tant qu'il ne les connaît pas (catalogue pas encore lu), aucun
+    // filtre : mieux vaut un exemple approximatif que pas d'exemple.
+    const chatModels = computed(() => Object.values(
+      (health.value || {}).backends || {}).flatMap((b) => b.chat_models || []));
+    const isChat = (id) => !chatModels.value.length
+      || chatModels.value.includes(String(id).toLowerCase());
     const exampleModel = computed(() => {
-      const top = [...models.value].sort((a, b) => b.requests - a.requests)[0];
+      const top = [...models.value].filter((m) => isChat(m.id))
+        .sort((a, b) => b.requests - a.requests)[0];
       if (top) return top.id;
       const seen = Object.values((health.value || {}).backends || {})
-        .flatMap((b) => b.last_seen_models || []);
-      return seen[0] || "albert/deepseek-v4-flash";
+        .flatMap((b) => b.last_seen_models || []).filter(isChat);
+      return chatModels.value[0] || seen[0] || "albert/deepseek-v4-flash";
     });
     // Un modèle d'un AUTRE backend que l'exemple, s'il y en a un : c'est
     // l'usage typique du petit modèle rapide (local, sans quota).
@@ -335,7 +351,7 @@ createApp({
       const main = exampleModel.value.split("/")[0];
       const seen = Object.entries((health.value || {}).backends || {})
         .filter(([name]) => name !== main)
-        .flatMap(([, b]) => b.last_seen_models || []);
+        .flatMap(([, b]) => b.last_seen_models || []).filter(isChat);
       return seen[0] || "bigchuck/qwen3-8b";
     });
     const snippets = computed(() => {
@@ -360,6 +376,21 @@ export ANTHROPIC_MODEL=${model}
 # tâches d'arrière-plan (titres, résumés…) sur un backend local, au choix :
 # export ANTHROPIC_SMALL_FAST_MODEL=${smallModel_}
 claude`,
+        // ~/.codex/config.toml : un provider en API Responses. `env_key`
+        // seulement si le proxy exige une clé (Codex refuse une variable vide).
+        codex: `model = "${model}"
+model_provider = "llm-proxy"
+
+[model_providers.llm-proxy]
+name = "llm-proxy"
+base_url = "${origin}/v1"
+wire_api = "responses"${auth ? '\nenv_key = "LLM_PROXY_KEY"   # export LLM_PROXY_KEY=' + key : ""}`,
+        // pi et omp : les extensions du dépôt llmsetup, qui lisent ces variables.
+        pi: `export LLM_PROXY_URL=${origin}${auth ? "\nexport LLM_PROXY_API_KEY=" + key : ""}
+# extensions à copier dans ~/.pi/agent/extensions/ (et ~/.omp/agent/extensions/) :
+#   llm-proxy.ts      le provider (modèles du proxy)
+#   llm-proxy-web.ts  recherche web et lecture de page du proxy
+pi --model albert/${model}`,
       };
     });
     const shortcuts = computed(() => windows.map((w) => w.key).join(" / ") +
@@ -501,7 +532,8 @@ claude`,
 
     return { windows, current, metrics, metric, metricUnit, metricLabel,
              models, totals, bars, axis, peak, since, now, tools, toolCalls,
-             loaded, entering, anthropic, authRequired, exampleModel,
+             loaded, entering, anthropic, responses, hostedTools,
+             authRequired, exampleModel,
              snippets, origin, note, shortcuts, bucketLabel, successRate,
              backendSummary, num, ms, ago, dur, moment, tickLabel, select,
              selectMetric };

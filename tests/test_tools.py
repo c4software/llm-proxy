@@ -1023,3 +1023,28 @@ def test_cle_du_proxy_non_ascii_ne_casse_pas_le_controle(routes, monkeypatch):
     monkeypatch.setattr(A, "PROXY_API_KEYS", frozenset({"clé-secrète"}))
     r = client.get("/v1/tools", headers={"Authorization": "Bearer cle-fausse"})
     assert r.status_code == 401
+
+
+def test_type_d_un_modele_sans_type_au_catalogue():
+    """Un catalogue qui ne dit pas ce que sont ses modèles (llama-swap) :
+    le nom tranche, un motif de configuration l'emporte, et ce que le
+    backend déclare n'est jamais deviné à sa place."""
+    from llm_proxy import app as A
+    from llm_proxy.backends import Backend
+    b = Backend("essai", {"url": "http://x", "model_types": {"*-voice-chat": "text-generation"}})
+    for model, attendu in [
+        ({"id": "qwen3.8-flash-next"}, "text-generation"),
+        ({"id": "Qwen-Image-2.1-heretic"}, "text-to-image"),
+        ({"id": "qwen3-tts-12hz-1.7b-voice-design"}, "text-to-speech"),
+        ({"id": "qwen3-asr-1.7b"}, "automatic-speech-recognition"),
+        ({"id": "bge-m3"}, "text-embeddings-inference"),
+        # « imagine » n'est pas « image » : un mot entier, pas une sous-chaîne.
+        ({"id": "imagine-7b"}, "text-generation"),
+        ({"id": "mon-voice-chat"}, "text-generation"),                 # motif
+        ({"id": "whisper-large-v3", "type": "text-generation"}, "text-generation"),
+        ({"id": "qwen-image-edit", "architecture": {
+            "input_modalities": ["text", "image"], "output_modalities": ["text"]}},
+         "image-text-to-text"),
+    ]:
+        assert A._model_type(model, b) == attendu, model["id"]
+    assert set(A.CHAT_TYPES) == {"text-generation", "image-text-to-text"}

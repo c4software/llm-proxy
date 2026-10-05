@@ -72,6 +72,14 @@ class Backend:
         # images — un backend llama.cpp en sert de toutes sortes, et
         # envoyer une image à un modèle texte seul est un 500 assuré.
         self.model_types: dict[str, str] = {}
+        # Type imposé pour des modèles de CE backend, par motif (jokers
+        # shell, casse ignorée) : pour un catalogue qui ne dit pas ce que
+        # sont ses modèles (llama-swap) et dont le nom trompe la déduction.
+        overrides = cfg.get("model_types")
+        self.type_overrides: dict[str, str] = {
+            str(k).strip().lower(): str(v).strip()
+            for k, v in (overrides.items() if isinstance(overrides, dict) else ())
+            if str(k).strip() and str(v).strip()}
 
     @staticmethod
     def _tool_choice(value) -> str | None:

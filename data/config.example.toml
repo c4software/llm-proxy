@@ -406,6 +406,16 @@ models = ["openweight-large", "gpt-oss"]
 #
 # tokenize_path — endpoint de tokenisation pour un count_tokens EXACT
 # (llama.cpp : "/tokenize") ; absent = estimation à 4 caractères/token.
+#
+# model_types — type imposé à des modèles de ce backend, par motif (jokers
+# shell, casse ignorée). Le type vient d'ordinaire du catalogue du backend
+# (Albert le donne, llama.cpp le laisse déduire) ; un catalogue qui ne dit
+# rien (llama-swap) est lu au NOM du modèle (image, tts, asr, embed…), et
+# cette table corrige un nom qui trompe. Le type décide de ce qui est
+# proposé à un client de chat (tableau de bord) et de qui reçoit les images.
+#   [backends.bigchuck.model_types]
+#   "mon-modele-voice-chat" = "text-generation"
+#   "*-vision-*" = "image-text-to-text"
 
 [backends.albert]
 url = "https://albert.api.etalab.gouv.fr"

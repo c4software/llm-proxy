@@ -1296,6 +1296,7 @@ url = "http://bigchuck:8009"
 | `max_tokens` | `0` = aucun | Plafond : `max_tokens` / `max_completion_tokens` du client ramené au plafond, jamais augmenté ni ajouté |
 | `images` | `false` | Les modèles multimodaux au catalogue du backend reçoivent les `image_url` d'un client Anthropic ; sinon texte de remplacement |
 | `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact — llama.cpp : `"/tokenize"` |
+| `model_types` | `{}` | Type imposé à des modèles du backend, par motif (`"*-vision-*" = "image-text-to-text"`). Sans lui le type vient du catalogue du backend, ou, s'il ne dit rien (llama-swap), du nom du modèle (`image`, `tts`, `asr`, `embed`…). Décide de ce qui est proposé à un client de chat et de qui reçoit les images |
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
 `unknown_backend_prefix`. Seules les requêtes sans champ `model`

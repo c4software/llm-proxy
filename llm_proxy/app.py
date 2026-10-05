@@ -61,6 +61,7 @@ association routeurs ↔ modèles) vit dans albert.py.
 """
 
 import asyncio
+import fnmatch
 import hmac
 import json
 import os
@@ -602,6 +603,12 @@ async def healthz():
                 "meta_timeout": b.meta_timeout,
                 "connect_timeout": b.connect_timeout,
                 "last_seen_models": sorted(f"{name}/{m}" for m in b.models),
+                # Ceux qu'on peut proposer à un client de chat (ni image,
+                # ni voix, ni embeddings) : le tableau de bord y prend ses
+                # exemples. Vide tant que le catalogue n'a pas été lu.
+                "chat_models": sorted(
+                    f"{name}/{m}" for m in b.models
+                    if b.model_types.get(m, "text-generation") in CHAT_TYPES),
                 **(b.quota_state.snapshot() if b.quotas else {}),
             }
             for name, b in BACKENDS.items()
@@ -633,9 +640,33 @@ def _model_max_context(m: dict) -> int | None:
     return None
 
 
-def _model_type(m: dict) -> str:
-    """`type` d'une entrée /v1/models. Albert le fournit ; llama.cpp non —
-    on le dérive d'architecture.{input,output}_modalities."""
+# Types d'un modèle de CONVERSATION : ceux qu'on peut proposer en exemple
+# à un client de chat (tableau de bord, /healthz `chat_models`).
+CHAT_TYPES = ("text-generation", "image-text-to-text")
+
+# Un catalogue sans `type` ni `architecture` (llama-swap devant gufo ou
+# llama.cpp) : le nom est le seul indice. Sans cela un modèle d'image, de
+# voix ou de transcription était publié «text-generation» et proposé à un
+# client de chat. Un mot entier du nom, jamais une sous-chaîne ; pour un nom
+# qui trompe, [backends.<nom>.model_types] tranche.
+_NAME_TYPES = (
+    (("image", "flux", "sdxl", "diffusion", "imagen"), "text-to-image"),
+    (("tts", "speech", "voice"), "text-to-speech"),
+    (("asr", "whisper", "stt", "transcribe"), "automatic-speech-recognition"),
+    (("embed", "embedding", "embeddings", "bge", "e5"), "text-embeddings-inference"),
+    (("rerank", "reranker"), "text-classification"),
+)
+
+
+def _model_type(m: dict, b: Backend | None = None) -> str:
+    """`type` d'une entrée /v1/models, par ordre de confiance : le motif
+    de [backends.<nom>.model_types] ; le `type` du backend (Albert le
+    fournit) ; `architecture.{input,output}_modalities` (llama.cpp) ; à
+    défaut le nom (voir _NAME_TYPES) ; sinon «text-generation»."""
+    name = str(m.get("id") or "").lower()
+    for pattern, kind in (b.type_overrides.items() if b is not None else ()):
+        if fnmatch.fnmatchcase(name, pattern):
+            return kind
     if isinstance(m.get("type"), str):
         return m["type"]
     arch = m.get("architecture")
@@ -646,6 +677,11 @@ def _model_type(m: dict) -> str:
             return "automatic-speech-recognition"
         if "image" in inp and "text" in out:
             return "image-text-to-text"
+        return "text-generation"
+    words = set(name.replace("/", "-").replace("_", "-").replace(".", "-").split("-"))
+    for keys, kind in _NAME_TYPES:
+        if words.intersection(keys):
+            return kind
     return "text-generation"
 
 
@@ -675,7 +711,7 @@ async def fetch_models(b: Backend, request: Request | None = None) -> list | Non
     for m in data:
         if isinstance(m, dict) and m.get("id"):
             costs = m.get("costs")
-            kind = _model_type(m)
+            kind = _model_type(m, b)
             types[str(m["id"]).lower()] = kind
             for a in m.get("aliases") or []:
                 if isinstance(a, str):
