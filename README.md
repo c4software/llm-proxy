@@ -485,28 +485,30 @@ seule la recherche est branchée — voir
 Le schéma de `web_search` et la forme de sa sortie sont repris de l'outil
 `web_search` d'[oh-my-pi](https://github.com/can1357/oh-my-pi).
 
-État de la validation au 05/10/2026, vers gufo 0.8.0
-(`bigchuck/qwen3.8-flash-next`) :
+État de la validation au 05/10/2026, sur un déploiement réel (image
+SearXNG et `settings.yml` du dépôt), vers gufo 0.8.0
+(`bigchuck/qwen3.8-flash-next`). Une même question de recherche a été
+posée par les quatre clients, et chacun a répondu avec l'URL d'une source
+trouvée par SearXNG :
 
-- `web_fetch` joué par Codex CLI 0.157.1 à travers le proxy : deux pages
-  publiques lues dans une même réponse, éléments `web_search_call`
-  affichés par Codex, et une adresse locale refusée par le garde-fou.
-- `web_search` joué sur un déploiement réel, avec l'image SearXNG et le
-  `settings.yml` du dépôt : une requête `/v1/responses` déclarant
-  `web_search` a enchaîné une recherche puis l'ouverture d'un résultat
-  avant de répondre. Ce jour-là SearXNG rendait 20 résultats, deux de ses
-  moteurs étant refusés par leur source (Brave en limite de débit,
-  DuckDuckGo en CAPTCHA) : la qualité dépend des moteurs que l'adresse de
-  la machine peut encore joindre.
-- Pas encore joué : Codex déclenchant lui-même une recherche (seule la
-  lecture de page l'a été avec lui), un backend à quotas, et le service
-  `searxng` du `docker-compose.yml` du dépôt tel quel (le déploiement
-  d'essai l'intègre dans un compose local, sans la clé obligatoire).
-- **Surface Anthropic : pas encore jouée avec un vrai Claude Code.** La
-  forme de la requête vient d'une capture de Claude Code 2.1.287 ; celle
-  de la réponse, de la documentation publique d'Anthropic (« Web search
-  tool ») ; le tout n'est couvert que par les tests du dépôt, sans
-  réseau.
+| Client | Chemin | Ce qui a été joué |
+|---|---|---|
+| Codex CLI 0.157.1 | `/v1/responses`, boucle du proxy | recherche ; lecture de deux pages dans une même réponse ; adresse locale refusée par le garde-fou |
+| Claude Code 2.1.287 | `/v1/messages`, outil serveur `web_search` | recherche par son outil `WebSearch` ; six recherches en erreur enchaînées (moteur éteint), blocs d'erreur lus par Claude Code |
+| pi 0.87.1 | `/v1/tools`, extension `llm-proxy-web.ts` | recherche ; lecture de page ; commandes `/web` et `/page` |
+| omp 18.3.2 | `/v1/tools`, extension `llm-proxy-web.ts` | recherche ; lecture de page ; commandes `/web` et `/page` |
+
+Ce jour-là SearXNG rendait 20 résultats, deux de ses moteurs étant
+refusés par leur source (Brave en limite de débit, DuckDuckGo en
+CAPTCHA) : la qualité dépend des moteurs que l'adresse de la machine peut
+encore joindre.
+
+Pas encore joué : un backend à quotas dans la boucle, un client qui
+rejoue des blocs `web_search_tool_result` sur `/v1/messages` (Claude Code
+ne le fait pas), le service `searxng` du `docker-compose.yml` du dépôt
+tel quel (le déploiement d'essai l'intègre dans un compose local, sans la
+clé obligatoire), et pi ou omp avec tous leurs outils (les essais
+limitaient le modèle aux deux outils web).
 
 ### Déroulé
 
@@ -1043,7 +1045,7 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 - **Outils hébergés : surfaces Responses et Anthropic.**
   `/v1/chat/completions` n'en profite pas (un client qui veut les
   déclarer lui-même a `/v1/tools`). Sur `/v1/messages`, seule la
-  recherche est branchée, **pas encore jouée avec un vrai Claude Code** ;
+  recherche est branchée ;
   pas de citations, pas de `pause_turn`, `user_location` ignoré, et les
   listes de domaines ne font que filtrer ce que SearXNG a rendu — voir
   [Claude Code et l'outil serveur `web_search`](#claude-code-et-loutil-serveur-web_search).
