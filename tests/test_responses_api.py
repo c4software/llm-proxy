@@ -990,3 +990,31 @@ def test_app_loop_client_gone_closes_everything(proxy):
     assert up.closed and len(proxy.lines) == 1
     assert proxy.lines[0][4] == 200 and proxy.lines[0][6:8] == (100, 10)
     assert not proxy.sent and not proxy.runs
+
+
+# ── blancs seuls avant un appel d'outil ─────────────────────────────────
+
+def test_stream_whitespace_before_tool_call_is_not_a_message():
+    _, ev = run(sse(
+        chunk({"content": "\n"}), chunk({"content": "\n "}),
+        chunk({"tool_calls": [{"index": 0, "id": "call_a", "function": {
+            "name": "exec_command", "arguments": "{}"}}]}),
+        chunk(finish="tool_calls"),
+    ))
+    assert [o["type"] for o in ev[-1]["response"]["output"]] == ["function_call"]
+    assert "response.output_text.delta" not in [e["type"] for e in ev]
+
+
+def test_stream_leading_whitespace_is_kept_when_text_follows():
+    _, ev = run(sse(chunk({"content": "\n\n"}), chunk({"content": "Paris"}),
+                    chunk(finish="stop")))
+    out = ev[-1]["response"]["output"]
+    assert [o["type"] for o in out] == ["message"]
+    assert out[0]["content"][0]["text"] == "\n\nParis"
+
+
+def test_json_whitespace_only_content_is_not_a_message():
+    resp = R.from_chat({"choices": [{"finish_reason": "tool_calls", "message": {
+        "content": "\n\n", "tool_calls": [{"id": "c", "function": {
+            "name": "exec_command", "arguments": "{}"}}]}}]}, ctx_of())
+    assert [o["type"] for o in resp["output"]] == ["function_call"]

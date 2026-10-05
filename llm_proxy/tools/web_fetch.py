@@ -92,8 +92,12 @@ async def _get(url: str, transport) -> tuple[httpx.Response, bytes]:
         # bloc par bloc — un seul bloc gzip peut en rendre mille fois plus.
         "Accept-Encoding": "identity",
     }
+    # trust_env=False : sans lui httpx lirait HTTP_PROXY / ALL_PROXY, et
+    # « la connexion part vers l'adresse vérifiée » deviendrait « un proxy
+    # s'y connecte pour nous ».
     async with httpx.AsyncClient(timeout=TIMEOUT, transport=transport,
-                                 follow_redirects=False) as c:
+                                 follow_redirects=False,
+                                 trust_env=False) as c:
         req = c.build_request("GET", target, headers=headers,
                               extensions={"sni_hostname": host})
         r = await c.send(req, stream=True)

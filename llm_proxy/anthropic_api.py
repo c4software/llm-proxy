@@ -648,7 +648,7 @@ def _message_blocks(msg: dict, hosted: dict) -> tuple[list[dict], list[dict]]:
     if REASONING_AS_THINKING and isinstance(reasoning, str) and reasoning:
         content.append({"type": "thinking", "thinking": reasoning,
                         "signature": ""})
-    if isinstance(msg.get("content"), str) and msg["content"]:
+    if isinstance(msg.get("content"), str) and msg["content"].strip():
         content.append({"type": "text", "text": msg["content"]})
     for tc in msg.get("tool_calls") or []:
         fn = tc.get("function") or {}
@@ -840,6 +840,7 @@ class Translator:
         # Appels hébergés du tour, retenus : index OpenAI → [nom, fragments].
         self._held: dict[int, list] = {}
         self._finish_reason: str | None = None
+        self._blank = ""                  # blancs retenus avant un texte
         self._saw_tool = False
         # Pour la trace : les appels de la réponse, [nom, fragments
         # d'arguments], dans l'ordre ; `_trace_open` : ceux du tour en
@@ -978,6 +979,7 @@ class Translator:
         self._held = {}
         self._trace_open = {}
         self._finish_reason = None
+        self._blank = ""
         self.client_calls = 0
         self.turns += 1
 
@@ -1099,6 +1101,7 @@ class Translator:
 
     def _open_block(self, kind: str, block: dict) -> bytes:
         out = self._close()
+        self._blank = ""
         self._open, self._open_index = kind, self._next_block
         self._block, self._parts = dict(block), []
         self._next_block += 1
@@ -1161,8 +1164,16 @@ class Translator:
                 out += self._delta({"type": "thinking_delta",
                                     "thinking": reasoning})
             text = delta.get("content")
+            if isinstance(text, str) and text and self._open != "text":
+                # Des blancs seuls avant un appel d'outil ne font pas un
+                # bloc de texte (un bloc vide, que l'API Anthropic refuse
+                # au rejeu) : retenus jusqu'au premier caractère visible,
+                # jetés si rien ne suit.
+                self._blank += text
+                text = "" if not self._blank.strip() else self._blank
             if isinstance(text, str) and text:
                 if self._open != "text":
+                    self._blank = ""
                     out += self._open_block("text", {"type": "text", "text": ""})
                 self._parts.append(text)
                 self.out_chars += len(text)

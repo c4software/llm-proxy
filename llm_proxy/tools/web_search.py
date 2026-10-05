@@ -214,7 +214,10 @@ async def run(args: dict, transport=None, allowed_domains=None,
     if CATEGORIES:
         params["categories"] = CATEGORIES
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, transport=transport) as c:
+        # trust_env=False : l'instance est une adresse du réseau du proxy,
+        # un HTTP_PROXY d'environnement n'a pas à s'en mêler.
+        async with httpx.AsyncClient(timeout=TIMEOUT, transport=transport,
+                                     trust_env=False) as c:
             r = await c.get(f"{SEARXNG_URL}/search", params=params)
     except httpx.HTTPError as exc:
         return f"Error: search engine unreachable ({type(exc).__name__})."

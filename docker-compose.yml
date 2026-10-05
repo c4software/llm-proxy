@@ -50,11 +50,15 @@ services:
       # qu'elles survivent à la recréation du conteneur.
       - searxng-cache:/var/cache/searxng
     environment:
-      # Surcharge `server.secret_key`. Jamais dans un fichier versionné, et
-      # jamais vide : SearXNG refuse le défaut «ultrasecretkey» mais
-      # accepterait une chaîne vide — d'où le `:?`, qui arrête
-      # `docker compose` avec ce message tant que .env ne la porte pas.
-      SEARXNG_SECRET: "${SEARXNG_SECRET:?absente de .env - en générer une avec « openssl rand -hex 32 » (voir .env.example)}"
+      # Surcharge `server.secret_key`. Jamais dans un fichier versionné :
+      # elle vient de .env (voir .env.example). Volontairement SANS `:?` —
+      # une variable absente n'arrête pas `docker compose`, qui dans une
+      # pile à `include` bloquerait tous les autres services avec celui-ci.
+      # Absente, la clé est vide : SearXNG démarre quand même (il ne refuse
+      # que son défaut «ultrasecretkey»), et compose le signale par un
+      # avertissement. L'instance n'est joignable que du proxy et ne sert
+      # que du JSON : la clé n'y signe rien d'exposé, mais autant la poser.
+      SEARXNG_SECRET: "${SEARXNG_SECRET:-}"
       # Ceinture et bretelles avec le montage du fichier seul : ne jamais
       # changer le propriétaire de ce qui vient de l'hôte.
       FORCE_OWNERSHIP: "false"

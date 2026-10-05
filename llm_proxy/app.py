@@ -1120,8 +1120,12 @@ def hosted_stream(call: Call, request: Request, payload: dict,
             {**payload, "input": base + robinet.output},
             images=images, hosted=hosted)[0]
 
+    # L'API Responses n'a pas d'événement `ping` : un commentaire SSE
+    # (ligne «:», ignorée par tout lecteur de flux) tient la connexion
+    # pendant une recherche ou l'attente d'un quota.
     return hosted_loop(call, request, hosted, robinet, upstream,
-                       prompt_estimate, rebuild)
+                       prompt_estimate, rebuild,
+                       ping=b": ping\n\n" if robinet.sse else None)
 
 
 async def _next_upstream(quiet: Call, request: Request, chat_payload: dict,
@@ -1408,10 +1412,13 @@ async def root():
 async def tools_list():
     """Les outils hébergés actifs, à la forme d'une déclaration de
     fonction : de quoi les présenter tels quels à un modèle."""
+    active = tools.enabled()
+    fetch = any(m.NAME == "web_fetch" for m in active)
     return {"object": "list", "data": [
-        {"name": m.NAME, **{k: v for k, v in m.DEFINITION["function"].items()
-                            if k != "name"}}
-        for m in tools.enabled()]}
+        {"name": m.NAME, **{k: v for k, v in (
+            m.definition(fetch=fetch) if hasattr(m, "definition")
+            else m.DEFINITION)["function"].items() if k != "name"}}
+        for m in active]}
 
 
 @app.post("/v1/tools/{name}")

@@ -172,7 +172,9 @@ class Hosted:
             result = f"Error: {name} failed ({type(exc).__name__})."
         if len(result) > MAX_RESULT_CHARS:
             result = result[:MAX_RESULT_CHARS] + "\n[truncated]"
+        # Le texte d'une erreur est journalisé : sur la surface Anthropic
+        # le client n'en reçoit qu'un code, seul le modèle lit le détail.
         log.info("outil hébergé %s(%s) → %d car. en %.1fs%s", name,
                  str(arguments)[:160], len(result), time.monotonic() - started,
-                 " (erreur)" if result.startswith("Error:") else "")
+                 f" — {result[:200]}" if result.startswith("Error:") else "")
         return result

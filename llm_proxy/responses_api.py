@@ -181,10 +181,15 @@ def _tools(tools, ctx: Context, hosted=None) -> list[dict]:
                        if m.NAME not in client and m.NAME not in seen]
             if modules:
                 # Outil que le proxy héberge : ses fonctions à la place.
+                # web_search renvoie à web_fetch dans sa description : sans
+                # lui (désactivé, ou nom pris par le client), la variante
+                # qui n'en parle pas.
+                fetch = any(x.NAME == "web_fetch" for x in modules)
                 for m in modules:
                     seen.add(m.NAME)
                     ctx.hosted[m.NAME] = m
-                    out.append(m.DEFINITION)
+                    out.append(m.definition(fetch=fetch) if hasattr(
+                        m, "definition") else m.DEFINITION)
                 continue
             # Outil hébergé par OpenAI seul (file_search, code_interpreter,
             # mcp…) ou intégré au client sans équivalent chat (custom,
@@ -592,7 +597,7 @@ def _chat_items(msg: dict, ctx: Context, base: int = 0) -> tuple[list[dict], lis
     reasoning = msg.get("reasoning_content") or msg.get("reasoning")
     if REASONING_AS_SUMMARY and isinstance(reasoning, str) and reasoning:
         output.append(_reasoning_item(_id("rs"), reasoning))
-    if isinstance(msg.get("content"), str) and msg["content"]:
+    if isinstance(msg.get("content"), str) and msg["content"].strip():
         output.append(_message_item(_id("msg"), msg["content"], "completed"))
     for tc in msg.get("tool_calls") or []:
         fn = tc.get("function") or {}
@@ -694,6 +699,7 @@ class Translator:
         self._tool_index: int | None = None      # index OpenAI de l'outil ouvert
         self._closed_tools: set[int] = set()
         self._finish_reason: str | None = None
+        self._blank = ""                  # blancs retenus avant un texte
 
     # ── interface robinet ──
     def feed(self, chunk: bytes) -> bytes:
@@ -783,6 +789,7 @@ class Translator:
         self.usage = None
         self._buf.clear()
         self._open, self._text = None, []
+        self._blank = ""
         self._tool_index = None
         self._closed_tools = set()
         self._finish_reason = None
@@ -876,6 +883,7 @@ class Translator:
 
     def _open_item(self, kind: str, item: dict) -> bytes:
         out = self._close()
+        self._blank = ""
         self._open, self._item_id, self._text = kind, item["id"], []
         return out + self._event("response.output_item.added", {
             "output_index": len(self._output), "item": item})
@@ -960,8 +968,15 @@ class Translator:
                 out += self._event("response.reasoning_summary_text.delta", {
                     **self._at(), "summary_index": 0, "delta": reasoning})
             text = delta.get("content")
+            if isinstance(text, str) and text and self._open != "text":
+                # Des blancs seuls avant un appel d'outil (certains gabarits
+                # en émettent) ne font pas un message : retenus jusqu'au
+                # premier caractère visible, jetés si rien ne suit.
+                self._blank += text
+                text = "" if not self._blank.strip() else self._blank
             if isinstance(text, str) and text:
                 if self._open != "text":
+                    self._blank = ""
                     out += self._open_item(
                         "text", _message_item(_id("msg"), "", "in_progress"))
                     out += self._event("response.content_part.added", {

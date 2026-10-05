@@ -1494,3 +1494,34 @@ def test_app_loop_client_gone_cancels_the_search(proxy):
     assert up.closed and len(proxy.lines) == 1
     assert proxy.lines[0][4] == 200 and proxy.lines[0][6:8] == (100, 10)
     assert not proxy.sent
+
+
+# ── blancs seuls avant un appel d'outil ─────────────────────────────────
+
+def test_stream_whitespace_before_tool_call_is_not_a_text_block():
+    t = A.Translator(200, "text/event-stream", "b/m")
+    lines = [
+        {"choices": [{"delta": {"content": "\n\n"}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {
+            "name": "Read", "arguments": "{}"}}]}}]},
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    ]
+    raw = b"".join(b"data: " + json.dumps(x).encode() + b"\n\n" for x in lines)
+    out = (t.feed(raw + b"data: [DONE]\n\n") + t.finish()).decode()
+    starts = [json.loads(line[5:])["content_block"]["type"]
+              for line in out.split("\n")
+              if line.startswith("data:") and '"content_block_start"' in line]
+    assert starts == ["tool_use"]
+
+
+def test_stream_leading_whitespace_is_kept_when_text_follows():
+    t = A.Translator(200, "text/event-stream", "b/m")
+    lines = [{"choices": [{"delta": {"content": "\n"}}]},
+             {"choices": [{"delta": {"content": "Paris"}}]},
+             {"choices": [{"delta": {}, "finish_reason": "stop"}]}]
+    raw = b"".join(b"data: " + json.dumps(x).encode() + b"\n\n" for x in lines)
+    out = (t.feed(raw + b"data: [DONE]\n\n") + t.finish()).decode()
+    deltas = [json.loads(line[5:])["delta"].get("text", "")
+              for line in out.split("\n")
+              if line.startswith("data:") and '"content_block_delta"' in line]
+    assert "".join(deltas) == "\nParis"

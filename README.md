@@ -652,11 +652,13 @@ joignable que du proxy, par le réseau du compose
 
 Ce qu'il faut savoir du service :
 
-- **`SEARXNG_SECRET` est obligatoire dès que ce compose est utilisé.**
-  SearXNG refuse de démarrer avec sa clé par défaut, mais accepterait une
-  clé vide : le compose exige donc la variable (`${SEARXNG_SECRET:?…}`)
-  et `docker compose` s'arrête avec un message tant que `.env` ne la
-  porte pas — y compris pour qui ne veut pas de la recherche.
+- **`SEARXNG_SECRET` est à poser dans `.env`, sans être bloquante.**
+  SearXNG refuse de démarrer avec sa clé par défaut mais accepte une clé
+  vide : absente, `docker compose` avertit et tout démarre quand même.
+  C'est voulu — une variable exigée arrêterait `docker compose` en
+  entier, et dans une pile à `include` tous les autres services avec.
+  L'instance n'étant joignable que du proxy, la clé n'y signe rien
+  d'exposé.
 - **L'image est épinglée** sur un tag daté (`AAAA.M.J-<commit>`), pas
   sur `latest`. Mise à jour : changer le tag dans `docker-compose.yml`,
   puis `docker compose up -d searxng`.
@@ -770,9 +772,9 @@ l'activer là où l'agent travaille sans surveillance.
     cp .env.example .env        # y mettre ALBERT_API_KEY et SEARXNG_SECRET
     docker compose up -d --build
 
-`SEARXNG_SECRET` (`openssl rand -hex 32`) est exigée par le service
+`SEARXNG_SECRET` (`openssl rand -hex 32`) est la clé du service
 `searxng`, le métamoteur des [outils hébergés](#outils-hébergés) : sans
-elle `docker compose` refuse de démarrer.
+elle `docker compose` avertit et démarre quand même.
 
 `./data` est monté comme volume : il porte la configuration
 (`config.toml`, créée au premier démarrage depuis l'exemple) **et** la
@@ -1040,8 +1042,10 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   `code_interpreter`, `mcp`, `image_generation`…) sont toujours ignorés,
   pas exécutés (le modèle ne les voit pas), comme les outils intégrés au
   client sans équivalent chat (`custom`, `local_shell`…). Pas de `ping`
-  pendant l'attente d'un quota : un flux vers un backend à quotas attend
-  avant de répondre, comme pour un client OpenAI.
+  pendant l'attente du quota du PREMIER tour : un flux vers un backend à
+  quotas attend avant de répondre, comme pour un client OpenAI. Pendant
+  une recherche et aux tours suivants de la boucle d'outils, un
+  commentaire SSE (`: ping`) tient la connexion.
 - **Outils hébergés : surfaces Responses et Anthropic.**
   `/v1/chat/completions` n'en profite pas (un client qui veut les
   déclarer lui-même a `/v1/tools`). Sur `/v1/messages`, seule la
