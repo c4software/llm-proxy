@@ -36,6 +36,20 @@ web : chacun a vu sa recherche dans la trace du client, et Codex 7 la
 lecture de la page épinglée. Aucun scénario sauté. Appels, tokens et
 latences non relevés pour ce run.
 
+Le même jour, après ajout des bancs `omp` et `api` (proxy `e8ab35d`, omp
+18.3.2, mêmes backend et modèle) :
+
+| Modèle | omp (6 scénarios) | api (7 scénarios) |
+|---|---|---|
+| `bigchuck/qwen3.8-flash-next` | **6/6** | **7/7** |
+
+Un premier passage avait donné 5/6 et 5/7 : les trois échecs venaient de
+SearXNG, dont les trois moteurs web actifs par défaut avaient bloqué
+l'instance après une journée d'essais (limite de débit, CAPTCHA). Rejoué
+après l'ajout de cinq moteurs à `searxng/settings.yml`. Hors banc, dans
+l'image `codex` avec un catalogue de modèles déclarant `apply_patch` en
+texte libre : Codex 0.157.1 a écrit `hello.txt` par l'outil `custom`.
+
 Run du 23 août 2026, proxy `e2713da`+, Claude Code 2.1.241, pi 0.84.2,
 backend llama.cpp `bigchuck` (`images = true`, `tokenize_path =
 "/tokenize"`), scénarios joués à la suite sur un seul GPU.
@@ -273,7 +287,8 @@ change est le client, et son provider :
   extension découverte d'office. En mode interactif omp y ouvrirait son
   assistant de premier lancement ; pas constaté en `-p`.
 
-Banc écrit le 05/10/2026, **pas encore joué**. Vérifié sans le lancer :
+Banc écrit le 05/10/2026 et joué le jour même avec omp 18.3.2 (6/6, voir
+« Derniers résultats »). Vérifié avant de le lancer :
 l'artefact (`omp-linux-x64` de la release `v18.3.2`, 278 132 192 octets,
 sha256 `8cbbcd4b…2534` au `SHA256SUMS.txt` de la release : le binaire
 installé sur le poste de validation a le même) et `omp/install.mjs`, joué

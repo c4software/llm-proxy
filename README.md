@@ -583,9 +583,11 @@ réellement (la tolérance reprend celle de gufo, gufo-org/gufo#434) :
   (`apply_patch_2`) et son appel revient sous son vrai nom. Des arguments
   mal écrits ne cassent rien : un `custom` rend le texte reçu tel quel,
   un `local_shell` sans commande exploitable est rendu `incomplete`.
-  **Écrit d'après le code de Codex `rust-v0.157.1` et le SDK d'OpenAI,
-  testé sans réseau, jamais joué avec un vrai client** — voir plus bas
-  quand Codex envoie ces outils.
+  Écrit d'après le code de Codex `rust-v0.157.1` et le SDK d'OpenAI.
+  `custom` a été joué le 05/10/2026 avec Codex 0.157.1 en conteneur et un
+  catalogue de modèles déclarant `apply_patch` en texte libre : le fichier
+  demandé a été écrit. `local_shell` n'a été joué avec aucun client (Codex
+  ne le déclare plus) — voir plus bas quand Codex envoie ces outils.
 - **`namespace` aplatis** : un `namespace` groupe des fonctions exécutées
   par le client (les `multi_agent_v1` de Codex). Ses fonctions rejoignent
   la liste, appelées par leur nom simple ; le `namespace` d'origine est
@@ -1531,7 +1533,7 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   `code_interpreter`, `mcp`…) sont toujours ignorés,
   pas exécutés (le modèle ne les voit pas). Les outils du client `custom`
   et `local_shell` sont présentés en fonctions ([Codex CLI](#codex-cli)),
-  sans avoir été joués avec un vrai client : la grammaire d'un `custom`
+  `custom` joué une fois avec un vrai Codex, `local_shell` jamais : la grammaire d'un `custom`
   n'est qu'un texte dans sa description (rien n'est contraint au
   décodage), son entrée arrive au client en un seul delta, et les autres
   outils intégrés (`shell`, `apply_patch` natif, `computer_use`…) restent
