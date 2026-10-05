@@ -587,6 +587,22 @@ def test_search_limit_bornee_et_defaut_si_pas_un_entier(monkeypatch):
         assert search(args, trente)[0].count("\n    https://") == attendu, limit
 
 
+def test_search_moteurs_indisponibles_n_est_pas_aucun_resultat():
+    """SearXNG sans résultat parce que ses moteurs sont bloqués : une
+    erreur qui dit de ne pas relancer, pas « No results » (le modèle
+    reformulerait et relancerait). Des résultats malgré un moteur en panne :
+    rendus normalement."""
+    panne = [["brave", "Suspended: too many requests"], ["duckduckgo", "CAPTCHA"]]
+    out, _ = search({"query": "q"}, {"results": [], "unresponsive_engines": panne})
+    assert out.startswith("Error: the search engines are temporarily unavailable "
+                          "(brave: Suspended: too many requests, duckduckgo: CAPTCHA).")
+    assert "Do not retry" in out
+    out, _ = search({"query": "q"}, {"results": [res(1)], "unresponsive_engines": panne})
+    assert out.startswith("[1] ")
+    out, _ = search({"query": "q"}, {"results": [], "unresponsive_engines": []})
+    assert out == "No results for «q»."
+
+
 def test_search_reponse_illisible():
     """Pas du JSON, ou du JSON valide d'une autre forme (liste, `results`
     qui n'en est pas une) : une erreur, pas une exception."""

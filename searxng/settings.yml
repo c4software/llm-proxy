@@ -33,3 +33,22 @@ server:
   # n'être joignable que du proxy : aucun port publié sur l'hôte.
   limiter: false
   public_instance: false
+
+# Moteurs web généralistes en plus des trois actifs par défaut (brave,
+# duckduckgo, google cse). Constat du 05/10/2026 : après une journée
+# d'essais depuis une adresse résidentielle, les trois ont bloqué l'instance
+# en même temps (limite de débit, CAPTCHA) et la recherche ne rendait plus
+# rien. Plus de moteurs = moins de requêtes par moteur n'y change rien —
+# chaque recherche les interroge tous — mais il en reste quand certains
+# bloquent. Une liste `engines` complète les défauts, moteur par moteur.
+engines:
+  - name: bing
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: yep
+    disabled: false
+  - name: mwmbl
+    disabled: false

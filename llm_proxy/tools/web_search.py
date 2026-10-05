@@ -217,5 +217,19 @@ async def run(args: dict, transport=None, allowed_domains=None,
         results = []
     if not isinstance(data, dict) or not isinstance(results, list):
         return "Error: unreadable search engine response."
+    # Aucun résultat PARCE QUE les moteurs de SearXNG ne répondent plus
+    # (limite de débit, CAPTCHA : ils bloquent l'adresse de la machine) :
+    # ce n'est pas « rien trouvé ». Le dire, et dire de ne pas réessayer —
+    # un modèle qui lit « No results » reformule et relance, jusqu'à la
+    # limite d'appels, ce qui aggrave le blocage.
+    down = data.get("unresponsive_engines")
+    if not results and isinstance(down, list) and down:
+        names = ", ".join(sorted({
+            f"{e[0]}: {e[1]}" if isinstance(e, (list, tuple)) and len(e) > 1
+            else str(e[0] if isinstance(e, (list, tuple)) and e else e)
+            for e in down}))[:300]
+        return (f"Error: the search engines are temporarily unavailable "
+                f"({names}). Do not retry the search now: answer with what "
+                f"you already know, or say that the search failed.")
     return format_results(query.strip(), results, limit, allowed_domains,
                           blocked_domains)
