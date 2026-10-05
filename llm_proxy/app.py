@@ -25,6 +25,10 @@ Rôles :
      POST /v1/messages et /v1/messages/count_tokens, et GET /v1/models à
      la forme Anthropic quand la requête porte `anthropic-version`. Un
      client Claude Code s'y branche avec ANTHROPIC_BASE_URL ;
+  4quater. la surface Responses (responses_api.py), si [responses].enabled :
+     POST /v1/responses, traduit vers /v1/chat/completions comme la
+     surface Anthropic. Un client Codex CLI s'y branche avec
+     wire_api = "responses" ;
   5. auth optionnelle du proxy lui-même : proxy.api_keys (liste vide par
      défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
      à la OpenAI — ou «x-api-key: <clé>», à l'Anthropic — (401 sinon,
@@ -63,6 +67,7 @@ from . import albert
 from . import anthropic_api
 from . import config
 from . import multipart
+from . import responses_api
 from . import stats
 from .backends import (
     BACKENDS, Backend, FALLBACK_BACKEND, backend_offline_message,
@@ -117,6 +122,12 @@ async def lifespan(app: FastAPI):
     else:
         log.info("surface Anthropic inactive ([anthropic].enabled absent "
                  "ou false) : /v1/messages → 404")
+    if responses_api.ENABLED:
+        log.info("surface Responses ACTIVE : POST /v1/responses, traduit "
+                 "vers /v1/chat/completions (Codex CLI)")
+    else:
+        log.info("surface Responses inactive ([responses].enabled absent "
+                 "ou false) : /v1/responses → 404")
     if albert.ROUTER_MODELS:
         log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 
@@ -530,6 +541,7 @@ async def healthz():
             "enabled": anthropic_api.ENABLED,
             "model_map": anthropic_api.MODEL_MAP,
         },
+        "responses": {"enabled": responses_api.ENABLED},
         "backends": {
             name: {
                 "url": b.url,
@@ -910,6 +922,57 @@ async def tokenize_upstream(b: Backend, model: str, payload: dict) -> int | None
 # ── Usage API ───────────────────────────────────────────────────────────
 
 USAGE_PATH = "/v1/organization/usage/completions"
+
+
+# ── Surface Responses ───────────────────────────────────────────────────
+
+@app.post("/v1/responses")
+async def responses(request: Request):
+    """L'API Responses (Codex CLI), traduite vers /v1/chat/completions du
+    backend que désigne le préfixe du modèle. La réponse repasse par
+    responses_api.Translator (JSON ou flux d'événements `response.*`)."""
+    if not responses_api.ENABLED:
+        return error_response(
+            "openai", 404, "unknown_route",
+            "surface Responses désactivée sur ce proxy ([responses].enabled "
+            "dans config.toml)",
+        )
+    payload = parse_json(await request.body())
+    if not isinstance(payload, dict):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps JSON attendu")
+    model_key = str(payload.get("model", "") or "")
+    backend, prefixed = route_backend(payload)
+    if backend is None or not prefixed:
+        return error_response("openai", 400, "unknown_backend_prefix",
+                              unknown_prefix_message(model_key))
+
+    images = False
+    if backend.images and responses_api.has_images(payload):
+        images = await accepts_images(backend, model_key[len(backend.name) + 1:])
+    try:
+        chat_payload, ctx = responses_api.to_chat(payload, images=images)
+    except responses_api.Refused as exc:
+        return error_response("openai", 400, "invalid_request_error", str(exc))
+    if ctx.ignored:
+        log.info("responses : %s sans équivalent chat, ignoré(s) (model=%s)",
+                 ", ".join(sorted(set(ctx.ignored))), model_key)
+    if inject_tool_choice(chat_payload, backend):
+        log.info(
+            "tool_choice=%s injecté (backend=%s, model=%s, %d tools)",
+            backend.tool_choice, backend.name, model_key,
+            len(chat_payload["tools"]),
+        )
+    cap_max_tokens(chat_payload, backend)
+    raw = strip_backend_prefix(chat_payload, backend)
+
+    call = Call(backend, model_key, "/v1/responses")
+    blocked = await gate(call, request, chat_payload,
+                         albert.estimate_chat_cost(raw))
+    if blocked is not None:
+        return blocked
+    tap = lambda status, ct: responses_api.Translator(status, ct, ctx)
+    return await forward(call, request, "v1/chat/completions", raw, tap=tap)
 
 
 def usage_query(request: Request) -> dict | JSONResponse:

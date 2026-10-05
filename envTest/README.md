@@ -1,11 +1,12 @@
 # envTest — valider le proxy avec de vrais clients
 
-Deux clients jetables, chacun dans son conteneur, qui tapent le proxy
+Trois clients jetables, chacun dans son conteneur, qui tapent le proxy
 et jouent des scénarios de validation — **Claude Code** (API Anthropic,
-traduite par le proxy) et **pi** ([pi.dev](https://pi.dev), API OpenAI).
+traduite par le proxy), **pi** ([pi.dev](https://pi.dev), API OpenAI) et
+**Codex CLI** (API Responses, traduite par le proxy).
 Chaque jeu est rejoué pour **chaque modèle** de `MODELS`. Rien n'est
-installé sur l'hôte ; `~/.claude` et `~/.pi` ne sont jamais lus ni
-écrits : chaque client a sa configuration dans l'image, et son dossier
+installé sur l'hôte ; `~/.claude`, `~/.pi` et `~/.codex` ne sont jamais
+lus ni écrits : chaque client a sa configuration dans l'image, et son dossier
 de travail disparaît avec le conteneur.
 
 ## Derniers résultats
@@ -32,6 +33,7 @@ Le proxy doit tourner (depuis la racine : `docker compose up -d`). Puis :
     cp .env.example .env        # PROXY_URL, MODELS, clé — voir le fichier
     docker compose run --rm claude    # scénarios Claude Code, pour chaque modèle
     docker compose run --rm pi        # scénarios pi (API OpenAI), pour chaque modèle
+    docker compose run --rm codex     # scénarios Codex (API Responses), pour chaque modèle
 
 Chaque scénario imprime `PASS` ou `FAIL` avec ce qu'il a vu ; la commande
 sort en erreur si l'un échoue. Sortie attendue :
@@ -74,6 +76,9 @@ du modèle apparaît dans `docker compose logs` (outils appelés, tokens).
 | `pi/models.json.tpl` | Les providers pi : `llm-proxy` (`openai-completions`, `${PROXY_URL}/v1`) — le seul joué — et `llm-proxy-anthropic` (`anthropic-messages`), gardé pour un essai à la main |
 | `pi/entrypoint.sh` | Substitue `${PROXY_URL}` et génère une entrée de modèle par élément de `MODELS` → `models.json` du conteneur |
 | `pi/scenarios.sh` | 5 scénarios, rejoués pour chaque modèle de `MODELS` |
+| `codex/Dockerfile` | `node:22-slim` + `@openai/codex`, `CODEX_HOME=/codex` |
+| `codex/entrypoint.sh` | Génère `config.toml` : provider `llm-proxy`, `wire_api = "responses"`, `${PROXY_URL}/v1`, clé lue dans `PROXY_API_KEY` |
+| `codex/scenarios.sh` | 5 scénarios (les mêmes que pi), rejoués pour chaque modèle de `MODELS` |
 
 ## Ce que les scénarios vérifient
 
@@ -135,6 +140,18 @@ c'est le chemin de relais brut, sans traduction. (Le provider
 `llm-proxy-anthropic` du `models.json` n'est pas joué ; il a servi une
 fois à vérifier la traduction avec un second client Anthropic, et reste
 disponible pour un essai à la main.)
+
+**Codex CLI** (`codex exec --skip-git-repo-check --ephemeral
+--dangerously-bypass-approvals-and-sandbox -m …` : le bac à sable de
+Codex ne démarre pas dans un conteneur sans privilèges, le conteneur
+jetable en tient lieu) — les cinq scénarios de pi, par `POST
+/v1/responses` : outils `function`, `namespace` aplatis et `web_search`
+ignoré à chaque requête, appels rejoués (`function_call` /
+`function_call_output`) d'un tour à l'autre. **Banc écrit le 05/10/2026
+et pas encore joué** : la traduction a été validée ce jour-là avec Codex
+CLI 0.157.1 lancé hors conteneur (session de 12 requêtes vers
+`bigchuck/qwen3.8-flash-next`, appels d'outils compris), pas avec cette
+image.
 
 ## Ce qui n'est PAS vérifié ici
 

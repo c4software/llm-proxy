@@ -91,6 +91,31 @@ default = "albert/deepseek-v4-flash"
 "haiku" = "albert/deepseek-v4-flash"
 
 
+# ── Surface Responses (Codex CLI) ───────────────────────────────────────
+# Un client écrit pour l'API Responses d'OpenAI — Codex CLI — peut parler
+# au proxy : POST /v1/responses est traduit en /v1/chat/completions (et la
+# réponse, flux d'événements compris) vers le backend que désigne le
+# préfixe du modèle. Aucun backend n'a besoin de servir /v1/responses.
+# Dans ~/.codex/config.toml :
+#
+#   model = "bigchuck/qwen3.8-flash-next"
+#   model_provider = "llm-proxy"
+#   [model_providers.llm-proxy]
+#   name = "llm-proxy"
+#   base_url = "http://localhost:8000/v1"
+#   wire_api = "responses"
+#
+# Les outils que seul OpenAI exécute (web_search, file_search, mcp…) sont
+# ignorés, les `namespace` aplatis en fonctions, les champs sans effet
+# tolérés. Rien n'est conservé côté proxy : previous_response_id → 400.
+# Table absente ou enabled = false → surface inactive (404).
+[responses]
+enabled = true
+# `reasoning_content` d'un backend → élément `reasoning` (résumé) visible
+# dans le client. false = jeté.
+reasoning_as_summary = true
+
+
 # ── Statistiques ────────────────────────────────────────────────────────
 [stats]
 # Base SQLite : une ligne par requête servie, d'où les vues All/Week/Day

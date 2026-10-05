@@ -5,7 +5,8 @@ un seul endpoint** : Albert (DINUM), machines llama.cpp locales, ou tout
 autre serveur compatible OpenAI. Le client parle à une seule URL et
 choisit le backend par le **préfixe du nom de modèle**
 (`albert/deepseek-v4-flash`, `bigchuck/qwen3-32b`). Un client écrit pour
-l'API Anthropic — **Claude Code** — s'y branche aussi, le proxy traduit.
+l'API Anthropic — **Claude Code** — ou pour l'API Responses d'OpenAI —
+**Codex CLI** — s'y branche aussi, le proxy traduit.
 
 ![Tableau de bord /ui : cartes de synthèse (requêtes, tokens, modèles actifs, erreurs) et détail par modèle](preview.jpg)
 
@@ -62,6 +63,11 @@ l'API Anthropic — **Claude Code** — s'y branche aussi, le proxy traduit.
   `GET /v1/models` à la forme Anthropic. Traduit vers
   `/v1/chat/completions` du backend visé — **uniquement dans ce sens**,
   aucun backend Anthropic. Voir [Claude Code](#claude-code).
+- **Compatible Codex CLI** — si `[responses].enabled`, le proxy parle
+  aussi l'**API Responses d'OpenAI** : `POST /v1/responses` (JSON et
+  flux d'événements `response.*`, outils compris), traduit vers
+  `/v1/chat/completions` du backend visé — aucun backend n'a besoin de
+  servir `/v1/responses`. Voir [Codex CLI](#codex-cli).
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
@@ -94,10 +100,11 @@ l'API Anthropic — **Claude Code** — s'y branche aussi, le proxy traduit.
 | `llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 | `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête), extraction de l'`usage` dans le flux de réponse, et l'Usage API |
 | `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` |
+| `llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés ignorés, `namespace` aplatis |
 | `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
-| `tests/` | Tests du traducteur et des stats (`pytest`, `requirements-dev.txt`) — sur des octets et une base temporaire, sans réseau |
-| `envTest/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code et pi, scénarios PASS/FAIL — voir `envTest/README.md` |
+| `tests/` | Tests des traducteurs et des stats (`pytest`, `requirements-dev.txt`) — sur des octets et une base temporaire, sans réseau |
+| `envTest/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi et Codex CLI, scénarios PASS/FAIL — voir `envTest/README.md` |
 | `llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `dashboard.css`, `vue.global.prod.js`) |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 
@@ -111,8 +118,8 @@ erreurs à la forme attendue (`{"error": {…}}` ou, pour un client
 Anthropic, `{"type": "error", …}`). La porte de quota (`gate`) et le
 relais (`forward`) sont communs à toutes les routes ; `forward` fait
 passer les octets upstream par un « robinet » — `stats.UsageCollector`
-(identité, lit l'`usage` au passage) ou `anthropic_api.Translator`
-(réécrit la réponse).
+(identité, lit l'`usage` au passage), `anthropic_api.Translator` ou
+`responses_api.Translator` (réécrivent la réponse).
 
 `data/` est le seul dossier écrit à l'exécution (`config.toml`,
 `stats.db`) : c'est le volume à monter.
@@ -356,6 +363,58 @@ nombreuses). Hors périmètre : Batches, Files, outils serveur
 (`web_search`, `code_execution`), PDF — aucun n'est nécessaire à Claude
 Code contre un backend OpenAI.
 
+## Codex CLI
+
+Avec `[responses].enabled = true` dans `config.toml`, Codex CLI (ou tout
+client de l'API Responses d'OpenAI) se branche sur le proxy par un
+provider, dans `~/.codex/config.toml` :
+
+    model = "bigchuck/qwen3.8-flash-next"
+    model_provider = "llm-proxy"
+
+    [model_providers.llm-proxy]
+    name = "llm-proxy"
+    base_url = "http://localhost:8000/v1"
+    wire_api = "responses"
+    # env_key = "LLM_PROXY_KEY"   # si proxy.api_keys est renseigné
+
+Le modèle porte le **préfixe du backend**, comme pour un client OpenAI :
+pas de table de correspondance. `POST /v1/responses` est traduit en
+`/v1/chat/completions` — tous les backends le parlent, aucun n'a besoin
+de servir `/v1/responses` — et la réponse retraduite, en objet
+`response` ou en flux d'événements `response.*`.
+
+Ce que le proxy fait de la requête, écrit sur les corps que Codex envoie
+réellement (la tolérance reprend celle de gufo, gufo-org/gufo#434) :
+
+- **Outils hébergés ignorés** : `web_search`, `file_search`,
+  `code_interpreter`, `mcp`… ne peuvent être exécutés que par OpenAI. Ils
+  sont retirés, les outils `function` restent. Une ligne de log dit
+  lesquels (`responses : web_search sans équivalent chat, ignoré(s)`).
+- **`namespace` aplatis** : un `namespace` groupe des fonctions exécutées
+  par le client (les `multi_agent_v1` de Codex). Ses fonctions rejoignent
+  la liste, appelées par leur nom simple ; le `namespace` d'origine est
+  reposé sur l'appel rendu au client. Un nom présent deux fois → `400`.
+- **Champs sans effet tolérés** : `include`, `reasoning.summary`,
+  `text.verbosity`, `prompt_cache_key`, `client_metadata`, `store`… Le
+  corps upstream est reconstruit, rien d'inconnu ne part vers le backend.
+- **Consignes d'ouverture en un seul `system`** : `instructions` et les
+  messages `developer` qui ouvrent la conversation sont réunis dans le
+  message system de tête (beaucoup de gabarits n'en acceptent qu'un). Le
+  préfixe reste identique d'un tour à l'autre : sur une session Codex
+  réelle vers gufo, 99 % du prompt est repris du cache dès le troisième
+  tour (colonne *Cache* du tableau de bord).
+- **`reasoning`** : les éléments rejoués sont jetés ; à l'inverse, le
+  `reasoning_content` d'un backend devient un élément `reasoning`
+  (résumé) visible dans le client (`reasoning_as_summary`).
+  `reasoning.effort` part en `reasoning_effort`.
+- **Rien n'est conservé** : `previous_response_id`, `conversation`,
+  `background` et `item_reference` → `400` explicite. Codex renvoie tout
+  l'historique à chaque tour.
+
+Les statistiques comptent ces requêtes sous `/v1/responses`, avec
+l'`usage` exact du backend.
+
 ## Déploiement
 
 ### Docker Compose
@@ -456,6 +515,13 @@ url = "http://bigchuck:8009"
 | `reasoning_as_thinking` | `true` | `reasoning_content` du backend → bloc `thinking` pour le client |
 | `trace` | `false` | Une ligne de log par réponse `/v1/messages` : `stop_reason`, outils appelés (nom + extrait des arguments), tokens. Pour voir ce qu'un agent fait — ou répète — derrière le proxy |
 
+### `[responses]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Ouvre la surface Responses (`POST /v1/responses`). Table absente = inactive, dit au démarrage dans les logs et dans `/healthz` |
+| `reasoning_as_summary` | `true` | `reasoning_content` du backend → élément `reasoning` (résumé) pour le client |
+
 ### `[quotas]` (backends à quotas)
 
 | Clé | Défaut | Rôle |
@@ -540,12 +606,19 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
            "messages":[{"role":"user","content":"Bonjour"}]}' \
       | jq '{model, stop_reason, text: .content[0].text}'
 
-    # tests du traducteur
+    # surface Responses (si [responses].enabled)
+    curl -s http://localhost:8000/v1/responses \
+      -H "Content-Type: application/json" \
+      -d '{"model":"bigchuck/qwen3.8-flash-next","input":"Bonjour",
+           "max_output_tokens":64}' \
+      | jq '{model, status, text: .output[0].content[0].text}'
+
+    # tests des traducteurs
     python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
     .venv/bin/python -m pytest -q tests
 
-    # validation avec de vrais clients (Claude Code, pi), en conteneurs
-    cd envTest && cp .env.example .env && docker compose run --rm claude && docker compose run --rm pi
+    # validation avec de vrais clients (Claude Code, pi, Codex), en conteneurs
+    cd envTest && cp .env.example .env && docker compose run --rm claude && docker compose run --rm pi && docker compose run --rm codex
 
 ## Limites connues
 
@@ -567,11 +640,19 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 - **Hors périmètre, volontairement** : Batches, Files, outils serveur
   Anthropic (`web_search`, `code_execution`…), et le sens proxy →
   backend Anthropic.
+- **Surface Responses** : les outils hébergés sont ignorés, pas exécutés
+  (le modèle ne les voit pas) ; les outils intégrés au client sans
+  équivalent chat (`custom`, `local_shell`…) aussi. Pas de `ping`
+  pendant l'attente d'un quota : un flux vers un backend à quotas attend
+  avant de répondre, comme pour un client OpenAI.
 
 ## Côté clients
 
 - Claude Code : `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`,
   `ANTHROPIC_MODEL=<backend>/<modèle>` — voir [Claude Code](#claude-code).
+- Codex CLI : un provider `wire_api = "responses"` dans
+  `~/.codex/config.toml`, modèle `<backend>/<modèle>` — voir
+  [Codex CLI](#codex-cli).
 - Hermes : retirer `extra_body.tool_choice` du provider dans
   `~/.hermes/config.yaml`, pointer `api` sur le proxy.
 - pi : un provider dans `~/.pi/agent/models.json` — `api:

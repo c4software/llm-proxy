@@ -1,12 +1,14 @@
-# Deux clients jetables pour valider le proxy : Claude Code (API Anthropic,
-# traduite) et pi (pi.dev — API OpenAI, et API Anthropic aussi). Rien n'est
-# installé sur l'hôte, rien ne touche ~/.claude ni ~/.pi : chaque client
+# Trois clients jetables pour valider le proxy : Claude Code (API Anthropic,
+# traduite), pi (pi.dev — API OpenAI, et API Anthropic aussi) et Codex CLI
+# (API Responses, traduite). Rien n'est installé sur l'hôte, rien ne touche
+# ~/.claude, ~/.pi ni ~/.codex : chaque client
 # vit dans son image, avec SA configuration, et son dossier de travail
 # disparaît avec le conteneur.
 #
 #   cp .env.example .env          # PROXY_URL, MODEL…
 #   docker compose run --rm claude            # tous les scénarios Claude Code
 #   docker compose run --rm pi                # tous les scénarios pi (API OpenAI)
+#   docker compose run --rm codex             # tous les scénarios Codex (API Responses)
 #   docker compose run --rm claude claude     # Claude Code interactif
 #   docker compose run --rm pi pi             # pi interactif
 #
@@ -24,6 +26,12 @@ services:
 
   pi:
     build: ./pi
+    network_mode: host
+    env_file: .env
+    command: ["./scenarios.sh"]
+
+  codex:
+    build: ./codex
     network_mode: host
     env_file: .env
     command: ["./scenarios.sh"]
