@@ -105,15 +105,112 @@ default = "albert/deepseek-v4-flash"
 #   base_url = "http://localhost:8000/v1"
 #   wire_api = "responses"
 #
-# Les outils que seul OpenAI exécute (web_search, file_search, mcp…) sont
-# ignorés, les `namespace` aplatis en fonctions, les champs sans effet
-# tolérés. Rien n'est conservé côté proxy : previous_response_id → 400.
+# Les outils que seul OpenAI exécute (file_search, code_interpreter, mcp…)
+# sont ignorés — sauf `web_search`, que le proxy exécute lui-même s'il est
+# activé plus bas ([tools]) —, les `namespace` aplatis en fonctions, les
+# champs sans effet tolérés. Aucun état de conversation côté proxy :
+# previous_response_id → 400.
 # Table absente ou enabled = false → surface inactive (404).
 [responses]
 enabled = true
 # `reasoning_content` d'un backend → élément `reasoning` (résumé) visible
 # dans le client. false = jeté.
 reasoning_as_summary = true
+
+
+# ── Outils hébergés (surface Responses) ─────────────────────────────────
+# Un client de l'API Responses — Codex CLI — déclare `{"type":
+# "web_search"}` en comptant qu'OpenAI fera la recherche. Derrière ce
+# proxy il n'y a pas d'OpenAI : c'est le proxy qui l'exécute. Il présente
+# au modèle deux fonctions, `web_search` et `web_fetch`, exécute leurs
+# appels, relance le backend avec le résultat, et ne rend au client que
+# des éléments `web_search_call` terminés.
+# Seule la surface Responses en profite (ni /v1/chat/completions ni
+# /v1/messages), et seulement pour un client qui DÉCLARE `web_search` :
+# rien n'est ajouté à une requête qui ne le demande pas.
+# Tables absentes ou enabled = false → comme avant : `web_search` est
+# ignoré, le modèle ne le voit pas.
+#
+# À SAVOIR avant d'activer : le texte d'une page web entre dans le
+# contexte d'un agent qui exécute des commandes sur le poste du client.
+# Une page peut porter des instructions écrites pour lui (injection de
+# prompt) ; AUCUN réglage de ce fichier ne l'empêche.
+[tools]
+# Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
+# reçoit une erreur qui lui demande de conclure avec ce qu'il a.
+max_calls = 8
+# Délai (s) d'une exécution, tout compris (redirections suivies incluses) ;
+# chaque outil a aussi le sien, plus court, par requête. Dépassé → une
+# erreur rendue au modèle, jamais au client.
+run_timeout = 60
+# Taille (caractères) d'un résultat rendu au modèle ; le surplus est coupé
+# et marqué «[truncated]».
+max_result_chars = 24000
+# Mémoire des résultats — la SEULE chose que le proxy conserve entre deux
+# requêtes. Le client renvoie au tour suivant l'élément `web_search_call`
+# SANS son résultat (OpenAI le garde côté serveur) : le proxy doit le
+# rendre au modèle à l'identique, sinon il perd ce qu'il a lu et le préfixe
+# change sous un backend à cache. Elle garde, par identifiant d'élément,
+# le nom de la fonction, ses arguments tels que le modèle les a écrits, et
+# le texte du résultat — rien d'autre, rien sur le client. En mémoire
+# vive, jamais sur disque : un redémarrage du proxy la vide, le modèle
+# reçoit alors à la place un mot qui lui dit de relancer l'outil.
+# cache_entries : nombre d'appels gardés (les moins récemment relus
+# sortent) ; cache_ttl : durée de vie (s) d'une entrée.
+cache_entries = 512
+cache_ttl = 86400
+
+# Recherche web, par une instance SearXNG (métamoteur libre, API JSON,
+# sans clé) : le service `searxng` du docker-compose.
+[tools.web_search]
+enabled = true
+# Base de l'instance ; le proxy appelle <searxng_url>/search?q=…&format=json.
+# «http://searxng:8080» est le nom du service sur le réseau du compose :
+# hors compose (uvicorn lancé à la main), mettre l'adresse réelle. Vide →
+# l'outil répond au modèle que la recherche n'est pas configurée.
+# C'est une adresse de CONFIGURATION, en général privée : le garde-fou des
+# adresses publiques de [tools.web_fetch] ne s'y applique pas.
+# SearXNG ne sert le JSON que si `search.formats` le liste
+# (searxng/settings.yml) ; sinon 403, et l'erreur rendue au modèle le dit.
+searxng_url = "http://searxng:8080"
+# Délai (s) de la requête vers SearXNG, qui interroge lui-même plusieurs
+# moteurs avant de répondre.
+timeout = 20
+# Résultats rendus quand le modèle ne précise pas `limit` (il peut en
+# demander jusqu'à 20). Un résultat = titre, date, URL, extrait de 240
+# caractères.
+limit = 8
+# Paramètres `language` («fr», «en-US»…) et `categories` («general»,
+# «general,it»…) passés à SearXNG. Vides = non envoyés, les défauts de
+# l'instance s'appliquent.
+language = ""
+categories = ""
+
+# Lecture d'une page par son URL, pour que le modèle ouvre un résultat de
+# la recherche — sans elle il n'en a que les extraits. Présentée au modèle
+# en même temps que `web_search`, quand le client déclare `web_search`.
+[tools.web_fetch]
+enabled = true
+# Délai (s) de chaque requête (une par saut de redirection, 5 sauts au plus).
+timeout = 20
+# Octets lus au plus sur le corps d'une page ; le reste n'est pas téléchargé.
+max_bytes = 2000000
+# Caractères de texte rendus par appel (HTML converti en texte ; JSON et
+# texte tels quels ; tout autre type refusé). Page plus longue : le modèle
+# redemande la suite par `offset`.
+max_chars = 20000
+# Garde-fou des adresses privées. La cible est choisie par le MODÈLE, et
+# la requête part DU PROXY : sans filtre, une page web (ou un prompt)
+# pourrait lui faire lire un service de son réseau — le backend
+# d'inférence, l'instance SearXNG, un routeur, les métadonnées d'un cloud.
+# false : seules les adresses PUBLIQUES sont jointes. Le nom est résolu par
+# le proxy, TOUTES ses adresses doivent être publiques (ni privées, ni
+# locales, ni lien local, ni CGNAT 100.64.0.0/10 — les adresses Tailscale —,
+# ni réservées), la connexion part vers l'adresse vérifiée et non vers le
+# nom, et le contrôle est refait à CHAQUE saut de redirection.
+# true lève ce filtre : à n'ouvrir que sur un proxy dont tous les clients
+# sont de confiance, et jamais derrière un modèle qui lit le web.
+allow_private = false
 
 
 # ── Statistiques ────────────────────────────────────────────────────────

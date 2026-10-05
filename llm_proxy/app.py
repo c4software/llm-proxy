@@ -28,7 +28,9 @@ Rôles :
   4quater. la surface Responses (responses_api.py), si [responses].enabled :
      POST /v1/responses, traduit vers /v1/chat/completions comme la
      surface Anthropic. Un client Codex CLI s'y branche avec
-     wire_api = "responses" ;
+     wire_api = "responses". Les outils HÉBERGÉS (paquet tools/ :
+     recherche web) y sont exécutés ici même : le backend est relancé
+     avec leurs résultats jusqu'à la réponse finale (`hosted_stream`) ;
   5. auth optionnelle du proxy lui-même : proxy.api_keys (liste vide par
      défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
      à la OpenAI — ou «x-api-key: <clé>», à l'Anthropic — (401 sinon,
@@ -69,6 +71,7 @@ from . import config
 from . import multipart
 from . import responses_api
 from . import stats
+from . import tools
 from .backends import (
     BACKENDS, Backend, FALLBACK_BACKEND, backend_offline_message,
     close_clients, open_clients, route_backend, strip_backend_prefix,
@@ -128,6 +131,15 @@ async def lifespan(app: FastAPI):
     else:
         log.info("surface Responses inactive ([responses].enabled absent "
                  "ou false) : /v1/responses → 404")
+    if tools.enabled():
+        log.info(
+            "outils hébergés ACTIFS (/v1/responses) : %s | %d appels au plus "
+            "par réponse",
+            ", ".join(m.NAME for m in tools.enabled()), tools.MAX_CALLS,
+        )
+    else:
+        log.info("aucun outil hébergé ([tools.<nom>].enabled absent ou "
+                 "false) : `web_search` d'un client Responses est ignoré")
     if albert.ROUTER_MODELS:
         log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 
@@ -542,6 +554,11 @@ async def healthz():
             "model_map": anthropic_api.MODEL_MAP,
         },
         "responses": {"enabled": responses_api.ENABLED},
+        "tools": {
+            "enabled": [m.NAME for m in tools.enabled()],
+            "max_calls": tools.MAX_CALLS,
+            "memory_entries": len(tools.MEMORY),
+        },
         "backends": {
             name: {
                 "url": b.url,
@@ -950,8 +967,12 @@ async def responses(request: Request):
     images = False
     if backend.images and responses_api.has_images(payload):
         images = await accepts_images(backend, model_key[len(backend.name) + 1:])
+    # Les outils que le proxy exécute lui-même (aucun = None : le client
+    # qui déclare `web_search` le voit ignoré, comme avant).
+    hosted = tools.Hosted() or None
     try:
-        chat_payload, ctx = responses_api.to_chat(payload, images=images)
+        chat_payload, ctx = responses_api.to_chat(payload, images=images,
+                                                  hosted=hosted)
     except responses_api.Refused as exc:
         return error_response("openai", 400, "invalid_request_error", str(exc))
     if ctx.ignored:
@@ -972,7 +993,156 @@ async def responses(request: Request):
     if blocked is not None:
         return blocked
     tap = lambda status, ct: responses_api.Translator(status, ct, ctx)
-    return await forward(call, request, "v1/chat/completions", raw, tap=tap)
+    if not ctx.hosted:
+        return await forward(call, request, "v1/chat/completions", raw, tap=tap)
+
+    # Le client a déclaré un outil que le proxy héberge : même départ que
+    # `forward` (statut et en-têtes du PREMIER upstream), mais le flux
+    # peut enchaîner plusieurs tours upstream.
+    upstream = await send_upstream(call, request, "v1/chat/completions", raw)
+    if isinstance(upstream, JSONResponse):
+        return upstream
+    robinet = tap(upstream.status_code, upstream.headers.get("content-type", ""))
+    estimate = albert.estimate_chat_cost(raw)
+    if not robinet.ok:
+        # Erreur dès le premier tour : rien à boucler, le relais ordinaire.
+        stream = relay(call, upstream, robinet, estimate)
+    else:
+        stream = hosted_stream(call, request, payload, images, hosted,
+                               robinet, upstream, estimate)
+    return StreamingResponse(stream, status_code=upstream.status_code,
+                             headers=response_headers(upstream))
+
+
+# Garde-fou de la boucle : au-delà de tools.MAX_CALLS le modèle ne reçoit
+# plus que des erreurs qui lui demandent de conclure ; s'il insiste encore
+# autant de fois, la réponse est close sans lui.
+HOSTED_HARD_LIMIT = tools.MAX_CALLS + 4
+
+
+def _error_message(response: Response) -> str:
+    """Le message d'une réponse d'erreur locale (gate, send_upstream)."""
+    return responses_api.error_body(
+        parse_json(response.body), response.status_code)["error"]["message"]
+
+
+async def hosted_stream(call: Call, request: Request, payload: dict,
+                        images: bool, hosted, robinet, upstream,
+                        prompt_estimate: int):
+    """Une réponse Responses avec outils hébergés : relaie le tour
+    upstream ouvert, exécute les appels que le robinet a mis de côté
+    (`pending`), en rend le compte au client, puis relance le backend —
+    jusqu'à un tour sans appel hébergé, que le robinet clôt lui-même.
+
+    Chaque tour suivant est RECONSTRUIT par responses_api.to_chat depuis
+    l'`input` d'origine suivi des éléments déjà rendus : le chemin même
+    par lequel passera le client quand il rejouera ces éléments à sa
+    prochaine requête. Le backend voit donc deux fois les mêmes octets —
+    préfixe stable pour son cache — et il n'y a qu'une traduction à tenir.
+
+    Un tour qui mêle appels hébergés et appels du client s'arrête après
+    les premiers : la main revient au client, qui rejouera le tout.
+
+    La réponse HTTP est partie avec le premier tour : une erreur ensuite
+    (quota, backend éteint, statut ≥ 400) se dit par robinet.fail(). Les
+    tours suivants passent par un `Call` MUET (sans modèle = rien n'est
+    compté) : `gate` et `send_upstream` comptent eux-mêmes leurs échecs,
+    or la ligne de stats de cette réponse s'écrit UNE fois, ici, avec
+    l'usage cumulé. Un client qui raccroche annule ce générateur : le
+    `finally` compte ce qui a été consommé et ferme l'upstream."""
+    base = payload.get("input")
+    if isinstance(base, str):
+        base = [{"type": "message", "role": "user", "content": base}]
+    base = list(base) if isinstance(base, list) else []
+    quiet = Call(call.backend, "", call.endpoint, call.dialect)
+    status = upstream.status_code
+    used = 0
+    try:
+        while True:
+            async for chunk in upstream.aiter_raw():
+                out = robinet.feed(chunk)
+                if out:
+                    yield out
+            out = robinet.finish()
+            if out:
+                yield out
+            await upstream.aclose()
+            upstream = None
+            if not robinet.pending:
+                return      # tour sans appel hébergé : le robinet a clos
+            handback = robinet.client_calls > 0
+            for pending in list(robinet.pending):
+                result = await hosted.run(pending["name"],
+                                          pending["arguments"], used)
+                used += 1
+                out = robinet.resolve(pending, result)
+                if out:
+                    yield out
+            if handback or used >= HOSTED_HARD_LIMIT:
+                if not handback:
+                    log.warning(
+                        "responses : %d appels d'outils hébergés, le modèle "
+                        "ne conclut pas — réponse close (model=%s)",
+                        used, call.model_key)
+                yield robinet.finalize()
+                return
+
+            try:
+                chat_payload, _ = responses_api.to_chat(
+                    {**payload, "input": base + robinet.output},
+                    images=images, hosted=hosted)
+            except responses_api.Refused as exc:
+                status = 500
+                yield robinet.fail(str(exc))
+                return
+            # Un `tool_choice` forcé par le client (`required`, ou une
+            # fonction nommée) vaut pour SA requête : réappliqué à chaque
+            # tour, il obligerait le modèle à rappeler un outil sans jamais
+            # pouvoir conclure, jusqu'à la limite dure.
+            if chat_payload.get("tool_choice") not in (None, "auto", "none"):
+                chat_payload["tool_choice"] = "auto"
+            inject_tool_choice(chat_payload, call.backend)
+            cap_max_tokens(chat_payload, call.backend)
+            raw = strip_backend_prefix(chat_payload, call.backend)
+            cost = albert.estimate_chat_cost(raw)
+            prompt_estimate += cost
+            blocked = await gate(quiet, request, chat_payload, cost)
+            if blocked is None:
+                blocked = await send_upstream(quiet, request,
+                                              "v1/chat/completions", raw)
+                if not isinstance(blocked, JSONResponse):
+                    upstream, blocked = blocked, None
+            if blocked is not None:
+                status = blocked.status_code
+                if status != CLIENT_CLOSED:
+                    yield robinet.fail(_error_message(blocked))
+                return
+            if upstream.status_code >= 400:
+                status = upstream.status_code
+                body = await upstream.aread()
+                log.warning(
+                    "[%s] %s → %d upstream au tour %d pour %s : %s",
+                    call.backend.name, call.endpoint, status,
+                    robinet.turns + 1, call.model_key,
+                    body[:ERROR_EXCERPT].decode("utf-8", "replace")
+                    .replace("\n", " "),
+                )
+                doc = parse_json(body)
+                yield robinet.fail(responses_api.error_body(
+                    doc if doc is not None else body.decode("utf-8", "replace"),
+                    status)["error"]["message"])
+                return
+            robinet.next_turn()
+    finally:
+        if used:
+            log.info(
+                "responses : %d appel(s) d'outil hébergé en %d tour(s) "
+                "upstream (model=%s)", used, robinet.turns, call.model_key)
+        prompt, completion, exact = robinet.tokens(prompt_estimate)
+        call.done(status, prompt, completion, exact, robinet.sse,
+                  robinet.cached())
+        if upstream is not None:
+            await upstream.aclose()
 
 
 def usage_query(request: Request) -> dict | JSONResponse:

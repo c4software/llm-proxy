@@ -1,0 +1,35 @@
+# Réglages de l'instance SearXNG du docker-compose : le métamoteur que
+# l'outil hébergé `web_search` du proxy interroge (llm_proxy/tools/
+# web_search.py). Monté en lecture seule sur /etc/searxng/settings.yml,
+# l'emplacement que l'image lit.
+#
+# `use_default_settings: true` : tout part des défauts de SearXNG
+# (searx/settings.yml de son dépôt — moteurs, délais, langue) ; ce fichier
+# ne porte que ce qui en DIFFÈRE ou ce dont le compose dépend. Un
+# dictionnaire est fusionné clé par clé, une liste est remplacée en entier.
+# Référence : https://docs.searxng.org/admin/settings/
+#
+# La clé secrète n'est PAS ici : `server.secret_key` est surchargée par la
+# variable d'environnement SEARXNG_SECRET (docker-compose.yml, valeur dans
+# .env). Sans elle il reste le défaut «ultrasecretkey», et SearXNG refuse
+# de démarrer.
+use_default_settings: true
+
+search:
+  # Le défaut est [html] seul. Le proxy appelle
+  # GET /search?q=…&format=json : un format absent de cette liste est
+  # refusé en 403. `html` reste, pour pouvoir ouvrir l'interface le jour où
+  # il faut comprendre pourquoi un moteur ne répond plus.
+  formats:
+    - html
+    - json
+
+server:
+  # Déjà les défauts ; écrits parce que le compose en dépend, pour qu'un
+  # changement de défaut en amont ne les retourne pas en silence.
+  # Le limiteur est fait pour une instance publique : il exige une base
+  # Valkey (absente du compose) et prendrait le proxy, client unique et
+  # sans navigateur, pour un robot. Ce qui protège l'instance, c'est de
+  # n'être joignable que du proxy : aucun port publié sur l'hôte.
+  limiter: false
+  public_instance: false

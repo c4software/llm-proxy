@@ -22,3 +22,50 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Métamoteur de recherche de l'outil hébergé `web_search` : le proxy
+  # l'interroge en JSON (GET http://searxng:8080/search?q=…&format=json,
+  # voir [tools.web_search] dans data/config.example.toml). Le proxy n'en
+  # dépend PAS pour démarrer — pas de `depends_on` : SearXNG en panne, la
+  # recherche rend une erreur au modèle, le reste du proxy sert.
+  searxng:
+    # Tag daté (`AAAA.M.J-<commit>`, un par build de master), pas `latest` :
+    # l'image fige ses dépendances Python, autant que la version de SearXNG
+    # ne bouge pas non plus sous un `docker compose pull`. Mise à jour :
+    # changer le tag (https://hub.docker.com/r/searxng/searxng/tags), puis
+    # `docker compose up -d searxng`. Même image sur ghcr.io/searxng/searxng
+    # si Docker Hub limite les téléchargements.
+    image: docker.io/searxng/searxng:2026.10.4-d48c4b555
+    restart: unless-stopped
+    # PAS de `ports:` — volontaire. L'instance n'a pas de limiteur
+    # (searxng/settings.yml) : elle ne doit être joignable que du proxy, par
+    # le réseau du compose, sous le nom `searxng` et le port 8080 de l'image.
+    volumes:
+      # Le FICHIER seul, en lecture seule, pas le dossier : le conteneur
+      # démarre en root et son point d'entrée ferait un `chown -R` du
+      # dossier monté vers son utilisateur (uid 977) — ici, un dossier
+      # versionné de l'hôte. Le fichier existant, il ne génère rien non plus.
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      # Données persistantes de SearXNG (caches) : un volume nommé, pour
+      # qu'elles survivent à la recréation du conteneur.
+      - searxng-cache:/var/cache/searxng
+    environment:
+      # Surcharge `server.secret_key`. Jamais dans un fichier versionné, et
+      # jamais vide : SearXNG refuse le défaut «ultrasecretkey» mais
+      # accepterait une chaîne vide — d'où le `:?`, qui arrête
+      # `docker compose` avec ce message tant que .env ne la porte pas.
+      SEARXNG_SECRET: "${SEARXNG_SECRET:?absente de .env - en générer une avec « openssl rand -hex 32 » (voir .env.example)}"
+      # Ceinture et bretelles avec le montage du fichier seul : ne jamais
+      # changer le propriétaire de ce qui vient de l'hôte.
+      FORCE_OWNERSHIP: "false"
+    # Même forme que celui du proxy : le Python de l'image (celui qui lance
+    # le serveur), sans compter sur un curl qu'elle n'embarque pas.
+    healthcheck:
+      test: ["CMD", "/usr/local/searxng/.venv/bin/python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  searxng-cache:

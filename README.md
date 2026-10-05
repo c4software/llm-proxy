@@ -68,6 +68,12 @@ l'API Anthropic — **Claude Code** — ou pour l'API Responses d'OpenAI —
   flux d'événements `response.*`, outils compris), traduit vers
   `/v1/chat/completions` du backend visé — aucun backend n'a besoin de
   servir `/v1/responses`. Voir [Codex CLI](#codex-cli).
+- **Outils hébergés** — si `[tools.web_search].enabled`, le `web_search`
+  que déclare un client Responses n'est plus ignoré : le proxy
+  l'**exécute lui-même** (recherche par une instance SearXNG livrée dans
+  le `docker-compose.yml`, lecture de pages par `web_fetch`), relance le
+  backend avec le résultat et rend au client des éléments
+  `web_search_call`. Voir [Outils hébergés](#outils-hébergés).
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
@@ -100,13 +106,19 @@ l'API Anthropic — **Claude Code** — ou pour l'API Responses d'OpenAI —
 | `llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 | `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête), extraction de l'`usage` dans le flux de réponse, et l'Usage API |
 | `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` |
-| `llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés ignorés, `namespace` aplatis |
+| `llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés par le proxy présentés au modèle et rejoués, les autres ignorés, `namespace` aplatis |
+| `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre, exécution bornée (délai, taille du résultat, nombre d'appels par réponse), **mémoire des résultats** |
+| `llm_proxy/tools/net.py` | Garde-fou réseau : résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée |
+| `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
+| `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) |
+| `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
 | `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
 | `tests/` | Tests des traducteurs et des stats (`pytest`, `requirements-dev.txt`) — sur des octets et une base temporaire, sans réseau |
 | `envTest/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi et Codex CLI, scénarios PASS/FAIL — voir `envTest/README.md` |
 | `llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `dashboard.css`, `vue.global.prod.js`) |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
+| `searxng/settings.yml` | Réglages de l'instance SearXNG du compose : les défauts de SearXNG, plus le format JSON. Monté en lecture seule dans le service `searxng` |
 
 `app.py` ne connaît d'Albert que « un backend `quotas = true` passe par
 sa `QuotaState` » ; toute la mécanique de quotas vit dans `albert.py`.
@@ -387,10 +399,15 @@ de servir `/v1/responses` — et la réponse retraduite, en objet
 Ce que le proxy fait de la requête, écrit sur les corps que Codex envoie
 réellement (la tolérance reprend celle de gufo, gufo-org/gufo#434) :
 
-- **Outils hébergés ignorés** : `web_search`, `file_search`,
-  `code_interpreter`, `mcp`… ne peuvent être exécutés que par OpenAI. Ils
-  sont retirés, les outils `function` restent. Une ligne de log dit
-  lesquels (`responses : web_search sans équivalent chat, ignoré(s)`).
+- **Outils hébergés : `web_search` exécuté par le proxy s'il est activé,
+  les autres ignorés**. `file_search`, `code_interpreter`, `mcp`,
+  `image_generation`… ne peuvent être exécutés que par OpenAI : ils sont
+  retirés, les outils `function` restent, et une ligne de log dit
+  lesquels (`responses : file_search sans équivalent chat, ignoré(s)`).
+  `web_search` subit le même sort tant que `[tools.web_search]` et
+  `[tools.web_fetch]` sont inactifs ; activés, le proxy présente au
+  modèle ses propres fonctions à la place et les exécute — voir
+  [Outils hébergés](#outils-hébergés).
 - **`namespace` aplatis** : un `namespace` groupe des fonctions exécutées
   par le client (les `multi_agent_v1` de Codex). Ses fonctions rejoignent
   la liste, appelées par leur nom simple ; le `namespace` d'origine est
@@ -408,19 +425,196 @@ réellement (la tolérance reprend celle de gufo, gufo-org/gufo#434) :
   `reasoning_content` d'un backend devient un élément `reasoning`
   (résumé) visible dans le client (`reasoning_as_summary`).
   `reasoning.effort` part en `reasoning_effort`.
-- **Rien n'est conservé** : `previous_response_id`, `conversation`,
-  `background` et `item_reference` → `400` explicite. Codex renvoie tout
-  l'historique à chaque tour.
+- **Aucun état de conversation** : `previous_response_id`,
+  `conversation`, `background` et `item_reference` → `400` explicite.
+  Codex renvoie tout l'historique à chaque tour. Seule exception, et
+  seulement si les outils hébergés sont activés : la
+  [mémoire des résultats](#mémoire-des-résultats) de leurs appels.
 
 Les statistiques comptent ces requêtes sous `/v1/responses`, avec
 l'`usage` exact du backend.
+
+## Outils hébergés
+
+Un client de l'API Responses déclare des outils qu'il ne sait pas
+exécuter lui-même : avec `{"type": "web_search"}`, Codex CLI compte
+qu'OpenAI fera la recherche côté serveur. Derrière ce proxy il n'y a pas
+d'OpenAI — sans rien faire, l'outil est retiré et le modèle n'a pas de
+recherche web. Un outil **hébergé** est un outil que le proxy exécute
+lui-même, à la place d'OpenAI. Il y en a deux, activés ensemble par le
+`web_search` du client :
+
+| Fonction présentée au modèle | Ce qu'elle fait | Par quoi |
+|---|---|---|
+| `web_search` (`query`, `recency`, `limit`) | Une recherche ; rend une liste numérotée — titre, date, URL, extrait de 240 caractères | Une instance **SearXNG** auto-hébergée (métamoteur libre, API JSON, sans clé), `GET <searxng_url>/search?q=…&format=json` |
+| `web_fetch` (`url`, `offset`) | Lit une page ; HTML converti en texte, JSON et texte tels quels, tout autre type refusé | Une requête HTTP du proxy, sous le garde-fou réseau |
+
+Le schéma de `web_search` et la forme de sa sortie sont repris de l'outil
+`web_search` d'[oh-my-pi](https://github.com/can1357/oh-my-pi).
+
+État de la validation au 05/10/2026 : **la lecture de page a tourné de
+bout en bout, la recherche non**. `web_fetch` a été joué par Codex CLI
+0.157.1 à travers le proxy vers gufo 0.8.0
+(`bigchuck/qwen3.8-flash-next`) : deux pages publiques lues dans une même
+réponse, éléments `web_search_call` affichés par Codex, et une adresse
+locale refusée par le garde-fou. `web_search` et le service `searxng` du
+compose n'ont **jamais tourné** : aucune instance SearXNG n'était
+disponible, seuls les tests sans réseau les couvrent.
+
+### Déroulé
+
+1. Le client déclare `web_search` dans `tools` (les variantes
+   `web_search_preview` et `web_search_2025_08_26` comptent aussi). Rien
+   n'est ajouté à une requête qui ne le déclare pas.
+2. Le proxy présente au modèle, à la place, les fonctions `web_search` et
+   `web_fetch` — celles qui sont activées. Une fonction du client qui
+   porterait déjà l'un de ces noms garde le sien : l'outil hébergé
+   homonyme n'est alors pas présenté.
+3. Quand le modèle appelle l'une d'elles, l'appel n'est **pas** rendu au
+   client en `function_call` : le proxy l'exécute, ajoute le résultat à
+   la conversation et **relance le backend**, jusqu'à un tour sans appel
+   hébergé. Un tour qui mêle appels hébergés et appels du client
+   s'arrête après les premiers : la main revient au client.
+4. Le client ne voit de tout cela que des éléments `web_search_call`
+   terminés — action `search` (la requête) ou `open_page` (l'URL) —, puis
+   la réponse.
+5. Au tour suivant, le client renvoie ces éléments **sans leur résultat**
+   (OpenAI le garde côté serveur). Le proxy le relit dans sa mémoire et
+   l'élément redevient, à l'identique, un appel suivi de son résultat.
+
+Une erreur d'outil n'est jamais une erreur HTTP : SearXNG injoignable,
+page en 404, délai dépassé, adresse refusée — le modèle reçoit un texte
+`Error: …` et s'adapte. Chaque exécution laisse une ligne de log
+(`outil hébergé web_search(…) → N car. en 1.2s`).
+
+Une réponse = **une** ligne de statistiques, quel que soit le nombre de
+tours upstream, avec l'usage cumulé ; chaque tour repasse par le limiteur
+d'un backend à quotas. Les outils actifs sont dits au démarrage dans les
+logs et dans `/healthz` (`tools` : fonctions actives, `max_calls`,
+nombre d'entrées en mémoire).
+
+### Mise en route
+
+Le `docker-compose.yml` porte un service `searxng` à côté du proxy,
+**sans port publié** : l'instance n'a pas de limiteur, elle n'est
+joignable que du proxy, par le réseau du compose
+(`http://searxng:8080`).
+
+    # 1. la clé secrète de SearXNG, dans .env (jamais dans un fichier versionné)
+    echo "SEARXNG_SECRET=$(openssl rand -hex 32)" >> .env
+
+    # 2. dans data/config.toml (un config.toml qui existe déjà n'est pas
+    #    réécrit : y recopier les tables depuis data/config.example.toml)
+    [responses]
+    enabled = true
+    [tools.web_search]
+    enabled = true
+    searxng_url = "http://searxng:8080"
+    [tools.web_fetch]
+    enabled = true
+
+    # 3.
+    docker compose up -d --build
+
+Ce qu'il faut savoir du service :
+
+- **`SEARXNG_SECRET` est obligatoire dès que ce compose est utilisé.**
+  SearXNG refuse de démarrer avec sa clé par défaut, mais accepterait une
+  clé vide : le compose exige donc la variable (`${SEARXNG_SECRET:?…}`)
+  et `docker compose` s'arrête avec un message tant que `.env` ne la
+  porte pas — y compris pour qui ne veut pas de la recherche.
+- **L'image est épinglée** sur un tag daté (`AAAA.M.J-<commit>`), pas
+  sur `latest`. Mise à jour : changer le tag dans `docker-compose.yml`,
+  puis `docker compose up -d searxng`.
+- **`searxng/settings.yml`** part des défauts de SearXNG
+  (`use_default_settings: true`) et n'y ajoute que le format `json` —
+  sans lui, `format=json` est refusé en 403. Moteurs, langue et délais
+  sont ceux de SearXNG ; les changer se fait dans ce fichier, puis
+  `docker compose restart searxng`.
+- **Le proxy ne dépend pas de SearXNG pour démarrer** (pas de
+  `depends_on`) : instance arrêtée ou en panne, la recherche rend une
+  erreur au modèle, tout le reste sert.
+- **Hors compose** (proxy lancé par `uvicorn`, Coolify sans ce compose) :
+  `searxng_url` doit pointer une instance que le proxy peut joindre, avec
+  `json` dans ses `search.formats`.
+
+Diagnostic, l'instance n'étant pas joignable de l'hôte :
+
+    docker compose ps searxng          # « healthy » : /healthz répond
+    docker compose logs searxng
+    docker compose exec albert-proxy python -c "import urllib.request; \
+      print(urllib.request.urlopen('http://searxng:8080/search?q=test&format=json').read()[:300])"
+
+### Garde-fous
+
+- **Adresses publiques seulement** (`web_fetch`). La cible est choisie
+  par le modèle et la requête part du proxy : sans filtre, une page web
+  ou un prompt pourrait lui faire lire un service de son réseau — le
+  backend d'inférence, l'instance SearXNG, un routeur, les métadonnées
+  d'un cloud. Le nom est résolu par le proxy ; **toutes** ses adresses
+  doivent être publiques (ni privées, ni locales, ni lien local, ni CGNAT
+  `100.64.0.0/10` — les adresses Tailscale —, ni réservées) ; la
+  connexion part vers l'adresse vérifiée, pas vers le nom, qu'un DNS
+  pourrait faire changer entre le contrôle et la connexion. Le contrôle
+  est refait **à chaque saut de redirection** (5 au plus), les
+  redirections n'étant jamais suivies par la bibliothèque HTTP. Seuls
+  `http` et `https` sont lus. `allow_private = true` lève le filtre.
+  L'adresse de SearXNG, elle, est une adresse de configuration : le
+  filtre ne s'y applique pas.
+- **Tailles** : `max_bytes` octets lus par page, le reste n'est pas
+  téléchargé ; `max_chars` caractères rendus par appel (le modèle
+  redemande la suite par `offset`) ; `max_result_chars` par résultat,
+  quel que soit l'outil ; `limit` résultats par recherche, 20 au plus.
+- **Délais** : `timeout` par requête, pour chaque outil ; `run_timeout`
+  pour une exécution entière, redirections comprises.
+- **Nombre d'appels** : `max_calls` exécutions par réponse. Au-delà, le
+  modèle reçoit une erreur qui lui demande de conclure avec ce qu'il a ;
+  s'il insiste encore (4 appels de plus), la réponse est close sans lui.
+
+### Mémoire des résultats
+
+C'est **la seule chose que le proxy conserve entre deux requêtes**. Elle
+existe parce que le client rejoue l'élément `web_search_call` sans son
+résultat : sans elle le modèle perdrait, au tour suivant, tout ce qu'il a
+lu — et le début de la conversation changerait, ce qui fait manquer le
+cache de préfixe du backend.
+
+Elle garde, par identifiant d'élément : le nom de la fonction, ses
+arguments tels que le modèle les a écrits, le texte du résultat. Rien
+d'autre, et rien qui identifie le client. Elle vit **en mémoire vive**,
+jamais sur disque, bornée en nombre (`cache_entries`, les entrées les
+moins récemment relues sortent) et en durée (`cache_ttl`). **Un
+redémarrage du proxy la vide** : l'appel rejoué est alors reconstruit
+depuis l'action de l'élément (la requête, l'URL), avec pour résultat un
+mot qui dit au modèle que le contenu n'est plus disponible et qu'il peut
+relancer l'outil.
+
+### Ce qu'aucun garde-fou n'empêche
+
+**Le contenu d'une page web entre dans le contexte d'un agent qui
+exécute des commandes sur le poste du client.** Une page — ou un extrait
+de résultat de recherche — peut porter des instructions écrites pour le
+modèle : c'est l'injection de prompt. Le modèle qui les suit lance un
+`shell`, modifie un fichier, envoie ailleurs ce qu'il a lu, avec les
+droits que le client lui a donnés.
+
+Les garde-fous ci-dessus protègent **le réseau du proxy** et bornent des
+tailles. Aucun ne lit, ne filtre ni ne neutralise ce qu'une page dit, et
+aucun ne le peut. Activer `web_search`, c'est faire lire du texte non
+fiable à l'agent : la seule défense est du côté du client — ses
+approbations de commandes, son bac à sable — et dans le choix de ne pas
+l'activer là où l'agent travaille sans surveillance.
 
 ## Déploiement
 
 ### Docker Compose
 
-    cp .env.example .env        # y mettre ALBERT_API_KEY
+    cp .env.example .env        # y mettre ALBERT_API_KEY et SEARXNG_SECRET
     docker compose up -d --build
+
+`SEARXNG_SECRET` (`openssl rand -hex 32`) est exigée par le service
+`searxng`, le métamoteur des [outils hébergés](#outils-hébergés) : sans
+elle `docker compose` refuse de démarrer.
 
 `./data` est monté comme volume : il porte la configuration
 (`config.toml`, créée au premier démarrage depuis l'exemple) **et** la
@@ -434,7 +628,9 @@ Déclarer un **volume persistant sur `/app/data`** (configuration et base
 de statistiques), ajouter les secrets en variables d'environnement
 (`ALBERT_API_KEY`…), puis exposer le service via Nginx Proxy Manager sur
 un sous-domaine interne. Les réglages se modifient ensuite dans
-`data/config.toml`, dans le volume.
+`data/config.toml`, dans le volume. Le Dockerfile seul ne livre pas
+SearXNG : pour la recherche web, déployer une instance à part et y
+pointer `tools.web_search.searxng_url`.
 
 ## Configuration
 
@@ -522,6 +718,39 @@ url = "http://bigchuck:8009"
 | `enabled` | `false` | Ouvre la surface Responses (`POST /v1/responses`). Table absente = inactive, dit au démarrage dans les logs et dans `/healthz` |
 | `reasoning_as_summary` | `true` | `reasoning_content` du backend → élément `reasoning` (résumé) pour le client |
 
+### `[tools]`
+
+Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `max_calls` | `8` | Appels d'outils hébergés exécutés pour **une** réponse ; au-delà, le modèle reçoit une erreur qui lui demande de conclure |
+| `run_timeout` | `60` | Secondes pour une exécution, tout compris (redirections suivies incluses). Dépassé → erreur rendue au modèle |
+| `max_result_chars` | `24000` | Caractères d'un résultat rendu au modèle ; le surplus est coupé et marqué `[truncated]` |
+| `cache_entries` | `512` | Appels gardés par la [mémoire des résultats](#mémoire-des-résultats) ; les moins récemment relus sortent |
+| `cache_ttl` | `86400` | Secondes de vie d'une entrée de cette mémoire |
+
+### `[tools.web_search]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Présente `web_search` au modèle quand le client déclare `web_search`. Table absente = inactif : l'outil du client est ignoré |
+| `searxng_url` | `""` | Base de l'instance SearXNG ; le proxy appelle `<searxng_url>/search?q=…&format=json`. Dans le compose : `"http://searxng:8080"`. Vide → le modèle reçoit « recherche non configurée ». Adresse de configuration : le garde-fou des adresses publiques ne s'y applique pas |
+| `timeout` | `20` | Secondes pour la requête vers SearXNG |
+| `limit` | `8` | Résultats rendus quand le modèle ne précise pas `limit` (20 au plus) |
+| `language` | `""` | Paramètre `language` passé à SearXNG (`"fr"`, `"en-US"`…) ; vide = non envoyé, défaut de l'instance |
+| `categories` | `""` | Paramètre `categories` passé à SearXNG (`"general"`, `"general,it"`…) ; vide = non envoyé |
+
+### `[tools.web_fetch]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Présente `web_fetch` au modèle quand le client déclare `web_search` — sans elle, la recherche ne rend que des extraits de 240 caractères |
+| `timeout` | `20` | Secondes par requête (une par saut de redirection, 5 sauts au plus) |
+| `max_bytes` | `2000000` | Octets lus au plus sur le corps d'une page |
+| `max_chars` | `20000` | Caractères de texte rendus par appel ; la suite se demande par `offset` |
+| `allow_private` | `false` | `false` : seules les adresses **publiques** sont jointes, contrôle refait à chaque redirection. `true` lève le filtre — à n'ouvrir que sur un proxy dont tous les clients sont de confiance, et jamais derrière un modèle qui lit le web |
+
 ### `[quotas]` (backends à quotas)
 
 | Clé | Défaut | Rôle |
@@ -559,6 +788,13 @@ cumulables :
   elle s'y passe une fois en `?key=<clé>` puis est mémorisée dans un
   cookie `HttpOnly` (`SameSite=Strict`).
 - **Le réseau** : Nginx Proxy Manager, Tailscale, réseau Docker partagé.
+
+Avec les [outils hébergés](#outils-hébergés) activés, s'y ajoute que le
+proxy **émet des requêtes vers des adresses choisies par le modèle** —
+bornées aux adresses publiques — et fait entrer du texte du web dans le
+contexte d'un agent : lire
+[Ce qu'aucun garde-fou n'empêche](#ce-quaucun-garde-fou-nempêche) avant
+de les ouvrir.
 
 ## Vérification
 
@@ -640,11 +876,21 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 - **Hors périmètre, volontairement** : Batches, Files, outils serveur
   Anthropic (`web_search`, `code_execution`…), et le sens proxy →
   backend Anthropic.
-- **Surface Responses** : les outils hébergés sont ignorés, pas exécutés
-  (le modèle ne les voit pas) ; les outils intégrés au client sans
-  équivalent chat (`custom`, `local_shell`…) aussi. Pas de `ping`
+- **Surface Responses** : des outils hébergés, seul `web_search` est
+  exécuté par le proxy, et seulement s'il est activé
+  ([Outils hébergés](#outils-hébergés)) ; les autres (`file_search`,
+  `code_interpreter`, `mcp`, `image_generation`…) sont toujours ignorés,
+  pas exécutés (le modèle ne les voit pas), comme les outils intégrés au
+  client sans équivalent chat (`custom`, `local_shell`…). Pas de `ping`
   pendant l'attente d'un quota : un flux vers un backend à quotas attend
   avant de répondre, comme pour un client OpenAI.
+- **Outils hébergés : surface Responses seulement.** Ni
+  `/v1/chat/completions` ni `/v1/messages` n'en profitent : les outils
+  serveur d'un client Anthropic (`web_search`…) restent ignorés. Pas de
+  rendu de JavaScript dans `web_fetch` (une page construite côté
+  navigateur rend peu de texte), pas de PDF. La mémoire des résultats ne survit pas à un
+  redémarrage. `web_search` et le service `searxng` n'ont pas encore tourné
+  contre une instance réelle (voir [Outils hébergés](#outils-hébergés)).
 
 ## Côté clients
 
