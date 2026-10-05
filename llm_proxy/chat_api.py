@@ -35,14 +35,57 @@ relais brut des octets, comme avant (app.chat_completions).
 Ce que le client reçoit : UNE réponse chat/completions ordinaire, quel
 que soit le nombre de tours upstream (voir `Translator`). Les appels
 hébergés ne lui arrivent JAMAIS en `tool_calls` — il tenterait de les
-exécuter. Conséquence, à connaître : son historique ne les contient pas.
-À la requête suivante le modèle retrouve sa réponse, pas ce qu'il avait
-lu, et le début de la conversation n'est plus celui que le backend a vu
-pendant la boucle (son cache de préfixe ne sert que jusqu'au dernier
-message d'avant la recherche). Aucune mémoire côté proxy pour ça : rien
-dans une requête chat/completions n'identifie la conversation, il
-faudrait la reconnaître à son contenu. Un client qui veut garder ce que
-le modèle a lu déclare l'outil lui-même et l'exécute par /v1/tools.
+exécuter. Conséquence : son historique ne les contient pas. À la requête
+suivante il renvoie `[…, user, assistant « réponse », user]` : sans rien
+de plus le modèle retrouverait sa réponse, pas ce qu'il avait lu, et le
+début de la conversation ne serait plus celui que le backend a vu pendant
+la boucle (son cache de préfixe ne servirait que jusqu'au dernier message
+d'avant la recherche).
+
+MÉMOIRE DES ÉCHANGES CACHÉS (`Memory`, `restore`, [chat].memory). Rien
+dans une requête chat/completions n'identifie la conversation : elle est
+reconnue À SON CONTENU. Quand une réponse se conclut après au moins un
+tour d'outils hébergés, l'échange caché — les messages assistant à
+`tool_calls` et les messages `tool`, tels que le backend les a reçus —
+est rangé sous un condensé de ce que le client en reverra : les messages
+de SA requête (ceux d'avant, sans rien de réinséré) et la réponse finale.
+À la requête suivante, pour chaque message assistant de l'historique, le
+condensé est recalculé ; s'il est connu, l'échange est réinséré juste
+avant ce message, dont le contenu redevient le texte du DERNIER tour (le
+client, lui, a reçu les textes de tous les tours bout à bout : le premier
+est déjà dans l'échange réinséré). Le backend reçoit alors, à l'octet
+près, ce qu'il a reçu au dernier tour de la boucle, suivi de ce qu'il a
+répondu — puis la suite.
+  * Ce qui entre dans le condensé (`_canon`) : par message, le rôle, le
+    TEXTE (une chaîne et une liste de parties `text` disent la même
+    chose ; espaces de début et de fin retirés), les identifiants de ses
+    `tool_calls`, son `tool_call_id`. Tout autre champ est ignoré
+    (`annotations`, `reasoning_content`, `images`, `name`…) : un client
+    qui les retire ou les ajoute retrouve son échange. Les messages
+    `system` / `developer` n'y entrent PAS : bien des clients y écrivent
+    l'heure, et ce que le modèle a lu ne dépend pas d'eux.
+  * Dans le doute, rien n'est réinséré — c'est le comportement d'avant,
+    jamais pire : texte de la réponse modifié (résumé, traduit, coupé,
+    régénéré : la nouvelle réponse a son propre échange, ou aucun),
+    contenu assistant qui porte autre chose que du texte, historique
+    tronqué ou compacté (tout ce qui précède change, donc toutes les
+    clés), entrée expirée ou sortie de la borne, proxy redémarré, autre
+    client. Un condensé ne peut désigner que l'endroit exact où l'échange
+    a eu lieu : pas de réinsertion « au mauvais endroit ».
+  * Une réponse que la limite dure a close (le modèle n'a pas conclu) ne
+    range rien : ses derniers résultats n'ont jamais été lus.
+  * Cloisonnée par client comme tools.Memory (le condensé de la clé du
+    proxy fait partie de la clé d'entrée), en mémoire vive seulement,
+    bornée en entrées, en durée ET en caractères — un échange porte
+    jusqu'à 8 résultats de 24 000 caractères. Jamais d'image : le
+    résultat gardé est le texte rendu au modèle. Rien n'en est journalisé
+    que des comptes.
+  * Seule une requête qui DÉCLARE un outil hébergé est relue ainsi. Un
+    client qui cesse de déclarer en cours de conversation repasse au
+    relais brut : rien n'est réinséré (le modèle n'a plus que ses
+    réponses), rien n'est perdu non plus — les entrées restent, et
+    servent de nouveau s'il redéclare, les clés ne dépendant que de ce
+    que LUI envoie.
 
 Tour MIXTE (le modèle appelle dans un même tour un outil hébergé et un
 outil du client) : la règle des deux autres surfaces — exécuter, puis
@@ -66,8 +109,12 @@ anthropic_api.Translator : c'est app.hosted_loop qui mène la boucle.
 Ce module ne connaît ni FastAPI ni httpx.
 """
 
+import hashlib
 import json
+import re
+import time
 import uuid
+from collections import OrderedDict
 
 from . import config
 from .settings import log
@@ -79,6 +126,16 @@ ENABLED = config.flag("chat.hosted_tools", False)
 # Annotations `url_citation` en fin de réponse : les URL que les outils
 # ont rendues ET que le modèle a écrites dans sa réponse.
 ANNOTATIONS = config.flag("chat.annotations", True)
+# La mémoire des échanges cachés (tête de module). false = le comportement
+# d'avant : rien n'est gardé, rien n'est réinséré.
+MEMORY_ENABLED = config.flag("chat.memory", True)
+# Ses bornes en entrées et en durée sont celles de la mémoire des
+# résultats ([tools], lues ici sans importer le paquet) ; celle-ci a en
+# plus une borne en CARACTÈRES, toutes entrées confondues : une entrée de
+# tools.Memory est UN résultat, une entrée d'ici peut en porter 8.
+MEMORY_ENTRIES = config.integer("tools.cache_entries", 512)
+MEMORY_TTL = config.num("tools.cache_ttl", 24 * 3600)
+MEMORY_CHARS = config.integer("chat.memory_chars", 8_000_000)
 CHARS_PER_TOKEN = 4
 # Entre les textes de deux tours, que le client reçoit comme UN message.
 GAP = "\n\n"
@@ -101,6 +158,13 @@ class Context:
         # proxy, lui, le demande toujours au backend (stats exactes).
         self.include_usage = False
         self.annotations = ANNOTATIONS
+        # Mémoire des échanges cachés, posés par restore() : où ranger,
+        # pour quel client (tools.owner), et le condensé des messages de
+        # la requête tels que le client les a envoyés. `state` None =
+        # rien ne sera rangé.
+        self.memory: Memory | None = None
+        self.client = ""
+        self.state = None
 
 
 def declares(payload: dict, kinds) -> bool:
@@ -108,6 +172,12 @@ def declares(payload: dict, kinds) -> bool:
     types que le paquet tools/ connaît, actifs ou non. Le corps est déjà
     désérialisé par la route : un parcours de `tools`, rien de plus."""
     if "web_search_options" in payload:
+        return True
+    # Un `tool_choice` à la forme Responses (`{"type": "web_search"}`)
+    # vise un outil hébergé : aucun backend ne le lirait, c'est à
+    # prepare() de le traduire ou de le refuser.
+    choice = payload.get("tool_choice")
+    if isinstance(choice, dict) and choice.get("type") in kinds:
         return True
     tools = payload.get("tools")
     return isinstance(tools, list) and any(
@@ -125,7 +195,15 @@ def prepare(payload: dict, hosted, kinds) -> Context:
     l'erreur d'un backend qui ne dit rien de la cause. (La surface
     Responses, elle, l'ignore : Codex le déclare d'office.) Un type que
     le paquet ne connaît pas n'est pas touché : c'est l'affaire du
-    backend."""
+    backend.
+
+    `tool_choice` à la forme Responses (`{"type": "web_search"}`,
+    `{"type": "image_generation"}`) : traduit vers la fonction présentée
+    pour ce type — la première, `web_search` pour la recherche. Il ne
+    vaut que pour le premier tour (app.hosted_loop ramène un choix forcé
+    à `auto` ensuite). S'il vise un outil désactivé, ou que la requête ne
+    déclare pas (ou dont une fonction du client a pris le nom) : 400 —
+    le backend, lui, refuserait sans dire pourquoi."""
     if isinstance(payload.get("n"), int) and payload["n"] > 1:
         raise Refused("`n` > 1 n'est pas pris en charge avec un outil "
                       "hébergé : une réponse, une boucle")
@@ -168,6 +246,21 @@ def prepare(payload: dict, hosted, kinds) -> Context:
         payload["tools"] = out
     else:
         payload.pop("tools", None)
+    choice = payload.get("tool_choice")
+    kind = choice.get("type") if isinstance(choice, dict) else None
+    if kind in kinds:
+        modules = hosted.for_kind(kind) if hosted else []
+        if not modules:
+            raise Refused(
+                f"`tool_choice` vise l'outil hébergé «{kind}», désactivé sur "
+                f"ce proxy ([tools.<nom>].enabled dans config.toml)")
+        name = next((m.NAME for m in modules if m.NAME in ctx.hosted), None)
+        if name is None:
+            raise Refused(
+                f"`tool_choice` vise l'outil hébergé «{kind}», que `tools` "
+                f"ne déclare pas")
+        payload["tool_choice"] = {"type": "function",
+                                  "function": {"name": name}}
     if payload.get("stream") and ctx.hosted:
         options = payload.get("stream_options")
         options = dict(options) if isinstance(options, dict) else {}
@@ -176,6 +269,151 @@ def prepare(payload: dict, hosted, kinds) -> Context:
         # la réponse, cumulée sur les tours, retomberait sur l'estimation.
         payload["stream_options"] = {**options, "include_usage": True}
     return ctx
+
+
+# ── mémoire des échanges cachés ─────────────────────────────────────────
+
+class Memory:
+    """Les échanges cachés, par client et condensé de contexte (tête de
+    module) : la logique de tools.Memory — LRU bornée en entrées, durée,
+    `owner` dans la clé — plus une borne en caractères, toutes entrées
+    confondues. Un échange plus gros que la borne à lui seul n'est pas
+    rangé."""
+
+    def __init__(self, entries: int, ttl: float, chars: int):
+        self.entries, self.ttl, self.chars = entries, ttl, chars
+        self.size = 0       # caractères gardés
+        self._data: OrderedDict[tuple[str, str], tuple[float, int, dict]] = \
+            OrderedDict()
+
+    def store(self, key: str, messages: list[dict], tail: str,
+              owner: str = "") -> None:
+        """`messages` : l'échange, tel qu'envoyé au backend ; `tail` : le
+        texte du dernier tour, celui que le backend a répondu."""
+        size = len(tail) + sum(_weight(m) for m in messages)
+        self._drop((owner, key))
+        if size > self.chars:
+            return
+        self._data[(owner, key)] = (time.monotonic(), size, {
+            "messages": messages, "tail": tail})
+        self.size += size
+        while len(self._data) > self.entries or self.size > self.chars:
+            self._drop(next(iter(self._data)))
+
+    def recall(self, key: str, owner: str = "") -> dict | None:
+        entry = self._data.get((owner, key))
+        if entry is None:
+            return None
+        if time.monotonic() - entry[0] > self.ttl:
+            self._drop((owner, key))
+            return None
+        self._data.move_to_end((owner, key))
+        return entry[2]
+
+    def _drop(self, key) -> None:
+        entry = self._data.pop(key, None)
+        if entry is not None:
+            self.size -= entry[1]
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+
+def _weight(msg: dict) -> int:
+    """Caractères d'un message de l'échange : son contenu, les arguments
+    de ses appels."""
+    return len(msg.get("content") or "") + sum(
+        len(tc["function"]["arguments"]) for tc in msg.get("tool_calls", ()))
+
+
+MEMORY = Memory(MEMORY_ENTRIES, MEMORY_TTL, MEMORY_CHARS)
+
+
+def _plain(content) -> str | None:
+    """Le texte d'un contenu : une chaîne, ou une liste de parties `text`
+    (les deux formes de l'API). None = autre chose que du texte."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list) and all(
+            isinstance(p, dict) and p.get("type") == "text"
+            and isinstance(p.get("text"), str) for p in content):
+        return "".join(p["text"] for p in content)
+    return None
+
+
+def _call_ids(msg: dict) -> list[str]:
+    calls = msg.get("tool_calls")
+    return [str(tc.get("id") or "") for tc in calls if isinstance(tc, dict)] \
+        if isinstance(calls, list) else []
+
+
+def _bytes(doc) -> bytes:
+    return json.dumps(doc, sort_keys=True, ensure_ascii=False,
+                      default=str).encode("utf-8", "surrogatepass")
+
+
+def _canon(msg) -> bytes:
+    """Ce qu'un message apporte au condensé (tête de module). Un contenu
+    qui n'est pas que du texte (image d'un message user) y entre tel
+    quel : seul son condensé est gardé."""
+    if isinstance(msg, dict):
+        text = _plain(msg.get("content"))
+        msg = [msg.get("role"),
+               text.strip() if text is not None else msg.get("content"),
+               _call_ids(msg), msg.get("tool_call_id")]
+    return _bytes(msg)
+
+
+def _key(state, text: str, ids: list[str]) -> str:
+    """La clé d'un échange : `state`, le condensé des messages d'avant,
+    prolongé de la réponse — son texte, les identifiants de ses appels
+    CLIENT (une réponse régénérée sans texte, aux appels différents, n'est
+    pas la même réponse)."""
+    h = state.copy()
+    h.update(b"=" + _bytes([text.strip(), ids]))
+    return h.hexdigest()
+
+
+def restore(payload: dict, ctx: Context, client: str) -> int:
+    """Réinsère, DANS `payload`, les échanges cachés que la mémoire
+    reconnaît (tête de module), et pose sur `ctx` de quoi ranger celui de
+    cette réponse. Rend le nombre d'échanges réinsérés. Sans effet si
+    [chat].memory est faux. `client` : tools.owner() de la clé présentée,
+    «» pour un proxy ouvert."""
+    messages = payload.get("messages")
+    if not MEMORY_ENABLED or not isinstance(messages, list):
+        return 0
+    state = hashlib.blake2b(digest_size=16)
+    out: list = []
+    found = 0
+    for msg in messages:
+        role = msg.get("role") if isinstance(msg, dict) else None
+        sent = msg
+        if role == "assistant":
+            text = _plain(msg.get("content"))
+            entry = MEMORY.recall(_key(state, text, _call_ids(msg)), client) \
+                if text is not None else None
+            if entry is not None:
+                found += 1
+                out += entry["messages"]
+                # Le texte du dernier tour, pas celui de tous les tours
+                # que le client a reçu ; ses autres champs sont les siens.
+                sent = {**msg, "content": entry["tail"] or None}
+        out.append(sent)
+        if role not in ("system", "developer"):
+            block = _canon(msg)
+            state.update(b"%d:" % len(block) + block)
+    payload["messages"] = out
+    ctx.memory, ctx.client, ctx.state = MEMORY, client, state
+    return found
+
+
+# Ce qui, juste après une URL trouvée dans le texte, dit qu'elle CONTINUE :
+# le modèle en a écrit une autre, plus longue. Une ponctuation de fin de
+# phrase (ou un `/` final) n'en fait partie que suivie d'un caractère d'URL.
+_MORE = re.compile(r"[.,;:!?)\]}'\"*>/]*[\w%~=&#+@-]")
 
 
 def _id(prefix: str) -> str:
@@ -268,6 +506,7 @@ class Translator:
         self._gap = ""
         self._done: list[tuple[dict, str]] = []   # (appel, résultat) du tour
         self._history: list[dict] = []    # messages des tours clos
+        self._ids: list[str] = []         # id des appels client du tour
         self._sources: dict[str, str] = {}        # URL → titre
         self._images: list[dict] = []
         # JSON : dernier corps upstream, appels client et raisonnement.
@@ -395,6 +634,7 @@ class Translator:
         self._slots, self._lead = {}, None
         self._finish, self._tail = None, None
         self._client = []
+        self._ids = []
         self.client_calls = 0
         if self._all and not self._all[-1].endswith("\n"):
             self._gap = GAP
@@ -407,6 +647,7 @@ class Translator:
         if self.sse:
             return self._end()
         self._finished = True
+        self._remember()
         doc = {**self._doc, **(self._head or {})}
         choice = dict(doc["choices"][0])
         msg = choice.get("message")
@@ -500,6 +741,7 @@ class Translator:
                 self._lead = "client"
                 slot = self.client_calls
                 self.client_calls += 1
+                self._ids.append(str(tc.get("id") or ""))
             self._slots[idx] = slot
         slot = self._slots[idx]
         if slot is None:
@@ -528,22 +770,48 @@ class Translator:
             return "stop"
         return self._finish or "stop"
 
+    def _remember(self) -> None:
+        """Range l'échange caché de cette réponse (tête de module), à sa
+        CONCLUSION : au moins un tour d'outils hébergés, puis un tour sans
+        eux. Pas après fail(), ni quand la limite dure a clos la réponse
+        (`_done` non vide : des résultats que le modèle n'a pas lus), ni
+        pour un dernier tour vide (ni texte, ni appel client)."""
+        ctx = self.ctx
+        tail = "".join(self._text)
+        if ctx.memory is None or ctx.state is None or not self._history \
+                or self._done or not (tail or self._ids):
+            return
+        ctx.memory.store(_key(ctx.state, "".join(self._all), self._ids),
+                         list(self._history), tail, ctx.client)
+
     def _annotations(self) -> list[dict]:
-        """Annotations `url_citation`, la forme d'OpenAI : une par URL
-        rendue par un outil ET présente dans le contenu — où elle l'est,
-        en caractères. Une source que le modèle n'a pas écrite n'est pas
-        une citation : rien n'est inventé."""
+        """Annotations `url_citation`, la forme d'OpenAI : une par
+        OCCURRENCE, dans le contenu, d'une URL rendue par un outil — où
+        elle l'est, en caractères du contenu rendu (tous les tours, GAP
+        compris). Une source que le modèle n'a pas écrite n'est pas une
+        citation : rien n'est inventé.
+
+        Une URL n'est citée que si elle est écrite EN ENTIER : `text.find`
+        seul trouvait aussi `…/llama.cpp` (la page du dépôt, rendue par la
+        recherche) au début de `…/llama.cpp/releases`, d'où deux
+        annotations au même endroit pour une URL écrite une fois. Les plus
+        longues d'abord, une occurrence ne servant qu'une fois ; et une
+        occurrence qui continue (`_MORE`) est une autre URL."""
         if not self.ctx.annotations or not self._sources:
             return []
         text = "".join(self._all)
-        found = []
-        for url, title in self._sources.items():
+        spans: list[tuple[int, int, str]] = []
+        for url in sorted(self._sources, key=len, reverse=True):
             at = text.find(url)
-            if at >= 0:
-                found.append({"type": "url_citation", "url_citation": {
-                    "start_index": at, "end_index": at + len(url),
-                    "url": url, "title": title}})
-        return sorted(found, key=lambda a: a["url_citation"]["start_index"])
+            while at >= 0:
+                end = at + len(url)
+                if not _MORE.match(text, end) \
+                        and not any(s < end and at < e for s, e, _ in spans):
+                    spans.append((at, end, url))
+                at = text.find(url, end)
+        return [{"type": "url_citation", "url_citation": {
+            "start_index": at, "end_index": end, "url": url,
+            "title": self._sources[url]}} for at, end, url in sorted(spans)]
 
     # ── flux ──
     def _block(self, delta: dict, finish: str | None = None) -> bytes:
@@ -612,6 +880,7 @@ class Translator:
 
     def _end(self) -> bytes:
         self._finished = True
+        self._remember()
         out = bytearray()
         annotations = self._annotations()
         if annotations:

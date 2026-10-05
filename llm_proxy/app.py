@@ -39,7 +39,9 @@ Rôles :
   4quinquies. les outils hébergés sur /v1/chat/completions (chat_api.py),
      si [chat].hosted_tools : une requête qui DÉCLARE `{"type":
      "web_search"}` dans `tools` passe par la même boucle et reçoit une
-     réponse chat/completions ordinaire ; toute autre est relayée brute ;
+     réponse chat/completions ordinaire ; toute autre est relayée brute.
+     Les appels hébergés, que le client ne voit pas, sont réinsérés dans
+     son historique à la requête suivante ([chat].memory) ;
   5. auth optionnelle du proxy lui-même : proxy.api_keys (liste vide par
      défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
      à la OpenAI — ou «x-api-key: <clé>», à l'Anthropic — (401 sinon,
@@ -578,7 +580,10 @@ async def healthz():
             "model_map": anthropic_api.MODEL_MAP,
         },
         "responses": {"enabled": responses_api.ENABLED},
-        "chat": {"hosted_tools": chat_api.ENABLED},
+        "chat": {"hosted_tools": chat_api.ENABLED,
+                 "memory": chat_api.MEMORY_ENABLED,
+                 "memory_entries": len(chat_api.MEMORY),
+                 "memory_chars": chat_api.MEMORY.size},
         "tools": {
             "enabled": [m.NAME for m in tools.enabled()],
             "max_calls": tools.MAX_CALLS,
@@ -772,6 +777,19 @@ async def chat_completions(request: Request):
             return error_response("openai", 400, "invalid_request_error",
                                   str(exc))
         modified = True
+        if ctx.hosted:
+            # Les échanges cachés des réponses précédentes, que le client
+            # n'a pas dans son historique, reprennent leur place (mémoire
+            # de chat_api, [chat].memory) — cloisonnée par client comme
+            # celle de la surface Responses : le condensé de la clé
+            # présentée, «» pour un proxy ouvert.
+            found = chat_api.restore(
+                payload, ctx,
+                tools.owner(client_token(request)) if PROXY_API_KEYS else "")
+            if found:
+                log.info("chat/completions : %d échange(s) d'outils hébergés "
+                         "réinséré(s) depuis la mémoire (model=%s)", found,
+                         payload.get("model"))
     if isinstance(payload, dict):
         if inject_tool_choice(payload, backend):
             modified = True
@@ -813,7 +831,8 @@ async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
     Chaque tour suivant repart du corps d'origine — déclaration déjà
     remplacée — et de ses messages, suivis de ce que le robinet a gardé
     des tours faits (appels hébergés et résultats). Le client, lui, ne
-    les aura pas dans son historique : voir chat_api."""
+    les aura pas dans son historique : le robinet les range à la
+    conclusion, chat_api.restore les réinsère à la requête suivante."""
     upstream = await send_upstream(call, request, "v1/chat/completions", raw)
     if isinstance(upstream, JSONResponse):
         return upstream

@@ -1021,7 +1021,11 @@ une pour le retour, les annotations `url_citation`, reprise ici.)
 Le proxy remplace la déclaration par les fonctions `web_search` et
 `web_fetch`, exécute leurs appels et relance le backend — la même boucle
 que les deux autres surfaces, mêmes garde-fous, même limite d'appels, un
-`tool_choice` forcé ramené à `auto` après le premier tour. Le client
+`tool_choice` forcé ramené à `auto` après le premier tour. Un
+`tool_choice` à la forme Responses (`{"type": "web_search"}`,
+`{"type": "image_generation"}`) est traduit vers la fonction
+correspondante (`web_search` pour la recherche) ; s'il vise un outil que
+`tools` ne déclare pas ou que le proxy a désactivé, `400`. Le client
 reçoit **une** réponse chat/completions ordinaire :
 
 - les appels hébergés ne lui arrivent **jamais** en `tool_calls` ;
@@ -1036,9 +1040,13 @@ reçoit **une** réponse chat/completions ordinaire :
   En flux, le `200` est parti : un bloc `{"error": …}`, puis `[DONE]` ;
 - les sources, en annotations `url_citation` (la forme d'OpenAI :
   `message.annotations`, `delta.annotations` juste avant la fin en flux) :
-  une par URL rendue par un outil **et** écrite par le modèle dans sa
-  réponse, à sa position dans le contenu. Rien d'autre ne dit ce qui a
-  été cherché. `[chat].annotations = false` les retire ;
+  une par **occurrence**, dans la réponse, d'une URL rendue par un outil
+  (résultat de recherche, page lue) et écrite **en entier** par le
+  modèle — `start_index` / `end_index` en caractères du contenu. Quand
+  deux sources se recouvrent (`…/llama.cpp` et `…/llama.cpp/releases`),
+  la plus longue l'emporte ; une URL que le modèle a prolongée n'est pas
+  la source. Rien d'autre ne dit ce qui a été cherché.
+  `[chat].annotations = false` les retire ;
 - une image générée : `images` (`[{"type": "image_url", "image_url":
   {"url": "data:image/png;base64,…"}}]`) sur le message, `delta.images`
   en flux.
@@ -1061,19 +1069,50 @@ exécutés et le modèle les redemandera à la requête suivante (coût : une
 requête de recherche). Les arguments des appels du client restent donc
 transmis en direct, sans attendre la fin du tour.
 
-**Le tour suivant de la conversation** — c'est la limite de ce chemin.
-Le client renvoie son historique **sans** les appels hébergés ni leurs
-résultats : le modèle retrouve sa réponse, **pas ce qu'il avait lu**
-(une question de suivi sur une page lue la lui fera relire), et le début
-de la conversation n'est plus celui que le backend a vu pendant la
-boucle — son cache de préfixe ne sert que jusqu'au message d'avant la
-recherche. Le proxy ne garde rien pour ça : rien dans une requête
-chat/completions n'identifie la conversation. Un client qui tient à
-garder ce que le modèle a lu déclare l'outil lui-même et passe par
+**Le tour suivant de la conversation.** Le client renvoie son
+historique **sans** les appels hébergés ni leurs résultats. Le proxy les
+**retrouve tant que sa mémoire les garde** (`[chat].memory`, actif par
+défaut) : à la conclusion d'une réponse, l'échange caché — les messages
+assistant à `tool_calls` et les messages `tool`, tels que le backend les
+a reçus — est rangé ; à la requête suivante il est réinséré juste avant
+la réponse à laquelle il a mené, dont le contenu redevient le texte du
+dernier tour. Le modèle relit ce qu'il avait lu, et le backend reçoit, à
+l'octet près, ce qu'il a reçu au dernier tour de la boucle suivi de sa
+réponse : son cache de préfixe sert jusque-là.
+
+Rien dans une requête chat/completions n'identifie la conversation : elle
+est reconnue **à son contenu**. La clé d'un échange est un condensé des
+messages que le client avait envoyés (rôle, texte, identifiants d'appels)
+et de la réponse finale. Conditions pour qu'il revienne :
+
+- la requête **déclare** encore un outil hébergé (sinon relais brut, rien
+  n'est lu ni réinséré ; la mémoire n'est pas vidée pour autant, elle
+  sert de nouveau si le client redéclare) ;
+- le client renvoie la réponse **avec son texte** et les messages qui la
+  précèdent inchangés. Sont sans effet : des espaces en début ou fin de
+  texte, un contenu en liste de parties `text` plutôt qu'en chaîne, des
+  champs retirés ou ajoutés (`annotations`, `reasoning_content`,
+  `images`…), et tout changement des messages `system` / `developer`
+  (ils n'entrent pas dans la clé : bien des clients y écrivent l'heure) ;
+- l'entrée n'a pas expiré (`[tools].cache_ttl`) ni été poussée dehors
+  (`[tools].cache_entries`, `[chat].memory_chars`), le proxy n'a pas
+  redémarré, et c'est le même client (même cloisonnement que la
+  [mémoire des résultats](#mémoire-des-résultats)).
+
+Dans tous les autres cas — texte de la réponse modifié, résumé ou
+régénéré, historique tronqué ou compacté par le client, contenu
+assistant qui n'est pas que du texte — **rien n'est réinséré** : le
+modèle retrouve sa réponse, pas ce qu'il avait lu (une question de suivi
+sur une page lue la lui fera relire), et le cache de préfixe du backend
+ne sert que jusqu'au message d'avant la recherche. Une conversation peut
+porter plusieurs échanges cachés, chacun retrouvé indépendamment. Une
+réponse close par la limite d'appels (le modèle n'a pas conclu) ne range
+rien. Un client qui tient à garder lui-même ce que le modèle a lu
+déclare l'outil et passe par
 l'[appel direct](#appel-direct--v1tools-pi-omp).
 
-Non joué contre un backend ni un client réels : seulement les tests du
-dépôt (`tests/test_chat_api.py`, backend simulé).
+La mémoire des échanges n'a été jouée que par les tests du dépôt
+(`tests/test_chat_api.py`, backend simulé).
 
 ### Appel direct : `/v1/tools` (pi, omp)
 
@@ -1108,9 +1147,11 @@ C'est ce que fait l'extension pi / omp `tools/llm-proxy-web.ts` du dépôt
 
 ### Mémoire des résultats
 
-C'est **la seule chose que le proxy conserve entre deux requêtes**, et
-seulement pour la surface Responses (un client Anthropic renvoie le
-résultat avec l'appel : rien n'est gardé pour lui). Elle
+Le proxy ne conserve entre deux requêtes que deux mémoires de ce qu'ont
+rendu les outils : celle-ci, pour la surface Responses (un client
+Anthropic renvoie le résultat avec l'appel : rien n'est gardé pour lui),
+et celle des échanges cachés de `/v1/chat/completions`, décrite à la fin
+de cette section. Elle
 existe parce que le client rejoue l'élément `web_search_call` sans son
 résultat : sans elle le modèle perdrait, au tour suivant, tout ce qu'il a
 lu — et le début de la conversation changerait, ce qui fait manquer le
@@ -1140,6 +1181,25 @@ partagent une clé partagent aussi la mémoire. La borne `cache_entries`
 reste **commune** : un client très actif peut faire sortir les entrées
 d'un autre, qui retrouve alors le mot « plus disponible » — une
 dégradation, pas une fuite.
+
+**Échanges cachés de `/v1/chat/completions`** (`[chat].memory`) — une
+seconde mémoire, séparée, pour le
+[tour suivant](#client-chatcompletions--déclarer-loutil) d'un client qui
+déclare un outil hébergé. Là il n'y a pas d'identifiant d'élément : une
+entrée est rangée sous un condensé (BLAKE2b) des messages de la requête
+et de la réponse finale, et porte l'échange caché — les `tool_calls`
+hébergés et le texte de leurs résultats, plus le texte du dernier tour.
+Jamais d'image (pour `image_generation`, la phrase rendue au modèle),
+jamais les messages du client eux-mêmes : d'eux, seul le condensé reste.
+Mêmes règles que ci-dessus — mémoire vive, jamais sur disque, rien du
+contenu dans les journaux ni les statistiques (les journaux disent
+combien d'échanges ont été réinsérés, `/healthz` combien sont gardés),
+cloisonnement par clé du proxy, bornes `cache_entries` et `cache_ttl` —
+plus une borne en caractères, toutes entrées confondues
+(`[chat].memory_chars`) : une entrée peut porter jusqu'à 8 résultats de
+24 000 caractères, là où une entrée de l'autre mémoire en porte un.
+Passé une borne, l'entrée la moins récemment relue sort, et son échange
+n'est simplement plus réinséré. Un redémarrage la vide.
 
 ### Ce qu'aucun garde-fou n'empêche
 
@@ -1282,6 +1342,8 @@ url = "http://bigchuck:8009"
 |---|---|---|
 | `hosted_tools` | `false` | Sur `/v1/chat/completions`, une requête qui déclare `{"type": "web_search"}` ou `{"type": "image_generation"}` dans `tools` (ou `web_search_options`) est bouclée par le proxy. Table absente = inactif : relais brut, la déclaration part au backend. Voir [Client chat/completions](#client-chatcompletions--déclarer-loutil) |
 | `annotations` | `true` | Annotations `url_citation` en fin de réponse, pour les URL rendues par un outil et écrites par le modèle |
+| `memory` | `true` | Garde l'échange caché de chaque réponse (appels hébergés et résultats) et le réinsère dans l'historique à la requête suivante. `false` = rien n'est gardé : le modèle ne retrouve que sa réponse. Nombre d'entrées et durée : `[tools].cache_entries` et `cache_ttl`. Voir [Mémoire des résultats](#mémoire-des-résultats) |
+| `memory_chars` | `8000000` | Caractères gardés par cette mémoire, toutes entrées confondues (de l'ordre de 8 à 32 Mo de RAM selon le texte) ; au-delà, les échanges les moins récemment relus sortent |
 
 ### `[tools]`
 
@@ -1477,10 +1539,14 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   une recherche et aux tours suivants de la boucle d'outils, un
   commentaire SSE (`: ping`) tient la connexion.
 - **Outils hébergés sur `/v1/chat/completions`** (`[chat].hosted_tools`) :
-  le client ne garde ni les appels hébergés ni leurs résultats. À la
-  requête suivante le modèle n'a plus ce qu'il avait lu, et le cache de
-  préfixe du backend ne sert que jusqu'au message d'avant la recherche ;
-  pas de mémoire côté proxy. Pas de `ping` pendant l'attente du quota du
+  le client ne garde ni les appels hébergés ni leurs résultats ; le proxy
+  les réinsère à la requête suivante tant que sa mémoire les garde
+  (`[chat].memory`) et que le client renvoie la réponse et ce qui la
+  précède inchangés — pas après une compaction ou une troncature de
+  l'historique, un redémarrage du proxy, ni si le client cesse de
+  déclarer l'outil : le modèle n'a alors plus ce qu'il avait lu, et le
+  cache de préfixe du backend ne sert que jusqu'au message d'avant la
+  recherche. Pas de `ping` pendant l'attente du quota du
   premier tour. `n` > 1 refusé. Pas joué contre un client réel. Voir
   [Client chat/completions](#client-chatcompletions--déclarer-loutil).
 - **Outils hébergés, autres surfaces.** Sur `/v1/messages`, seule la

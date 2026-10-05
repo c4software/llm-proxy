@@ -12,9 +12,15 @@ from fakes import (
 )
 from llm_proxy import app as A
 from llm_proxy import chat_api as C
+from llm_proxy.tools import web_search
 
 WEB = {"type": "web_search"}
 URL = "https://github.com/ggml-org/llama.cpp/releases"
+# La conversation des tests de mémoire : la question, et la réponse telle
+# que le client la reçoit après SEARCH_TURN puis ANSWER_TURN.
+Q1 = {"role": "user", "content": "Dernière version ?"}
+A1 = {"role": "assistant", "content": "Je cherche.\n\nVoilà."}
+Q2 = {"role": "user", "content": "Et la précédente ?"}
 
 
 def fn(name):
@@ -24,10 +30,19 @@ def fn(name):
 
 @pytest.fixture
 def chat(proxy, monkeypatch):
-    """`proxy`, [chat].hosted_tools actif, et les exécutions d'outils
-    notées dans `tool_lines` (stats.record_tool)."""
-    proxy.tool_lines = []
+    """`proxy`, [chat].hosted_tools actif, les exécutions d'outils notées
+    dans `tool_lines` (stats.record_tool), une mémoire des échanges
+    cachés neuve, et dans `raws` les OCTETS partis au backend."""
+    proxy.tool_lines, proxy.raws = [], []
+    inner = A.send_upstream
+
+    async def send_upstream(call, request, path, body):
+        proxy.raws.append(body)
+        return await inner(call, request, path, body)
+
+    monkeypatch.setattr(A, "send_upstream", send_upstream)
     monkeypatch.setattr(C, "ENABLED", True)
+    monkeypatch.setattr(C, "MEMORY", C.Memory(8, 60, 100_000))
     monkeypatch.setattr(A.stats, "record_tool",
                         lambda *a: proxy.tool_lines.append(a))
     return proxy
@@ -38,6 +53,32 @@ def post(proxy, **extra):
             "messages": [{"role": "user", "content": "Dernière version ?"}],
             **extra}
     return proxy.client.post("/v1/chat/completions", json=body)
+
+
+def ask(proxy, messages, key=None, **extra):
+    """Une requête de la conversation `messages`, outil déclaré. Par
+    défaut le backend répond ANSWER_TURN (aucune recherche)."""
+    if not proxy.replies:
+        proxy.replies = [FakeUpstream(stream(*ANSWER_TURN))]
+    body = {"model": "essai/qwen", "stream": True, "tools": [WEB],
+            "messages": messages, **extra}
+    r = proxy.client.post(
+        "/v1/chat/completions", json=body,
+        headers={"Authorization": f"Bearer {key}"} if key else None)
+    assert r.status_code == 200
+    return proxy.sent[-1]["messages"]
+
+
+def searched(proxy, messages=(Q1,), key=None):
+    """Le tour d'une réponse AVEC recherche : après lui, l'échange caché
+    de A1 est en mémoire."""
+    proxy.replies = [FakeUpstream(stream(*SEARCH_TURN)),
+                     FakeUpstream(stream(*ANSWER_TURN))]
+    return ask(proxy, list(messages), key)
+
+
+def roles(messages) -> str:
+    return " ".join(m["role"] for m in messages)
 
 
 def blocks(raw: bytes) -> list[dict]:
@@ -290,3 +331,195 @@ def test_declared_but_disabled_tool_is_refused(chat):
     for extra in ({}, {"tools": [], "web_search_options": {}}):
         assert post(chat, **extra).status_code == 400
     assert not chat.sent and not chat.lines
+
+
+def test_next_request_gets_the_hidden_exchange_back_byte_for_byte(chat):
+    """L'objectif de la mémoire : ce que le backend reçoit à la requête
+    suivante COMMENCE, à l'octet près, par ce qu'il a reçu au dernier
+    tour de la boucle, suivi de ce qu'il a répondu à ce tour-là."""
+    loop = searched(chat)
+    last = chat.raws[-1]
+    seen = last[:last.index(b'], "stream_options"')]   # jusqu'au résultat
+    assert seen.endswith(json.dumps(loop[-1], ensure_ascii=False).encode())
+    ask(chat, [Q1, A1, Q2])
+    answer = json.dumps({"role": "assistant", "content": "Voilà."},
+                        ensure_ascii=False).encode()
+    assert chat.raws[-1].startswith(seen + b", " + answer + b", ")
+    assert roles(chat.sent[-1]["messages"]) == "user assistant tool assistant user"
+
+    # Ce qu'un client change sans changer la réponse : l'échange revient.
+    for rewritten in (
+        {"role": "assistant", "content": "Je cherche.\n\nVoilà.\n "},
+        {"role": "assistant", "content": [
+            {"type": "text", "text": "Je cherche.\n\n"},
+            {"type": "text", "text": "Voilà."}]},
+        {**A1, "annotations": [], "reasoning_content": "hm"},
+    ):
+        sent = ask(chat, [{"role": "system", "content": "Il est 12 h 04."},
+                          Q1, rewritten, Q2])
+        assert sent[1:4] == loop and sent[5] == Q2
+        # Son message, au texte du dernier tour ; ses champs sont gardés.
+        assert sent[4] == {**rewritten, "content": "Voilà."}
+
+    # En JSON aussi l'échange est rangé.
+    chat.replies = [FakeUpstream(SEARCH_DOC), FakeUpstream(ANSWER_DOC)]
+    ask(chat, [Q2], stream=False)
+    assert roles(ask(chat, [Q2, A1, Q1])) == "user assistant tool assistant user"
+
+
+def test_in_doubt_nothing_is_reinserted(chat, monkeypatch):
+    """Réponse qui n'est plus celle rangée, historique amputé, entrée
+    expirée, mémoire coupée, autre client : l'historique du client part
+    tel quel, comme sans mémoire."""
+    part = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}}
+    for case, messages, setup in (
+        ("texte changé", [Q1, {**A1, "content": "Voilà."}, Q2], None),
+        ("pas que du texte", [Q1, {**A1, "content": [
+            {"type": "text", "text": A1["content"]}, part]}, Q2], None),
+        ("historique amputé", [A1, Q2], None),
+        ("question changée", [{**Q1, "content": "Autre ?"}, A1, Q2], None),
+        ("expirée", [Q1, A1, Q2], lambda: setattr(C.MEMORY, "ttl", -1)),
+        ("[chat].memory = false", [Q1, A1, Q2],
+         lambda: monkeypatch.setattr(C, "MEMORY_ENABLED", False)),
+    ):
+        monkeypatch.setattr(C, "MEMORY", C.Memory(8, 60, 100_000))
+        searched(chat)
+        if setup:
+            setup()
+        assert ask(chat, messages) == messages, case
+        monkeypatch.setattr(C, "MEMORY_ENABLED", True)
+
+    # Cloisonnée par client dès que le proxy a des clés.
+    monkeypatch.setattr(A, "PROXY_API_KEYS", ["un", "deux"])
+    searched(chat, key="un")
+    assert ask(chat, [Q1, A1, Q2], key="deux") == [Q1, A1, Q2]
+    assert len(ask(chat, [Q1, A1, Q2], key="un")) == 5
+
+
+def test_two_hidden_exchanges_in_one_conversation(chat):
+    """Chaque réponse a le sien, rangé sous ce que le CLIENT envoie — pas
+    sous ce qui a été réinséré : le troisième tour retrouve les deux."""
+    first = searched(chat)[1:]
+    chat.replies = [
+        FakeUpstream(stream(tool_call(0, "call_y", "web_fetch",
+                                      json.dumps({"url": URL})),
+                            chunk(finish="tool_calls"), usage(10, 1))),
+        FakeUpstream(stream(chunk({"content": "Lu."}), chunk(finish="stop"),
+                            usage(10, 1)))]
+    ask(chat, [Q1, A1, Q2])
+    last = chat.raws[-1]
+    seen = last[:last.index(b'], "stream_options"')]
+    second = chat.sent[-1]["messages"][-2:]
+    assert [m["role"] for m in second] == ["assistant", "tool"]
+
+    a2 = {"role": "assistant", "content": "Lu."}
+    q3 = {"role": "user", "content": "Merci."}
+    # (A1 revient cette fois avec une espace de fin : même message.)
+    sent = ask(chat, [Q1, {**A1, "content": A1["content"] + " "}, Q2, a2, q3])
+    assert sent == [Q1, *first, {**A1, "content": "Voilà."}, Q2, *second, a2, q3]
+    assert chat.raws[-1].startswith(
+        seen + b", " + json.dumps(a2).encode() + b", ")
+    # Le premier a expiré ou est sorti de la borne : le second revient seul.
+    del C.MEMORY._data[next(iter(C.MEMORY._data))]
+    assert ask(chat, [Q1, A1, Q2, a2, q3]) == [Q1, A1, Q2, *second, a2, q3]
+
+
+def test_without_declaration_the_history_is_not_read(chat, monkeypatch):
+    """Un client qui cesse de déclarer l'outil repasse au relais brut :
+    mêmes octets, la mémoire n'est pas consultée — et pas vidée : elle
+    sert de nouveau s'il redéclare."""
+    searched(chat)
+    body = json.dumps({"model": "essai/qwen", "messages": [Q1, A1, Q2],
+                       "stream": True}, ensure_ascii=False).encode()
+    inner = C.restore
+    monkeypatch.setattr(C, "restore", None)     # appelée = 500
+    chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
+    r = chat.client.post("/v1/chat/completions", content=body)
+    # Seul le préfixe du backend est retiré du modèle.
+    assert r.status_code == 200
+    assert chat.raws[-1] == body.replace(b"essai/qwen", b"qwen")
+    monkeypatch.setattr(C, "restore", inner)
+    assert len(ask(chat, [Q1, A1, Q2])) == 5
+
+
+def test_memory_is_bounded_and_never_holds_an_image(chat, monkeypatch):
+    memory = C.Memory(2, 60, 100)
+    exchange = lambda n: [{"role": "tool", "tool_call_id": "c", "content": "x" * n}]
+    for key, n in (("a", 40), ("b", 40), ("c", 40), ("gros", 101)):
+        memory.store(key, exchange(n), "fin")
+    # 43 caractères par entrée : la troisième fait sortir la première
+    # (borne en caractères), la quatrième dépasse à elle seule.
+    assert [memory.recall(k) is not None for k in ("a", "b", "c", "gros")] == [
+        False, True, True, False]
+    assert (len(memory), memory.size) == (2, 86)
+    memory.store("d", exchange(1), "")
+    assert len(memory) == 2 and memory.recall("b") is None      # borne en entrées
+
+    # Un résultat qui porte une image : le client la reçoit, la mémoire
+    # ne garde que le texte rendu au modèle.
+    class Picture(str):
+        b64, format = "QUJDREVGRw==", "png"
+
+    chat.hosted.result = Picture("Image generated.")
+    searched(chat)
+    kept = json.dumps([entry for _, _, entry in C.MEMORY._data.values()])
+    assert "Image generated." in kept and Picture.b64 not in kept
+
+
+def test_one_annotation_per_written_occurrence_of_a_source(chat):
+    """`text.find` de chaque source annotait aussi une URL PRÉFIXE de
+    celle que le modèle a écrite : deux annotations au même endroit."""
+    repo = URL.removesuffix("/releases")
+    archive = "https://web.archive.org/web/2026/" + URL
+    found = lambda *urls: web_search.render("q", [
+        {"title": f"T{i}", "date": "", "url": u, "snippet": ""}
+        for i, u in enumerate(urls)])
+    search = {"id": "c1", "function": {"name": "web_search", "arguments": QUERY}}
+    fetch = {"id": "c2", "function": {"name": "web_fetch",
+                                      "arguments": json.dumps({"url": URL})}}
+    for case, sources, calls, text, expected in (
+        ("préfixe d'une autre", (repo, URL), [search],
+         f"Les releases sont à l'URL {URL}.", [URL]),
+        ("deux sources, une URL", (URL,), [search, fetch],
+         f"Voir {URL}", [URL]),
+        ("accents, deux occurrences, les deux URL", (repo, URL), [search],
+         f"Dépôt « à jour » : {repo}, releases ({URL}) — où ? {URL}/",
+         [repo, URL, URL]),
+        ("une URL plus longue qu'une source n'est pas elle", (repo,), [search],
+         f"Voir {URL} et {repo}.git", []),
+        ("une source à l'intérieur d'une autre", (URL, archive), [search],
+         f"Copie : {archive}", [archive]),
+    ):
+        chat.hosted.result = found(*sources)
+        chat.replies = [
+            FakeUpstream(chat_doc({"content": "Je vérifie d'abord.",
+                                   "tool_calls": calls}, "tool_calls", 1, 1)),
+            FakeUpstream(chat_doc({"content": text}, "stop", 1, 1))]
+        message = post(chat, stream=False).json()["choices"][0]["message"]
+        cited = [a["url_citation"] for a in message.get("annotations", [])]
+        assert [c["url"] for c in cited] == expected, case
+        # Indices en caractères du contenu rendu, texte du premier tour
+        # et ligne vide compris.
+        assert message["content"] == "Je vérifie d'abord.\n\n" + text
+        assert all(message["content"][c["start_index"]:c["end_index"]]
+                   == c["url"] for c in cited), case
+        assert [c["start_index"] for c in cited] == sorted(
+            {c["start_index"] for c in cited}), case
+
+
+def test_responses_shaped_tool_choice_names_the_hosted_function(chat):
+    forced = {"type": "function", "function": {"name": "web_search"}}
+    for choice in (WEB, {"type": "web_search_preview"}):
+        chat.replies = [FakeUpstream(stream(*SEARCH_TURN)),
+                        FakeUpstream(stream(*ANSWER_TURN))]
+        assert post(chat, tool_choice=choice).status_code == 200
+        assert [s["tool_choice"] for s in chat.sent[-2:]] == [forced, "auto"]
+    sent = len(chat.sent)
+    for extra, reason in (
+        ({"tools": [fn("ls")]}, "ne déclare pas"),
+        ({"tools": [fn("web_search"), fn("web_fetch"), WEB]}, "ne déclare pas"),
+        ({"tool_choice": {"type": "image_generation"}}, "désactivé"),
+    ):
+        r = post(chat, **{"tool_choice": WEB, **extra})
+        assert r.status_code == 400 and reason in r.json()["error"]["message"]
+    assert len(chat.sent) == sent

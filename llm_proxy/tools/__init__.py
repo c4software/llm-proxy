@@ -48,7 +48,9 @@ Ce module porte ce qui est commun : le registre, l'exécution bornée
 (délai, taille du résultat), la ligne de STATISTIQUES de chaque exécution
 (stats.record_tool, depuis Hosted.run : des mesures, jamais le contenu)
 et la MÉMOIRE des résultats. Cette mémoire
-est la seule chose que le proxy conserve entre deux requêtes : le client
+est, avec celle des échanges cachés de chat_api (même logique, pour un
+client /v1/chat/completions), tout ce que le proxy conserve entre deux
+requêtes : le client
 renvoie au tour suivant l'élément `web_search_call` SANS son résultat
 (OpenAI le garde côté serveur), et il faut le rendre au modèle à
 l'identique — sinon il perd ce qu'il a lu, et le préfixe change sous un

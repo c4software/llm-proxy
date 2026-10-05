@@ -130,9 +130,11 @@ reasoning_as_summary = true
 # (exécution, relance du backend) : le client reçoit UNE réponse
 # ordinaire, sans `tool_calls` pour ces appels. Un outil déclaré mais
 # désactivé plus bas → 400.
-# À SAVOIR : le client ne garde ni ces appels ni leurs résultats. À la
-# requête suivante le modèle n'a plus ce qu'il avait lu, et le cache de
-# préfixe du backend ne sert que jusqu'au message d'avant la recherche.
+# À SAVOIR : le client ne garde ni ces appels ni leurs résultats. Le
+# proxy les lui rend à la requête suivante tant que `memory` les garde
+# (voir plus bas) ; sinon le modèle n'a plus ce qu'il avait lu, et le
+# cache de préfixe du backend ne sert que jusqu'au message d'avant la
+# recherche.
 # Table absente ou hosted_tools = false → comme avant : relais brut, la
 # déclaration part telle quelle au backend (qui la refuse, ou en a SA
 # lecture — Zhipu). Une requête qui ne déclare rien n'est jamais touchée.
@@ -141,6 +143,20 @@ hosted_tools = true
 # Annotations `url_citation` (forme OpenAI) en fin de réponse : les URL
 # rendues par un outil ET écrites par le modèle. false = aucune.
 annotations = true
+# Mémoire des échanges cachés : à la conclusion d'une réponse, les appels
+# hébergés et le texte de leurs résultats sont gardés sous un condensé
+# des messages de la requête et de la réponse (aucun identifiant de
+# conversation en chat/completions) ; à la requête suivante, si le client
+# renvoie cette réponse et ce qui la précède inchangés, ils sont
+# réinsérés à leur place avant l'envoi au backend. En mémoire vive
+# seulement, cloisonnée par clé du proxy, jamais d'image ; nombre
+# d'entrées et durée : [tools].cache_entries et cache_ttl. false = rien
+# n'est gardé ni réinséré.
+memory = true
+# Caractères gardés au plus, toutes entrées confondues (un échange peut
+# porter 8 résultats de 24 000 caractères) : au-delà, les moins
+# récemment relus sortent.
+memory_chars = 8000000
 
 
 # ── Outils hébergés (surfaces Responses et Anthropic) ───────────────────
