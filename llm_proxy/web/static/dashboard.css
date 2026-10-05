@@ -301,4 +301,10 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
 }
 
 /* La ligne du cache web, sous le tableau des outils. */
-.panel.tools .webcache { font-size: 12.5px; color: var(--muted); margin: 12px 0 0; }
+/* Mêmes marges latérales que l'en-tête du panneau (20px) ; un filet la
+   sépare du tableau quand il y en a un. */
+.panel.tools .webcache {
+  font-size: 12.5px; line-height: 1.5; color: var(--muted);
+  margin: 0; padding: 14px 20px 16px;
+}
+.panel.tools .scroll + .webcache { border-top: 1px solid var(--line); }
