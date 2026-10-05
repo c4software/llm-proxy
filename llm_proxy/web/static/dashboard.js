@@ -23,6 +23,12 @@
   « Brancher un client » (auth, surface Anthropic, modèles connus) — ce
   n'est pas de l'usage, ça ne bouge pas, ça ne se rafraîchit pas.
 
+  La section « Outils » a son propre appel, à la route sœur
+  (/ui/usage/tools = /v1/organization/usage/tools) : UN seau sur la même
+  période, groupé par outil et par route d'appel. Elle ne montre que des
+  totaux, il n'y a donc rien à découper ; et elle disparaît quand aucun
+  outil hébergé n'a servi dans la fenêtre.
+
   Rien n'est demandé tant que l'onglet est masqué.
 
   Le rafraîchissement ne clignote pas : Vue rapproche les listes par leur
@@ -34,6 +40,7 @@ const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
 createApp({
   setup() {
     const API = "/ui/usage";
+    const API_TOOLS = "/ui/usage/tools";
     const REFRESH = 5000;
     const STORE = "llm-proxy-window";
     const STORE_METRIC = "llm-proxy-metric";
@@ -72,6 +79,9 @@ createApp({
     const buckets = ref([]);      // seaux de la période, groupés par modèle
     const bucketWidth = ref("1d");
     const since = ref(0);         // plus ancien enregistrement connu
+    // Exécutions d'outils hébergés de la période : les lignes de résultat
+    // d'un seau unique, une par couple (outil, route d'appel).
+    const toolResults = ref([]);
     const loaded = ref(false);
     // Horloge : fait vieillir les « il y a 3 min » sans aucune requête.
     const now = ref(Date.now() / 1000);
@@ -201,6 +211,46 @@ createApp({
         : "aucun trafic";
     });
 
+    // Un outil hébergé par ligne, recomposé depuis ses lignes par route
+    // d'appel : tout s'additionne ou se maximise, comme pour les modèles.
+    // La durée moyenne porte sur les appels réellement lancés — un refus
+    // par limite d'appels n'exécute rien et ne dure rien.
+    const tools = computed(() => {
+      const acc = new Map();
+      for (const r of toolResults.value) {
+        let t = acc.get(r.tool);
+        if (!t) {
+          acc.set(r.tool, t = {
+            id: r.tool, calls: 0, errors: 0, limited: 0, durationSum: 0,
+            maxDuration: 0, chars: 0, last: 0, routes: [],
+          });
+        }
+        t.calls += r.num_requests;
+        t.errors += r.num_errors;
+        t.limited += r.num_limited;
+        t.durationSum += r.total_duration_seconds;
+        t.maxDuration = Math.max(t.maxDuration, r.max_duration_seconds);
+        t.chars += r.result_chars;
+        t.last = Math.max(t.last, r.last_request_time);
+        t.routes.push({ endpoint: r.endpoint, calls: r.num_requests });
+      }
+      return [...acc.values()]
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((t) => {
+          const ran = t.calls - t.limited;
+          return {
+            ...t,
+            avgDuration: ran ? t.durationSum / ran : 0,
+            // Répartition par route d'appel, en une ligne de texte.
+            routes: t.routes
+              .sort((a, b) => a.endpoint.localeCompare(b.endpoint))
+              .map((r) => r.endpoint + " : " + num(r.calls)).join(" · "),
+          };
+        });
+    });
+    const toolCalls = computed(() =>
+      tools.value.reduce((s, t) => s + t.calls, 0));
+
     // Valeur d'un seau DANS LA MESURE COURANTE : c'est elle qui donne
     // l'échelle de la courbe et le partage de chaque barre.
     const pick = computed(() => metricById[metric.value].pick);
@@ -318,11 +368,11 @@ claude`,
       ? "1 heure" : "1 jour");
 
     // ── lecture de l'Usage API ──────────────────────────────────────────
-    const ask = (params) => {
+    const ask = (params, api = API) => {
       const q = Object.entries(params)
         .filter(([, v]) => v !== null && v !== undefined)
         .map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
-      return fetch(API + "?" + q, { headers: { accept: "application/json" } })
+      return fetch(api + "?" + q, { headers: { accept: "application/json" } })
         .then((r) => (r.ok ? r.json() : Promise.reject(r.status)));
     };
 
@@ -353,11 +403,25 @@ claude`,
         // seau commencerait avant la plage demandée et les totaux
         // porteraient sur un peu plus que ce que la courbe montre.
         const start = Math.floor((stamp - range) / seconds) * seconds;
-        const page = await ask({
-          start_time: start, bucket_width: width, "group_by[]": "model",
-          limit: Math.min(Math.ceil((stamp - start) / seconds) + 1, 180),
-        });
+        // Les deux lectures partent ensemble. Celle des outils couvre la
+        // même période en UN seau ; en vue « Tout » elle part de zéro,
+        // l'étendue de l'historique étant celle des REQUÊTES — un outil
+        // appelé directement (/v1/tools) peut les précéder. Si elle
+        // échoue, le reste de la page n'en dépend pas.
+        const [page, toolPage] = await Promise.all([
+          ask({
+            start_time: start, bucket_width: width, "group_by[]": "model",
+            limit: Math.min(Math.ceil((stamp - start) / seconds) + 1, 180),
+          }),
+          ask({
+            start_time: span ? start : 0, bucket_width: "all",
+            "group_by[]": "tool,endpoint", limit: 1,
+          }, API_TOOLS).catch(() => null),
+        ]);
         if (win !== current.value) return;   // période changée entre-temps
+        if (toolPage) {
+          toolResults.value = ((toolPage.data || [])[0] || {}).results || [];
+        }
         bucketWidth.value = width;
         buckets.value = page.data || [];
         loaded.value = true;
@@ -436,7 +500,7 @@ claude`,
     });
 
     return { windows, current, metrics, metric, metricUnit, metricLabel,
-             models, totals, bars, axis, peak, since, now,
+             models, totals, bars, axis, peak, since, now, tools, toolCalls,
              loaded, entering, anthropic, authRequired, exampleModel,
              snippets, origin, note, shortcuts, bucketLabel, successRate,
              backendSummary, num, ms, ago, dur, moment, tickLabel, select,

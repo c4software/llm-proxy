@@ -21,6 +21,8 @@ Rôles :
      en est le tableau de bord — une page HTML statique
      (web/templates/index.html) que web/static/dashboard.js remplit en
      appelant cette même route sous /ui/usage, en vues All / Week / Day ;
+     GET /v1/organization/usage/tools en est la route sœur, de même
+     forme, pour les exécutions d'outils hébergés (/ui/usage/tools) ;
   4ter. la surface Anthropic (anthropic_api.py), si [anthropic].enabled :
      POST /v1/messages et /v1/messages/count_tokens, et GET /v1/models à
      la forme Anthropic quand la requête porte `anthropic-version`. Un
@@ -1008,6 +1010,9 @@ async def tokenize_upstream(b: Backend, model: str, payload: dict) -> int | None
 # ── Usage API ───────────────────────────────────────────────────────────
 
 USAGE_PATH = "/v1/organization/usage/completions"
+# Route sœur, propre au proxy : les exécutions d'outils hébergés, à la
+# même forme (stats.usage_tools).
+USAGE_TOOLS_PATH = "/v1/organization/usage/tools"
 
 
 # ── Surface Responses ───────────────────────────────────────────────────
@@ -1208,7 +1213,8 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                 name = pending["name"]
                 task = asyncio.ensure_future(hosted.run(
                     name, pending["arguments"], used, limit, options,
-                    same.get(name, 0)))
+                    same.get(name, 0), endpoint=call.endpoint,
+                    model=call.model_key))
                 while not await _settled(task, ping):
                     yield ping
                 result, task = task.result(), None
@@ -1296,9 +1302,11 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
             await upstream.aclose()
 
 
-def usage_query(request: Request) -> dict | JSONResponse:
+def usage_query(request: Request,
+                group_fields=stats.GROUP_FIELDS) -> dict | JSONResponse:
     """Lit et valide les paramètres de l'Usage API. `start_time` est le
-    seul obligatoire, comme à l'upstream."""
+    seul obligatoire, comme à l'upstream. `group_fields` : les champs de
+    `group_by` de la route interrogée — le seul paramètre qui en dépende."""
     q = request.query_params
 
     def repeated(name: str) -> list[str]:
@@ -1315,7 +1323,7 @@ def usage_query(request: Request) -> dict | JSONResponse:
         )
 
     try:
-        group_by = stats.parse_group_by(repeated("group_by"))
+        group_by = stats.parse_group_by(repeated("group_by"), group_fields)
     except ValueError as exc:
         return invalid(str(exc), "group_by")
     width = q.get("bucket_width", "1d")
@@ -1357,20 +1365,32 @@ def usage_query(request: Request) -> dict | JSONResponse:
     }
 
 
-async def usage_page(request: Request):
+async def usage_page(request: Request, read=stats.usage_completions,
+                     group_fields=stats.GROUP_FIELDS):
     """Forme de l'Usage API OpenAI, page → buckets → results. Un modèle
     n'apparaît que s'il a servi au moins une requête dans le seau
     concerné. Les agrégats sortent de SQLite : la lecture part dans le
-    pool de threads pour ne pas bloquer la boucle d'événements."""
-    params = usage_query(request)
+    pool de threads pour ne pas bloquer la boucle d'événements.
+    `read` / `group_fields` : la lecture et les champs de `group_by` de la
+    route — les requêtes par défaut, les outils pour usage_tools."""
+    params = usage_query(request, group_fields)
     if isinstance(params, JSONResponse):
         return params
-    return await run_in_threadpool(stats.usage_completions, **params)
+    return await run_in_threadpool(read, **params)
 
 
 @app.get(USAGE_PATH)
 async def usage_completions(request: Request):
     return await usage_page(request)
+
+
+@app.get(USAGE_TOOLS_PATH)
+async def usage_tools(request: Request):
+    """Les exécutions d'outils hébergés : mêmes paramètres, mêmes
+    validations, même pagination que la route ci-dessus ; `group_by` sur
+    `tool`, `endpoint` (la route d'appel) et `model`."""
+    return await usage_page(request, stats.usage_tools,
+                            stats.TOOL_GROUP_FIELDS)
 
 
 @app.get("/ui", response_class=HTMLResponse)
@@ -1397,6 +1417,12 @@ async def ui_usage(request: Request):
     cookie posé par la page y suffit comme authentification (un fetch de
     navigateur ne peut pas porter le Bearer)."""
     return await usage_page(request)
+
+
+@app.get("/ui/usage/tools")
+async def ui_usage_tools(request: Request):
+    """La route d'usage des outils, sous /ui pour la même raison."""
+    return await usage_tools(request)
 
 
 @app.get("/")
@@ -1446,7 +1472,8 @@ async def tools_run(name: str, request: Request):
         return error_response("openai", 400, "invalid_request_error",
                               "corps attendu : les arguments de l'outil, "
                               "en objet JSON")
-    result = await hosted.run(name, json.dumps(args, ensure_ascii=False), 0)
+    result = await hosted.run(name, json.dumps(args, ensure_ascii=False), 0,
+                              endpoint="/v1/tools")
     return {"name": name, "result": result,
             "is_error": result.startswith("Error:")}
 

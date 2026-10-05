@@ -20,6 +20,18 @@ bloquent donc pas l'écrivain.
 Le retour reste DYNAMIQUE — un modèle n'apparaît que s'il a réellement
 servi au moins une requête dans la fenêtre demandée.
 
+Les exécutions d'OUTILS HÉBERGÉS (paquet tools/) ont leur propre table,
+`tool_calls` : une ligne par exécution, déposée par tools.Hosted.run —
+le point unique par où passent /v1/responses, /v1/messages et /v1/tools —
+dans la même file, écrite par le même thread, purgée par la même règle.
+Elle ne porte QUE des mesures (outil, route d'appel, modèle, issue, durée,
+taille du résultat) : ni la requête de recherche, ni l'URL lue, ni le
+résultat — ce que les utilisateurs cherchent ou lisent n'a pas à survivre
+dans une base de statistiques. Lecture par une route sœur, de même forme
+(`/v1/organization/usage/tools`, voir usage_tools). La table `requests`
+n'en est pas changée : une réponse qui a utilisé des outils y garde UNE
+ligne, avec son usage de tokens cumulé.
+
 Comptage des tokens, par ordre de préférence :
   1. le bloc `usage` renvoyé par l'upstream (exact) — présent sur les
      réponses non streamées, et sur les flux SSE quand le client a
@@ -249,6 +261,43 @@ INSERT INTO requests (ts, model_key, backend, model, endpoint, status,
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
+# Une ligne par exécution d'outil hébergé. Table à part, créée par le même
+# `CREATE TABLE IF NOT EXISTS` au démarrage : une base d'avant les outils
+# (qui n'a que `requests`) la reçoit sans rien perdre ni rien rejouer.
+#   endpoint   la route par où l'outil a été appelé : /v1/responses,
+#              /v1/messages (les boucles du proxy) ou /v1/tools (direct) ;
+#   model_key  le modèle PRÉFIXÉ de la conversation ; vide pour l'appel
+#              direct, où le proxy ne voit pas de modèle ;
+#   outcome    «ok», «error» (le résultat est un texte «Error: …») ou
+#              «limit» (refus par limite d'appels : rien n'a été exécuté) ;
+#   duration   secondes d'exécution (0 pour un refus) ;
+#   result_chars  caractères du résultat rendu au modèle.
+# Volontairement AUCUNE colonne de contenu (arguments, requête, URL,
+# résultat) : le journal applicatif les montre, les statistiques non.
+TOOLS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS tool_calls (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts           REAL    NOT NULL,
+  tool         TEXT    NOT NULL,
+  endpoint     TEXT    NOT NULL,
+  model_key    TEXT    NOT NULL DEFAULT '',
+  outcome      TEXT    NOT NULL,
+  duration     REAL    NOT NULL,
+  result_chars INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tool_calls_ts ON tool_calls(ts);
+"""
+
+INSERT_TOOL = """
+INSERT INTO tool_calls (ts, tool, endpoint, model_key, outcome, duration,
+                        result_chars)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+"""
+
+TOOL_OUTCOMES = ("ok", "error", "limit")
+# Les tables à lignes horodatées : la purge et reset() les parcourent.
+TABLES = ("requests", "tool_calls")
+
 # Colonnes ajoutées après coup : une base existante les reçoit par ALTER
 # TABLE au démarrage, avec leur défaut — aucune migration à jouer à la
 # main. (nom, définition)
@@ -290,8 +339,8 @@ def _purge(conn: sqlite3.Connection) -> None:
     if RETENTION_DAYS <= 0:
         return
     cutoff = time.time() - RETENTION_DAYS * 86_400
-    removed = conn.execute("DELETE FROM requests WHERE ts < ?",
-                           (cutoff,)).rowcount
+    removed = sum(conn.execute(f"DELETE FROM {table} WHERE ts < ?",
+                               (cutoff,)).rowcount for table in TABLES)
     conn.commit()
     if removed:
         log.info("stats : %d ligne(s) de plus de %.0f jours purgée(s)",
@@ -320,7 +369,11 @@ def _write_loop(conn: sqlite3.Connection) -> None:
                 break
             batch.append(extra)
         try:
-            conn.executemany(INSERT, batch)
+            # Chaque élément de la file est (INSERT de sa table, ligne).
+            for sql in (INSERT, INSERT_TOOL):
+                rows = [r for s, r in batch if s is sql]
+                if rows:
+                    conn.executemany(sql, rows)
             conn.commit()
         except sqlite3.Error as exc:
             log.error("stats : écriture impossible (%d ligne(s)) : %s",
@@ -346,6 +399,7 @@ def init() -> None:
         os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
         conn = _connect()
         conn.executescript(SCHEMA)
+        conn.executescript(TOOLS_SCHEMA)
         conn.commit()
         _migrate(conn)
         _purge(conn)
@@ -356,11 +410,13 @@ def init() -> None:
     with _reader() as r:
         row = r.execute("SELECT COUNT(*), MIN(ts) FROM requests").fetchone()
         total, oldest = row[0], row[1]
+        tool_runs = r.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
     log.info(
-        "stats : %s | %d requête(s) déjà en base%s | rétention %s",
+        "stats : %s | %d requête(s) déjà en base%s | %d exécution(s) "
+        "d'outil | rétention %s",
         DB_PATH, total,
         f" depuis {time.strftime('%Y-%m-%d', time.localtime(oldest))}"
-        if oldest else "",
+        if oldest else "", tool_runs,
         f"{RETENTION_DAYS:.0f} j" if RETENTION_DAYS > 0 else "illimitée",
     )
 
@@ -394,13 +450,34 @@ def record(model_key: str, backend: str, model: str, endpoint: str,
     le client. Non bloquant : la ligne part dans la file d'écriture."""
     if not model_key:
         return
-    global _dropped
     row = (time.time(), model_key, backend, model, "/" + endpoint.strip("/"),
            int(status), max(float(latency), 0.0), max(int(prompt_tokens), 0),
            max(int(completion_tokens), 0), int(bool(exact)),
            int(bool(streamed)), max(int(cached_tokens), 0))
+    _enqueue(INSERT, row)
+
+
+def record_tool(tool: str, endpoint: str, model_key: str, outcome: str,
+                duration: float, result_chars: int) -> None:
+    """Enregistre UNE exécution d'outil hébergé (voir TOOLS_SCHEMA). Non
+    bloquant, comme record(). `endpoint` : la route d'appel ; `model_key` :
+    le modèle préfixé de la conversation, vide pour l'appel direct.
+    Aucun paramètre ne porte de contenu, et ce n'est pas un oubli.
+
+    Sans écrivain (stats.init() pas appelé : un outil exécuté hors de
+    l'application) rien n'est déposé — personne ne viderait la file, et
+    ses lignes finiraient dans la première base ouverte ensuite."""
+    if _writer is None or not tool or outcome not in TOOL_OUTCOMES:
+        return
+    _enqueue(INSERT_TOOL, (
+        time.time(), tool, "/" + endpoint.strip("/"), model_key or "",
+        outcome, max(float(duration), 0.0), max(int(result_chars), 0)))
+
+
+def _enqueue(sql: str, row: tuple) -> None:
+    global _dropped
     try:
-        _pending.put_nowait(row)
+        _pending.put_nowait((sql, row))
     except queue.Full:
         _dropped += 1
         if _dropped % 100 == 1:
@@ -457,20 +534,20 @@ GROUP BY b, mk
 ORDER BY b, mk
 """
 
-def parse_group_by(values) -> list[str]:
+def parse_group_by(values, fields=GROUP_FIELDS) -> list[str]:
     """`group_by` accepte la forme répétée (?group_by=a&group_by=b) et la
     forme séparée par des virgules. Un champ inconnu est une erreur, comme
-    à l'upstream."""
+    à l'upstream. `fields` : ceux de la route interrogée."""
     out = []
     for value in values or []:
         for field in str(value).split(","):
             field = field.strip()
             if not field:
                 continue
-            if field not in GROUP_FIELDS:
+            if field not in fields:
                 raise ValueError(
                     f"group_by « {field} » inconnu ; attendu : "
-                    + ", ".join(GROUP_FIELDS)
+                    + ", ".join(fields)
                 )
             if field not in out:
                 out.append(field)
@@ -487,26 +564,42 @@ def default_limit(bucket_width: str) -> int:
     return DEFAULT_LIMITS.get(bucket_width, 7)
 
 
-def usage_completions(start_time: int, end_time: int | None = None,
-                      bucket_width: str = "1d", group_by=(),
-                      limit: int | None = None, page: str | None = None,
-                      models=(), empty: bool = False) -> dict:
-    """`empty` : un filtre porte sur une dimension que le proxy ne
+def _empty_page() -> dict:
+    return {"object": "page", "data": [], "has_more": False,
+            "next_page": None}
+
+
+def _model_filter(models) -> tuple[str, tuple]:
+    """Filtre `models` : les ids sont ceux que le client emploie, donc les
+    noms PRÉFIXÉS (« albert/openweight-large »)."""
+    models = [str(m) for m in models if str(m)]
+    if not models:
+        return "", ()
+    return (" AND model_key IN (%s)" % ", ".join("?" * len(models)),
+            tuple(models))
+
+
+def _usage_page(start_time: int, end_time: int | None, bucket_width: str,
+                limit: int | None, page: str | None, empty: bool,
+                results) -> dict:
+    """La page d'Usage API, commune à toutes les routes d'usage du proxy :
+    fenêtre, découpage en seaux alignés, pagination, forme page → bucket.
+    Ce qui diffère d'une route à l'autre lui est passé :
+    `results(origin, width, lo, hi)` lit les agrégats de la plage [lo, hi[
+    et rend, par ligne, (indice du seau, horodatage de sa première ligne,
+    l'objet `result`).
+
+    `empty` : un filtre porte sur une dimension que le proxy ne
     possède pas (projet, utilisateur, clé nommée, lot). Aucune ligne ne
     peut y correspondre — on rend une page vide plutôt que d'ignorer
     silencieusement le filtre et de sur-déclarer l'usage."""
     if empty:
-        return {"object": "page", "data": [], "has_more": False,
-                "next_page": None}
+        return _empty_page()
     now = int(time.time())
     start_time = max(int(start_time), 0)
     end_time = int(end_time) if end_time else now
     if end_time <= start_time:
-        return {"object": "page", "data": [], "has_more": False,
-                "next_page": None}
-    group_by = list(group_by)
-    by_model = "model" in group_by
-    model_expr = "model_key" if by_model else "NULL"
+        return _empty_page()
 
     single = bucket_width == "all"
     if single:
@@ -525,62 +618,15 @@ def usage_completions(start_time: int, end_time: int | None = None,
     count = min(limit if limit else default_limit(bucket_width), MAX_LIMIT)
     count = max(min(count, total - first), 0)
     if count <= 0:
-        return {"object": "page", "data": [], "has_more": False,
-                "next_page": None}
+        return _empty_page()
 
     lo = origin + first * width
     hi = min(lo + count * width, end_time) if single else lo + count * width
-    # Filtre `models` : les ids sont ceux que le client emploie, donc les
-    # noms PRÉFIXÉS (« albert/openweight-large »).
-    models = [str(m) for m in models if str(m)]
-    where = ""
-    tail = ()
-    if models:
-        where = " AND model_key IN (%s)" % ", ".join("?" * len(models))
-        tail = tuple(models)
-    with _reader() as conn:
-        rows = conn.execute(_AGG.format(model=model_expr, filter=where),
-                            (origin, width, lo, hi) + tail).fetchall()
 
     grouped: dict[int, list] = {}
     seen_first: dict[int, float] = {}
-    for (b, mk, prompt, completion, requests, errors, streamed, estimated,
-         anthropic, cached, latency_sum, latency_max, first_ts, last_ts) in rows:
-        grouped.setdefault(b, []).append({
-            "object": "organization.usage.completions.result",
-            "input_tokens": prompt or 0,
-            "output_tokens": completion or 0,
-            # Tokens d'entrée servis depuis le cache de préfixe du
-            # backend, quand l'upstream le dit (prompt_tokens_details.
-            # cached_tokens — llama.cpp, vLLM, OpenAI) ; 0 sinon, jamais
-            # une valeur inventée. Inclus dans input_tokens, comme chez
-            # OpenAI. L'audio, lui, reste inconnu : 0.
-            "input_cached_tokens": cached or 0,
-            "input_audio_tokens": 0,
-            "output_audio_tokens": 0,
-            "num_model_requests": requests,
-            "project_id": None,
-            "user_id": None,
-            "api_key_id": None,
-            "model": mk,
-            "batch": None,
-            # ── extensions du proxy (hors schéma OpenAI) ──
-            "num_errors": errors or 0,
-            "num_streamed_requests": streamed or 0,
-            "num_estimated_requests": estimated or 0,
-            # Requêtes arrivées par la surface Anthropic (/v1/messages,
-            # c'est-à-dire Claude Code) : la colonne `endpoint` suffit.
-            "num_anthropic_requests": anthropic or 0,
-            # Latences EXACTEMENT recomposables d'un seau à l'autre : la
-            # somme s'additionne, le maximum se maximise. Un percentile,
-            # lui, ne se recompose pas — c'est pourquoi il n'y en a pas.
-            "total_latency_seconds": round(latency_sum or 0.0, 3),
-            "avg_latency_seconds": round((latency_sum or 0.0) / requests, 3)
-            if requests else 0.0,
-            "max_latency_seconds": round(latency_max or 0.0, 3),
-            "first_request_time": int(first_ts),
-            "last_request_time": int(last_ts),
-        })
+    for b, first_ts, result in results(origin, width, lo, hi):
+        grouped.setdefault(b, []).append(result)
         seen_first[b] = min(seen_first.get(b, first_ts), first_ts)
 
     def bounds(i: int) -> tuple[int, int]:
@@ -609,8 +655,159 @@ def usage_completions(start_time: int, end_time: int | None = None,
     }
 
 
+def usage_completions(start_time: int, end_time: int | None = None,
+                      bucket_width: str = "1d", group_by=(),
+                      limit: int | None = None, page: str | None = None,
+                      models=(), empty: bool = False) -> dict:
+    """`/v1/organization/usage/completions` : les requêtes relayées, par
+    seau et — avec group_by=model — par modèle. Fenêtre, seaux et
+    pagination : _usage_page."""
+    model_expr = "model_key" if "model" in list(group_by) else "NULL"
+    where, tail = _model_filter(models)
+
+    def results(origin, width, lo, hi):
+        with _reader() as conn:
+            rows = conn.execute(_AGG.format(model=model_expr, filter=where),
+                                (origin, width, lo, hi) + tail).fetchall()
+        for (b, mk, prompt, completion, requests, errors, streamed,
+             estimated, anthropic, cached, latency_sum, latency_max,
+             first_ts, last_ts) in rows:
+            yield b, first_ts, {
+                "object": "organization.usage.completions.result",
+                "input_tokens": prompt or 0,
+                "output_tokens": completion or 0,
+                # Tokens d'entrée servis depuis le cache de préfixe du
+                # backend, quand l'upstream le dit (prompt_tokens_details.
+                # cached_tokens — llama.cpp, vLLM, OpenAI) ; 0 sinon, jamais
+                # une valeur inventée. Inclus dans input_tokens, comme chez
+                # OpenAI. L'audio, lui, reste inconnu : 0.
+                "input_cached_tokens": cached or 0,
+                "input_audio_tokens": 0,
+                "output_audio_tokens": 0,
+                "num_model_requests": requests,
+                "project_id": None,
+                "user_id": None,
+                "api_key_id": None,
+                "model": mk,
+                "batch": None,
+                # ── extensions du proxy (hors schéma OpenAI) ──
+                "num_errors": errors or 0,
+                "num_streamed_requests": streamed or 0,
+                "num_estimated_requests": estimated or 0,
+                # Requêtes arrivées par la surface Anthropic (/v1/messages,
+                # c'est-à-dire Claude Code) : la colonne `endpoint` suffit.
+                "num_anthropic_requests": anthropic or 0,
+                # Latences EXACTEMENT recomposables d'un seau à l'autre : la
+                # somme s'additionne, le maximum se maximise. Un percentile,
+                # lui, ne se recompose pas — c'est pourquoi il n'y en a pas.
+                "total_latency_seconds": round(latency_sum or 0.0, 3),
+                "avg_latency_seconds": round((latency_sum or 0.0) / requests, 3)
+                if requests else 0.0,
+                "max_latency_seconds": round(latency_max or 0.0, 3),
+                "first_request_time": int(first_ts),
+                "last_request_time": int(last_ts),
+            }
+
+    return _usage_page(start_time, end_time, bucket_width, limit, page,
+                       empty, results)
+
+
+# ── Usage des outils hébergés ───────────────────────────────────────────
+#
+# L'Usage API d'OpenAI a une route par nature d'usage, toutes de la même
+# forme (completions, embeddings, images, web_search_calls,
+# file_search_calls, code_interpreter_sessions…). Aucune ne couvre «les
+# appels d'outils» en général : `web_search_calls` ne compte que des
+# recherches (num_requests, par modèle et `context_level`), sans issue ni
+# durée, et rien n'existe pour une lecture de page. `/tools` est donc une
+# route SŒUR, propre au proxy, à la forme commune : même page, mêmes
+# seaux, mêmes paramètres. `num_requests` y est le nombre d'appels, comme
+# dans les résultats web_searches / file_searches d'OpenAI ; `tool` et
+# `endpoint` sont des dimensions du proxy.
+#
+# Mêmes propriétés que les latences des requêtes : tout s'additionne ou se
+# maximise, un client recompose une période depuis des seaux plus fins.
+
+TOOL_GROUP_FIELDS = ("tool", "endpoint", "model", "project_id", "user_id",
+                     "api_key_id")
+
+_TOOL_AGG = """
+SELECT CAST((ts - ?) / ? AS INTEGER)      AS b,
+       {tool}                             AS t,
+       {endpoint}                         AS e,
+       {model}                            AS mk,
+       COUNT(*),
+       SUM(outcome = 'error'),
+       SUM(outcome = 'limit'),
+       SUM(duration),
+       MAX(duration),
+       SUM(result_chars),
+       MIN(ts),
+       MAX(ts)
+FROM tool_calls WHERE ts >= ? AND ts < ?{filter}
+GROUP BY b, t, e, mk
+ORDER BY b, t, e, mk
+"""
+
+
+def usage_tools(start_time: int, end_time: int | None = None,
+                bucket_width: str = "1d", group_by=(),
+                limit: int | None = None, page: str | None = None,
+                models=(), empty: bool = False) -> dict:
+    """`/v1/organization/usage/tools` : les exécutions d'outils hébergés,
+    par seau et — selon group_by — par outil, par route d'appel, par
+    modèle. Mêmes paramètres et même page que usage_completions."""
+    group_by = list(group_by)
+    exprs = {
+        "tool": "tool" if "tool" in group_by else "NULL",
+        "endpoint": "endpoint" if "endpoint" in group_by else "NULL",
+        # Appel direct (/v1/tools) : pas de modèle, donc null — pas «».
+        "model": "NULLIF(model_key, '')" if "model" in group_by else "NULL",
+    }
+    where, tail = _model_filter(models)
+
+    def results(origin, width, lo, hi):
+        with _reader() as conn:
+            rows = conn.execute(_TOOL_AGG.format(filter=where, **exprs),
+                                (origin, width, lo, hi) + tail).fetchall()
+        for (b, tool, endpoint, mk, calls, errors, limited, duration_sum,
+             duration_max, chars, first_ts, last_ts) in rows:
+            # Un refus par limite n'exécute rien (durée 0) : la moyenne
+            # porte sur les appels réellement lancés.
+            ran = calls - (limited or 0)
+            yield b, first_ts, {
+                "object": "organization.usage.tools.result",
+                "num_requests": calls,
+                "project_id": None,
+                "user_id": None,
+                "api_key_id": None,
+                "model": mk,
+                # ── dimensions et mesures du proxy ──
+                "tool": tool,
+                "endpoint": endpoint,
+                # Le résultat rendu au modèle commençait par «Error:».
+                "num_errors": errors or 0,
+                # Refus par limite d'appels (tools.max_calls, max_uses du
+                # client, limite propre à l'outil) : comptés à part, ce
+                # ne sont pas des pannes de l'outil.
+                "num_limited": limited or 0,
+                "total_duration_seconds": round(duration_sum or 0.0, 3),
+                "avg_duration_seconds": round((duration_sum or 0.0) / ran, 3)
+                if ran else 0.0,
+                "max_duration_seconds": round(duration_max or 0.0, 3),
+                # Caractères rendus au modèle, tous résultats confondus.
+                "result_chars": chars or 0,
+                "first_request_time": int(first_ts),
+                "last_request_time": int(last_ts),
+            }
+
+    return _usage_page(start_time, end_time, bucket_width, limit, page,
+                       empty, results)
+
+
 def reset() -> None:
     """Efface l'historique persistant."""
     with _reader() as conn:
-        conn.execute("DELETE FROM requests")
+        for table in TABLES:
+            conn.execute(f"DELETE FROM {table}")
         conn.commit()

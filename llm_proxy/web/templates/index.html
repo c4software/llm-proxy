@@ -7,7 +7,8 @@
 
   Les chiffres viennent de /ui/usage, c'est-à-dire l'Usage API OpenAI du
   proxy (/v1/organization/usage/completions) servie sous /ui pour que le
-  cookie de la page suffise à s'authentifier.
+  cookie de la page suffise à s'authentifier ; ceux de la section Outils,
+  de sa route sœur /ui/usage/tools (/v1/organization/usage/tools).
 -->
 <html lang="fr">
 <head>
@@ -195,6 +196,55 @@
               <div v-else>Les modèles apparaîtront ici dès leur première
                 requête.</div>
             </div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Les outils que le proxy exécute lui-même (recherche web, lecture
+       de page, génération d'image), sur la même période. Absente tant
+       qu'aucun n'a servi dans la fenêtre. Des mesures seulement : ce qui
+       a été cherché ou lu n'est pas dans les statistiques. -->
+  <div class="panel tools" v-if="tools.length">
+    <div class="panel-head">
+      <h2>Outils</h2>
+      <span class="meta">{{ num(toolCalls) }} exécution{{ toolCalls > 1 ? "s" : "" }}
+        d'outils hébergés · {{ note }}</span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Outil</th><th>Appels</th><th>Erreurs</th><th>Refus</th>
+          <th>Durée moy.</th><th>Durée max</th><th>Rendu</th>
+          <th>Dernier</th>
+        </tr></thead>
+        <tbody>
+          <tr v-for="t in tools" :key="t.id">
+            <td>
+              <div class="model"><span>
+                <span class="id">{{ t.id }}</span><br>
+                <!-- Par où l'outil a été appelé : les boucles du proxy
+                     (/v1/responses, /v1/messages) ou l'appel direct. -->
+                <span class="backend">{{ t.routes }}</span>
+              </span></div>
+            </td>
+            <td>{{ num(t.calls) }}</td>
+            <td title="le résultat rendu au modèle était un texte « Error: … »">
+              <span v-if="t.errors" class="err">{{ num(t.errors) }}</span>
+              <span v-else class="dim">0</span>
+            </td>
+            <!-- Refus par limite d'appels : rien n'a été exécuté, ce
+                 n'est pas une panne de l'outil. -->
+            <td title="appels refusés par la limite d'appels par réponse : rien n'a été exécuté">
+              <span v-if="t.limited">{{ num(t.limited) }}</span>
+              <span v-else class="dim">0</span>
+            </td>
+            <td>{{ ms(t.avgDuration) }}</td>
+            <td class="dim">{{ ms(t.maxDuration) }}</td>
+            <td title="caractères rendus au modèle, tous résultats confondus">
+              {{ num(t.chars) }} car.</td>
+            <td class="dim">{{ ago(t.last) }}</td>
           </tr>
         </tbody>
       </table>

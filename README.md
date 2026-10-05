@@ -110,10 +110,12 @@ et un tableau de bord.
   fenêtre temporelle est calculable après coup. C'est la **seule**
   lecture des statistiques — il n'existe pas de format privé, et le
   SDK OpenAI officiel s'y branche tel quel (voir
-  [Statistiques](#statistiques-usage-api)).
+  [Statistiques](#statistiques-usage-api)). Les exécutions d'outils
+  hébergés ont une route sœur de même forme,
+  `GET /v1/organization/usage/tools`.
 - **Tableau de bord** — `GET /ui` (ou `/`) : une page Vue 3 qui consomme
-  cette même Usage API, en vues **Jour / Semaine / Tout**
-  (voir [Tableau de bord](#tableau-de-bord)).
+  cette même Usage API, en vues **Jour / Semaine / Tout**, outils
+  hébergés compris (voir [Tableau de bord](#tableau-de-bord)).
 
 ## Fichiers
 
@@ -124,10 +126,10 @@ et un tableau de bord.
 | `llm_proxy/settings.py` | La table `[proxy]`, en constantes typées |
 | `llm_proxy/backends.py` | Déclaration des backends, clients HTTP, **routage au préfixe de modèle** |
 | `llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
-| `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête), extraction de l'`usage` dans le flux de réponse, et l'Usage API |
+| `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête, une par exécution d'outil hébergé), extraction de l'`usage` dans le flux de réponse, et l'Usage API (requêtes, outils) |
 | `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` ; outil serveur `web_search_…` remplacé par la recherche hébergée, rendue et rejouée en blocs `server_tool_use` / `web_search_tool_result` |
 | `llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés par le proxy présentés au modèle et rejoués, les autres ignorés, `namespace` aplatis |
-| `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre, exécution bornée (délai, taille du résultat, nombre d'appels par réponse), **mémoire des résultats** |
+| `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre, exécution bornée (délai, taille du résultat, nombre d'appels par réponse), ligne de statistiques de chaque exécution, **mémoire des résultats** |
 | `llm_proxy/tools/net.py` | Garde-fou réseau : résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée |
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
 | `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en liste structurée pour les blocs d'un client Anthropic ; filtre par domaines |
@@ -168,7 +170,9 @@ dédié. Ils survivent donc au redémarrage, et n'importe quelle fenêtre
 temporelle se calcule après coup. Purge automatique au-delà de
 `stats.retention_days` (90 jours par défaut, `0` = illimité).
 
-La seule route de lecture est **l'Usage API d'OpenAI** :
+La seule route de lecture des requêtes est **l'Usage API d'OpenAI**
+(les outils hébergés ont la leur, de même forme : voir
+[Usage des outils hébergés](#usage-des-outils-hébergés)) :
 
     GET /v1/organization/usage/completions
         ?start_time=<epoch>        (obligatoire)
@@ -229,6 +233,103 @@ que le chiffre affiché reste honnête. Une requête **en erreur** sans
 exact** : rien n'a été consommé de mesurable, et le corps envoyé n'a pas
 à gonfler l'entrée.
 
+### Usage des outils hébergés
+
+Chaque exécution d'un [outil hébergé](#outils-hébergés) laisse **une
+ligne** dans la même base (table `tool_calls`), par le même thread
+d'écriture et sous la même purge `stats.retention_days`. Elle est écrite
+au point unique par où passent les trois chemins (`tools.Hosted.run`) :
+la boucle de `/v1/responses`, celle de `/v1/messages`, l'appel direct
+`POST /v1/tools/<nom>`. Une base existante reçoit la table au démarrage,
+rien n'est à migrer à la main. La table `requests` n'en est pas changée :
+une réponse qui a utilisé des outils y garde **une** ligne, avec son
+usage de tokens cumulé.
+
+Par exécution : l'horodatage, l'outil, la route d'appel, le modèle
+préfixé de la conversation (aucun pour l'appel direct), l'issue, la
+durée, le nombre de caractères rendus au modèle. **Rien du contenu** :
+ni la requête de recherche, ni l'URL lue, ni les arguments, ni le
+résultat. Le journal applicatif les montre (160 caractères d'arguments,
+200 d'une erreur) ; les statistiques, elles, ne gardent rien de ce que
+les utilisateurs cherchent ou lisent.
+
+Trois issues :
+
+| Issue | Sens |
+|---|---|
+| `ok` | l'outil a rendu son résultat |
+| `error` | le résultat rendu au modèle commence par `Error:` — moteur injoignable, page en 404, délai dépassé, adresse refusée, arguments illisibles (`num_errors`) |
+| `limit` | refus par limite d'appels (`max_calls`, `max_uses` du client, limite propre à l'outil) : **rien n'a été exécuté**, durée nulle (`num_limited`) |
+
+Lecture :
+
+    GET /v1/organization/usage/tools
+        ?start_time=<epoch>        (obligatoire)
+        &end_time=<epoch>
+        &bucket_width=1m|1h|1d|all
+        &group_by[]=tool&group_by[]=endpoint&group_by[]=model
+        &models[]=bigchuck/qwen3.8-flash-next
+        &limit=<n>&page=<curseur>
+
+```json
+{"object": "page", "has_more": false, "next_page": null, "data": [
+  {"object": "bucket", "start_time": 1791158400, "end_time": 1791244800,
+   "results": [
+    {"object": "organization.usage.tools.result", "num_requests": 4,
+     "project_id": null, "user_id": null, "api_key_id": null,
+     "model": null, "tool": "web_search", "endpoint": null,
+     "num_errors": 1, "num_limited": 1,
+     "total_duration_seconds": 22.0, "avg_duration_seconds": 7.333,
+     "max_duration_seconds": 20.0, "result_chars": 9438,
+     "first_request_time": 1791220947, "last_request_time": 1791220990}]}]}
+```
+
+**Ce qui est la forme d'OpenAI, ce qui est du proxy.** L'Usage API
+d'OpenAI a une route par nature d'usage (`completions`, `embeddings`,
+`images`, `web_search_calls`, `file_search_calls`,
+`code_interpreter_sessions`…), toutes de la même forme. Relu le
+05/10/2026 dans les types du SDK `openai-python`
+(`types/admin/organization/usage_*`), la page de référence d'OpenAI
+refusant ce jour-là la lecture automatique :
+
+- **repris tel quel** : la page (`object: "page"`, `data`, `has_more`,
+  `next_page`), le seau (`object: "bucket"`, `start_time`, `end_time`,
+  `results`), les paramètres `start_time`, `end_time`, `bucket_width`,
+  `group_by`, `models`, `limit`, `page`, les filtres `project_ids` /
+  `user_ids` / `api_key_ids`, les champs `project_id`, `user_id`,
+  `api_key_id`, `model` du résultat, et `num_requests` pour le nombre
+  d'appels (le nom qu'il porte dans les résultats `web_searches` et
+  `file_searches` d'OpenAI). Validation, alignement des seaux et
+  pagination sont ceux de `/completions`, par le même code ;
+- **propre au proxy** : la route elle-même (`/usage/tools` n'existe pas
+  chez OpenAI), le type `organization.usage.tools.result`, les
+  dimensions `tool` et `endpoint` (dans `group_by` et dans le résultat),
+  `num_errors`, `num_limited`, les trois durées, `result_chars`,
+  `first_request_time` / `last_request_time`, et `bucket_width=all`
+  comme pour `/completions`.
+
+OpenAI a bien une route pour des appels d'outils,
+`/v1/organization/usage/web_search_calls` : elle ne compte que des
+recherches (`num_requests`, `num_model_requests`, par modèle et
+`context_level`), sans issue ni durée, et rien n'y correspond à une
+lecture de page. **Le proxy ne la sert pas** : une seule route couvre
+tous ses outils.
+
+`model` est `null` pour un appel direct (le proxy n'y voit pas de
+modèle) ; `endpoint` vaut `/v1/responses`, `/v1/messages` ou
+`/v1/tools`. `avg_duration_seconds` porte sur les appels réellement
+lancés (`num_requests - num_limited`). Comme pour les requêtes, tout
+s'additionne ou se maximise : pas de percentile.
+
+**Ce qui n'est pas mesuré** : le contenu, donc (ni ce qui est cherché,
+ni ce qui est lu) ; les tokens que coûte un résultat d'outil (ils sont
+dans la ligne de la requête, pas répartis par outil) ; le lien entre
+une exécution et sa requête (aucun identifiant commun) ; le poids d'une
+image générée (`result_chars` est le texte rendu au modèle, une
+phrase) ; les appels aux outils **du client** (un `function_call` rendu
+au client n'est pas exécuté par le proxy) ; une exécution interrompue
+parce que le client a raccroché (elle ne laisse pas de ligne).
+
 ## Tableau de bord
 
 `GET /ui` (ou `/`) — c'est la copie d'écran ci-dessus. La page est servie
@@ -254,7 +355,8 @@ redemande rien au proxy, les mêmes barres glissent simplement vers leur
 nouvelle hauteur.
 
 Les deux choix sont mémorisés (`localStorage`). **Un seul appel par
-rafraîchissement** : les seaux de la période, groupés par modèle. Totaux,
+rafraîchissement** pour le trafic : les seaux de la période, groupés par
+modèle (un second, pour la section *Outils*, est décrit plus bas). Totaux,
 ligne par modèle et courbe s'en déduisent, puisque tout ce qu'expose
 l'API s'additionne ou se maximise. La borne de départ est alignée sur la
 largeur des seaux, si bien que les chiffres du tableau portent exactement
@@ -288,8 +390,21 @@ pur.
 Les seaux vides sont dessinés eux aussi : un creux doit se voir comme un
 creux.
 
+La section **Outils**, sous le tableau des modèles, montre les
+[outils hébergés](#outils-hébergés) sur la même période : par outil, le
+nombre d'appels, les erreurs, les refus par limite d'appels, la durée
+moyenne et maximale d'une exécution, le volume rendu au modèle (en
+caractères), le dernier appel, et sous son nom la répartition par route
+d'appel (`/v1/responses : 12 · /v1/tools : 3`). Elle se lit par un second
+appel à chaque rafraîchissement — **un seul seau** sur la période,
+groupé par outil et par route, la section ne montrant que des totaux —
+et **n'apparaît pas** quand aucun outil n'a servi dans la fenêtre. En
+vue *Tout* elle part du début de la base, pas de la première requête :
+un outil appelé directement peut la précéder.
+
 Les chiffres sont lus sur `/ui/usage`, qui est la même route que
-`/v1/organization/usage/completions`. Ce doublon n'existe que pour l'auth :
+`/v1/organization/usage/completions` (et `/ui/usage/tools`, la même que
+`/v1/organization/usage/tools`). Ce doublon n'existe que pour l'auth :
 un `fetch` de navigateur ne peut pas porter l'en-tête `Authorization`,
 alors que le cookie posé par `/ui` vaut pour tout ce qui est sous `/ui` —
 et pour rien d'autre, si bien qu'il ne peut jamais servir à dépenser des
@@ -551,11 +666,16 @@ page en 404, délai dépassé, adresse refusée — le modèle reçoit un texte
 `Error: …` et s'adapte. Chaque exécution laisse une ligne de log
 (`outil hébergé web_search(…) → N car. en 1.2s`).
 
-Une réponse = **une** ligne de statistiques, quel que soit le nombre de
-tours upstream, avec l'usage cumulé ; chaque tour repasse par le limiteur
-d'un backend à quotas. Les outils actifs sont dits au démarrage dans les
-logs et dans `/healthz` (`tools` : fonctions actives, `max_calls`,
-nombre d'entrées en mémoire).
+Une réponse = **une** ligne de statistiques de requête, quel que soit le
+nombre de tours upstream, avec l'usage cumulé ; chaque tour repasse par
+le limiteur d'un backend à quotas. Chaque **exécution d'outil** a en plus
+sa propre ligne — outil, route d'appel, modèle, issue, durée, taille du
+résultat, **jamais le contenu** —, lue par
+`GET /v1/organization/usage/tools` et la section *Outils* du tableau de
+bord : voir [Usage des outils hébergés](#usage-des-outils-hébergés). Les
+outils actifs sont dits au démarrage dans les logs et dans `/healthz`
+(`tools` : fonctions actives, `max_calls`, nombre d'entrées en mémoire —
+un état, pas des compteurs : l'usage se lit par l'Usage API).
 
 ### Claude Code et l'outil serveur `web_search`
 
@@ -793,10 +913,13 @@ la fin : le client doit patienter d'autant.
 
 Cet outil n'est **pas** exposé sur `/v1/tools` (ces routes rendent un
 texte ; pi et omp ont `gufo-media.ts`), ni présenté sur `/v1/messages`.
-La génération ne compte pas dans les statistiques (elles comptent des
-tokens) ni dans le limiteur d'un backend à quotas : elle laisse une
-ligne de log (`image_generation : 512x512 png … en 16.2s, 412 Ko`), et
-sa durée est comprise dans celle de la réponse.
+La génération ne compte pas dans les statistiques de requêtes (elles
+comptent des tokens) ni dans le limiteur d'un backend à quotas : elle
+laisse une ligne de log (`image_generation : 512x512 png … en 16.2s,
+412 Ko`), sa durée est comprise dans celle de la réponse, et elle a sa
+ligne d'[usage des outils](#usage-des-outils-hébergés) comme les deux
+autres (durée de la génération ; `result_chars` y est la phrase rendue
+au modèle, pas le poids de l'image).
 
     [tools.image_generation]
     enabled = true
@@ -830,6 +953,12 @@ Le client déclare alors l'outil à son modèle comme n'importe quel outil
 mémoire à tenir. Un échec de l'outil est un `200` avec un texte
 `Error: …` et `is_error: true` (c'est un texte pour le modèle) ; un outil
 inconnu ou désactivé, un `404` `unknown_tool`.
+
+Un appel direct n'écrit **pas** de ligne de requête (aucun modèle,
+aucun token) : il n'apparaît que dans
+l'[usage des outils](#usage-des-outils-hébergés), route `/v1/tools`,
+sans modèle. Un `404` ou un corps refusé n'y laisse rien — l'outil n'a
+pas été appelé.
 
 C'est ce que fait l'extension pi / omp `tools/llm-proxy-web.ts` du dépôt
 [llmsetup](https://github.com/c4software/llmsetup) : elle lit
@@ -1105,6 +1234,12 @@ de les ouvrir.
 ?start_time=$(( $(date +%s) - 604800 ))&bucket_width=1d&limit=8" \
       | jq '.data[] | {jour: (.start_time | todate),
                        req: ([.results[].num_model_requests] | add // 0)}'
+
+    # outils hébergés : par outil et par route d'appel, tout l'historique
+    curl -s "http://localhost:8000/v1/organization/usage/tools\
+?start_time=0&bucket_width=all&group_by[]=tool&group_by[]=endpoint" \
+      | jq '.data[0].results[] | {tool, endpoint, num_requests, num_errors,
+                                  num_limited, avg_duration_seconds}'
 
     curl -s http://localhost:8000/v1/chat/completions \
       -H "Content-Type: application/json" \

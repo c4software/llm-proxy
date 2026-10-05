@@ -125,6 +125,9 @@ code {
 }
 footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
 
+/* «Outils» : le même tableau que «Par modèle», un cran plus bas. */
+.tools { margin-top: 26px; }
+
 /* «Brancher un client» : un panneau repliable. Le résumé reprend la
    tête de panneau ; le marqueur natif est remplacé par un chevron. */
 .howto { margin-top: 26px; }

@@ -45,7 +45,9 @@ pour les blocs `web_search_result`), et que `run` accepte les listes de
 domaines du client.
 
 Ce module porte ce qui est commun : le registre, l'exécution bornée
-(délai, taille du résultat) et la MÉMOIRE des résultats. Cette mémoire
+(délai, taille du résultat), la ligne de STATISTIQUES de chaque exécution
+(stats.record_tool, depuis Hosted.run : des mesures, jamais le contenu)
+et la MÉMOIRE des résultats. Cette mémoire
 est la seule chose que le proxy conserve entre deux requêtes : le client
 renvoie au tour suivant l'élément `web_search_call` SANS son résultat
 (OpenAI le garde côté serveur), et il faut le rendre au modèle à
@@ -65,7 +67,7 @@ import json
 import time
 from collections import OrderedDict
 
-from .. import config
+from .. import config, stats
 from ..settings import log
 from . import image_generation, web_fetch, web_search
 
@@ -172,29 +174,61 @@ class Hosted:
 
     async def run(self, name: str, arguments: str, used: int,
                   limit: int | None = None, options: dict | None = None,
-                  same: int = 0) -> str:
+                  same: int = 0, endpoint: str = "", model: str = "") -> str:
         """Exécute la fonction `name`. `used` : appels déjà exécutés pour
         cette réponse, `same` : ceux de CETTE fonction (un module peut
         avoir sa limite, `MAX_CALLS`) ; `limit` : voir cap(). `options` : ce que le CLIENT
         a réglé sur son outil, par nom de fonction (les listes de domaines
         de l'outil serveur Anthropic) — passé au module en plus des
         arguments du modèle, qui ne peut donc pas s'en affranchir.
-        Ne lève jamais : tout échec est un texte."""
+        `endpoint` / `model` : la route par où l'appel arrive et le modèle
+        PRÉFIXÉ de la conversation (aucun pour l'appel direct) — ils ne
+        servent qu'à la ligne de statistiques.
+        Ne lève jamais : tout échec est un texte.
+
+        C'est LE point par où passent les trois chemins (boucles de
+        /v1/responses et /v1/messages, appel direct /v1/tools) : la ligne
+        de statistiques de l'exécution s'écrit donc ici, une fois. Elle
+        ne retient que des mesures — nom, route, modèle, issue, durée,
+        taille du résultat — jamais les arguments ni le résultat."""
         module = self.by_name.get(name)
         if module is None:
+            # Pas de ligne de statistiques : ce nom n'est celui d'aucun
+            # outil, c'est un texte venu du modèle ou du client.
             return f"Error: unknown tool {name}."
+        started = time.monotonic()
+        result = self._refusal(module, used, limit, same)
+        outcome = "limit"
+        if result is None:
+            result = await self._execute(module, arguments, options)
+            outcome = "error" if result.startswith("Error:") else "ok"
+        try:
+            stats.record_tool(name, endpoint, model, outcome,
+                              time.monotonic() - started if outcome != "limit"
+                              else 0.0, len(result))
+        except Exception:  # les statistiques ne cassent jamais un outil
+            log.exception("stats : exécution de %s non enregistrée", name)
+        return result
+
+    def _refusal(self, module, used: int, limit, same: int) -> str | None:
+        """Le refus par limite d'appels, ou None s'il reste de la marge :
+        la limite de la réponse (cap()), puis celle du module."""
         cap = self.cap(limit)
         if used >= cap:
             return (f"Error: the limit of {cap} web tool calls for one "
                     f"answer is reached. Answer now with what you already have.")
+        own = getattr(module, "MAX_CALLS", None)
+        if own is not None and same >= own:
+            return (f"Error: the limit of {own} {module.NAME} calls for one "
+                    f"answer is reached. Answer now with what you already have.")
+        return None
+
+    async def _execute(self, module, arguments: str, options) -> str:
+        name = module.NAME
         try:
             args = json.loads(arguments or "{}")
         except (ValueError, TypeError):  # TypeError : pas une chaîne
             args = None
-        own = getattr(module, "MAX_CALLS", None)
-        if own is not None and same >= own:
-            return (f"Error: the limit of {own} {name} calls for one answer "
-                    f"is reached. Answer now with what you already have.")
         if not isinstance(args, dict):
             return "Error: the tool arguments are not a JSON object."
         # Le délai commun coupe une recherche qui traîne ; une génération

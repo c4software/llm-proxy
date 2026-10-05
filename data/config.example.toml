@@ -281,9 +281,11 @@ max_per_response = 2
 # ── Statistiques ────────────────────────────────────────────────────────
 [stats]
 # Base SQLite : une ligne par requête servie, d'où les vues All/Week/Day
-# et l'Usage API. Chemin relatif = à côté de CE fichier.
+# et l'Usage API ; et une par exécution d'outil hébergé (des mesures,
+# jamais ce qui est cherché ou lu). Chemin relatif = à côté de CE fichier.
 database = "stats.db"
-# Purge des lignes plus vieilles que N jours (0 = ne jamais purger).
+# Purge des lignes plus vieilles que N jours, requêtes et outils
+# (0 = ne jamais purger).
 retention_days = 90
 
 
