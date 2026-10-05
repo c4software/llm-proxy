@@ -27,7 +27,9 @@ Chiffres lus sur l'Usage API du proxy (`bucket_width=all`,
 
 ## Lancer
 
-Le proxy doit tourner (depuis la racine : `docker compose up -d`). Puis :
+Le proxy doit tourner (depuis la racine : `docker compose up -d`), ou être
+joignable s'il est déjà déployé ailleurs — voir
+[Viser un proxy distant](#viser-un-proxy-distant). Puis :
 
     cd envTest
     cp .env.example .env        # PROXY_URL, MODELS, clé — voir le fichier
@@ -36,7 +38,10 @@ Le proxy doit tourner (depuis la racine : `docker compose up -d`). Puis :
     docker compose run --rm codex     # scénarios Codex (API Responses), pour chaque modèle
 
 Chaque scénario imprime `PASS` ou `FAIL` avec ce qu'il a vu ; la commande
-sort en erreur si l'un échoue. Sortie attendue :
+sort en erreur si l'un échoue. Un scénario de recherche web imprime `SKIP`
+quand le proxy visé n'héberge pas l'outil : ni réussite ni échec, compté à
+part (`13/13, 1 sauté(s)`), et la commande ne sort pas en erreur pour autant.
+Sortie attendue :
 
     ════ Claude Code 2.1.241 (Claude Code) → http://127.0.0.1:8000 | modèle bigchuck/qwen3.8-27b-mtp-nothink ════
     1. Réponse simple (POST /v1/messages, flux SSE)
@@ -44,11 +49,22 @@ sort en erreur si l'un échoue. Sortie attendue :
     2. Outils : Write + Bash + Read (tool_use / tool_result, plusieurs tours)
       PASS hello.txt = bonjour — …
     …
+    14. Recherche web hébergée (WebSearch → sous-requête à l'outil serveur web_search, exécutée par le proxy)
+      PASS 1 recherche(s) aboutie(s) sur 1 (…) — https://github.com/ggml-org/llama.cpp/releases
     ════ Claude Code 2.1.241 (Claude Code) → http://127.0.0.1:8000 | modèle bigchuck/qwen3.6-35b-a3b-mtp-nothink ════
     …
     Résumé :
-      bigchuck/qwen3.8-27b-mtp-nothink : 13/13
-      bigchuck/qwen3.6-35b-a3b-mtp-nothink : 13/13
+      bigchuck/qwen3.8-27b-mtp-nothink : 14/14
+      bigchuck/qwen3.6-35b-a3b-mtp-nothink : 14/14
+    Tout passe.
+
+Devant un proxy sans outils web, la fin devient :
+
+    14. Recherche web hébergée (…)
+      SKIP web_search n'est pas hébergé par ce proxy (/healthz : tools.enabled = [])
+    Résumé :
+      bigchuck/qwen3.8-27b-mtp-nothink : 13/13, 1 sauté(s)
+    1 scénario(s) sauté(s) : outils web non hébergés par le proxy.
     Tout passe.
 
 Pour essayer à la main, même image, même configuration :
@@ -59,26 +75,52 @@ Pour essayer à la main, même image, même configuration :
 
 Variables utiles à `docker compose run -e …` : `MODELS` (un seul modèle
 pour aller vite), `ONLY=5` (ne joue que les N premiers scénarios Claude
-Code), `MAX_TURNS` (plafond de tours par scénario, 40 par défaut). Avec
+Code), `MAX_TURNS` (plafond de tours par scénario, 40 par défaut).
+`PROXY_URL`, lui, se change dans `.env`. Avec
 `[anthropic] trace = true` dans le `config.toml` du proxy, chaque réponse
 du modèle apparaît dans `docker compose logs` (outils appelés, tokens).
+
+### Viser un proxy distant
+
+Une seule variable, dans `.env` : l'adresse du proxy **sans `/v1` ni barre
+finale**, telle que la machine qui lance les conteneurs la joint.
+
+    PROXY_URL=http://llmproxy
+    PROXY_API_KEY=unused          # ou une clé de proxy.api_keys ; jamais vide
+    MODELS="bigchuck/qwen3.8-flash-next"   # des modèles de CE proxy
+
+Les conteneurs sont en réseau hôte : c'est la machine hôte qui résout
+`llmproxy` (DNS, `/etc/hosts`, Tailscale…). Si ce nom n'existe que sur un
+réseau Docker, le réseau hôte ne le verra pas : remplacer alors
+`network_mode: host` par ce réseau dans `docker-compose.yml`. Chaque
+client en tire sa propre adresse — `ANTHROPIC_BASE_URL` pour Claude Code
+(posée par le `docker-compose.yml`, qui lit `.env` : d'où le changement
+dans le fichier plutôt que par `-e`), `${PROXY_URL}/v1` pour pi et Codex,
+`LLM_PROXY_URL` pour l'extension web de pi.
+
+Les images prennent la **dernière** version de chaque client. Pour
+rejouer celles qui ont été validées à la main le 05/10/2026 :
+
+    docker compose build --build-arg CLAUDE_CODE_VERSION=2.1.287 claude
+    docker compose build --build-arg PI_VERSION=0.87.1 pi
+    docker compose build --build-arg CODEX_VERSION=0.157.1 codex
 
 ## Fichiers
 
 | Fichier | Rôle |
 |---|---|
-| `.env.example` | `PROXY_URL` (le proxy vu des conteneurs), `PROXY_API_KEY`, `MODELS` (préfixés, séparés par des espaces), `SMALL_MODEL` — copié en `.env`, ignoré par git |
-| `docker-compose.yml` | Les deux services, en **réseau hôte** (`127.0.0.1:8000` = le proxy de la racine) |
-| `claude/Dockerfile` | `node:22-slim` + `@anthropic-ai/claude-code`, utilisateur non root (requis par `--dangerously-skip-permissions`), télémétrie et mises à jour coupées |
+| `.env.example` | `PROXY_URL` (le proxy vu des conteneurs, local ou distant), `PROXY_API_KEY`, `MODELS` (préfixés, séparés par des espaces), `SMALL_MODEL` — copié en `.env`, ignoré par git |
+| `docker-compose.yml` | Les trois services, en **réseau hôte** (`127.0.0.1:8000` = le proxy de la racine) |
+| `claude/Dockerfile` | `node:22-slim` + `@anthropic-ai/claude-code` (`CLAUDE_CODE_VERSION`, la dernière par défaut), utilisateur non root (requis par `--dangerously-skip-permissions`), télémétrie et mises à jour coupées |
 | `claude/settings.json` | Le `~/.claude/settings.json` **du conteneur** : `CLAUDE_CODE_ATTRIBUTION_HEADER=0`, pour que l'attribution (variable d'une requête à l'autre) ne décale pas le préfixe et ne fasse pas manquer le cache du backend |
-| `claude/scenarios.sh` | Les 13 scénarios Claude Code, rejoués pour chaque modèle de `MODELS` (`ANTHROPIC_MODEL` posé par le script) ; `ONLY=N` pour n'en jouer que N |
-| `pi/Dockerfile` | `node:22-slim` + `@earendil-works/pi-coding-agent`, `PI_CODING_AGENT_DIR=/pi/agent` |
+| `claude/scenarios.sh` | Les 14 scénarios Claude Code, rejoués pour chaque modèle de `MODELS` (`ANTHROPIC_MODEL` posé par le script) ; `ONLY=N` pour n'en jouer que N |
+| `pi/Dockerfile` | `node:22-slim` + `@earendil-works/pi-coding-agent` (`PI_VERSION`), `PI_CODING_AGENT_DIR=/pi/agent` ; télécharge l'extension `tools/llm-proxy-web.ts` de [llmsetup](https://github.com/c4software/llmsetup) à un commit **épinglé**, sha256 vérifié, dans `/pi/extensions` — la mise à jour est décrite dans le fichier |
 | `pi/models.json.tpl` | Les providers pi : `llm-proxy` (`openai-completions`, `${PROXY_URL}/v1`) — le seul joué — et `llm-proxy-anthropic` (`anthropic-messages`), gardé pour un essai à la main |
-| `pi/entrypoint.sh` | Substitue `${PROXY_URL}` et génère une entrée de modèle par élément de `MODELS` → `models.json` du conteneur |
-| `pi/scenarios.sh` | 5 scénarios, rejoués pour chaque modèle de `MODELS` |
-| `codex/Dockerfile` | `node:22-slim` + `@openai/codex`, `CODEX_HOME=/codex` |
-| `codex/entrypoint.sh` | Génère `config.toml` : provider `llm-proxy`, `wire_api = "responses"`, `${PROXY_URL}/v1`, clé lue dans `PROXY_API_KEY` |
-| `codex/scenarios.sh` | 5 scénarios (les mêmes que pi), rejoués pour chaque modèle de `MODELS` |
+| `pi/entrypoint.sh` | Substitue `${PROXY_URL}` et génère une entrée de modèle par élément de `MODELS` → `models.json` du conteneur ; pose `LLM_PROXY_URL` et `LLM_PROXY_KEY` (lues par l'extension) depuis `PROXY_URL` et `PROXY_API_KEY` |
+| `pi/scenarios.sh` | 6 scénarios, rejoués pour chaque modèle de `MODELS` |
+| `codex/Dockerfile` | `node:22-slim` + `@openai/codex` (`CODEX_VERSION`), `CODEX_HOME=/codex` |
+| `codex/entrypoint.sh` | Génère `config.toml` : provider `llm-proxy`, `wire_api = "responses"`, `${PROXY_URL}/v1`, clé lue dans `PROXY_API_KEY` (non vide), `model` = le premier de `MODELS` pour un essai à la main |
+| `codex/scenarios.sh` | 7 scénarios (les cinq de pi, puis deux sur les outils web), rejoués pour chaque modèle de `MODELS` |
 
 ## Ce que les scénarios vérifient
 
@@ -128,6 +170,10 @@ changer) :
     traversent la traduction intacts, pas que le modèle recopie mot pour
     mot (le 27B reformule les libellés).
 13. **Bash en pipeline** — un chiffre vérifiable (`3` lignes).
+14. **Recherche web hébergée** — voir
+    [Outils web hébergés](#outils-web-hébergés-par-le-proxy). Seul
+    scénario lancé en `--output-format stream-json --verbose` et avec
+    `--tools WebSearch`.
 
 Les scénarios 8–10 sont ceux qui ressemblent au travail réel : une
 dizaine de tours d'outils chacun, arguments volumineux (le contenu des
@@ -136,7 +182,8 @@ fichiers), plusieurs outils par tour.
 **pi** (`pi -p --no-session --provider llm-proxy --model …`, les outils
 s'exécutent sans confirmation) — les scénarios 1 à 3, puis la création
 de code (8) et la correction sous test (9), par l'API OpenAI du proxy :
-c'est le chemin de relais brut, sans traduction. (Le provider
+c'est le chemin de relais brut, sans traduction ; puis, en sixième, la
+[recherche web hébergée](#outils-web-hébergés-par-le-proxy). (Le provider
 `llm-proxy-anthropic` du `models.json` n'est pas joué ; il a servi une
 fois à vérifier la traduction avec un second client Anthropic, et reste
 disponible pour un essai à la main.)
@@ -144,14 +191,94 @@ disponible pour un essai à la main.)
 **Codex CLI** (`codex exec --skip-git-repo-check --ephemeral
 --dangerously-bypass-approvals-and-sandbox -m …` : le bac à sable de
 Codex ne démarre pas dans un conteneur sans privilèges, le conteneur
-jetable en tient lieu) — les cinq scénarios de pi, par `POST
-/v1/responses` : outils `function`, `namespace` aplatis et `web_search`
-ignoré à chaque requête, appels rejoués (`function_call` /
-`function_call_output`) d'un tour à l'autre. **Banc écrit le 05/10/2026
-et pas encore joué** : la traduction a été validée ce jour-là avec Codex
-CLI 0.157.1 lancé hors conteneur (session de 12 requêtes vers
-`bigchuck/qwen3.8-flash-next`, appels d'outils compris), pas avec cette
-image.
+jetable en tient lieu) — les cinq premiers scénarios de pi, par `POST
+/v1/responses` : outils `function`, `namespace` aplatis, `web_search`
+exécuté par le proxy s'il l'héberge et ignoré sinon, appels rejoués
+(`function_call` / `function_call_output`) d'un tour à l'autre ; puis
+deux scénarios sur les
+[outils web hébergés](#outils-web-hébergés-par-le-proxy) (6 et 7).
+**Banc écrit le 05/10/2026 et pas encore joué** : la traduction a été
+validée ce jour-là avec Codex CLI 0.157.1 lancé hors conteneur (session
+de 12 requêtes vers `bigchuck/qwen3.8-flash-next`, appels d'outils
+compris), pas avec cette image. Relu le même jour contre les sources de
+Codex à l'étiquette `rust-v0.157.1` et le registre npm : nom du paquet,
+clés du provider (`name`, `base_url`, `wire_api`, `env_key`), options de
+`codex exec` (`--skip-git-repo-check`, `--ephemeral`, `--json`,
+`--sandbox`) et forme des événements JSON — une relecture, pas une
+exécution.
+
+### Outils web hébergés par le proxy
+
+Un scénario « recherche web » par client, à la suite des autres, et pour
+Codex un second qui enchaîne recherche et lecture de page. **Écrits le
+05/10/2026 et pas encore joués** : ce jour-là les outils ont été validés
+à la main, hors conteneur, avec Claude Code 2.1.287, pi 0.87.1 et Codex
+0.157.1 (README principal, « Outils hébergés ») — pas avec ces images, et
+pas avec ces scénarios.
+
+| Client | N° | Ce qui est demandé | Chemin dans le proxy |
+|---|---|---|---|
+| Claude Code | 14 | l'URL de la page des releases du dépôt GitHub `ggml-org/llama.cpp`, avec l'outil `WebSearch` | sous-requête `/v1/messages` avec l'outil serveur `web_search_20250305` |
+| pi | 6 | la même URL, avec pour seul outil `proxy_web_search` (extension `llm-proxy-web.ts`) | `GET /v1/tools`, `POST /v1/tools/web_search` |
+| Codex | 6 | la même URL (`--sandbox read-only`) | `web_search` déclaré dans `/v1/responses`, boucle du proxy |
+| Codex | 7 | une recherche sur le dépôt `c4software/llmsetup`, puis la lecture de `tools/llm-proxy-web.ts` à un commit donné, et la ligne qui y définit `PREFIXE` | `web_search` puis `web_fetch` dans la même boucle |
+
+**Sauté plutôt qu'échoué.** Avant de jouer, chaque banc lit `GET
+/healthz` du proxy visé (`tools.enabled`, sans clé). Sans `web_search` —
+et, pour le scénario 7 de Codex, sans `web_fetch` — le scénario imprime
+`SKIP` avec ce qu'il a lu. Un proxy antérieur au 05/10/2026, ou qui ne
+répond pas sur `/healthz`, donne une liste vide : sauté aussi.
+
+**Deux vérifications par scénario, et c'est la première qui compte.**
+
+1. *La recherche a eu lieu*, lu dans la trace du client et non dans sa
+   réponse — un modèle peut écrire l'URL d'un dépôt connu de mémoire :
+   - Claude Code (`stream-json`) : un bloc `tool_use` de l'outil
+     `WebSearch`, suivi de son `tool_result` sans erreur et portant au
+     moins une URL. Claude Code compose ce résultat depuis les blocs
+     `web_search_tool_result` de sa sous-requête ; une recherche en échec
+     y laisse `Web search error: …`, sans lien.
+   - pi (`--mode json`) : un événement `tool_execution_end` de
+     `proxy_web_search`, `isError` faux, dont le résultat porte au moins
+     une URL — le texte rendu par `POST /v1/tools/web_search`.
+   - Codex (`--json`) : un élément `web_search` terminé dans la trace, et
+     pour le scénario 7 un second dont l'action est `open_page`. Codex ne
+     les construit que depuis les `web_search_call` du proxy. La trace ne
+     dit **pas** si la recherche a rendu des résultats ni si la page a pu
+     être lue : l'élément ne porte que la requête ou l'URL. C'est la
+     réponse qui le dit, au point 2.
+2. *La réponse est la bonne*, par une sous-chaîne qui ne dépend ni de
+   l'actualité ni de la formulation :
+   - `github.com/ggml-org/llama.cpp` (casse ignorée) pour la recherche :
+     l'URL est déterminée par le nom du dépôt, et toute bonne réponse la
+     contient (`/releases`, `/releases/latest`, lien Markdown). Le prompt
+     ne la donne pas, et n'est de toute façon pas dans le texte examiné.
+     Demander plutôt la dernière release aurait été fragile : le
+     05/10/2026 elle s'appelle `v0.6.0`, après des années d'étiquettes
+     `bNNNN`.
+   - `proxy_` pour la lecture de page (Codex 7) : la page est un fichier
+     adressé par son commit (contenu immuable), écrit le 05/10/2026 donc
+     absent de la mémoire de tout modèle, et la ligne demandée —
+     `const PREFIXE = "proxy_";` — ne s'écrit que d'une façon. Ici la
+     réponse prouve à elle seule que la page est arrivée au modèle.
+
+Ce que ces scénarios ne peuvent pas dire :
+
+- La trace de Codex ne distingue pas une recherche fructueuse d'une
+  recherche vide, ni le nombre de requêtes HTTP : « dans le même tour »
+  est ce que le client voit, « dans la même réponse `/v1/responses` » se
+  lit dans les logs du proxy (`outil hébergé web_search(…) → N car.`).
+- Un échec sur la sous-chaîne, preuve de recherche acquise, met en cause
+  le modèle ou les moteurs que SearXNG joint ce jour-là, pas la
+  traduction : le message d'échec dit laquelle des deux vérifications a
+  manqué.
+- La lecture de page de Claude Code (`WebFetch`) et les commandes `/web`
+  et `/page` de l'extension pi ne sont pas jouées ; la lecture de page
+  par `/v1/tools/web_fetch` (pi) non plus.
+- Le scénario de pi limite le modèle à l'outil de recherche : pi avec
+  tous ses outils **et** l'extension n'est pas joué.
+- Le scénario 7 de Codex lit `raw.githubusercontent.com` : un proxy dont
+  `[tools.web_fetch].allowed_domains` ne le permet pas le fera échouer.
 
 ## Ce qui n'est PAS vérifié ici
 

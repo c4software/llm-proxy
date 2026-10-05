@@ -1,8 +1,12 @@
 # Claude Code seul, sans rien d'autre. Utilisateur non root : Claude Code
 # refuse --dangerously-skip-permissions à root, et les scénarios en ont
 # besoin (aucune question posée, tout s'exécute).
+# CLAUDE_CODE_VERSION : la dernière par défaut. Pour rejouer la version
+# validée à la main le 05/10/2026 (recherche web) :
+#   docker compose build --build-arg CLAUDE_CODE_VERSION=2.1.287 claude
 FROM node:22-slim
-RUN npm install -g @anthropic-ai/claude-code \
+ARG CLAUDE_CODE_VERSION=latest
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && mkdir -p /work && chown node:node /work
 USER node
 WORKDIR /work

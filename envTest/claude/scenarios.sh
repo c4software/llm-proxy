@@ -2,11 +2,29 @@
 # Les scénarios de validation Claude Code → proxy. Chacun imprime PASS ou
 # FAIL avec ce qu'il a vu ; le script sort en erreur si l'un échoue.
 # Tout s'exécute ICI, dans /work du conteneur — rien n'est écrit ailleurs.
+#
+# Scénario 14 : la recherche web HÉBERGÉE par le proxy (README principal,
+# « Claude Code et l'outil serveur web_search »). L'outil WebSearch de
+# Claude Code envoie une sous-requête /v1/messages avec l'outil serveur
+# `web_search_20250305`, que le proxy exécute. Il est SAUTÉ (SKIP, ni PASS
+# ni FAIL) quand le proxy visé n'héberge pas l'outil — lu dans /healthz.
 set -u
 cd /work
 fails=0
+skips=0
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails + 1)); }
+skip() { printf '  \033[33mSKIP\033[0m %s\n' "$1"; skips=$((skips + 1)); }
+
+# Les outils que le proxy héberge, séparés par des espaces (« web_search
+# web_fetch »), lus dans /healthz — exempté de clé. Vide si aucun n'est
+# activé, si le proxy est plus ancien que ces outils ou s'il ne répond pas.
+hosted=$(node -e '
+  fetch(process.argv[1] + "/healthz", {signal: AbortSignal.timeout(10000)})
+    .then(r => r.json())
+    .then(j => process.stdout.write(((j.tools || {}).enabled || []).join(" ")))
+    .catch(() => {});' "$ANTHROPIC_BASE_URL")
+hosts() { case " $hosted " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # Sortie JSON de `claude -p` → le champ `result` (dernier objet de la
 # sortie ; les avertissements «unrecognized_model» précèdent).
@@ -27,12 +45,59 @@ ONLY=${ONLY:-99}
 want() { [ "$1" -le "$ONLY" ]; }
 run() { claude -p --dangerously-skip-permissions --max-turns "$MAX_TURNS" --output-format json "$@" 2>/dev/null | result; }
 
+# Scénario web : la sortie `json` ne porte que la réponse ; `stream-json`
+# (qui exige --verbose en mode -p) rend toute la conversation, un événement
+# JSON par ligne — de quoi PROUVER la recherche (voir verdict).
+# --tools WebSearch ne laisse au modèle que cet outil : ni Bash (un curl
+# partirait du conteneur, pas du proxy), ni WebFetch (que Claude Code exécute
+# lui-même, sans le proxy). L'option prend une LISTE : le prompt la précède,
+# sinon il serait lu comme un nom d'outil.
+web() {
+  claude -p "$1" --dangerously-skip-permissions --max-turns "$MAX_TURNS" \
+    --output-format stream-json --verbose --tools WebSearch </dev/null 2>/tmp/claude-web.err
+}
+diag() { [ -s /tmp/claude-web.err ] && printf ' — stderr : %s' "$(tail -n 3 /tmp/claude-web.err | tr '\n' ' ')"; return 0; }
+# Verdict du scénario web, sur ce flux lu sur l'entrée standard. $1 : le
+# texte que la réponse doit contenir (casse ignorée). Imprime « OK … » ou
+# « KO … ». La PREUVE que le proxy a cherché n'est pas la réponse, qu'un
+# modèle peut écrire de mémoire : c'est un bloc `tool_use` de l'outil
+# WebSearch suivi de son `tool_result`, sans erreur et portant au moins une
+# URL. Claude Code le compose depuis les blocs `web_search_tool_result` de
+# la sous-requête : une recherche que le proxy n'a pas exécutée, ou qui a
+# échoué, n'y laisse aucun lien (« Web search error: … »). La réponse est le
+# champ `result` de l'événement final, le même que lit `result` plus haut.
+verdict() { node -e '
+  const [needle] = process.argv.slice(1);
+  const events = require("fs").readFileSync(0, "utf8").split("\n")
+    .flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+  const blocks = role => events.filter(e => e.type === role)
+    .flatMap(e => Array.isArray((e.message || {}).content) ? e.message.content : []);
+  const uses = blocks("assistant").filter(b => b.type === "tool_use" && b.name === "WebSearch");
+  const ids = new Set(uses.map(b => b.id));
+  const results = blocks("user").filter(b => b.type === "tool_result" && ids.has(b.tool_use_id));
+  const good = results.filter(b => b.is_error !== true && JSON.stringify(b.content || "").includes("http"));
+  const query = (uses.map(b => (b.input || {}).query || "").pop() || "?").slice(0, 60);
+  const end = events.filter(e => e.type === "result").pop();
+  const answer = String((end || {}).result ?? "").replace(/\s+/g, " ").trim();
+  const seen = good.length + " recherche(s) aboutie(s) sur " + uses.length + " (" + query + ") — "
+    + (answer.slice(0, 200) || "pas de réponse");
+  const ko = !end ? "pas d\u0027événement final en sortie de claude -p : " + seen
+    : end.subtype === "error_max_turns" ? "plafond de tours atteint (boucle du modèle) : " + seen
+    : end.is_error ? "erreur de Claude Code (" + (end.subtype || "") + ") : " + seen
+    : !uses.length ? "aucun appel à WebSearch dans la trace : " + seen
+    : !good.length ? "WebSearch appelé mais sans résultat ("
+        + JSON.stringify((results[results.length - 1] || {}).content || "aucun tool_result").slice(0, 160) + ") : " + seen
+    : !answer.toLowerCase().includes(needle.toLowerCase()) ? "réponse sans « " + needle + " » : " + seen
+    : "";
+  process.stdout.write(ko ? "KO " + ko : "OK " + seen);' "$@"; }
+
 version=$(claude --version 2>/dev/null | head -1)
 summary=""
 
 for model in $MODELS; do
 export ANTHROPIC_MODEL="$model"
 fails_before=$fails
+skips_before=$skips
 echo
 echo "════ Claude Code $version → $ANTHROPIC_BASE_URL | modèle $model ════"
 rm -rf /work/* 2>/dev/null
@@ -195,12 +260,31 @@ out=$(run "Avec une seule commande shell, compte le nombre total de lignes des f
 case "$out" in *3*) pass "$out" ;; *) fail "$out" ;; esac
 fi
 
+if want 14; then
+echo "14. Recherche web hébergée (WebSearch → sous-requête à l'outil serveur web_search, exécutée par le proxy)"
+# La réponse attendue est une URL que le nom du dépôt détermine : elle ne
+# dépend ni de l'actualité ni de la formulation (on ne cherche que
+# « github.com/ggml-org/llama.cpp », que toute bonne réponse contient,
+# /releases, /releases/latest ou lien Markdown compris).
+if hosts web_search; then
+  out=$(web "Trouve avec l'outil WebSearch la page des releases du dépôt GitHub ggml-org/llama.cpp et réponds uniquement par son URL." | verdict "github.com/ggml-org/llama.cpp")
+  case "$out" in "OK "*) pass "${out#OK }" ;; *) fail "${out#KO }$(diag)" ;; esac
+else
+  skip "web_search n'est pas hébergé par ce proxy (/healthz : tools.enabled = [${hosted}])"
+fi
+fi
+
 failed=$((fails - fails_before))
-total=$ONLY; [ "$total" -gt 13 ] && total=13
+skipped=$((skips - skips_before))
+total=$ONLY; [ "$total" -gt 14 ] && total=14
+played=$((total - skipped))
+line="$((played - failed))/$played"
+[ "$skipped" -gt 0 ] && line="$line, $skipped sauté(s)"
 summary="$summary
-  $model : $((total - failed))/$total"
+  $model : $line"
 done
 
 echo
 echo "Résumé :$summary"
+[ "$skips" -gt 0 ] && echo "$skips scénario(s) sauté(s) : outils web non hébergés par le proxy."
 [ "$fails" -eq 0 ] && echo "Tout passe." || { echo "$fails scénario(s) en échec."; exit 1; }

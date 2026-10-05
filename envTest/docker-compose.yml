@@ -12,7 +12,9 @@
 #   docker compose run --rm claude claude     # Claude Code interactif
 #   docker compose run --rm pi pi             # pi interactif
 #
-# Réseau HÔTE : 127.0.0.1:8000 est le proxy de la racine du dépôt.
+# Réseau HÔTE : 127.0.0.1:8000 est le proxy de la racine du dépôt. Un proxy
+# distant se vise par PROXY_URL dans .env (http://llmproxy) : en réseau
+# hôte, le nom est résolu par la machine qui lance les conteneurs.
 services:
   claude:
     build: ./claude
@@ -24,12 +26,16 @@ services:
       ANTHROPIC_SMALL_FAST_MODEL: "${SMALL_MODEL}"
     command: ["./scenarios.sh"]
 
+  # LLM_PROXY_URL et LLM_PROXY_KEY, que lit l'extension web de pi, ne sont
+  # pas posées ici : pi/entrypoint.sh les dérive de PROXY_URL et
+  # PROXY_API_KEY (env_file), pour n'avoir qu'une source.
   pi:
     build: ./pi
     network_mode: host
     env_file: .env
     command: ["./scenarios.sh"]
 
+  # PROXY_API_KEY (env_file) est la variable que Codex lit (env_key).
   codex:
     build: ./codex
     network_mode: host

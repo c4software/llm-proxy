@@ -12,4 +12,10 @@ for m in $MODELS; do
 done
 sed -e "s|\${PROXY_URL}|${PROXY_URL}|g" -e "s|\${MODELS_JSON}|${entries}|g" \
     /work/models.json.tpl > "$PI_CODING_AGENT_DIR/models.json"
+# L'extension des outils web (/pi/extensions/llm-proxy-web.ts) lit ses
+# propres variables : l'adresse du proxy SANS /v1 et sa clé. Dérivées ici de
+# PROXY_URL et PROXY_API_KEY plutôt que dans le docker-compose : une seule
+# source, y compris sous `docker compose run -e PROXY_URL=…`.
+export LLM_PROXY_URL="${LLM_PROXY_URL:-$PROXY_URL}"
+export LLM_PROXY_KEY="${LLM_PROXY_KEY:-${PROXY_API_KEY:-unused}}"
 exec "$@"
