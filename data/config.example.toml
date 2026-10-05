@@ -225,6 +225,15 @@ max_chars = 20000
 # true lève ce filtre : à n'ouvrir que sur un proxy dont tous les clients
 # sont de confiance, et jamais derrière un modèle qui lit le web.
 allow_private = false
+# Listes de domaines, pour restreindre ce que le modèle peut ouvrir. Vides
+# par défaut : tout domaine public est lu. `allowed_domains` non vide =
+# SEULS ces domaines ; `blocked_domains` = jamais. Un domaine couvre ses
+# sous-domaines ("github.com" couvre "docs.github.com"), un chemin
+# restreint ("example.com/blog"). Contrôlées à chaque redirection. C'est
+# la seule parade à la fuite par l'URL : une page lue qui pousse le modèle
+# à ouvrir https://ailleurs/?d=<contenu de la conversation>.
+# allowed_domains = ["github.com", "docs.python.org", "wikipedia.org"]
+# blocked_domains = ["pastebin.com"]
 
 
 # ── Statistiques ────────────────────────────────────────────────────────

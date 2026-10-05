@@ -75,6 +75,8 @@ def reglages(monkeypatch):
     monkeypatch.setattr(web_fetch, "ALLOW_PRIVATE", False)
     monkeypatch.setattr(web_fetch, "MAX_BYTES", 2_000_000)
     monkeypatch.setattr(web_fetch, "MAX_CHARS", 20_000)
+    monkeypatch.setattr(web_fetch, "ALLOWED_DOMAINS", [])
+    monkeypatch.setattr(web_fetch, "BLOCKED_DOMAINS", [])
     monkeypatch.setattr(web_search, "SEARXNG_URL", "http://searx.test:8080")
     monkeypatch.setattr(web_search, "LIMIT", 8)
     monkeypatch.setattr(web_search, "LANGUAGE", "")
@@ -360,6 +362,29 @@ def test_fetch_redirection_recontrolee_a_chaque_saut():
     for location in ["\\\\127.0.0.1/x", "http:\\\\127.0.0.1\\x"]:
         assert all(r.url.host == PUBLIC and r.headers["host"] == "site.test"
                    for r in suivi(location)[1]), location
+
+
+def test_fetch_listes_de_domaines_a_chaque_saut(monkeypatch, dns):
+    """`allowed_domains` : seuls ces domaines sont lus ; `blocked_domains` :
+    jamais. Les sous-domaines suivent, et une redirection n'en sort pas."""
+    web = Web({("site.test", "/sortie"): redirect("http://autre.test/x")},
+              default=page("ok"))
+    dns["docs.site.test"] = [PUBLIC]
+    monkeypatch.setattr(web_fetch, "ALLOWED_DOMAINS", ["site.test"])
+    assert web.fetch("http://site.test/").endswith("ok")
+    assert web.fetch("http://docs.site.test/").endswith("ok")
+    refus = "Error: autre.test is not a domain this proxy is allowed to read."
+    assert web.fetch("http://autre.test/") == refus
+    assert len(web.requests) == 2          # rien n'est parti vers autre.test
+    assert web.fetch("http://site.test/sortie") == refus
+    assert [r.headers["host"] for r in web.requests[2:]] == ["site.test"]
+
+    monkeypatch.setattr(web_fetch, "ALLOWED_DOMAINS", [])
+    monkeypatch.setattr(web_fetch, "BLOCKED_DOMAINS", ["autre.test"])
+    assert web.fetch("http://site.test/").endswith("ok")
+    assert web.fetch("http://sous.autre.test/") == refus.replace(
+        "autre.test is", "sous.autre.test is")
+    assert web.fetch("http://site.test/sortie") == refus
 
 
 def test_fetch_rebinding_entre_deux_sauts(dns):

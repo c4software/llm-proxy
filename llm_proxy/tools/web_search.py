@@ -20,11 +20,11 @@ sinon il répond 403, et l'erreur le dit.
 """
 
 import re
-from urllib.parse import urlsplit
 
 import httpx
 
 from .. import config
+from .net import domain_match as _domain_match
 
 ENABLED = config.flag("tools.web_search.enabled", False)
 SEARXNG_URL = config.text("tools.web_search.searxng_url", "").rstrip("/")
@@ -85,26 +85,6 @@ def action(args: dict) -> dict:
 def _limit(value) -> int:
     return min(max(value, 1), MAX_LIMIT) if isinstance(value, int) \
         and not isinstance(value, bool) else LIMIT
-
-
-def _domain_match(url: str, domains) -> bool:
-    """`url` relève-t-elle d'une des entrées de `domains` ? Règles de
-    l'outil serveur d'Anthropic, d'où viennent ces listes : domaine nu,
-    sans schéma ; les sous-domaines sont couverts (`example.com` couvre
-    `docs.example.com`, l'inverse non) ; un chemin restreint à ce qui le
-    prolonge (`example.com/blog`). Les jokers de chemin ne sont pas lus :
-    le chemin s'arrête au premier `*`."""
-    parts = urlsplit(url)
-    host = (parts.hostname or "").lower()
-    for d in domains:
-        d = str(d).strip().lower().split("://", 1)[-1]
-        name, _, path = d.partition("/")
-        if not name or not (host == name or host.endswith("." + name)):
-            continue
-        path = path.split("*", 1)[0]
-        if not path or parts.path.lower().startswith("/" + path):
-            return True
-    return False
 
 
 def entries(results, limit: int, allowed=None, blocked=None) -> list[dict]:

@@ -25,6 +25,14 @@ MAX_CHARS = config.integer("tools.web_fetch.max_chars", 20_000)
 # Lire aussi les adresses privées : à n'ouvrir que sur un proxy dont tous
 # les clients sont de confiance, et jamais derrière un modèle qui lit le web.
 ALLOW_PRIVATE = config.flag("tools.web_fetch.allow_private", False)
+# Listes de domaines, fixées par celui qui déploie (pas par le modèle) :
+# `allowed_domains` non vide = SEULS ces domaines sont lus ;
+# `blocked_domains` = jamais lus. Mêmes règles que net.domain_match
+# (sous-domaines couverts, chemin facultatif). C'est la seule parade à la
+# fuite par l'URL : une page lue qui pousse le modèle à ouvrir
+# https://ailleurs/?d=<contenu de la conversation>.
+ALLOWED_DOMAINS = config.strings("tools.web_fetch.allowed_domains")
+BLOCKED_DOMAINS = config.strings("tools.web_fetch.blocked_domains")
 MAX_REDIRECTS = 5
 USER_AGENT = "llm-proxy web_fetch (+https://github.com/c4software/llm-proxy)"
 
@@ -154,6 +162,12 @@ async def run(args: dict, transport=None) -> str:
     offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else 0
     try:
         for _ in range(MAX_REDIRECTS + 1):
+            # À chaque saut, comme le contrôle d'adresse : une redirection
+            # ne sort pas des listes.
+            if (ALLOWED_DOMAINS and not net.domain_match(url, ALLOWED_DOMAINS)) \
+                    or net.domain_match(url, BLOCKED_DOMAINS):
+                return (f"Error: {urlsplit(url).hostname or url} is not a "
+                        f"domain this proxy is allowed to read.")
             r, body = await _get(url, transport)
             if r.status_code in (301, 302, 303, 307, 308) \
                     and r.headers.get("location"):
