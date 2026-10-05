@@ -36,6 +36,10 @@ Rôles :
      recherche web, génération d'image) y sont exécutés ici même : le backend est relancé
      avec leurs résultats jusqu'à la réponse finale — `hosted_loop`,
      la boucle commune aux deux surfaces traduites ;
+  4quinquies. les outils hébergés sur /v1/chat/completions (chat_api.py),
+     si [chat].hosted_tools : une requête qui DÉCLARE `{"type":
+     "web_search"}` dans `tools` passe par la même boucle et reçoit une
+     réponse chat/completions ordinaire ; toute autre est relayée brute ;
   5. auth optionnelle du proxy lui-même : proxy.api_keys (liste vide par
      défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
      à la OpenAI — ou «x-api-key: <clé>», à l'Anthropic — (401 sinon,
@@ -72,6 +76,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import albert
 from . import anthropic_api
+from . import chat_api
 from . import config
 from . import multipart
 from . import responses_api
@@ -146,6 +151,11 @@ async def lifespan(app: FastAPI):
         log.info("aucun outil hébergé ([tools.<nom>].enabled absent ou "
                  "false) : `web_search` d'un client Responses ou Anthropic, "
                  "`image_generation` d'un client Responses sont ignorés")
+    log.info(
+        "outils hébergés sur /v1/chat/completions : %s",
+        "ACTIFS — une requête qui déclare `{\"type\": \"web_search\"}` "
+        "dans `tools` est bouclée par le proxy" if chat_api.ENABLED
+        else "inactifs ([chat].hosted_tools absent ou false) : relais brut")
     if albert.ROUTER_MODELS:
         log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 
@@ -254,7 +264,11 @@ def error_response(dialect: str, status: int, type_: str, message: str,
 async def require_proxy_key(request: Request, call_next):
     if PROXY_API_KEYS and request.url.path != "/healthz":
         token = client_token(request)
-        if not any(hmac.compare_digest(token, k) for k in PROXY_API_KEYS):
+        # En octets : compare_digest refuse une chaîne non ASCII (TypeError),
+        # et un jeton accentué ferait tomber la requête en 500.
+        presented = token.encode("utf-8", "surrogatepass")
+        if not any(hmac.compare_digest(presented, k.encode("utf-8"))
+                   for k in PROXY_API_KEYS):
             log.warning(
                 "clé proxy absente ou invalide : %s %s → 401",
                 request.method, request.url.path,
@@ -564,6 +578,7 @@ async def healthz():
             "model_map": anthropic_api.MODEL_MAP,
         },
         "responses": {"enabled": responses_api.ENABLED},
+        "chat": {"hosted_tools": chat_api.ENABLED},
         "tools": {
             "enabled": [m.NAME for m in tools.enabled()],
             "max_calls": tools.MAX_CALLS,
@@ -743,6 +758,20 @@ async def chat_completions(request: Request):
                               unknown_prefix_message(str(payload.get("model", ""))))
 
     modified = False
+    # Outils hébergés ([chat].hosted_tools) : seule une requête qui en
+    # DÉCLARE un quitte le relais brut — sa déclaration est remplacée par
+    # les fonctions du paquet tools/, avant l'injection de tool_choice
+    # (qui compte les outils). Toute autre requête ne coûte que ce test.
+    ctx = hosted = None
+    if chat_api.ENABLED and isinstance(payload, dict) \
+            and chat_api.declares(payload, HOSTED_KINDS):
+        hosted = tools.Hosted()
+        try:
+            ctx = chat_api.prepare(payload, hosted, HOSTED_KINDS)
+        except chat_api.Refused as exc:
+            return error_response("openai", 400, "invalid_request_error",
+                                  str(exc))
+        modified = True
     if isinstance(payload, dict):
         if inject_tool_choice(payload, backend):
             modified = True
@@ -764,7 +793,65 @@ async def chat_completions(request: Request):
     blocked = await gate(call, request, payload, albert.estimate_chat_cost(raw))
     if blocked is not None:
         return blocked
-    return await forward(call, request, "v1/chat/completions", raw)
+    if ctx is None or not ctx.hosted:
+        return await forward(call, request, "v1/chat/completions", raw)
+    return await chat_hosted(call, request, payload, ctx, hosted, raw)
+
+
+# Tous les types d'outil que le paquet tools/ sait héberger, actifs ou
+# non : ce qu'une requête chat/completions peut déclarer dans `tools`.
+HOSTED_KINDS = frozenset(k for m in tools.MODULES for k in m.KINDS)
+
+
+async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
+                      hosted, raw: bytes) -> Response:
+    """Une requête chat/completions qui déclare un outil hébergé : même
+    départ que `forward` (statut et en-têtes du PREMIER upstream), puis la
+    boucle commune (`hosted_loop`) avec le robinet chat_api.Translator,
+    qui rend au client UNE réponse chat/completions.
+
+    Chaque tour suivant repart du corps d'origine — déclaration déjà
+    remplacée — et de ses messages, suivis de ce que le robinet a gardé
+    des tours faits (appels hébergés et résultats). Le client, lui, ne
+    les aura pas dans son historique : voir chat_api."""
+    upstream = await send_upstream(call, request, "v1/chat/completions", raw)
+    if isinstance(upstream, JSONResponse):
+        return upstream
+    estimate = albert.estimate_chat_cost(raw)
+    content_type = upstream.headers.get("content-type", "")
+    if upstream.status_code >= 400:
+        # Erreur dès le premier tour : rien à boucler, le relais ordinaire.
+        return StreamingResponse(
+            relay(call, upstream,
+                  default_tap(upstream.status_code, content_type), estimate),
+            status_code=upstream.status_code,
+            headers=response_headers(upstream))
+    robinet = chat_api.Translator(upstream.status_code, content_type, ctx)
+    base = payload.get("messages")
+    base = list(base) if isinstance(base, list) else []
+    # `payload` a déjà perdu son préfixe (strip_backend_prefix), et la
+    # boucle le retire à chaque tour : il est reposé ici.
+    model = f"{call.backend.name}/{payload.get('model') or ''}"
+
+    def rebuild(robinet) -> dict:
+        return {**payload, "model": model, "messages": base + robinet.history}
+
+    # Pas d'événement `ping` en chat/completions : un commentaire SSE
+    # (ligne «:», ignorée par tout lecteur de flux) tient la connexion
+    # pendant une recherche ou l'attente d'un quota. ping_interval = 0 :
+    # aucun (`_settled` sonderait sinon sans attendre).
+    ping = b": ping\n\n" if robinet.sse \
+        and anthropic_api.PING_INTERVAL > 0 else None
+    loop = hosted_loop(call, request, hosted, robinet, upstream, estimate,
+                       rebuild, options=ctx.options, ping=ping)
+    if robinet.sse:
+        return StreamingResponse(loop, status_code=upstream.status_code,
+                                 headers=response_headers(upstream))
+    # En JSON rien ne part avant la fin : la boucle est menée à son terme
+    # ICI, et la réponse prend le statut de son issue (comme messages()).
+    chunks = [chunk async for chunk in loop]
+    return Response(b"".join(chunks), status_code=robinet.status,
+                    media_type="application/json")
 
 
 # ── Surface Anthropic ───────────────────────────────────────────────────
@@ -1044,14 +1131,23 @@ async def responses(request: Request):
     # Les outils que le proxy exécute lui-même (aucun = None : le client
     # qui déclare `web_search` le voit ignoré, comme avant).
     hosted = tools.Hosted() or None
+    # À qui appartiendront les résultats gardés en mémoire : le condensé de
+    # la clé présentée (jamais la clé). Proxy ouvert = un seul client, quel
+    # que soit le Bearer — personne ne l'a vérifié.
+    client = tools.owner(client_token(request)) if PROXY_API_KEYS else ""
     try:
         chat_payload, ctx = responses_api.to_chat(payload, images=images,
-                                                  hosted=hosted)
+                                                  hosted=hosted, client=client)
     except responses_api.Refused as exc:
         return error_response("openai", 400, "invalid_request_error", str(exc))
     if ctx.ignored:
         log.info("responses : %s sans équivalent chat, ignoré(s) (model=%s)",
                  ", ".join(sorted(set(ctx.ignored))), model_key)
+    if ctx.custom or ctx.shell:
+        log.info("responses : outil(s) du client présenté(s) en fonction : "
+                 "%s (model=%s)", ", ".join(
+                     [f"custom {name}" for name, _ in ctx.custom.values()]
+                     + (["local_shell"] if ctx.shell else [])), model_key)
     if inject_tool_choice(chat_payload, backend):
         log.info(
             "tool_choice=%s injecté (backend=%s, model=%s, %d tools)",
@@ -1123,14 +1219,17 @@ def hosted_stream(call: Call, request: Request, payload: dict,
     def rebuild(robinet) -> dict:
         return responses_api.to_chat(
             {**payload, "input": base + robinet.output},
-            images=images, hosted=hosted)[0]
+            images=images, hosted=hosted, client=robinet.ctx.client)[0]
 
     # L'API Responses n'a pas d'événement `ping` : un commentaire SSE
     # (ligne «:», ignorée par tout lecteur de flux) tient la connexion
     # pendant une recherche ou l'attente d'un quota.
     return hosted_loop(call, request, hosted, robinet, upstream,
                        prompt_estimate, rebuild, options=robinet.ctx.options,
-                       ping=b": ping\n\n" if robinet.sse else None)
+                       # ping_interval = 0 : pas de ping (sans ce garde
+                       # l'attente aurait un délai nul et pingerait en boucle).
+                       ping=b": ping\n\n" if robinet.sse
+                       and anthropic_api.PING_INTERVAL > 0 else None)
 
 
 async def _next_upstream(quiet: Call, request: Request, chat_payload: dict,

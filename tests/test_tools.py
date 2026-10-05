@@ -719,6 +719,28 @@ def test_memory_evince_l_entree_la_moins_recemment_utilisee():
     assert len(vide) == 0 and vide.recall("a") is None
 
 
+def test_memory_cloisonnee_par_client():
+    """Le client fait partie de la clé : le même identifiant, pour un autre
+    client, n'existe pas. La borne, elle, est commune."""
+    alice, bob = tools.owner("clé-alice"), tools.owner("clé-bob")
+    # Un condensé, stable dans le processus, qui ne contient pas la clé ;
+    # pas de clé = le client unique d'un proxy ouvert.
+    assert alice == tools.owner("clé-alice") != bob
+    assert len(alice) == 32 and "alice" not in alice and tools.owner("") == ""
+    m = tools.Memory(3, 60)
+    m.store("ws_1", "n", "{}", "pour alice", alice)
+    assert m.recall("ws_1", alice)["result"] == "pour alice"
+    assert m.recall("ws_1", bob) is None and m.recall("ws_1") is None
+    m.store("ws_1", "n", "{}", "pour bob", bob)   # même id, autre client
+    assert len(m) == 2 and m.recall("ws_1", alice)["result"] == "pour alice"
+    # LRU commune : les entrées d'un client peuvent pousser dehors celles
+    # d'un autre (son rejeu retombe alors sur le résultat «expiré»).
+    m.recall("ws_1", bob)
+    m.store("ws_2", "n", "{}", "b2", bob)
+    m.store("ws_3", "n", "{}", "b3", bob)
+    assert m.recall("ws_1", alice) is None and m.recall("ws_1", bob)
+
+
 def test_memory_expiration(monkeypatch):
     t = [1000.0]
     monkeypatch.setattr(tools.time, "monotonic", lambda: t[0])
@@ -974,3 +996,14 @@ def test_route_tools_exige_la_cle_du_proxy(routes, monkeypatch):
     r = client.post("/v1/tools/web_search", json={"query": "x"},
                     headers={"Authorization": "Bearer secret"})
     assert r.status_code == 200 and seen == [{"query": "x"}]
+
+
+def test_cle_du_proxy_non_ascii_ne_casse_pas_le_controle(routes, monkeypatch):
+    """Une clé configurée avec un accent : le contrôle compare en octets
+    (compare_digest refuse une chaîne non ASCII) — 401 pour un autre jeton,
+    pas un 500."""
+    from llm_proxy import app as A
+    client, _ = routes
+    monkeypatch.setattr(A, "PROXY_API_KEYS", frozenset({"clé-secrète"}))
+    r = client.get("/v1/tools", headers={"Authorization": "Bearer cle-fausse"})
+    assert r.status_code == 401

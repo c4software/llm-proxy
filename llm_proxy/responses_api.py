@@ -24,6 +24,11 @@ La tolérance de la requête reprend celle de gufo (gufo-org/gufo#434),
     leur nom simple — le `namespace` d'origine est reposé sur l'appel
     rendu au client, qui s'en sert pour router ; un nom présent deux fois
     (deux namespaces, ou un namespace et le premier niveau) est refusé ;
+  * `custom` et `local_shell` ne sont pas hébergés non plus : ce sont des
+    outils que le CLIENT exécute, sous une forme que chat/completions n'a
+    pas (entrée en texte libre ; élément `local_shell_call`). Chacun est
+    présenté au modèle comme une fonction, et son appel rendu au client
+    dans sa forme d'origine — voir « Outils du client hors `function` » ;
   * les champs sans effet ici (`include`, `reasoning.summary`,
     `text.verbosity`, `prompt_cache_key`, `client_metadata`, `store`…)
     sont tolérés : le corps upstream est RECONSTRUIT, rien d'inconnu ne
@@ -47,6 +52,27 @@ redevient, à l'identique, un appel suivi de son résultat (pour un
 que le modèle avait lu, jamais l'image). Ce module ne
 fait aucune requête : il reçoit un objet `Hosted` et s'en sert comme
 d'un annuaire.
+
+Outils du client hors `function` (formes lues dans le code de Codex CLI
+rust-v0.157.1 — protocol/src/models.rs, tools/src/responses_api.rs,
+codex-api/src/sse/responses.rs — et dans les types du SDK openai-python) :
+  * `{"type": "custom", name, description, format}` — outil « freeform »,
+    dont l'entrée est un TEXTE, pas du JSON (Codex : `apply_patch`, avec
+    une grammaire lark, pour les modèles dont le catalogue dit
+    `apply_patch_tool_type = "freeform"`). Devient une fonction à un seul
+    champ `input` ; la grammaire rejoint la description, c'est tout ce
+    qu'un backend chat peut en faire. L'appel est rendu en
+    `custom_tool_call` (`call_id`, `name`, `input`), rejoué par le client
+    avec un `custom_tool_call_output` ;
+  * `{"type": "local_shell"}` — devient une fonction `local_shell`
+    (`command` en tableau d'arguments…), l'appel est rendu en
+    `local_shell_call` avec son `action` `exec`, rejoué avec un
+    `local_shell_call_output` (SDK) ou un `function_call_output` (Codex).
+    Codex 0.157.1 ne DÉCLARE plus cet outil (son `ToolSpec` n'en a plus la
+    variante) : il n'est là que pour un autre client Responses.
+La fonction prend le nom de l'outil, ou ce nom suffixé (`_2`…) si une
+fonction du client le porte déjà : c'est la fonction du client qui garde
+le sien.
 
 Même robinet que anthropic_api.Translator (feed / finish / tokens /
 cached / sse / ok) : un flux OpenAI (deltas plats, outils fragmentés par
@@ -100,6 +126,14 @@ class Context:
         # hébergé (`size` d'`image_generation`) : passé à l'exécution.
         self.options: dict[str, dict] = {}
         self.memory = None
+        # Le client, pour la mémoire des résultats : tools.owner() de la
+        # clé présentée au proxy, «» pour un proxy ouvert.
+        self.client = ""
+        # Outils du CLIENT présentés au modèle comme des fonctions : nom de
+        # la fonction → (nom de l'outil `custom`, son namespace ou None),
+        # et le nom de la fonction qui tient lieu de `local_shell`.
+        self.custom: dict[str, tuple[str, str | None]] = {}
+        self.shell: str | None = None
         self.echo = {
             k: request.get(k) for k in (
                 "max_output_tokens", "metadata", "temperature", "top_p")
@@ -109,6 +143,20 @@ class Context:
         self.echo["tool_choice"] = request.get("tool_choice") or "auto"
         self.echo["parallel_tool_calls"] = bool(
             request.get("parallel_tool_calls", True))
+
+    def form(self, function: str) -> str:
+        """Sous quelle forme l'appel de cette fonction est rendu au client :
+        `custom`, `local_shell`, ou `function` pour tout le reste."""
+        if function in self.custom:
+            return "custom"
+        return "local_shell" if function == self.shell else "function"
+
+    def custom_function(self, tool: str) -> str:
+        """La fonction qui tient lieu de l'outil `custom` de ce nom — le nom
+        lui-même s'il n'est pas (ou plus) déclaré : un appel rejoué garde
+        sa place dans l'historique."""
+        return next((fn for fn, (name, _) in self.custom.items()
+                     if name == tool), tool)
 
 
 # ── Requête : Responses → OpenAI chat ───────────────────────────────────
@@ -128,6 +176,59 @@ def _function_tool(t: dict) -> dict:
     if t.get("strict") is True:
         fn["strict"] = True
     return {"type": "function", "function": fn}
+
+
+# Ajouté à la description d'un outil `custom` : la sienne dit souvent de
+# NE PAS emballer l'entrée dans du JSON (« This is a FREEFORM tool » chez
+# Codex), ce qui n'a pas de sens pour un modèle qui ne sait appeler que
+# des fonctions.
+CUSTOM_NOTE = ("Call this function with a single JSON argument, `input`: "
+               "the raw text the tool expects, as one string.")
+
+
+def _custom_tool(t: dict, function: str) -> dict:
+    """Outil `custom` → fonction à un champ texte. La grammaire (`format`
+    de type `grammar`) n'a pas d'équivalent chat/completions : elle part
+    dans la description, où elle dit au moins au modèle quoi écrire."""
+    description = [str(t.get("description") or ""), CUSTOM_NOTE]
+    fmt = t.get("format")
+    if isinstance(fmt, dict) and fmt.get("type") == "grammar" \
+            and isinstance(fmt.get("definition"), str) and fmt["definition"]:
+        syntax = str(fmt.get("syntax") or "").strip()
+        description.append(
+            f"The text must follow this {syntax + ' ' if syntax else ''}"
+            f"grammar:\n{fmt['definition']}")
+    return {"type": "function", "function": {
+        "name": function,
+        "description": "\n\n".join(d for d in description if d),
+        "parameters": {"type": "object", "properties": {"input": {
+            "type": "string",
+            "description": "The raw text input of the tool."}},
+            "required": ["input"]},
+    }}
+
+
+def _shell_tool(function: str) -> dict:
+    """Outil `local_shell` → fonction. Ses champs sont ceux de l'action
+    `exec` de l'élément `local_shell_call` (SDK openai-python,
+    LocalShellCallAction ; Codex, LocalShellExecAction)."""
+    return {"type": "function", "function": {
+        "name": function,
+        "description": "Run a command on the user's machine and return "
+                       "its output.",
+        "parameters": {"type": "object", "properties": {
+            "command": {"type": "array", "items": {"type": "string"},
+                        "description": "The command and its arguments, e.g. "
+                                       "[\"bash\", \"-lc\", \"ls -la\"]."},
+            "working_directory": {"type": "string",
+                                  "description": "Directory to run it in."},
+            "timeout_ms": {"type": "integer",
+                           "description": "Timeout in milliseconds."},
+            "env": {"type": "object",
+                    "additionalProperties": {"type": "string"},
+                    "description": "Environment variables to set."},
+        }, "required": ["command"]},
+    }}
 
 
 def _client_names(tools) -> set[str]:
@@ -165,21 +266,56 @@ def _tools(tools, ctx: Context, hosted=None) -> list[dict]:
             ctx.namespaces[name] = namespace
         out.append(tool)
 
+    def free(name: str) -> str:
+        """Un nom de fonction libre pour un outil qui n'en est pas une :
+        le sien, ou suffixé si une fonction du client (où qu'elle soit
+        dans la liste) ou une fonction déjà posée le porte."""
+        function, n = name, 1
+        while function in client or function in seen:
+            n += 1
+            function = f"{name}_{n}"
+        seen.add(function)
+        return function
+
+    def add_custom(t: dict, namespace: str | None) -> None:
+        name = t.get("name")
+        if not isinstance(name, str) or not name:
+            raise Refused("outil `custom` sans `name`")
+        if any(known == name for known, _ in ctx.custom.values()):
+            raise Refused(
+                f"outil `custom` «{name}» déclaré deux fois : les noms "
+                f"doivent être uniques")
+        function = free(name)
+        ctx.custom[function] = (name, namespace)
+        out.append(_custom_tool(t, function))
+
     for t in tools if isinstance(tools, list) else []:
         if not isinstance(t, dict):
             continue
         kind = t.get("type")
         if kind == "function":
             add(t, None)
+        elif kind == "custom":
+            add_custom(t, None)
+        elif kind == "local_shell":
+            # Sans nom ni réglage : déclaré deux fois, c'est le même outil.
+            if ctx.shell is None:
+                ctx.shell = free("local_shell")
+                out.append(_shell_tool(ctx.shell))
         elif kind == "namespace":
             ns, nested = t.get("name"), t.get("tools")
             if not isinstance(ns, str) or not ns or not isinstance(nested, list):
                 raise Refused("`namespace` mal formé : `name` et `tools` attendus")
             for sub in nested:
+                # Codex y range aussi ses outils `custom` (mode « responses
+                # lite » : ResponsesApiNamespaceTool::Custom).
+                if isinstance(sub, dict) and sub.get("type") == "custom":
+                    add_custom(sub, ns)
+                    continue
                 if not isinstance(sub, dict) or sub.get("type") != "function":
                     raise Refused(
                         f"namespace «{ns}» : seuls des outils `function` "
-                        f"peuvent y être groupés")
+                        f"ou `custom` peuvent y être groupés")
                 add(sub, ns)
         else:
             modules = [m for m in (hosted.for_kind(kind) if hosted else [])
@@ -199,19 +335,24 @@ def _tools(tools, ctx: Context, hosted=None) -> list[dict]:
                         m, "definition") else m.DEFINITION)
                 continue
             # Outil hébergé par OpenAI seul (file_search, code_interpreter,
-            # mcp…) ou intégré au client sans équivalent chat (custom,
-            # local_shell…) : rien à traduire.
+            # mcp…) : rien à traduire.
             ctx.ignored.append(str(kind))
     return out
 
 
-def _tool_choice(value, out: dict) -> None:
+def _tool_choice(value, out: dict, ctx: Context) -> None:
+    kind = value.get("type") if isinstance(value, dict) else None
+    name = None
     if value in ("auto", "none", "required"):
         out["tool_choice"] = value
-    elif isinstance(value, dict) and value.get("type") == "function" \
-            and value.get("name"):
-        out["tool_choice"] = {"type": "function",
-                              "function": {"name": value["name"]}}
+    elif kind == "function" and value.get("name"):
+        name = value["name"]
+    elif kind == "custom" and value.get("name"):
+        name = ctx.custom_function(str(value["name"]))
+    elif kind == "local_shell":
+        name = ctx.shell
+    if name:
+        out["tool_choice"] = {"type": "function", "function": {"name": name}}
     # Tout autre choix (outil hébergé, allowed_tools…) : laissé au défaut.
 
 
@@ -286,12 +427,14 @@ def has_images(p: dict) -> bool:
     return False
 
 
-def _replayed_call(it: dict, hosted) -> tuple[str, str, str] | None:
+def _replayed_call(it: dict, hosted, client: str = "") -> tuple[str, str, str] | None:
     """Élément d'outil hébergé rejoué par le client (web_search_call…)
     → (nom, arguments, résultat), ou None s'il n'est pas des nôtres. La
     mémoire rend l'appel tel qu'il a eu lieu ; si elle l'a perdu, il est
-    reconstruit depuis son action, avec un résultat qui le dit."""
-    entry = hosted.memory.recall(str(it.get("id") or ""))
+    reconstruit depuis son action, avec un résultat qui le dit. `client` :
+    à qui la mémoire doit l'entrée — celle d'un autre client n'existe pas
+    pour celui-ci, l'appel est reconstruit comme s'il était perdu."""
+    entry = hosted.memory.recall(str(it.get("id") or ""), client)
     if entry is not None:
         return entry["name"], entry["arguments"], entry["result"]
     module = hosted.for_item(it)
@@ -303,6 +446,79 @@ def _replayed_call(it: dict, hosted) -> tuple[str, str, str] | None:
         return (module.NAME, *module.replay(it))
     args = {k: v for k, v in it["action"].items() if k != "type"}
     return module.NAME, json.dumps(args, ensure_ascii=False), hosted.expired
+
+
+def _custom_arguments(text) -> str:
+    """L'entrée texte d'un `custom_tool_call` rejoué → arguments de la
+    fonction. Toujours la même sérialisation : le préfixe ne bouge pas
+    d'un tour à l'autre."""
+    return json.dumps({"input": text if isinstance(text, str) else ""},
+                      ensure_ascii=False)
+
+
+def _custom_input(arguments: str) -> str:
+    """Arguments écrits par le modèle → entrée texte de l'outil `custom`.
+    Un JSON invalide ou tronqué, ou sans `input`, est rendu TEL QUEL : un
+    modèle qui suit la description d'origine à la lettre (« do not wrap
+    the patch in JSON ») écrit son texte nu, et c'est alors le bon ; sinon
+    c'est l'outil du client qui le refusera, avec un message que le modèle
+    lira."""
+    try:
+        args = json.loads(arguments)
+    except ValueError:
+        return arguments
+    if isinstance(args, dict) and isinstance(args.get("input"), str):
+        return args["input"]
+    return args if isinstance(args, str) else arguments
+
+
+# Champs de l'action `exec`, dans l'ordre où ils sont rejoués.
+SHELL_FIELDS = ("command", "working_directory", "timeout_ms", "env", "user")
+
+
+def _shell_action(arguments: str) -> tuple[dict, bool]:
+    """Arguments écrits par le modèle → (action `exec`, valide ?). Une
+    commande en CHAÎNE (erreur courante) passe par `bash -lc` ; sans
+    commande exploitable — JSON invalide, tronqué, champ absent — l'action
+    est vide et l'appelant rend l'élément `incomplete` plutôt que de
+    casser le flux : le client répondra, le modèle corrigera."""
+    try:
+        args = json.loads(arguments or "{}")
+    except ValueError:
+        args = None
+    args = args if isinstance(args, dict) else {}
+    command = args.get("command")
+    if isinstance(command, str) and command.strip():
+        command = ["bash", "-lc", command]
+    ok = isinstance(command, list) and bool(command) \
+        and all(isinstance(x, str) for x in command)
+    env, timeout = args.get("env"), args.get("timeout_ms")
+    text = lambda v: v if isinstance(v, str) and v else None
+    return {
+        "type": "exec",
+        "command": command if ok else [],
+        "env": {str(k): str(v) for k, v in env.items()}
+        if isinstance(env, dict) else {},
+        "timeout_ms": timeout if isinstance(timeout, int)
+        and not isinstance(timeout, bool) else None,
+        "user": text(args.get("user")),
+        "working_directory": text(args.get("working_directory")),
+    }, ok
+
+
+def _shell_arguments(action) -> str:
+    """L'action d'un `local_shell_call` rejoué → arguments de la fonction :
+    ses champs renseignés, dans un ordre fixe."""
+    action = action if isinstance(action, dict) else {}
+    return json.dumps({k: action[k] for k in SHELL_FIELDS
+                       if action.get(k) not in (None, {}, [])},
+                      ensure_ascii=False)
+
+
+# Sortie d'un appel exécuté par le client, quelle que soit la forme de
+# l'appel : toutes deviennent un message `tool`.
+OUTPUT_ITEMS = ("function_call_output", "custom_tool_call_output",
+                "local_shell_call_output")
 
 
 def _messages(p: dict, images: bool, ctx: Context, hosted=None) -> list[dict]:
@@ -324,6 +540,7 @@ def _messages(p: dict, images: bool, ctx: Context, hosted=None) -> list[dict]:
     pending: list[str] = []      # system/developer en cours de conversation
     media: list[dict] = []       # images de sorties d'outil, après les `tool`
     opened = False               # un élément non system a-t-il été vu ?
+    shell_ids: dict[str, str] = {}   # id d'un local_shell_call → son call_id
 
     def flush_media() -> None:
         if media:
@@ -334,6 +551,22 @@ def _messages(p: dict, images: bool, ctx: Context, hosted=None) -> list[dict]:
         if pending:
             messages.append({"role": "user", "content": "\n\n".join(pending)})
             pending.clear()
+
+    def call(call_id: str, name: str, arguments: str) -> None:
+        """Un appel d'outil de l'assistant. Texte puis appels du même
+        tour : UN message assistant, la forme que chat/completions attend."""
+        nonlocal opened
+        opened = True
+        flush_media()
+        entry = {"id": call_id, "type": "function",
+                 "function": {"name": name, "arguments": arguments}}
+        last = messages[-1] if messages else None
+        if last and last["role"] == "assistant":
+            last.setdefault("tool_calls", []).append(entry)
+        else:
+            flush_pending()
+            messages.append({"role": "assistant", "content": None,
+                             "tool_calls": [entry]})
 
     items = p.get("input")
     if isinstance(items, str):
@@ -366,28 +599,31 @@ def _messages(p: dict, images: bool, ctx: Context, hosted=None) -> list[dict]:
                     pending.clear()
                 messages.append(msg)
         elif kind == "function_call":
-            opened = True
-            flush_media()
-            call = {
-                "id": str(it.get("call_id") or it.get("id") or _id("call")),
-                "type": "function",
-                "function": {"name": str(it.get("name", "")),
-                             "arguments": it.get("arguments")
-                             if isinstance(it.get("arguments"), str) else "{}"},
-            }
-            # Texte puis appels du même tour : UN message assistant, la
-            # forme que chat/completions attend.
-            last = messages[-1] if messages else None
-            if last and last["role"] == "assistant":
-                last.setdefault("tool_calls", []).append(call)
-            else:
-                flush_pending()
-                messages.append({"role": "assistant", "content": None,
-                                 "tool_calls": [call]})
-        elif kind == "function_call_output":
+            call(str(it.get("call_id") or it.get("id") or _id("call")),
+                 str(it.get("name", "")),
+                 it.get("arguments")
+                 if isinstance(it.get("arguments"), str) else "{}")
+        elif kind == "custom_tool_call":
+            # Appel d'un outil `custom` : la fonction qui en tient lieu,
+            # son texte remis dans `input`.
+            call(str(it.get("call_id") or it.get("id") or _id("call")),
+                 ctx.custom_function(str(it.get("name", ""))),
+                 _custom_arguments(it.get("input")))
+        elif kind == "local_shell_call":
+            call_id = str(it.get("call_id") or it.get("id") or _id("call"))
+            if it.get("id"):
+                shell_ids[str(it["id"])] = call_id
+            call(call_id, ctx.shell or "local_shell",
+                 _shell_arguments(it.get("action")))
+        elif kind in OUTPUT_ITEMS:
             opened = True
             output = it.get("output")
-            call_id = str(it.get("call_id", ""))
+            call_id = str(it.get("call_id") or "")
+            if kind == "local_shell_call_output" and not call_id:
+                # L'API y nomme `id` ce qui est le `call_id` de l'appel ;
+                # un client qui y met l'id de l'ÉLÉMENT est suivi aussi.
+                call_id = str(it.get("id") or "")
+                call_id = shell_ids.get(call_id, call_id)
             if isinstance(output, str):
                 text = output
             else:
@@ -404,23 +640,13 @@ def _messages(p: dict, images: bool, ctx: Context, hosted=None) -> list[dict]:
                              "content": text})
         elif kind == "reasoning":
             continue
-        elif hosted and (replayed := _replayed_call(it, hosted)):
+        elif hosted and (replayed := _replayed_call(it, hosted, ctx.client)):
             # Appel que le proxy avait exécuté : il redevient un appel
             # suivi de son résultat, comme pendant la boucle (app.py
             # reconstruit ses tours par ce même chemin).
-            opened = True
-            flush_media()
             name, arguments, result = replayed
-            call = {"id": str(it.get("id")), "type": "function",
-                    "function": {"name": name, "arguments": arguments}}
-            last = messages[-1] if messages else None
-            if last and last["role"] == "assistant":
-                last.setdefault("tool_calls", []).append(call)
-            else:
-                flush_pending()
-                messages.append({"role": "assistant", "content": None,
-                                 "tool_calls": [call]})
-            messages.append({"role": "tool", "tool_call_id": call["id"],
+            call(str(it.get("id")), name, arguments)
+            messages.append({"role": "tool", "tool_call_id": str(it.get("id")),
                              "content": result})
         elif kind == "item_reference":
             raise Refused(
@@ -437,12 +663,14 @@ def _messages(p: dict, images: bool, ctx: Context, hosted=None) -> list[dict]:
     return messages
 
 
-def to_chat(p: dict, images: bool = False, hosted=None) -> tuple[dict, Context]:
+def to_chat(p: dict, images: bool = False, hosted=None,
+            client: str = "") -> tuple[dict, Context]:
     """Corps /v1/responses → corps /v1/chat/completions, et le contexte
     dont la réponse aura besoin. `model` est recopié tel quel : l'appelant
     route sur son préfixe. `hosted` : l'annuaire des outils que le proxy
-    exécute (tools.Hosted), ou None. Lève Refused pour ce qui ne peut pas
-    être honoré."""
+    exécute (tools.Hosted), ou None. `client` : à qui appartiennent les
+    résultats de la mémoire (tools.owner de sa clé ; «» = proxy ouvert,
+    un seul client). Lève Refused pour ce qui ne peut pas être honoré."""
     for key in ("previous_response_id", "conversation"):
         if p.get(key):
             raise Refused(
@@ -453,6 +681,10 @@ def to_chat(p: dict, images: bool = False, hosted=None) -> tuple[dict, Context]:
 
     ctx = Context(p)
     ctx.memory = hosted.memory if hosted else None
+    ctx.client = client
+    # Les outils d'abord : le rejeu d'un `custom_tool_call` a besoin du nom
+    # de la fonction qui tient lieu de l'outil.
+    tools = _tools(p.get("tools"), ctx, hosted)
     out: dict = {"model": p.get("model", "")}
     out["messages"] = _messages(p, images, ctx, hosted)
 
@@ -482,10 +714,9 @@ def to_chat(p: dict, images: bool = False, hosted=None) -> tuple[dict, Context]:
         # retomberaient sur l'estimation, et le client ne saurait rien.
         out["stream_options"] = {"include_usage": True}
 
-    tools = _tools(p.get("tools"), ctx, hosted)
     if tools:
         out["tools"] = tools
-        _tool_choice(p.get("tool_choice"), out)
+        _tool_choice(p.get("tool_choice"), out, ctx)
         if isinstance(p.get("parallel_tool_calls"), bool):
             out["parallel_tool_calls"] = p["parallel_tool_calls"]
     return out, ctx
@@ -547,6 +778,37 @@ def _call_item(item_id: str, call_id: str, name: str, arguments: str,
     if name in ctx.namespaces:
         item["namespace"] = ctx.namespaces[name]
     return item
+
+
+# Les éléments par lesquels la main revient au CLIENT, et le préfixe de
+# leur id (ceux de Codex : protocol/src/models.rs).
+CLIENT_ITEMS = {"function": ("function_call", "fc"),
+                "custom": ("custom_tool_call", "ctc"),
+                "local_shell": ("local_shell_call", "lsh")}
+CLIENT_CALLS = tuple(kind for kind, _ in CLIENT_ITEMS.values())
+
+
+def _client_call(ctx: Context, call_id: str, name: str, arguments: str,
+                 item_id: str | None = None) -> dict:
+    """L'élément TERMINÉ d'un appel que le client exécutera, dans la forme
+    de l'outil qu'il a déclaré : `function_call`, `custom_tool_call` (les
+    arguments redeviennent un texte) ou `local_shell_call` (une action)."""
+    form = ctx.form(name)
+    item_id = item_id or _id(CLIENT_ITEMS[form][1])
+    if form == "custom":
+        tool, namespace = ctx.custom[name]
+        item = {"id": item_id, "type": "custom_tool_call",
+                "status": "completed", "call_id": call_id, "name": tool,
+                "input": _custom_input(arguments)}
+        if namespace:
+            item["namespace"] = namespace
+        return item
+    if form == "local_shell":
+        action, ok = _shell_action(arguments)
+        return {"id": item_id, "type": "local_shell_call", "call_id": call_id,
+                "status": "completed" if ok else "incomplete",
+                "action": action}
+    return _call_item(item_id, call_id, name, arguments, "completed", ctx)
 
 
 def _response(ctx: Context, rid: str, created: int, status: str,
@@ -639,9 +901,8 @@ def _chat_items(msg: dict, ctx: Context, base: int = 0) -> tuple[list[dict], lis
                                     base + len(output)))
             output.append(_hosted_item(item_id, ctx.hosted[name]))
             continue
-        output.append(_call_item(
-            _id("fc"), str(tc.get("id") or _id("call")), name, arguments,
-            "completed", ctx))
+        output.append(_client_call(
+            ctx, str(tc.get("id") or _id("call")), name, arguments))
     return output, pending
 
 
@@ -771,7 +1032,7 @@ class Translator:
         self._output += items
         self.pending += pending
         self.client_calls = sum(
-            1 for item in items if item["type"] == "function_call")
+            1 for item in items if item["type"] in CLIENT_CALLS)
         self._finish_reason = choice.get("finish_reason")
         if self.turns == 1 and isinstance(doc.get("created"), int):
             self._created = doc["created"]
@@ -800,7 +1061,8 @@ class Translator:
         une image la laisserait sinon en mémoire vive jusqu'à expiration."""
         module = self.ctx.hosted[call["name"]]
         self.ctx.memory.store(call["item_id"], call["name"],
-                              call["arguments"], str(result))
+                              call["arguments"], str(result),
+                              self.ctx.client)
         item = _hosted_item(call["item_id"], module, call["arguments"], result)
         self._output[call["index"]] = item
         self.pending = [c for c in self.pending if c is not call]
@@ -915,10 +1177,15 @@ class Translator:
         """Où se place l'élément ouvert : son rang dans `output`, son id."""
         return {"output_index": len(self._output), "item_id": self._item_id}
 
-    def _open_item(self, kind: str, item: dict) -> bytes:
+    def _open_item(self, kind: str, item: dict, announce: bool = True) -> bytes:
+        """`announce` faux : l'élément s'ouvre sans `output_item.added` —
+        un `local_shell_call` n'a pas de forme sans son action, il n'est
+        annoncé qu'à sa clôture."""
         out = self._close()
         self._blank = ""
         self._open, self._item_id, self._text = kind, item["id"], []
+        if not announce:
+            return out
         return out + self._event("response.output_item.added", {
             "output_index": len(self._output), "item": item})
 
@@ -960,10 +1227,28 @@ class Translator:
                 "part": {"type": "summary_text", "text": text}})
         else:
             call_id, name = self._call
-            item = _call_item(self._item_id, call_id, name, text or "{}",
-                              "completed", self.ctx)
-            out += self._event("response.function_call_arguments.done", {
-                **at, "name": name, "arguments": item["arguments"]})
+            form = self.ctx.form(name)
+            item = _client_call(self.ctx, call_id, name,
+                                text or "{}" if form == "function" else text,
+                                self._item_id)
+            if form == "custom":
+                # L'entrée n'est connue qu'une fois les arguments JSON
+                # complets : UN delta qui la porte entière, puis `done`.
+                # Codex ne lit que le delta (aperçu du patch en cours) et
+                # prend l'appel dans `output_item.done`.
+                if item["input"]:
+                    out += self._event(
+                        "response.custom_tool_call_input.delta",
+                        {**at, "delta": item["input"]})
+                out += self._event("response.custom_tool_call_input.done", {
+                    **at, "input": item["input"]})
+            elif form == "local_shell":
+                out += self._event("response.output_item.added", {
+                    "output_index": len(self._output),
+                    "item": {**item, "status": "in_progress"}})
+            else:
+                out += self._event("response.function_call_arguments.done", {
+                    **at, "name": name, "arguments": item["arguments"]})
             if self._tool_index is not None:
                 self._closed_tools.add(self._tool_index)
             self._tool_index = None
@@ -1045,6 +1330,13 @@ class Translator:
                         out += self._event(
                             f"response.{module.ITEM_TYPE}.in_progress",
                             self._at())
+                    elif self.ctx.form(name) == "custom":
+                        item = _client_call(self.ctx, call_id, name, "")
+                        out += self._open_item(
+                            "tool", {**item, "status": "in_progress"})
+                    elif self.ctx.form(name) == "local_shell":
+                        out += self._open_item(
+                            "tool", {"id": _id("lsh")}, announce=False)
                     else:
                         out += self._open_item("tool", _call_item(
                             _id("fc"), call_id, name, "", "in_progress",
@@ -1053,7 +1345,8 @@ class Translator:
                 args = fn.get("arguments")
                 if isinstance(args, str) and args:
                     self._text.append(args)
-                    if self._open == "tool":
+                    if self._open == "tool" \
+                            and self.ctx.form(self._call[1]) == "function":
                         out += self._event(
                             "response.function_call_arguments.delta",
                             {**self._at(), "delta": args})

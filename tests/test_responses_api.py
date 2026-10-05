@@ -215,6 +215,8 @@ def test_to_chat_refuses_what_it_cannot_honor():
         ({"tools": [{"type": "namespace", "tools": [fn("a")]}]}, "mal formé"),
         ({"tools": [ns("n", {"type": "web_search"})]}, "function"),
         ({"tools": [{"type": "function"}]}, "name"),
+        ({"tools": [{"type": "custom"}]}, "name"),
+        ({"tools": [APPLY_PATCH, ns("n", APPLY_PATCH)]}, "deux fois"),
     ):
         with pytest.raises(R.Refused, match=needle):
             R.to_chat({"model": "b/m", "input": "x", **patch})
@@ -418,6 +420,221 @@ def test_whitespace_alone_before_a_tool_call_is_not_a_message():
     assert out[0]["content"][0]["text"] == "\n\nParis"
 
 
+# ── outils du client hors `function` : `custom` et `local_shell` ────────
+# Formes relevées dans Codex CLI rust-v0.157.1 (create_apply_patch_freeform_tool,
+# ResponseItem::CustomToolCall / LocalShellCall) et dans le SDK openai-python.
+
+PATCH = "*** Begin Patch\n*** Add File: a.txt\n+été « ok »\n*** End Patch\n"
+PATCH_ARGS = json.dumps({"input": PATCH})      # tel qu'un modèle l'écrit
+APPLY_PATCH = {
+    "type": "custom", "name": "apply_patch",
+    "description": "Edit files. This is a FREEFORM tool, so do not wrap "
+                   "the patch in JSON.",
+    "format": {"type": "grammar", "syntax": "lark",
+               "definition": "start: begin_patch hunk+ end_patch"}}
+LS = {"type": "exec", "command": ["ls", "-la"], "env": {}, "timeout_ms": 500,
+      "user": None, "working_directory": None}
+
+
+def client_tools_ctx(*more):
+    return R.to_chat(codex_request(tools=[
+        fn("exec_command"), APPLY_PATCH, {"type": "local_shell"}, *more]))[1]
+
+
+def test_to_chat_declares_custom_and_local_shell_as_functions():
+    out, ctx = R.to_chat(codex_request(
+        tools=[fn("exec_command"), APPLY_PATCH, {"type": "local_shell"}],
+        tool_choice={"type": "custom", "name": "apply_patch"}))
+    assert ctx.ignored == []
+    names = [t["function"]["name"] for t in out["tools"]]
+    assert names == ["exec_command", "apply_patch", "local_shell"]
+    patch, shell = out["tools"][1]["function"], out["tools"][2]["function"]
+    # Un seul champ texte ; la description d'origine, la consigne qui la
+    # corrige (l'entrée passe par `input`) et la grammaire.
+    assert patch["parameters"] == {
+        "type": "object", "required": ["input"], "properties": {"input": {
+            "type": "string", "description": "The raw text input of the tool."}}}
+    assert patch["description"] == "\n\n".join([
+        APPLY_PATCH["description"], R.CUSTOM_NOTE,
+        "The text must follow this lark grammar:\n"
+        "start: begin_patch hunk+ end_patch"])
+    assert shell["parameters"]["required"] == ["command"]
+    assert shell["parameters"]["properties"]["command"]["type"] == "array"
+    assert out["tool_choice"] == {"type": "function",
+                                  "function": {"name": "apply_patch"}}
+    # Sans grammaire ni description : la consigne seule.
+    bare = R.to_chat({"model": "b/m", "input": "x", "tools": [
+        {"type": "custom", "name": "note"}]})[0]["tools"][0]["function"]
+    assert bare["description"] == R.CUSTOM_NOTE
+
+
+def test_custom_and_local_shell_yield_their_name_to_client_functions():
+    """Une fonction du client garde son nom, où qu'elle soit dans la
+    liste : l'outil prend un nom suffixé, et son appel revient quand même
+    sous le nom que le client connaît. Un `custom` rangé dans un namespace
+    (mode « responses lite » de Codex) y retourne."""
+    out, ctx = R.to_chat(codex_request(tools=[
+        APPLY_PATCH, {"type": "local_shell"}, fn("apply_patch"),
+        {"type": "namespace", "name": "functions", "tools": [
+            fn("local_shell"), {"type": "custom", "name": "exec"}]}]))
+    assert [t["function"]["name"] for t in out["tools"]] == [
+        "apply_patch_2", "local_shell_2", "apply_patch", "local_shell", "exec"]
+    assert ctx.custom == {"apply_patch_2": ("apply_patch", None),
+                          "exec": ("exec", "functions")}
+    resp = R.from_chat({"choices": [{"finish_reason": "tool_calls", "message": {
+        "tool_calls": [{"id": f"call_{i}", "function": {"name": name,
+                                                        "arguments": args}}
+                       for i, (name, args) in enumerate((
+                           ("apply_patch_2", PATCH_ARGS),
+                           ("apply_patch", "{}"),
+                           ("exec", "{\"input\": \"1+1\"}"),
+                           ("local_shell", "{}"),
+                           ("local_shell_2", "{\"command\": [\"ls\"]}")))]}}]},
+        ctx)
+    assert [(o["type"], o.get("name"), o.get("namespace"))
+            for o in resp["output"]] == [
+        ("custom_tool_call", "apply_patch", None),
+        ("function_call", "apply_patch", None),
+        ("custom_tool_call", "exec", "functions"),
+        ("function_call", "local_shell", "functions"),
+        ("local_shell_call", None, None)]
+    # Au rejeu, l'appel `custom` retrouve la fonction suffixée.
+    replay = R.to_chat(codex_request(
+        tools=[APPLY_PATCH, fn("apply_patch")],
+        input=[user("x"), resp["output"][0]]))[0]["messages"][-1]
+    assert replay["tool_calls"][0]["function"]["name"] == "apply_patch_2"
+
+
+def test_stream_custom_and_local_shell_calls():
+    """En flux : jamais de `function_call_arguments.*` pour ces deux-là.
+    Le `custom` s'ouvre vide et reçoit son entrée d'un seul delta, une fois
+    le JSON du modèle complet ; le `local_shell_call` n'est annoncé qu'avec
+    son action. Les deux rendent la main au client."""
+    t = R.Translator(200, "text/event-stream", client_tools_ctx())
+    half = len(PATCH_ARGS) // 2
+    ev = turn(
+        t, tool_call(0, "call_p", "apply_patch", ""),
+        chunk({"tool_calls": [{"index": 0, "function": {
+            "arguments": PATCH_ARGS[:half]}}]}),
+        chunk({"tool_calls": [{"index": 0, "function": {
+            "arguments": PATCH_ARGS[half:]}}]}),
+        tool_call(1, "call_s", "local_shell",
+                  "{\"command\": [\"ls\", \"-la\"], \"timeout_ms\": 500}"),
+        chunk(finish="tool_calls"))
+    assert [e["type"] for e in ev] == [
+        "response.created", "response.in_progress",
+        "response.output_item.added",
+        "response.custom_tool_call_input.delta",
+        "response.custom_tool_call_input.done", "response.output_item.done",
+        "response.output_item.added", "response.output_item.done",
+        "response.completed"]
+    assert [e["sequence_number"] for e in ev] == list(range(len(ev)))
+    patch = {"id": ev[2]["item"]["id"], "type": "custom_tool_call",
+             "status": "in_progress", "call_id": "call_p",
+             "name": "apply_patch", "input": ""}
+    assert ev[2]["item"] == patch and patch["id"].startswith("ctc_")
+    assert ev[3] == {"type": ev[3]["type"], "output_index": 0,
+                     "item_id": patch["id"], "delta": PATCH,
+                     "sequence_number": 3}
+    assert ev[4]["input"] == PATCH and ev[4]["item_id"] == patch["id"]
+    assert ev[5]["item"] == {**patch, "status": "completed", "input": PATCH}
+    shell = {"id": ev[6]["item"]["id"], "type": "local_shell_call",
+             "call_id": "call_s", "status": "in_progress", "action": LS}
+    assert ev[6]["item"] == shell and shell["id"].startswith("lsh_")
+    assert ev[6]["output_index"] == ev[7]["output_index"] == 1
+    assert ev[7]["item"] == {**shell, "status": "completed"}
+    assert ev[-1]["response"]["output"] == [ev[5]["item"], ev[7]["item"]]
+    assert t.client_calls == 2
+
+
+def test_custom_and_local_shell_survive_bad_arguments():
+    """Ce qu'un modèle écrit de travers ne casse ni le flux ni le JSON :
+    un `custom` rend le texte reçu tel quel (c'est l'outil du client qui
+    jugera), un `local_shell` sans commande exploitable est `incomplete`."""
+    cut = PATCH_ARGS[:30]                       # coupé par max_tokens
+    for name, arguments, expected in (
+        ("apply_patch", PATCH, {"input": PATCH}),        # texte nu, sans JSON
+        ("apply_patch", cut, {"input": cut}),
+        ("apply_patch", "{\"patch\": \"x\"}", {"input": "{\"patch\": \"x\"}"}),
+        ("apply_patch", json.dumps(PATCH), {"input": PATCH}),
+        ("apply_patch", "", {"input": ""}),
+        ("local_shell", "{\"command\": \"ls -la\"}", {
+            "status": "completed",
+            "action": {**LS, "command": ["bash", "-lc", "ls -la"],
+                       "timeout_ms": None}}),
+        ("local_shell", "{\"command\": [\"ls\", 3]", {
+            "status": "incomplete",
+            "action": {**LS, "command": [], "timeout_ms": None}}),
+        ("local_shell", "", {"status": "incomplete"}),
+    ):
+        t = R.Translator(200, "text/event-stream", client_tools_ctx())
+        ev = turn(t, tool_call(0, "call_1", name, arguments),
+                  chunk(finish="tool_calls"))
+        assert ev[-1]["type"] == "response.completed", arguments
+        t = R.Translator(200, "application/json", client_tools_ctx())
+        t.feed(chat_doc({"content": None, "tool_calls": [{
+            "id": "call_1", "function": {"name": name, "arguments": arguments}}]},
+            "tool_calls", 5, 1))
+        for item in (ev[-1]["response"]["output"][0],
+                     json.loads(t.finish())["output"][0]):
+            assert item["call_id"] == "call_1"
+            assert {k: item[k] for k in expected} == expected, arguments
+        assert t.client_calls == 1
+
+
+def test_to_chat_replays_custom_and_local_shell_calls():
+    """Appels et sorties rejoués par le client : appel assistant + message
+    `tool`, avec une sérialisation qui ne dépend que de l'élément — le
+    début de la conversation est le même d'un tour à l'autre."""
+    request = codex_request(
+        tools=[fn("exec_command"), APPLY_PATCH, {"type": "local_shell"}])
+    resp = R.from_chat({"choices": [{"finish_reason": "tool_calls", "message": {
+        "content": "Je corrige.", "tool_calls": [
+            {"id": "call_p", "function": {"name": "apply_patch",
+                                          "arguments": PATCH_ARGS}},
+            {"id": "call_s", "function": {
+                "name": "local_shell",
+                "arguments": "{\"timeout_ms\":500,\"command\":[\"ls\",\"-la\"]}"}},
+        ]}}]}, R.to_chat(request)[1])
+    patch, shell = resp["output"][1:]
+    history = request["input"] + json.loads(json.dumps(resp["output"])) + [
+        # Codex : la sortie d'un outil custom (texte, ou liste de parties) ;
+        # celle d'un local_shell en `function_call_output`.
+        {"type": "custom_tool_call_output", "call_id": "call_p",
+         "output": [{"type": "input_text", "text": "Done!"}]},
+        {"type": "function_call_output", "call_id": "call_s", "output": "a.txt"},
+    ]
+    out, ctx = R.to_chat({**request, "input": history})
+    assert ctx.ignored == []
+    assert out["messages"][3:] == [
+        {"role": "assistant", "content": "Je corrige.", "tool_calls": [
+            {"id": "call_p", "type": "function", "function": {
+                "name": "apply_patch",
+                "arguments": json.dumps({"input": PATCH}, ensure_ascii=False)}},
+            {"id": "call_s", "type": "function", "function": {
+                "name": "local_shell",
+                "arguments": "{\"command\": [\"ls\", \"-la\"], "
+                             "\"timeout_ms\": 500}"}}]},
+        {"role": "tool", "tool_call_id": "call_p", "content": "Done!"},
+        {"role": "tool", "tool_call_id": "call_s", "content": "a.txt"},
+    ]
+    # Tour suivant : tout ce qui précède est rendu à l'identique.
+    later, _ = R.to_chat({**request, "input": history + [user("Merci")]})
+    encode = lambda messages: json.dumps(messages, ensure_ascii=False)
+    assert encode(later["messages"][:-1]) == encode(out["messages"])
+    # SDK OpenAI : `local_shell_call_output` désigne l'appel par `id` — le
+    # call_id d'après l'API, l'id de l'élément chez un client distrait.
+    for ref in ("call_s", shell["id"]):
+        out, ctx = R.to_chat({**request, "input": [user("x"), shell, {
+            "type": "local_shell_call_output", "id": ref, "output": "a.txt"}]})
+        assert out["messages"][-1] == {"role": "tool", "tool_call_id": "call_s",
+                                       "content": "a.txt"} and not ctx.ignored
+    # L'outil n'est plus déclaré : l'historique garde sa place.
+    out, _ = R.to_chat({"model": "b/m", "input": [user("x"), patch, shell]})
+    assert [c["function"]["name"] for c in out["messages"][-1]["tool_calls"]] == [
+        "apply_patch", "local_shell"]
+
+
 # ── outils hébergés ─────────────────────────────────────────────────────
 # Aucun réseau : les faux outils de tests/fakes.py, une mémoire propre à
 # chaque test.
@@ -614,6 +831,36 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
         {"role": "assistant", "content": "Voilà."},
         {"role": "user", "content": "Merci"}]
     assert encode(again["tools"]) == encode(looped["tools"]) == encode(first["tools"])
+
+
+def test_to_chat_replay_is_scoped_to_the_client():
+    """Un résultat rangé pour un client ne se relit qu'avec lui : pour un
+    autre, l'élément est reconstruit comme s'il était perdu — rien ne dit
+    qu'il existe ailleurs."""
+    hosted = hosted_tools()
+    alice, bob = tools.owner("clé-alice"), tools.owner("clé-bob")
+    request = codex_request()
+    _, ctx = R.to_chat(request, hosted=hosted, client=alice)
+    t = R.Translator(200, "text/event-stream", ctx)
+    turn(t, *SEARCH_TURN)
+    t.resolve(t.pending[0], FOUND)
+    item = t.output[1]
+    assert hosted.memory.recall(item["id"], alice)["result"] == FOUND
+    assert hosted.memory.recall(item["id"], bob) is None
+    assert hosted.memory.recall(item["id"]) is None      # ni sans client
+
+    replay = lambda client: R.to_chat(
+        {**request, "input": request["input"] + t.output},
+        hosted=hosted, client=client)[0]["messages"][-2:]
+    call, result = replay(alice)
+    assert call["tool_calls"][0]["function"]["arguments"] == QUERY
+    assert result["content"] == FOUND
+    call, result = replay(bob)
+    assert call["tool_calls"][0]["function"]["arguments"] == \
+        "{\"query\": \"llama.cpp latest release\"}"
+    assert result["content"] == hosted.expired
+    # La clé n'est nulle part : ni dans la mémoire, ni dans le condensé.
+    assert "alice" not in repr(hosted.memory._data) and "alice" not in alice
 
 
 # ── la boucle d'app.py ──────────────────────────────────────────────────
@@ -815,3 +1062,42 @@ def test_app_loop_client_gone_closes_everything(proxy, monkeypatch):
     assert up.closed and started and cancelled == started
     assert [(line[4], *line[6:8]) for line in proxy.lines] == [(200, 100, 10)] * 2
     assert not proxy.sent
+
+
+def test_app_memory_is_scoped_by_proxy_key(proxy, monkeypatch):
+    """La route entière : le rejeu d'un client rend au backend, octet pour
+    octet, le tour 2 de sa boucle ; la même requête sous une autre clé n'y
+    trouve pas le résultat. Proxy ouvert : un seul client, quel que soit
+    le Bearer présenté."""
+    def session(first_key, second_key):
+        """Une boucle sous `first_key`, puis le rejeu de sa réponse sous
+        `second_key` : (corps du tour 2, corps du rejeu)."""
+        proxy.sent.clear()
+        proxy.replies = [FakeUpstream(stream(*SEARCH_TURN)),
+                         FakeUpstream(stream(*ANSWER_TURN)),
+                         FakeUpstream(stream(*ANSWER_TURN))]
+        auth = lambda key: {"Authorization": f"Bearer {key}"} if key else {}
+        request = codex_request(model="essai/qwen")
+        r = proxy.client.post("/v1/responses", json=request,
+                              headers=auth(first_key))
+        output = events(r.content)[-1]["response"]["output"]
+        r = proxy.client.post(
+            "/v1/responses", headers=auth(second_key),
+            json={**request, "input": request["input"] + output})
+        assert r.status_code == 200
+        return proxy.sent[1], proxy.sent[2]
+
+    encode = lambda messages: json.dumps(messages, ensure_ascii=False)
+    monkeypatch.setattr(A, "PROXY_API_KEYS", ["cle-alice", "cle-bob"])
+    looped, again = session("cle-alice", "cle-alice")
+    n = len(looped["messages"])
+    assert looped["messages"][-1]["content"] == FOUND
+    assert encode(again["messages"][:n]) == encode(looped["messages"])
+    looped, again = session("cle-alice", "cle-bob")
+    assert again["messages"][n - 1]["content"] == proxy.hosted.expired
+    assert "alice" not in repr(proxy.hosted.memory._data)
+
+    monkeypatch.setattr(A, "PROXY_API_KEYS", [])
+    for first, second in (("un", "autre"), ("", "un")):
+        looped, again = session(first, second)
+        assert encode(again["messages"][:n]) == encode(looped["messages"])

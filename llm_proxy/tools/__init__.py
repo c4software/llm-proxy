@@ -53,7 +53,9 @@ renvoie au tour suivant l'élément `web_search_call` SANS son résultat
 (OpenAI le garde côté serveur), et il faut le rendre au modèle à
 l'identique — sinon il perd ce qu'il a lu, et le préfixe change sous un
 backend à cache. Bornée (entrées, durée), en mémoire : un redémarrage du
-proxy l'oublie, le modèle reçoit alors un mot qui le dit. La surface
+proxy l'oublie, le modèle reçoit alors un mot qui le dit. CLOISONNÉE par
+client : une entrée ne se relit qu'avec le condensé de la clé qui l'a
+rangée (`owner`), l'identifiant de l'élément ne suffit pas. La surface
 Anthropic n'y range RIEN : son client renvoie le résultat avec l'appel
 (blocs `web_search_tool_result`), le texte se reconstruit de là.
 
@@ -63,7 +65,9 @@ ne connaissent de ce paquet que l'objet `Hosted` qu'on leur passe.
 """
 
 import asyncio
+import hashlib
 import json
+import os
 import time
 from collections import OrderedDict
 
@@ -98,30 +102,56 @@ def direct(modules) -> list:
     return [m for m in modules if getattr(m, "DIRECT", True)]
 
 
+# Sel du condensé des clés clientes : tiré à chaque démarrage, jamais
+# écrit. La mémoire ne survit pas au processus, son cloisonnement non plus
+# n'a pas à le faire — et un condensé sorti d'ici ne dit rien de la clé.
+_OWNER_SALT = os.urandom(16)
+
+
+def owner(token: str) -> str:
+    """Le client, pour la mémoire : un condensé de la clé qu'il présente
+    au proxy, JAMAIS la clé. «» (pas de clé) reste «» : c'est le client
+    unique d'un proxy ouvert."""
+    if not token:
+        return ""
+    return hashlib.blake2b(token.encode("utf-8", "surrogatepass"),
+                           key=_OWNER_SALT, digest_size=16).hexdigest()
+
+
 class Memory:
-    """Résultats des appels hébergés, par identifiant d'élément : ce qu'il
-    faut pour rejouer l'appel À L'IDENTIQUE au tour suivant (nom, arguments
-    tels que le modèle les a écrits, résultat). LRU bornée, avec durée."""
+    """Résultats des appels hébergés, par client et identifiant d'élément :
+    ce qu'il faut pour rejouer l'appel À L'IDENTIQUE au tour suivant (nom,
+    arguments tels que le modèle les a écrits, résultat). LRU bornée, avec
+    durée.
+
+    `owner` : le client (voir owner() — un condensé, «» pour un proxy
+    ouvert). Il fait partie de la CLÉ : un identifiant d'élément présenté
+    par un autre client ne trouve rien, exactement comme un identifiant
+    inconnu. La borne, elle, est commune à tous les clients."""
 
     def __init__(self, entries: int, ttl: float):
         self.entries, self.ttl = entries, ttl
-        self._data: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+        self._data: OrderedDict[tuple[str, str], tuple[float, dict]] = \
+            OrderedDict()
 
-    def store(self, item_id: str, name: str, arguments: str, result: str) -> None:
-        self._data[item_id] = (time.monotonic(), {
+    def store(self, item_id: str, name: str, arguments: str, result: str,
+              owner: str = "") -> None:
+        key = (owner, item_id)
+        self._data[key] = (time.monotonic(), {
             "name": name, "arguments": arguments, "result": result})
-        self._data.move_to_end(item_id)
+        self._data.move_to_end(key)
         while len(self._data) > self.entries:
             self._data.popitem(last=False)
 
-    def recall(self, item_id: str) -> dict | None:
-        entry = self._data.get(item_id)
+    def recall(self, item_id: str, owner: str = "") -> dict | None:
+        key = (owner, item_id)
+        entry = self._data.get(key)
         if entry is None:
             return None
         if time.monotonic() - entry[0] > self.ttl:
-            del self._data[item_id]
+            del self._data[key]
             return None
-        self._data.move_to_end(item_id)
+        self._data.move_to_end(key)
         return entry[1]
 
     def __len__(self) -> int:

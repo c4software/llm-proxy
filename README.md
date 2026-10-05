@@ -92,8 +92,10 @@ et un tableau de bord.
   `web_search_tool_result`. Si `[tools.image_generation].enabled`, même
   principe pour l'`image_generation` d'un client Responses : le proxy
   appelle la route images du backend configuré et rend un élément
-  `image_generation_call` portant l'image. Voir
-  [Outils hébergés](#outils-hébergés).
+  `image_generation_call` portant l'image. Si `[chat].hosted_tools`,
+  un client `/v1/chat/completions` peut déclarer ces mêmes outils dans
+  `tools` (`{"type": "web_search"}`) et reçoit une réponse ordinaire, la
+  boucle faite. Voir [Outils hébergés](#outils-hébergés).
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
@@ -129,6 +131,7 @@ et un tableau de bord.
 | `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête, une par exécution d'outil hébergé), extraction de l'`usage` dans le flux de réponse, et l'Usage API (requêtes, outils) |
 | `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` ; outil serveur `web_search_…` remplacé par la recherche hébergée, rendue et rejouée en blocs `server_tool_use` / `web_search_tool_result` |
 | `llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés par le proxy présentés au modèle et rejoués, les autres ignorés, `namespace` aplatis |
+| `llm_proxy/chat_api.py` | Les outils hébergés sur `/v1/chat/completions` : déclaration dans `tools` remplacée par les fonctions du proxy, robinet qui rend une seule réponse chat/completions pour plusieurs tours upstream |
 | `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre, exécution bornée (délai, taille du résultat, nombre d'appels par réponse), ligne de statistiques de chaque exécution, **mémoire des résultats** |
 | `llm_proxy/tools/net.py` | Garde-fou réseau : résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée |
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
@@ -559,10 +562,35 @@ réellement (la tolérance reprend celle de gufo, gufo-org/gufo#434) :
   `[tools.image_generation]` l'est ; activés, le proxy présente au
   modèle ses propres fonctions à la place et les exécute — voir
   [Outils hébergés](#outils-hébergés).
+- **`custom` et `local_shell` présentés en fonctions** : ce sont des
+  outils que le *client* exécute, sous une forme que chat/completions n'a
+  pas. Un outil `custom` (« freeform » : son entrée est un texte libre,
+  pas du JSON — Codex s'en sert pour `apply_patch`, avec une grammaire
+  lark) devient une fonction à un seul champ `input` ; sa description est
+  reprise, suivie d'une consigne (« passer le texte dans `input` ») et de
+  la grammaire, qui n'est **pas** imposée au décodage. L'appel du modèle
+  est rendu au client en `custom_tool_call` (`call_id`, `name`, `input`
+  texte), en JSON comme en flux (`response.custom_tool_call_input.delta`
+  puis `.done` : un seul delta, l'entrée entière, une fois les arguments
+  du modèle complets). `local_shell` devient une fonction `local_shell`
+  (`command` en tableau d'arguments, `working_directory`, `timeout_ms`,
+  `env`), rendue en `local_shell_call` avec son action `exec`. Au tour
+  suivant, l'appel et sa sortie (`custom_tool_call_output`,
+  `local_shell_call_output` ou `function_call_output`) redeviennent appel
+  assistant et message `tool`. Si une fonction du client porte déjà le
+  nom, c'est elle qui le garde : l'outil est présenté suffixé
+  (`apply_patch_2`) et son appel revient sous son vrai nom. Des arguments
+  mal écrits ne cassent rien : un `custom` rend le texte reçu tel quel,
+  un `local_shell` sans commande exploitable est rendu `incomplete`.
+  **Écrit d'après le code de Codex `rust-v0.157.1` et le SDK d'OpenAI,
+  testé sans réseau, jamais joué avec un vrai client** — voir plus bas
+  quand Codex envoie ces outils.
 - **`namespace` aplatis** : un `namespace` groupe des fonctions exécutées
   par le client (les `multi_agent_v1` de Codex). Ses fonctions rejoignent
   la liste, appelées par leur nom simple ; le `namespace` d'origine est
   reposé sur l'appel rendu au client. Un nom présent deux fois → `400`.
+  Un outil `custom` peut s'y trouver aussi (Codex l'y range pour les
+  modèles en mode « responses lite »).
 - **Champs sans effet tolérés** : `include`, `reasoning.summary`,
   `text.verbosity`, `prompt_cache_key`, `client_metadata`, `store`… Le
   corps upstream est reconstruit, rien d'inconnu ne part vers le backend.
@@ -584,6 +612,37 @@ réellement (la tolérance reprend celle de gufo, gufo-org/gufo#434) :
 
 Les statistiques comptent ces requêtes sous `/v1/responses`, avec
 l'`usage` exact du backend.
+
+**Quand Codex envoie-t-il `custom` ou `local_shell` ?** Par défaut,
+jamais à ce proxy : la capture d'une session Codex 0.157.1 n'y montre que
+des `function`, un `namespace` et `web_search`. D'après son code
+(`rust-v0.157.1`) :
+
+- `custom` n'est déclaré que pour `apply_patch`, et seulement si les
+  métadonnées du modèle portent `apply_patch_tool_type = "freeform"`
+  (`core/src/tools/spec_plan.rs`). Un modèle inconnu de son catalogue
+  reçoit des métadonnées de repli sans ce champ
+  (`models-manager/src/model_info.rs`) — c'est le cas de
+  `bigchuck/qwen3.8-flash-next`, qui édite alors ses fichiers par
+  `exec_command`. Deux façons de l'obtenir : `model_catalog_json =
+  "/chemin/catalogue.json"` dans `~/.codex/config.toml`, un catalogue
+  (`{"models": [...]}`, au moins une entrée, mêmes champs que le
+  `models.json` embarqué de Codex) qui décrit le modèle avec ce champ ;
+  ou, par accident, un modèle dont le nom **après le préfixe du backend**
+  commence par celui d'un modèle du catalogue embarqué (`gpt-5.5…`,
+  `gpt-5.4…`) — la correspondance se fait au plus long préfixe, un
+  premier segment `backend/` retiré — et qui hérite alors de TOUTES ses
+  métadonnées, consignes système comprises.
+- `local_shell` n'est plus déclaré du tout : le `ToolSpec` de cette
+  version n'en a plus la variante, et un `local_shell_call` reçu n'y est
+  pas exécuté (`core/src/tools/router.rs`). La traduction ne sert qu'à un
+  autre client de l'API Responses ; la documentation d'OpenAI annonce
+  elle-même la fin de cet outil, avec `codex-mini-latest`, au 12/02/2026.
+
+Est-ce que ça vaut le coup ? `apply_patch` en fonction donne au modèle un
+outil d'édition dédié au lieu de `exec_command` ; rien ne dit qu'un
+modèle local écrit mieux un patch dans une chaîne JSON qu'un `cat <<EOF`,
+et ce n'est pas mesuré.
 
 ## Outils hébergés
 
@@ -935,10 +994,92 @@ provider tiers ; l'outil hébergé `{"type": "image_generation"}` n'y est
 pas déclaré. Cet outil sert donc un client écrit contre l'API Responses
 qui le déclare lui-même (SDK `openai`, Agents SDK, script `curl`).
 
+### Client chat/completions : déclarer l'outil
+
+`/v1/chat/completions` n'a pas de forme standard pour un outil exécuté
+côté serveur. Si `[chat].hosted_tools = true`, le proxy y reconnaît la
+déclaration de l'API Responses, **telle quelle dans `tools`** :
+`{"type": "web_search"}` (et ses variantes), `{"type":
+"image_generation"}`. Un backend chat/completions ne connaît que
+`function` et refuse le reste : rien de ce que le proxy remplace n'aurait
+marché. `web_search_options` — le champ racine d'OpenAI pour ses modèles
+de recherche, le seul que son SDK sait écrire ici — est accepté comme
+synonyme de `{"type": "web_search"}` ; ses réglages sont ignorés, et le
+modèle reste libre de ne pas chercher. (OpenRouter a ses propres formes :
+`plugins`, suffixe `:online`, outil `openrouter:web_search` ; LiteLLM
+relaie `web_search_options`. Aucune convention commune pour déclarer —
+une pour le retour, les annotations `url_citation`, reprise ici.)
+
+    curl -sN http://localhost:8000/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{"model": "bigchuck/qwen3.8-flash-next", "stream": true,
+           "stream_options": {"include_usage": true},
+           "tools": [{"type": "web_search"}],
+           "messages": [{"role": "user", "content":
+             "Quelle est la dernière version de llama.cpp ? Cite ta source."}]}'
+
+Le proxy remplace la déclaration par les fonctions `web_search` et
+`web_fetch`, exécute leurs appels et relance le backend — la même boucle
+que les deux autres surfaces, mêmes garde-fous, même limite d'appels, un
+`tool_choice` forcé ramené à `auto` après le premier tour. Le client
+reçoit **une** réponse chat/completions ordinaire :
+
+- les appels hébergés ne lui arrivent **jamais** en `tool_calls` ;
+- en flux, un flux continu : même `id`, les deltas de contenu des tours
+  successifs à la suite (une ligne vide entre deux textes), **un**
+  `finish_reason`, **un** bloc `usage` cumulé sur les tours s'il a
+  demandé `stream_options.include_usage`, puis `[DONE]` ; pendant une
+  recherche ou l'attente d'un quota, un commentaire SSE (`: ping`) tient
+  la connexion ;
+- en JSON, rien avant la fin : le contenu de tous les tours, l'usage
+  cumulé ; un backend qui tombe en cours de boucle donne son vrai statut.
+  En flux, le `200` est parti : un bloc `{"error": …}`, puis `[DONE]` ;
+- les sources, en annotations `url_citation` (la forme d'OpenAI :
+  `message.annotations`, `delta.annotations` juste avant la fin en flux) :
+  une par URL rendue par un outil **et** écrite par le modèle dans sa
+  réponse, à sa position dans le contenu. Rien d'autre ne dit ce qui a
+  été cherché. `[chat].annotations = false` les retire ;
+- une image générée : `images` (`[{"type": "image_url", "image_url":
+  {"url": "data:image/png;base64,…"}}]`) sur le message, `delta.images`
+  en flux.
+
+Un outil déclaré mais désactivé sur le proxy (`[tools.<nom>].enabled`)
+est **refusé en `400`** : le retirer en silence ferait répondre le modèle
+sans recherche à un client qui l'a demandée. `n` > 1 aussi. Un type que
+le proxy ne connaît pas est laissé au backend. Une fonction du client
+nommée `web_search` ou `web_fetch` garde son nom, comme ailleurs.
+
+**Tour mixte** — le modèle appelle dans le même tour un outil hébergé et
+un outil du client. Le client ne pouvant pas rejouer un appel hébergé,
+« exécuter puis rendre la main » perdrait le résultat. Le **premier
+appel du tour décide** : hébergé d'abord, les appels hébergés sont
+exécutés, ceux du client de ce tour ne sont pas transmis et le backend
+est relancé — le modèle les réémet, résultat sous les yeux (coût : leurs
+arguments générés deux fois) ; client d'abord, ses appels sont déjà
+partis au fil de l'eau, les appels hébergés qui suivent ne sont pas
+exécutés et le modèle les redemandera à la requête suivante (coût : une
+requête de recherche). Les arguments des appels du client restent donc
+transmis en direct, sans attendre la fin du tour.
+
+**Le tour suivant de la conversation** — c'est la limite de ce chemin.
+Le client renvoie son historique **sans** les appels hébergés ni leurs
+résultats : le modèle retrouve sa réponse, **pas ce qu'il avait lu**
+(une question de suivi sur une page lue la lui fera relire), et le début
+de la conversation n'est plus celui que le backend a vu pendant la
+boucle — son cache de préfixe ne sert que jusqu'au message d'avant la
+recherche. Le proxy ne garde rien pour ça : rien dans une requête
+chat/completions n'identifie la conversation. Un client qui tient à
+garder ce que le modèle a lu déclare l'outil lui-même et passe par
+l'[appel direct](#appel-direct--v1tools-pi-omp).
+
+Non joué contre un backend ni un client réels : seulement les tests du
+dépôt (`tests/test_chat_api.py`, backend simulé).
+
 ### Appel direct : `/v1/tools` (pi, omp)
 
-Un client qui parle `/v1/chat/completions` n'a pas d'outil « hébergé » à
-déclarer, et garde ses appels d'outils dans son propre historique. Pour
+Un client qui parle `/v1/chat/completions` et veut garder ses appels
+d'outils et leurs résultats dans son propre historique ne déclare pas un
+outil hébergé. Pour
 lui, les mêmes outils s'appellent directement, derrière la clé du proxy
 et avec les mêmes garde-fous :
 
@@ -978,13 +1119,27 @@ cache de préfixe du backend.
 Elle garde, par identifiant d'élément : le nom de la fonction, ses
 arguments tels que le modèle les a écrits, le texte du résultat (pour
 une image générée : la phrase rendue au modèle, jamais l'image). Rien
-d'autre, et rien qui identifie le client. Elle vit **en mémoire vive**,
+d'autre. Elle vit **en mémoire vive**,
 jamais sur disque, bornée en nombre (`cache_entries`, les entrées les
 moins récemment relues sortent) et en durée (`cache_ttl`). **Un
 redémarrage du proxy la vide** : l'appel rejoué est alors reconstruit
 depuis l'action de l'élément (la requête, l'URL), avec pour résultat un
 mot qui dit au modèle que le contenu n'est plus disponible et qu'il peut
 relancer l'outil.
+
+Elle est **cloisonnée par client** : une entrée ne se relit qu'avec la
+clé du proxy (`proxy.api_keys`) qui l'a fait ranger. L'identifiant de
+l'élément (`ws_…`, 96 bits aléatoires) ne suffit donc pas : présenté sous
+une autre clé, il est traité comme un identifiant inconnu — même réponse
+qu'après un redémarrage, rien ne dit que l'entrée existe. La clé n'est
+gardée nulle part : la mémoire n'en tient qu'un condensé, salé par un
+aléa tiré au démarrage, et il n'est pas journalisé. Avec `proxy.api_keys`
+vide (proxy ouvert), tous les clients sont le même, quel que soit le
+`Bearer` qu'ils présentent : personne ne l'a vérifié. Des clients qui
+partagent une clé partagent aussi la mémoire. La borne `cache_entries`
+reste **commune** : un client très actif peut faire sortir les entrées
+d'un autre, qui retrouve alors le mot « plus disponible » — une
+dégradation, pas une fuite.
 
 ### Ce qu'aucun garde-fou n'empêche
 
@@ -1120,6 +1275,13 @@ url = "http://bigchuck:8009"
 |---|---|---|
 | `enabled` | `false` | Ouvre la surface Responses (`POST /v1/responses`). Table absente = inactive, dit au démarrage dans les logs et dans `/healthz` |
 | `reasoning_as_summary` | `true` | `reasoning_content` du backend → élément `reasoning` (résumé) pour le client |
+
+### `[chat]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `hosted_tools` | `false` | Sur `/v1/chat/completions`, une requête qui déclare `{"type": "web_search"}` ou `{"type": "image_generation"}` dans `tools` (ou `web_search_options`) est bouclée par le proxy. Table absente = inactif : relais brut, la déclaration part au backend. Voir [Client chat/completions](#client-chatcompletions--déclarer-loutil) |
+| `annotations` | `true` | Annotations `url_citation` en fin de réponse, pour les URL rendues par un outil et écrites par le modèle |
 
 ### `[tools]`
 
@@ -1303,15 +1465,25 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   `image_generation` sont exécutés par le proxy, et seulement s'ils sont
   activés ([Outils hébergés](#outils-hébergés)) ; les autres (`file_search`,
   `code_interpreter`, `mcp`…) sont toujours ignorés,
-  pas exécutés (le modèle ne les voit pas), comme les outils intégrés au
-  client sans équivalent chat (`custom`, `local_shell`…). Pas de `ping`
+  pas exécutés (le modèle ne les voit pas). Les outils du client `custom`
+  et `local_shell` sont présentés en fonctions ([Codex CLI](#codex-cli)),
+  sans avoir été joués avec un vrai client : la grammaire d'un `custom`
+  n'est qu'un texte dans sa description (rien n'est contraint au
+  décodage), son entrée arrive au client en un seul delta, et les autres
+  outils intégrés (`shell`, `apply_patch` natif, `computer_use`…) restent
+  ignorés. Pas de `ping`
   pendant l'attente du quota du PREMIER tour : un flux vers un backend à
   quotas attend avant de répondre, comme pour un client OpenAI. Pendant
   une recherche et aux tours suivants de la boucle d'outils, un
   commentaire SSE (`: ping`) tient la connexion.
-- **Outils hébergés : surfaces Responses et Anthropic.**
-  `/v1/chat/completions` n'en profite pas (un client qui veut les
-  déclarer lui-même a `/v1/tools`). Sur `/v1/messages`, seule la
+- **Outils hébergés sur `/v1/chat/completions`** (`[chat].hosted_tools`) :
+  le client ne garde ni les appels hébergés ni leurs résultats. À la
+  requête suivante le modèle n'a plus ce qu'il avait lu, et le cache de
+  préfixe du backend ne sert que jusqu'au message d'avant la recherche ;
+  pas de mémoire côté proxy. Pas de `ping` pendant l'attente du quota du
+  premier tour. `n` > 1 refusé. Pas joué contre un client réel. Voir
+  [Client chat/completions](#client-chatcompletions--déclarer-loutil).
+- **Outils hébergés, autres surfaces.** Sur `/v1/messages`, seule la
   recherche est branchée ;
   pas de citations, pas de `pause_turn`, `user_location` ignoré, et les
   listes de domaines ne font que filtrer ce que SearXNG a rendu — voir
@@ -1341,6 +1513,10 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 - pi et omp, outils web : l'extension `tools/llm-proxy-web.ts` de
   llmsetup, qui appelle `/v1/tools` — voir
   [Appel direct](#appel-direct--v1tools-pi-omp).
+- Tout client `/v1/chat/completions`, outils web sans extension :
+  `{"type": "web_search"}` dans `tools` si `[chat].hosted_tools` — le
+  proxy boucle, mais le client ne garde pas ce que le modèle a lu ; voir
+  [Client chat/completions](#client-chatcompletions--déclarer-loutil).
 - pi : un provider dans `~/.pi/agent/models.json` — `api:
   "openai-completions"` sur `http://…:8000/v1`, ou `api:
   "anthropic-messages"` sur `http://…:8000` (les deux marchent ; voir

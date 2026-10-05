@@ -121,6 +121,28 @@ enabled = true
 reasoning_as_summary = true
 
 
+# ── Outils hébergés sur /v1/chat/completions ────────────────────────────
+# chat/completions n'a pas de forme standard pour un outil exécuté côté
+# serveur. hosted_tools = true : une requête qui déclare dans `tools` la
+# forme de l'API Responses — {"type": "web_search"}, {"type":
+# "image_generation"} — ou le champ `web_search_options` d'OpenAI voit sa
+# déclaration remplacée par les fonctions de [tools], et le proxy boucle
+# (exécution, relance du backend) : le client reçoit UNE réponse
+# ordinaire, sans `tool_calls` pour ces appels. Un outil déclaré mais
+# désactivé plus bas → 400.
+# À SAVOIR : le client ne garde ni ces appels ni leurs résultats. À la
+# requête suivante le modèle n'a plus ce qu'il avait lu, et le cache de
+# préfixe du backend ne sert que jusqu'au message d'avant la recherche.
+# Table absente ou hosted_tools = false → comme avant : relais brut, la
+# déclaration part telle quelle au backend (qui la refuse, ou en a SA
+# lecture — Zhipu). Une requête qui ne déclare rien n'est jamais touchée.
+[chat]
+hosted_tools = true
+# Annotations `url_citation` (forme OpenAI) en fin de réponse : les URL
+# rendues par un outil ET écrites par le modèle. false = aucune.
+annotations = true
+
+
 # ── Outils hébergés (surfaces Responses et Anthropic) ───────────────────
 # Un client de l'API Responses — Codex CLI — déclare `{"type":
 # "web_search"}` en comptant qu'OpenAI fera la recherche. Derrière ce
@@ -135,8 +157,8 @@ reasoning_as_summary = true
 # pages sur le poste du client) et rend les blocs `server_tool_use` puis
 # `web_search_tool_result` ; `max_uses`, `allowed_domains` et
 # `blocked_domains` de l'outil sont respectés.
-# /v1/chat/completions n'en profite pas, et rien n'est ajouté à une
-# requête qui ne DÉCLARE pas l'outil.
+# /v1/chat/completions en profite si [chat].hosted_tools ; rien n'est
+# ajouté à une requête qui ne DÉCLARE pas l'outil.
 # Tables absentes ou enabled = false → comme avant : `web_search` est
 # ignoré, le modèle ne le voit pas.
 #
@@ -166,7 +188,9 @@ max_result_chars = 24000
 # rendre au modèle à l'identique, sinon il perd ce qu'il a lu et le préfixe
 # change sous un backend à cache. Elle garde, par identifiant d'élément,
 # le nom de la fonction, ses arguments tels que le modèle les a écrits, et
-# le texte du résultat — rien d'autre, rien sur le client. En mémoire
+# le texte du résultat — rien d'autre. Cloisonnée par client : une entrée
+# ne se relit qu'avec la clé (proxy.api_keys) qui l'a fait ranger, dont
+# seul un condensé est gardé ; proxy ouvert = un seul client. En mémoire
 # vive, jamais sur disque : un redémarrage du proxy la vide, le modèle
 # reçoit alors à la place un mot qui lui dit de relancer l'outil.
 # cache_entries : nombre d'appels gardés (les moins récemment relus
