@@ -98,6 +98,23 @@ createApp({
     // Outils que le proxy exécute lui-même (recherche web, lecture de page…).
     const hostedTools = computed(() =>
       ((health.value || {}).tools || {}).enabled || []);
+    // Cache web des outils (tools/webcache.py), lu dans /healthz : des
+    // compteurs en mémoire vive, DEPUIS LE DÉMARRAGE du proxy — pas sur la
+    // période choisie, au contraire du tableau des exécutions.
+    const webCache = computed(() => {
+      const c = ((health.value || {}).tools || {}).web_cache;
+      if (!c) return null;
+      const asked = (c.hits || 0) + (c.misses || 0);
+      const mo = (c.bytes || 0) / 1e6;
+      return {
+        on: c.ttl > 0, asked, hits: c.hits || 0, entries: c.entries || 0,
+        share: asked ? Math.round((100 * (c.hits || 0)) / asked) : 0,
+        size: mo >= 1 ? mo.toFixed(1).replace(".", ",") + " Mo"
+          : Math.round((c.bytes || 0) / 1e3) + " Ko",
+        ttl: c.ttl >= 120 ? Math.round(c.ttl / 60) + " min"
+          : Math.round(c.ttl) + " s",
+      };
+    });
 
     // ── formatage ───────────────────────────────────────────────────────
     // Entier à la française : espace comme séparateur de milliers.
@@ -509,8 +526,10 @@ pi --model albert/${model}`,
     function loadHealth() {
       fetch("/healthz", { headers: { accept: "application/json" } })
         .then((r) => (r.ok ? r.json() : null))
-        .then((h) => { health.value = h; })
-        .catch(() => { health.value = null; });
+        // Un échec passager garde le dernier état connu : sinon les
+        // exemples et le cache web clignoteraient à chaque relecture.
+        .then((h) => { if (h || !health.value) health.value = h; })
+        .catch(() => {});
     }
 
     let timers = [];
@@ -520,6 +539,8 @@ pi --model albert/${model}`,
       timers = [
         setInterval(() => { if (!document.hidden) poll(); }, REFRESH),
         setInterval(() => { now.value = Date.now() / 1000; }, 1000),
+        // /healthz relu de temps en temps : le cache web bouge.
+        setInterval(() => { if (!document.hidden) loadHealth(); }, 6 * REFRESH),
       ];
       window.addEventListener("keydown", onKey);
       document.addEventListener("visibilitychange", onVisibility);
@@ -532,7 +553,7 @@ pi --model albert/${model}`,
 
     return { windows, current, metrics, metric, metricUnit, metricLabel,
              models, totals, bars, axis, peak, since, now, tools, toolCalls,
-             loaded, entering, anthropic, responses, hostedTools,
+             loaded, entering, anthropic, responses, hostedTools, webCache,
              authRequired, exampleModel,
              snippets, origin, note, shortcuts, bucketLabel, successRate,
              backendSummary, num, ms, ago, dur, moment, tickLabel, select,

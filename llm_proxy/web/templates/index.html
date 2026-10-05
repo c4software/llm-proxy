@@ -206,13 +206,13 @@
        de page, génération d'image), sur la même période. Absente tant
        qu'aucun n'a servi dans la fenêtre. Des mesures seulement : ce qui
        a été cherché ou lu n'est pas dans les statistiques. -->
-  <div class="panel tools" v-if="tools.length">
+  <div class="panel tools" v-if="tools.length || (webCache && webCache.asked)">
     <div class="panel-head">
       <h2>Outils</h2>
       <span class="meta">{{ num(toolCalls) }} exécution{{ toolCalls > 1 ? "s" : "" }}
         d'outils hébergés · {{ note }}</span>
     </div>
-    <div class="scroll">
+    <div class="scroll" v-if="tools.length">
       <table>
         <thead><tr>
           <th>Outil</th><th>Appels</th><th>Erreurs</th><th>Refus</th>
@@ -249,6 +249,21 @@
         </tbody>
       </table>
     </div>
+    <!-- Cache web : ce que les outils n'ont pas eu à redemander au web.
+         Compteurs en mémoire vive, depuis le démarrage du proxy — pas sur
+         la période du tableau. -->
+    <p class="note webcache" v-if="webCache">
+      <template v-if="webCache.on">
+        <b>Cache web</b> — {{ num(webCache.hits) }} demande{{ webCache.hits > 1 ? "s" : "" }}
+        sur {{ num(webCache.asked) }} servie{{ webCache.hits > 1 ? "s" : "" }}
+        sans retourner sur le web ({{ webCache.share }} %) depuis le
+        démarrage du proxy · {{ num(webCache.entries) }} page{{ webCache.entries > 1 ? "s" : "" }}
+        ou recherche{{ webCache.entries > 1 ? "s" : "" }} en cache
+        ({{ webCache.size }}), gardée{{ webCache.entries > 1 ? "s" : "" }} {{ webCache.ttl }}
+      </template>
+      <template v-else><b>Cache web</b> désactivé
+        (<code>[tools] web_cache_ttl = 0</code>)</template>
+    </p>
   </div>
 
   <!-- Brancher un client : replié par défaut, tout est dérivé de l'URL
