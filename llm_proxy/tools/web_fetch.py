@@ -10,6 +10,7 @@ CHAQUE saut de redirection. Le corps est lu jusqu'à `max_bytes`, rendu
 en texte (HTML → texte, JSON et texte tels quels) et coupé à `max_chars`.
 """
 
+import re
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -67,19 +68,28 @@ TEXT_TYPES = ("text/", "application/json", "application/xml",
               "application/rss+xml", "application/atom+xml")
 
 
-def action(args: dict) -> dict:
+# L'en-tête qu'écrit render() pour une page lue par morceaux.
+_RANGE = re.compile(r"^Characters: (\d+)-(\d+) of \d+", re.M)
+
+
+def action(args: dict, result=None) -> dict:
     """Ce que le client affiche de l'appel. Une page longue est lue en
     plusieurs morceaux (`offset`) : sans rien pour les distinguer, le client
     montre trois fois « Opened <même URL> » et l'on croit à une boucle. La
-    position part donc en fragment de l'URL affichée (`#offset=20000`) — un
-    fragment ne change pas la page désignée, et le modèle, lui, ne voit que
+    plage de caractères réellement rendue suit donc l'URL affichée —
+    « <url> [20000, 40000] » —, lue dans l'en-tête du résultat ; une page
+    rendue d'un seul tenant garde son URL nue. Le modèle, lui, ne voit que
     ses propres arguments."""
     url = str(args.get("url") or "")
-    offset = args.get("offset")
-    if url and isinstance(offset, int) and not isinstance(offset, bool) \
-            and offset > 0:
-        url = f"{url.split('#', 1)[0]}#offset={offset}"
+    span = _RANGE.search(str(result)[:600]) if url and result is not None else None
+    if span:
+        url = f"{url} [{span.group(1)}, {span.group(2)}]"
     return {"type": "open_page", "url": url}
+
+
+def item(args: dict, result) -> dict:
+    """Les champs de l'élément terminé : l'action, avec la plage lue."""
+    return {"status": "completed", "action": action(args, result)}
 
 
 async def _get(url: str, transport) -> tuple[httpx.Response, bytes]:

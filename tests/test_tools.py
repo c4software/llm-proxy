@@ -1050,16 +1050,22 @@ def test_type_d_un_modele_sans_type_au_catalogue():
     assert set(A.CHAT_TYPES) == {"text-generation", "image-text-to-text"}
 
 
-def test_fetch_action_distingue_les_morceaux_d_une_page_longue():
-    """Le client n'affiche que l'URL de chaque ouverture : la position d'un
-    morceau suivant y figure en fragment, le premier reste l'URL nue."""
-    u = "https://site.test/doc.html"
-    for args, attendu in [
-        ({"url": u}, u),
-        ({"url": u, "offset": 0}, u),
-        ({"url": u, "offset": 20000}, u + "#offset=20000"),
-        ({"url": u + "#titre", "offset": 40000}, u + "#offset=40000"),
-        ({"url": u, "offset": "20000"}, u),
-        ({"offset": 20000}, ""),
-    ]:
-        assert web_fetch.action(args) == {"type": "open_page", "url": attendu}, args
+def test_fetch_action_distingue_les_morceaux_d_une_page_longue(monkeypatch):
+    """Le client n'affiche que l'URL de chaque ouverture : la plage rendue
+    la suit pour une page lue par morceaux, une page courte garde son URL
+    nue. La plage est celle du résultat réel, pas un calcul sur l'offset."""
+    monkeypatch.setattr(web_fetch, "MAX_CHARS", 20)
+    u = "http://site.test/doc"
+    web = Web(default=page("x" * 50))
+    for args, plage in [({}, " [0, 20]"), ({"offset": 20}, " [20, 40]"),
+                        ({"offset": 40}, " [40, 50]")]:
+        result = web.fetch(u, **args)
+        assert web_fetch.item({"url": u, **args}, result) == {
+            "status": "completed",
+            "action": {"type": "open_page", "url": u + plage}}, args
+    court = Web(default=page("bonjour")).fetch(u)
+    assert web_fetch.action({"url": u}, court) == {"type": "open_page", "url": u}
+    # Sans résultat (élément en cours, module interrogé à vide) ou en erreur.
+    assert web_fetch.action({"url": u, "offset": 20}) == {"type": "open_page", "url": u}
+    assert web_fetch.action({"url": u}, "Error: x")["url"] == u
+    assert web_fetch.action({}) == {"type": "open_page", "url": ""}
