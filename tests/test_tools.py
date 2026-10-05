@@ -19,7 +19,7 @@ import pytest
 
 from fakes import FOUND, RESULTS
 from llm_proxy import tools
-from llm_proxy.tools import html_text, net, web_fetch, web_search
+from llm_proxy.tools import html_text, net, web_fetch, web_search, webcache
 
 PUBLIC = "93.184.216.34"
 PUBLIC6 = "2606:4700:4700::1111"
@@ -75,6 +75,10 @@ def reglages(monkeypatch):
     monkeypatch.setattr(web_fetch, "ALLOW_PRIVATE", False)
     monkeypatch.setattr(web_fetch, "MAX_BYTES", 2_000_000)
     monkeypatch.setattr(web_fetch, "MAX_CHARS", 20_000)
+    # Cache web vidé et COUPÉ : les tests resservent les mêmes URL avec des
+    # pages différentes. Ceux du cache le rallument (ttl).
+    webcache.CACHE.clear()
+    monkeypatch.setattr(webcache.CACHE, "ttl", 0)
     monkeypatch.setattr(web_fetch, "ALLOWED_DOMAINS", [])
     monkeypatch.setattr(web_fetch, "BLOCKED_DOMAINS", [])
     monkeypatch.setattr(web_search, "SEARXNG_URL", "http://searx.test:8080")
@@ -1069,3 +1073,80 @@ def test_fetch_action_distingue_les_morceaux_d_une_page_longue(monkeypatch):
     assert web_fetch.action({"url": u, "offset": 20}) == {"type": "open_page", "url": u}
     assert web_fetch.action({"url": u}, "Error: x")["url"] == u
     assert web_fetch.action({}) == {"type": "open_page", "url": ""}
+
+
+# ── cache web ───────────────────────────────────────────────────────────
+
+def test_cache_web_une_page_longue_n_est_telechargee_qu_une_fois(monkeypatch):
+    """Les morceaux d'une page (`offset`) et une relecture dans les minutes
+    qui suivent sortent du cache ; passé la durée, la page est redemandée."""
+    monkeypatch.setattr(webcache.CACHE, "ttl", 600)
+    monkeypatch.setattr(web_fetch, "MAX_CHARS", 20)
+    web = Web(default=page("x" * 50))
+    u = "http://site.test/long"
+    assert "Characters: 0-20 of 50" in web.fetch(u)
+    assert "Characters: 20-40 of 50" in web.fetch(u, offset=20)
+    assert "Characters: 40-50 of 50" in web.fetch(u + "#ancre", offset=40)
+    assert len(web.requests) == 1
+    horloge = webcache.time.monotonic()
+    monkeypatch.setattr(webcache.time, "monotonic", lambda: horloge + 601)
+    web.fetch(u)
+    assert len(web.requests) == 2
+
+
+def test_cache_web_ne_garde_ni_les_echecs_ni_ce_que_les_listes_interdisent(monkeypatch):
+    monkeypatch.setattr(webcache.CACHE, "ttl", 600)
+    web = Web({("site.test", "/ko"): page("non", status=500),
+               ("site.test", "/pdf"): page(b"%PDF", ct="application/pdf")},
+              default=page("ok"))
+    for chemin in ("/ko", "/pdf"):
+        for _ in range(2):
+            assert web.fetch("http://site.test" + chemin).startswith("Error:")
+    assert len(web.requests) == 4 and len(webcache.CACHE) == 0
+    # Une page en cache reste soumise aux listes de domaines.
+    assert web.fetch("http://site.test/").endswith("ok")
+    monkeypatch.setattr(web_fetch, "BLOCKED_DOMAINS", ["site.test"])
+    assert web.fetch("http://site.test/").startswith("Error: site.test is not")
+    # Désactivé : tout repart sur le réseau.
+    monkeypatch.setattr(web_fetch, "BLOCKED_DOMAINS", [])
+    monkeypatch.setattr(webcache.CACHE, "ttl", 0)
+    webcache.CACHE.clear()
+    n = len(web.requests)
+    web.fetch("http://site.test/a")
+    web.fetch("http://site.test/a")
+    assert len(web.requests) == n + 2
+
+
+def test_cache_web_recherche_identique_et_bornes(monkeypatch):
+    """Même requête : SearXNG n'est interrogé qu'une fois, limite et
+    domaines appliqués à chaque appel. Une recherche vide ou des moteurs
+    en panne ne sont pas gardés. Bornes : entrées et taille cumulée."""
+    monkeypatch.setattr(webcache.CACHE, "ttl", 600)
+    donnees = {"results": [res(1), res(2), res(3)]}
+    appels = []
+
+    def searx(request):
+        appels.append(request)
+        return httpx.Response(200, json=donnees)
+    out1, _ = search({"query": "q"}, searx)
+    out2, _ = search({"query": "q", "limit": 1}, searx)
+    assert len(appels) == 1 and "[3]" in out1 and "[2]" not in out2
+    search({"query": "q", "recency": "day"}, searx)       # autre requête
+    assert len(appels) == 2
+    vide = []
+
+    def panne(request):
+        vide.append(request)
+        return httpx.Response(200, json={
+            "results": [], "unresponsive_engines": [["brave", "x"]]})
+    for _ in range(2):
+        search({"query": "rien"}, panne)
+    assert len(vide) == 2
+
+    c = webcache.Cache(ttl=60, entries=2, max_bytes=10)
+    c.put("a", 1, 4)
+    c.put("b", 2, 4)
+    c.put("c", 3, 4)
+    assert c.get("a") is None and c.get("c") == 3 and len(c) == 2 and c.size == 8
+    c.put("gros", 0, 11)
+    assert c.get("gros") is None and (c.hits, c.misses) == (1, 2)

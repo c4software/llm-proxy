@@ -134,6 +134,7 @@ et un tableau de bord.
 | `llm_proxy/chat_api.py` | Les outils hébergés sur `/v1/chat/completions` : déclaration dans `tools` remplacée par les fonctions du proxy, robinet qui rend une seule réponse chat/completions pour plusieurs tours upstream |
 | `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre, exécution bornée (délai, taille du résultat, nombre d'appels par réponse), ligne de statistiques de chaque exécution, **mémoire des résultats** |
 | `llm_proxy/tools/net.py` | Garde-fou réseau : résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée |
+| `llm_proxy/tools/webcache.py` | Cache web : pages lues et recherches gardées quelques minutes, borné, en mémoire vive |
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
 | `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en liste structurée pour les blocs d'un client Anthropic ; filtre par domaines |
 | `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
@@ -1148,6 +1149,23 @@ C'est ce que fait l'extension pi / omp `tools/llm-proxy-web.ts` du dépôt
 `GET /v1/tools` au démarrage et enregistre `proxy_web_search` et
 `proxy_web_fetch`, plus les commandes `/web` et `/page`.
 
+### Cache web
+
+Une page lue par `web_fetch` et les résultats d'une recherche sont gardés
+quelques minutes (`[tools].web_cache_ttl`, 10 minutes par défaut) et
+resservis sans retourner sur le web : les morceaux d'une page longue
+(`offset`) ne la retéléchargent pas, et une recherche identique ne repart
+pas chez les moteurs de SearXNG — qui bloquent vite une adresse trop
+pressante (limite de débit, CAPTCHA).
+
+Seuls les succès y entrent : ni une erreur, ni une recherche vide, ni des
+moteurs indisponibles. En mémoire vive, borné en entrées et en taille,
+commun à tous les clients (une page publique est la même pour tous) ; les
+listes de domaines sont vérifiées avant la lecture du cache. `/healthz`
+en donne l'état (`tools.web_cache` : entrées, octets, succès et échecs).
+À ne pas confondre avec les mémoires de conversation ci-dessous, qui ne
+gardent pas le web mais ce qu'un modèle a lu dans une conversation.
+
 ### Mémoire des résultats
 
 Le proxy ne conserve entre deux requêtes que deux mémoires de ce qu'ont
@@ -1360,6 +1378,9 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 | `max_result_chars` | `24000` | Caractères d'un résultat rendu au modèle ; le surplus est coupé et marqué `[truncated]` |
 | `cache_entries` | `512` | Appels gardés par la [mémoire des résultats](#mémoire-des-résultats) ; les moins récemment relus sortent |
 | `cache_ttl` | `86400` | Secondes de vie d'une entrée de cette mémoire |
+| `web_cache_ttl` | `600` | Cache web : secondes pendant lesquelles une page lue ou une recherche faite est resservie sans être redemandée. `0` = pas de cache |
+| `web_cache_entries` | `256` | Cache web : nombre d'entrées gardées |
+| `web_cache_bytes` | `64000000` | Cache web : taille cumulée gardée, en octets |
 
 ### `[tools.web_search]`
 

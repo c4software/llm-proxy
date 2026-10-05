@@ -16,7 +16,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from .. import config
-from . import net
+from . import net, webcache
 from .html_text import html_to_text
 
 ENABLED = config.flag("tools.web_fetch.enabled", False)
@@ -181,14 +181,30 @@ async def run(args: dict, transport=None) -> str:
         url = "https://" + url
     offset = args.get("offset")
     offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else 0
+
+    def refused(u: str) -> str | None:
+        if (ALLOWED_DOMAINS and not net.domain_match(u, ALLOWED_DOMAINS)) \
+                or net.domain_match(u, BLOCKED_DOMAINS):
+            return (f"Error: {urlsplit(u).hostname or u} is not a "
+                    f"domain this proxy is allowed to read.")
+        return None
+
+    # Le cache web (webcache.py) : la page telle qu'elle a été téléchargée,
+    # d'où chaque morceau (`offset`) est rendu sans la redemander. Les
+    # listes de domaines passent AVANT ; le contrôle d'adresse et celui de
+    # chaque redirection ont été faits au téléchargement.
+    key = ("fetch", url.split("#", 1)[0])
+    if (no := refused(url)) is not None:
+        return no
+    hit = webcache.CACHE.get(key)
+    if hit is not None:
+        return render(*hit, offset)
     try:
         for _ in range(MAX_REDIRECTS + 1):
             # À chaque saut, comme le contrôle d'adresse : une redirection
             # ne sort pas des listes.
-            if (ALLOWED_DOMAINS and not net.domain_match(url, ALLOWED_DOMAINS)) \
-                    or net.domain_match(url, BLOCKED_DOMAINS):
-                return (f"Error: {urlsplit(url).hostname or url} is not a "
-                        f"domain this proxy is allowed to read.")
+            if (no := refused(url)) is not None:
+                return no
             r, body = await _get(url, transport)
             if r.status_code in (301, 302, 303, 307, 308) \
                     and r.headers.get("location"):
@@ -205,5 +221,10 @@ async def run(args: dict, transport=None) -> str:
         return f"Error: could not fetch {url} ({type(exc).__name__})."
     if r.status_code >= 400:
         return f"Error: {url} returned HTTP {r.status_code}."
-    return render(url, r.headers.get("content-type", ""), body,
-                  r.charset_encoding, offset)
+    page = (url, r.headers.get("content-type", ""), body, r.charset_encoding)
+    out = render(*page, offset)
+    # Seule une page lue avec succès est gardée (un type non lisible rend
+    # une erreur : rien à garder).
+    if r.status_code == 200 and not out.startswith("Error:"):
+        webcache.CACHE.put(key, page, len(body))
+    return out

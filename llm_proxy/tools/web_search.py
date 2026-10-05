@@ -24,6 +24,7 @@ import re
 import httpx
 
 from .. import config
+from . import webcache
 from .net import domain_match as _domain_match
 
 ENABLED = config.flag("tools.web_search.enabled", False)
@@ -193,6 +194,15 @@ async def run(args: dict, transport=None, allowed_domains=None,
         params["language"] = LANGUAGE
     if CATEGORIES:
         params["categories"] = CATEGORIES
+    # Le cache web (webcache.py) : les résultats BRUTS de SearXNG pour cette
+    # requête — limite et listes de domaines s'appliquent après, à chaque
+    # appel. Une recherche identique dans les minutes qui suivent ne repart
+    # pas chez les moteurs, qui bloquent vite une adresse trop pressante.
+    key = ("search", SEARXNG_URL, tuple(sorted(params.items())))
+    cached = webcache.CACHE.get(key)
+    if cached is not None:
+        return format_results(query.strip(), cached, limit, allowed_domains,
+                              blocked_domains)
     try:
         # trust_env=False : l'instance est une adresse du réseau du proxy,
         # un HTTP_PROXY d'environnement n'a pas à s'en mêler.
@@ -231,5 +241,7 @@ async def run(args: dict, transport=None, allowed_domains=None,
         return (f"Error: the search engines are temporarily unavailable "
                 f"({names}). Do not retry the search now: answer with what "
                 f"you already know, or say that the search failed.")
+    if results:
+        webcache.CACHE.put(key, results, len(r.content))
     return format_results(query.strip(), results, limit, allowed_domains,
                           blocked_domains)

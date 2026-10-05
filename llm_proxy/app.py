@@ -609,6 +609,13 @@ async def healthz():
             "enabled": [m.NAME for m in tools.enabled()],
             "max_calls": tools.MAX_CALLS,
             "memory_entries": len(tools.MEMORY),
+            # Cache web (tools/webcache.py) : pages et recherches gardées
+            # quelques minutes, et ce qu'il a épargné depuis le démarrage.
+            "web_cache": {"ttl": tools.webcache.TTL,
+                          "entries": len(tools.webcache.CACHE),
+                          "bytes": tools.webcache.CACHE.size,
+                          "hits": tools.webcache.CACHE.hits,
+                          "misses": tools.webcache.CACHE.misses},
         },
         "backends": {
             name: {

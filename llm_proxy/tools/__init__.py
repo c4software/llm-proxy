@@ -75,7 +75,7 @@ from collections import OrderedDict
 
 from .. import config, stats
 from ..settings import log
-from . import image_generation, web_fetch, web_search
+from . import image_generation, web_fetch, web_search, webcache
 
 MODULES = (web_search, web_fetch, image_generation)
 

@@ -213,6 +213,17 @@ max_result_chars = 24000
 # sortent) ; cache_ttl : durée de vie (s) d'une entrée.
 cache_entries = 512
 cache_ttl = 86400
+# Cache WEB (à ne pas confondre avec la mémoire ci-dessus, qui rend au
+# modèle ce qu'il a déjà lu dans UNE conversation) : une page lue ou une
+# recherche faite est gardée quelques minutes, pour ne pas la redemander au
+# web. Une page longue lue en plusieurs morceaux n'est téléchargée qu'une
+# fois, et une recherche identique ne repart pas chez les moteurs de
+# SearXNG, qui bloquent vite une adresse trop pressante. Durée en secondes
+# (0 = pas de cache) : courte, sinon une page d'actualité serait servie
+# périmée. En mémoire vive, commun à tous les clients, succès seulement.
+web_cache_ttl = 600
+web_cache_entries = 256
+web_cache_bytes = 64000000
 
 # Recherche web, par une instance SearXNG (métamoteur libre, API JSON,
 # sans clé) : le service `searxng` du docker-compose.
