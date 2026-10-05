@@ -521,6 +521,10 @@ tel quel (le déploiement d'essai l'intègre dans un compose local, sans la
 clé obligatoire), et pi ou omp avec tous leurs outils (les essais
 limitaient le modèle aux deux outils web).
 
+Les bancs `envTest/` rejouent depuis ce jour une recherche web par client
+en conteneur (Codex, pi, Claude Code) : 27 scénarios sur 27 au run du
+05/10/2026, voir `envTest/README.md`.
+
 ### Déroulé
 
 1. Le client déclare `web_search` dans `tools` (les variantes

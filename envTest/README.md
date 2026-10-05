@@ -11,6 +11,23 @@ de travail disparaît avec le conteneur.
 
 ## Derniers résultats
 
+Run du 5 octobre 2026, proxy `9cd08f1` déployé avec son instance SearXNG
+(outils `web_search` et `web_fetch` actifs), Codex CLI 0.157.1, pi 0.87.1,
+Claude Code 2.1.287 (versions fixées à la construction des images),
+backend gufo 0.8.0 `bigchuck`, clients en conteneurs sur la machine du
+backend, proxy distant (`PROXY_URL=http://llmproxy`), les trois bancs
+joués à la suite.
+
+| Modèle | Codex (7 scénarios) | pi (6 scénarios) | Claude Code (14 scénarios) |
+|---|---|---|---|
+| `bigchuck/qwen3.8-flash-next` | **7/7** | **6/6** | **14/14** |
+
+Premier passage du banc Codex (commandes réellement exécutées dans le
+conteneur, à travers `/v1/responses`) et des quatre scénarios d'outils
+web : chacun a vu sa recherche dans la trace du client, et Codex 7 la
+lecture de la page épinglée. Aucun scénario sauté. Appels, tokens et
+latences non relevés pour ce run.
+
 Run du 23 août 2026, proxy `e2713da`+, Claude Code 2.1.241, pi 0.84.2,
 backend llama.cpp `bigchuck` (`images = true`, `tokenize_path =
 "/tokenize"`), scénarios joués à la suite sur un seul GPU.
@@ -197,24 +214,19 @@ exécuté par le proxy s'il l'héberge et ignoré sinon, appels rejoués
 (`function_call` / `function_call_output`) d'un tour à l'autre ; puis
 deux scénarios sur les
 [outils web hébergés](#outils-web-hébergés-par-le-proxy) (6 et 7).
-**Banc écrit le 05/10/2026 et pas encore joué** : la traduction a été
-validée ce jour-là avec Codex CLI 0.157.1 lancé hors conteneur (session
-de 12 requêtes vers `bigchuck/qwen3.8-flash-next`, appels d'outils
-compris), pas avec cette image. Relu le même jour contre les sources de
+Banc écrit le 05/10/2026 et joué le jour même avec Codex CLI 0.157.1
+(7/7, voir « Derniers résultats »). Relu le même jour contre les sources de
 Codex à l'étiquette `rust-v0.157.1` et le registre npm : nom du paquet,
 clés du provider (`name`, `base_url`, `wire_api`, `env_key`), options de
 `codex exec` (`--skip-git-repo-check`, `--ephemeral`, `--json`,
-`--sandbox`) et forme des événements JSON — une relecture, pas une
-exécution.
+`--sandbox`) et forme des événements JSON.
 
 ### Outils web hébergés par le proxy
 
 Un scénario « recherche web » par client, à la suite des autres, et pour
-Codex un second qui enchaîne recherche et lecture de page. **Écrits le
-05/10/2026 et pas encore joués** : ce jour-là les outils ont été validés
-à la main, hors conteneur, avec Claude Code 2.1.287, pi 0.87.1 et Codex
-0.157.1 (README principal, « Outils hébergés ») — pas avec ces images, et
-pas avec ces scénarios.
+Codex un second qui enchaîne recherche et lecture de page. Écrits le
+05/10/2026 et joués le jour même contre un proxy déployé avec SearXNG :
+les quatre passent (voir « Derniers résultats »).
 
 | Client | N° | Ce qui est demandé | Chemin dans le proxy |
 |---|---|---|---|
