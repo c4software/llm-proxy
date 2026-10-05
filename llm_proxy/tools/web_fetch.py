@@ -68,7 +68,18 @@ TEXT_TYPES = ("text/", "application/json", "application/xml",
 
 
 def action(args: dict) -> dict:
-    return {"type": "open_page", "url": str(args.get("url") or "")}
+    """Ce que le client affiche de l'appel. Une page longue est lue en
+    plusieurs morceaux (`offset`) : sans rien pour les distinguer, le client
+    montre trois fois « Opened <même URL> » et l'on croit à une boucle. La
+    position part donc en fragment de l'URL affichée (`#offset=20000`) — un
+    fragment ne change pas la page désignée, et le modèle, lui, ne voit que
+    ses propres arguments."""
+    url = str(args.get("url") or "")
+    offset = args.get("offset")
+    if url and isinstance(offset, int) and not isinstance(offset, bool) \
+            and offset > 0:
+        url = f"{url.split('#', 1)[0]}#offset={offset}"
+    return {"type": "open_page", "url": url}
 
 
 async def _get(url: str, transport) -> tuple[httpx.Response, bytes]:

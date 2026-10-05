@@ -1048,3 +1048,18 @@ def test_type_d_un_modele_sans_type_au_catalogue():
     ]:
         assert A._model_type(model, b) == attendu, model["id"]
     assert set(A.CHAT_TYPES) == {"text-generation", "image-text-to-text"}
+
+
+def test_fetch_action_distingue_les_morceaux_d_une_page_longue():
+    """Le client n'affiche que l'URL de chaque ouverture : la position d'un
+    morceau suivant y figure en fragment, le premier reste l'URL nue."""
+    u = "https://site.test/doc.html"
+    for args, attendu in [
+        ({"url": u}, u),
+        ({"url": u, "offset": 0}, u),
+        ({"url": u, "offset": 20000}, u + "#offset=20000"),
+        ({"url": u + "#titre", "offset": 40000}, u + "#offset=40000"),
+        ({"url": u, "offset": "20000"}, u),
+        ({"offset": 20000}, ""),
+    ]:
+        assert web_fetch.action(args) == {"type": "open_page", "url": attendu}, args
