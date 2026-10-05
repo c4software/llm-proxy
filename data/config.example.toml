@@ -109,8 +109,8 @@ default = "albert/deepseek-v4-flash"
 #   wire_api = "responses"
 #
 # Les outils que seul OpenAI exécute (file_search, code_interpreter, mcp…)
-# sont ignorés — sauf `web_search`, que le proxy exécute lui-même s'il est
-# activé plus bas ([tools]) —, les `namespace` aplatis en fonctions, les
+# sont ignorés — sauf `web_search` et `image_generation`, que le proxy
+# exécute lui-même s'ils sont activés plus bas ([tools]) —, les `namespace` aplatis en fonctions, les
 # champs sans effet tolérés. Aucun état de conversation côté proxy :
 # previous_response_id → 400.
 # Table absente ou enabled = false → surface inactive (404).
@@ -152,7 +152,8 @@ reasoning_as_summary = true
 max_calls = 8
 # Délai (s) d'une exécution, tout compris (redirections suivies incluses) ;
 # chaque outil a aussi le sien, plus court, par requête. Dépassé → une
-# erreur rendue au modèle, jamais au client.
+# erreur rendue au modèle, jamais au client. `image_generation` a le sien
+# ([tools.image_generation].timeout), bien plus long.
 run_timeout = 60
 # Taille (caractères) d'un résultat rendu au modèle ; le surplus est coupé
 # et marqué «[truncated]».
@@ -234,6 +235,47 @@ allow_private = false
 # à ouvrir https://ailleurs/?d=<contenu de la conversation>.
 # allowed_domains = ["github.com", "docs.python.org", "wikipedia.org"]
 # blocked_domains = ["pastebin.com"]
+
+# Génération d'image, pour un client de l'API Responses qui déclare
+# `{"type": "image_generation"}` en comptant qu'OpenAI dessinera. Le proxy
+# présente au modèle une fonction `image_generation` (`prompt`, `size`),
+# l'exécute par la route /v1/images/generations du backend que désigne
+# `model`, et rend au client un élément `image_generation_call` qui porte
+# l'image en base64 ; le modèle, lui, ne reçoit qu'une phrase (il ne voit
+# pas l'image). Surface Responses seulement : jamais présentée à un client
+# Anthropic, pas d'appel direct par /v1/tools.
+# Désactivée ici : rien ne change pour qui recopie ce fichier.
+# À SAVOIR avant d'activer, sur un backend qui partage sa mémoire entre le
+# modèle d'image et les LLM (gufo) : générer DÉCHARGE le modèle de la
+# conversation, que le tour suivant recharge — compter 30 à 40 s de plus
+# de chaque côté de la génération.
+[tools.image_generation]
+enabled = false
+# Le modèle d'image, PRÉFIXÉ par son backend comme partout : c'est lui qui
+# est appelé, jamais celui que le client nomme sur son outil
+# («gpt-image-1»…). La requête part avec la clé du backend ([backends.<nom>].
+# api_key) ; son limiteur de quotas, s'il en a un, n'est pas consulté.
+# Vide → l'outil répond au modèle qu'il n'est pas configuré.
+model = "bigchuck/Qwen-Image-2.1-heretic"
+# Tailles permises, et celle qui sert par défaut. Le `size` que le client
+# pose sur son outil est respecté s'il est dans la liste (il l'emporte
+# alors sur le choix du modèle) ; «auto», absent ou hors liste = au choix
+# du modèle parmi `sizes`, sinon `size`. Sur gufo (Qwen-Image, 20 étapes) :
+# ~15 s en 512x512, ~90 s en 1024x1024.
+size = "512x512"
+sizes = ["512x512", "768x768", "1024x1024"]
+# Étapes de diffusion (`steps`, extension de gufo) ; 0 = non envoyé, le
+# défaut du backend.
+steps = 0
+# Délai (s) de la requête au backend, bascule de modèle comprise. Il
+# remplace [tools].run_timeout pour cet outil.
+timeout = 300
+# Images générées au plus pour UNE réponse (en plus de [tools].max_calls,
+# qui compte tous les outils) ; au-delà, le modèle reçoit une erreur.
+max_per_response = 2
+# Options de l'outil du client sans équivalent ici, ignorées : model,
+# quality, output_format, output_compression, background, moderation,
+# partial_images, input_fidelity, input_image_mask, action (pas d'édition).
 
 
 # ── Statistiques ────────────────────────────────────────────────────────

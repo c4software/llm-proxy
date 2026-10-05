@@ -36,13 +36,15 @@ perdu en silence : `previous_response_id`, `conversation`, `background`,
 `item_reference`. Codex renvoie tout l'historique à chaque tour.
 
 Outils hébergés (paquet tools/) : quand le proxy sait exécuter un outil
-que le client déclare — `web_search` —, il présente au modèle les
+que le client déclare — `web_search`, `image_generation` —, il présente au modèle les
 fonctions correspondantes, et leurs appels ne sont PAS rendus au client
 en `function_call` : le robinet les met de côté (`pending`), app.py les
 exécute et relance le backend, et le client ne voit qu'un élément
 `web_search_call` terminé. Au tour suivant le client renvoie cet élément
 sans son résultat : il est relu dans la mémoire du paquet tools/ et
-redevient, à l'identique, un appel suivi de son résultat. Ce module ne
+redevient, à l'identique, un appel suivi de son résultat (pour un
+`image_generation_call`, que le client renvoie AVEC son image : le texte
+que le modèle avait lu, jamais l'image). Ce module ne
 fait aucune requête : il reçoit un objet `Hosted` et s'en sert comme
 d'un annuaire.
 
@@ -94,6 +96,9 @@ class Context:
         self.ignored: list[str] = []
         # Fonctions exécutées par le proxy : nom → module de tools/.
         self.hosted: dict = {}
+        # Par nom de fonction, ce que le client a réglé sur son outil
+        # hébergé (`size` d'`image_generation`) : passé à l'exécution.
+        self.options: dict[str, dict] = {}
         self.memory = None
         self.echo = {
             k: request.get(k) for k in (
@@ -188,6 +193,8 @@ def _tools(tools, ctx: Context, hosted=None) -> list[dict]:
                 for m in modules:
                     seen.add(m.NAME)
                     ctx.hosted[m.NAME] = m
+                    if hasattr(m, "options"):
+                        ctx.options[m.NAME] = m.options(t)
                     out.append(m.definition(fetch=fetch) if hasattr(
                         m, "definition") else m.DEFINITION)
                 continue
@@ -290,6 +297,10 @@ def _replayed_call(it: dict, hosted) -> tuple[str, str, str] | None:
     module = hosted.for_item(it)
     if module is None:
         return None
+    if hasattr(module, "replay"):
+        # Élément sans action (image_generation_call) : le module sait le
+        # relire — son prompt, jamais son image.
+        return (module.NAME, *module.replay(it))
     args = {k: v for k, v in it["action"].items() if k != "type"}
     return module.NAME, json.dumps(args, ensure_ascii=False), hosted.expired
 
@@ -563,10 +574,24 @@ def _final_status(finish: str | None) -> str:
     return "incomplete" if finish in INCOMPLETE_REASONS else "completed"
 
 
-def _hosted_item(item_id: str, module, arguments: str | None = None) -> dict:
+# Ce que l'API Responses fixe pour chaque type d'élément hébergé : le
+# préfixe de son id, et l'événement qui dit que l'exécution est en cours
+# (`response.<type>.<étape>`, entre `in_progress` et `completed`).
+HOSTED_ITEMS = {"web_search_call": ("ws", "searching"),
+                "image_generation_call": ("ig", "generating")}
+
+
+def _hosted_id(module) -> str:
+    return _id(HOSTED_ITEMS[module.ITEM_TYPE][0])
+
+
+def _hosted_item(item_id: str, module, arguments: str | None = None,
+                 result: str = "") -> dict:
     """Élément qui rend compte d'un appel exécuté par le proxy
-    (`web_search_call`). `arguments` None = appel en cours : ni action ni
-    résultat — le client n'en voit jamais plus que l'action."""
+    (`web_search_call`, `image_generation_call`). `arguments` None = appel
+    en cours : ni action ni résultat. Terminé, le client n'en voit que
+    l'action — ou, pour un module à `item`, ce que celui-ci tire du
+    résultat (l'image, et un `status` qui peut être `failed`)."""
     item = {"id": item_id, "type": module.ITEM_TYPE,
             "status": "in_progress" if arguments is None else "completed"}
     if arguments is not None:
@@ -574,7 +599,11 @@ def _hosted_item(item_id: str, module, arguments: str | None = None) -> dict:
             args = json.loads(arguments or "{}")
         except ValueError:
             args = None
-        item["action"] = module.action(args if isinstance(args, dict) else {})
+        args = args if isinstance(args, dict) else {}
+        if hasattr(module, "item"):
+            item.update(module.item(args, result))
+        else:
+            item["action"] = module.action(args)
     return item
 
 
@@ -605,7 +634,7 @@ def _chat_items(msg: dict, ctx: Context, base: int = 0) -> tuple[list[dict], lis
         name = str(fn.get("name", ""))
         arguments = args if isinstance(args, str) else json.dumps(args or {})
         if name in ctx.hosted:
-            item_id = _id("ws")
+            item_id = _hosted_id(ctx.hosted[name])
             pending.append(_pending(item_id, name, arguments or "{}",
                                     base + len(output)))
             output.append(_hosted_item(item_id, ctx.hosted[name]))
@@ -766,19 +795,24 @@ class Translator:
         """Le résultat d'un appel de `pending`, exécuté par l'appelant :
         rangé en mémoire sous l'id de l'élément (le client le rejouera
         sans son résultat), et l'élément est clos — le client n'en voit
-        que l'action."""
+        que l'action, ou ce que le module tire du résultat (une image).
+        La mémoire ne garde que le TEXTE (`str`) : un résultat qui porte
+        une image la laisserait sinon en mémoire vive jusqu'à expiration."""
         module = self.ctx.hosted[call["name"]]
         self.ctx.memory.store(call["item_id"], call["name"],
-                              call["arguments"], result)
-        item = _hosted_item(call["item_id"], module, call["arguments"])
+                              call["arguments"], str(result))
+        item = _hosted_item(call["item_id"], module, call["arguments"], result)
         self._output[call["index"]] = item
         self.pending = [c for c in self.pending if c is not call]
         if not self.sse:
             return b""
         at = {"output_index": call["index"], "item_id": call["item_id"]}
-        return (self._event(f"response.{module.ITEM_TYPE}.completed", at)
-                + self._event("response.output_item.done", {
-                    "output_index": call["index"], "item": item}))
+        # Pas d'événement `.completed` pour un élément en échec : seul
+        # `output_item.done` le porte, avec son `status`.
+        done = self._event(f"response.{module.ITEM_TYPE}.completed", at) \
+            if item["status"] == "completed" else b""
+        return done + self._event("response.output_item.done", {
+            "output_index": call["index"], "item": item})
 
     def next_turn(self) -> None:
         """Avant de recevoir le flux upstream suivant : l'état propre au
@@ -908,7 +942,9 @@ class Translator:
                 self._closed_tools.add(self._tool_index)
             self._tool_index = None
             self._open = None
-            return self._event(f"response.{module.ITEM_TYPE}.searching", at)
+            return self._event(
+                f"response.{module.ITEM_TYPE}."
+                f"{HOSTED_ITEMS[module.ITEM_TYPE][1]}", at)
         if self._open == "text":
             item = _message_item(self._item_id, text, "completed")
             out += self._event("response.output_text.done", {
@@ -1005,7 +1041,7 @@ class Translator:
                         # `web_search_call` s'ouvrir, jamais ses arguments.
                         module = self.ctx.hosted[name]
                         out += self._open_item(
-                            "hosted", _hosted_item(_id("ws"), module))
+                            "hosted", _hosted_item(_hosted_id(module), module))
                         out += self._event(
                             f"response.{module.ITEM_TYPE}.in_progress",
                             self._at())

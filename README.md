@@ -89,7 +89,11 @@ et un tableau de bord.
   `web_search_call`. Même service pour l'outil serveur
   `web_search_20250305` d'un client Anthropic — celui par lequel passe
   le `WebSearch` de Claude Code —, rendu en blocs `server_tool_use` /
-  `web_search_tool_result`. Voir [Outils hébergés](#outils-hébergés).
+  `web_search_tool_result`. Si `[tools.image_generation].enabled`, même
+  principe pour l'`image_generation` d'un client Responses : le proxy
+  appelle la route images du backend configuré et rend un élément
+  `image_generation_call` portant l'image. Voir
+  [Outils hébergés](#outils-hébergés).
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
@@ -128,6 +132,7 @@ et un tableau de bord.
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
 | `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en liste structurée pour les blocs d'un client Anthropic ; filtre par domaines |
 | `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
+| `llm_proxy/tools/image_generation.py` | L'outil `image_generation` : requête `/v1/images/generations` au backend du modèle d'image configuré ; un texte court pour le modèle, l'image en base64 pour l'élément du client |
 | `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
 | `tests/` | Tests des traducteurs et des stats (`pytest`, `requirements-dev.txt`) — sur des octets et une base temporaire, sans réseau |
@@ -429,13 +434,14 @@ de servir `/v1/responses` — et la réponse retraduite, en objet
 Ce que le proxy fait de la requête, écrit sur les corps que Codex envoie
 réellement (la tolérance reprend celle de gufo, gufo-org/gufo#434) :
 
-- **Outils hébergés : `web_search` exécuté par le proxy s'il est activé,
-  les autres ignorés**. `file_search`, `code_interpreter`, `mcp`,
-  `image_generation`… ne peuvent être exécutés que par OpenAI : ils sont
-  retirés, les outils `function` restent, et une ligne de log dit
-  lesquels (`responses : file_search sans équivalent chat, ignoré(s)`).
+- **Outils hébergés : `web_search` et `image_generation` exécutés par le
+  proxy s'ils sont activés, les autres ignorés**. `file_search`,
+  `code_interpreter`, `mcp`… ne peuvent être exécutés que par OpenAI :
+  ils sont retirés, les outils `function` restent, et une ligne de log
+  dit lesquels (`responses : file_search sans équivalent chat, ignoré(s)`).
   `web_search` subit le même sort tant que `[tools.web_search]` et
-  `[tools.web_fetch]` sont inactifs ; activés, le proxy présente au
+  `[tools.web_fetch]` sont inactifs, `image_generation` tant que
+  `[tools.image_generation]` l'est ; activés, le proxy présente au
   modèle ses propres fonctions à la place et les exécute — voir
   [Outils hébergés](#outils-hébergés).
 - **`namespace` aplatis** : un `namespace` groupe des fonctions exécutées
@@ -471,8 +477,9 @@ exécuter lui-même : avec `{"type": "web_search"}`, Codex CLI compte
 qu'OpenAI fera la recherche côté serveur. Derrière ce proxy il n'y a pas
 d'OpenAI — sans rien faire, l'outil est retiré et le modèle n'a pas de
 recherche web. Un outil **hébergé** est un outil que le proxy exécute
-lui-même, à la place d'OpenAI. Il y en a deux, activés ensemble par le
-`web_search` du client. Un client de l'API Messages d'Anthropic est dans
+lui-même, à la place d'OpenAI. Il y en a deux pour le web, activés
+ensemble par le `web_search` du client, et un troisième,
+[`image_generation`](#génération-dimage-image_generation), décrit à part. Un client de l'API Messages d'Anthropic est dans
 le même cas avec son outil serveur `web_search_20250305` ; pour lui,
 seule la recherche est branchée — voir
 [Claude Code et l'outil serveur `web_search`](#claude-code-et-loutil-serveur-web_search).
@@ -503,7 +510,11 @@ refusés par leur source (Brave en limite de débit, DuckDuckGo en
 CAPTCHA) : la qualité dépend des moteurs que l'adresse de la machine peut
 encore joindre.
 
-Pas encore joué : un backend à quotas dans la boucle, un client qui
+Un backend à quotas est passé dans la boucle ce jour-là
+(`albert/deepseek-v4-flash-0731` : recherche puis réponse), sans attente
+de quota provoquée.
+
+Pas encore joué : une attente de quota à un tour ultérieur, un client qui
 rejoue des blocs `web_search_tool_result` sur `/v1/messages` (Claude Code
 ne le fait pas), le service `searxng` du `docker-compose.yml` du dépôt
 tel quel (le déploiement d'essai l'intègre dans un compose local, sans la
@@ -707,6 +718,96 @@ Diagnostic, l'instance n'étant pas joignable de l'hôte :
   modèle reçoit une erreur qui lui demande de conclure avec ce qu'il a ;
   s'il insiste encore (4 appels de plus), la réponse est close sans lui.
 
+### Génération d'image (`image_generation`)
+
+Avec `[tools.image_generation].enabled`, l'outil
+`{"type": "image_generation"}` d'un client **Responses** n'est plus
+ignoré. Joué une fois en réel le 05/10/2026, par une requête directe (pas un
+client de l'API Responses) vers gufo 0.8.0 : Flash-Next appelle la
+fonction, Qwen-Image rend un PNG 512x512 en 25 s, le modèle de
+conversation est rechargé au tour suivant, 65 s en tout, la connexion
+tenue par cinq `: ping`. **Pas encore joué avec un vrai client**, ni le
+rejeu de l'élément au tour suivant. La forme de l'élément et des
+événements a été relue ce jour-là dans le guide d'OpenAI et les types du
+SDK `openai-python`.
+
+1. Le proxy présente au modèle la fonction `image_generation` (`prompt`,
+   et `size` parmi les tailles permises).
+2. Quand le modèle l'appelle, le proxy envoie
+   `POST /v1/images/generations` au backend que désigne le préfixe de
+   `[tools.image_generation].model` — par le client HTTP et la clé de ce
+   backend, préfixe retiré — avec `model`, `prompt`, `size` (et `steps`
+   s'il est réglé) : le corps que gufo accepte. Réponse lue :
+   `data[0].b64_json`. Une image par appel.
+3. Le client reçoit, en flux :
+
+       response.output_item.added                  {"item": {"id": "ig_…", "type": "image_generation_call", "status": "in_progress"}}
+       response.image_generation_call.in_progress  {"output_index": 0, "item_id": "ig_…"}
+       response.image_generation_call.generating   {"output_index": 0, "item_id": "ig_…"}
+       : ping                                      (commentaire SSE, tant que la génération dure)
+       response.image_generation_call.completed    {"output_index": 0, "item_id": "ig_…"}
+       response.output_item.done                   {"item": {"id": "ig_…", "type": "image_generation_call",
+                                                    "status": "completed", "result": "<base64>",
+                                                    "revised_prompt": "<le prompt du modèle>",
+                                                    "size": "512x512", "output_format": "png"}}
+
+   En JSON, le même élément dans `output`. `output_format` est le format
+   réel, lu dans les premiers octets de l'image. `revised_prompt` porte
+   le prompt tel que le modèle l'a écrit (rien ne le réécrit).
+4. Le **modèle** ne reçoit pas l'image mais une phrase :
+   `Image generated (512x512, png) and shown to the user. …`, et le
+   backend de conversation est relancé pour qu'il conclue.
+5. **Échec** (backend en erreur, délai, limite atteinte) : le modèle lit
+   un texte `Error: …` ; l'élément est rendu `"status": "failed"`,
+   `"result": null`, sans événement `.completed`. La réponse, elle,
+   aboutit.
+6. **Rejeu.** Le client renvoie l'élément au tour suivant — avec son
+   image, ou par son seul `id`. Il redevient l'appel et le texte que le
+   modèle avait lu, relus dans la [mémoire des résultats](#mémoire-des-résultats),
+   qui ne garde que ce texte : **l'image ne retourne jamais au modèle**
+   et n'est conservée nulle part par le proxy. Mémoire perdue : l'appel
+   est reconstruit du `revised_prompt` de l'élément, avec le même texte
+   si l'élément porte encore `size` et `output_format`, un texte sans
+   taille sinon.
+
+Ce qui vient de l'outil du client : **`size`**, si elle figure dans
+`sizes` (elle l'emporte alors sur le choix du modèle ; `auto` ou hors
+liste = choix du modèle, puis défaut). **Ignorés**, faute d'équivalent :
+`model` (c'est celui de la configuration qui dessine), `quality`,
+`output_format`, `output_compression`, `background`, `moderation`,
+`input_fidelity`, `input_image_mask`, `action` (pas d'édition d'image),
+`partial_images` (aucun événement `partial_image`), et un `tool_choice`
+qui forcerait l'outil (laissé à `auto`).
+
+Bornes : `sizes`, `max_per_response` images par réponse, `timeout`
+propre (à la place de `run_timeout`). **Sur un backend qui partage sa
+mémoire entre modèle d'image et LLM (gufo), générer décharge le modèle
+de la conversation** : à la durée de la génération s'ajoutent la bascule
+(~30 s) et le rechargement au tour suivant de la boucle (~40 s), pendant
+lesquels le flux ne porte que des `: ping`. En JSON rien ne part avant
+la fin : le client doit patienter d'autant.
+
+Cet outil n'est **pas** exposé sur `/v1/tools` (ces routes rendent un
+texte ; pi et omp ont `gufo-media.ts`), ni présenté sur `/v1/messages`.
+La génération ne compte pas dans les statistiques (elles comptent des
+tokens) ni dans le limiteur d'un backend à quotas : elle laisse une
+ligne de log (`image_generation : 512x512 png … en 16.2s, 412 Ko`), et
+sa durée est comprise dans celle de la réponse.
+
+    [tools.image_generation]
+    enabled = true
+    model = "bigchuck/Qwen-Image-2.1-heretic"
+
+**Qui s'en sert.** Pas Codex CLI derrière ce proxy : dans son code
+(0.157.1 comme la branche principale au 05/10/2026,
+`codex-rs/core/src/tools/spec_plan.rs`), la génération d'image est une
+fonction côté client (`image_gen.imagegen`) qui appelle le service
+d'images d'OpenAI, et n'est proposée qu'à un compte connecté à OpenAI
+(hors offre gratuite) avec un modèle à entrée image — jamais à un
+provider tiers ; l'outil hébergé `{"type": "image_generation"}` n'y est
+pas déclaré. Cet outil sert donc un client écrit contre l'API Responses
+qui le déclare lui-même (SDK `openai`, Agents SDK, script `curl`).
+
 ### Appel direct : `/v1/tools` (pi, omp)
 
 Un client qui parle `/v1/chat/completions` n'a pas d'outil « hébergé » à
@@ -714,7 +815,9 @@ déclarer, et garde ses appels d'outils dans son propre historique. Pour
 lui, les mêmes outils s'appellent directement, derrière la clé du proxy
 et avec les mêmes garde-fous :
 
-    GET  /v1/tools            → les outils actifs (nom, description, schéma)
+    GET  /v1/tools            → les outils actifs dont le résultat est un
+                                texte (nom, description, schéma) : pas
+                                `image_generation`
     POST /v1/tools/<nom>      → corps : les arguments, en objet JSON
                                 réponse : {"name", "result", "is_error"}
 
@@ -740,7 +843,8 @@ lu — et le début de la conversation changerait, ce qui fait manquer le
 cache de préfixe du backend.
 
 Elle garde, par identifiant d'élément : le nom de la fonction, ses
-arguments tels que le modèle les a écrits, le texte du résultat. Rien
+arguments tels que le modèle les a écrits, le texte du résultat (pour
+une image générée : la phrase rendue au modèle, jamais l'image). Rien
 d'autre, et rien qui identifie le client. Elle vit **en mémoire vive**,
 jamais sur disque, bornée en nombre (`cache_entries`, les entrées les
 moins récemment relues sortent) et en durée (`cache_ttl`). **Un
@@ -891,7 +995,7 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 | Clé | Défaut | Rôle |
 |---|---|---|
 | `max_calls` | `8` | Appels d'outils hébergés exécutés pour **une** réponse ; au-delà, le modèle reçoit une erreur qui lui demande de conclure. Le `max_uses` d'un outil serveur Anthropic peut l'abaisser pour sa requête, jamais le relever |
-| `run_timeout` | `60` | Secondes pour une exécution, tout compris (redirections suivies incluses). Dépassé → erreur rendue au modèle |
+| `run_timeout` | `60` | Secondes pour une exécution, tout compris (redirections suivies incluses). Dépassé → erreur rendue au modèle. `image_generation` a son propre délai |
 | `max_result_chars` | `24000` | Caractères d'un résultat rendu au modèle ; le surplus est coupé et marqué `[truncated]` |
 | `cache_entries` | `512` | Appels gardés par la [mémoire des résultats](#mémoire-des-résultats) ; les moins récemment relus sortent |
 | `cache_ttl` | `86400` | Secondes de vie d'une entrée de cette mémoire |
@@ -918,6 +1022,18 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 | `allow_private` | `false` | `false` : seules les adresses **publiques** sont jointes, contrôle refait à chaque redirection. `true` lève le filtre — à n'ouvrir que sur un proxy dont tous les clients sont de confiance, et jamais derrière un modèle qui lit le web |
 | `allowed_domains` | `[]` | Non vide : **seuls** ces domaines sont lus par `web_fetch` (sous-domaines couverts, chemin facultatif : `example.com/blog`). Contrôlé à chaque redirection |
 | `blocked_domains` | `[]` | Domaines jamais lus, mêmes règles |
+
+### `[tools.image_generation]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Présente `image_generation` au modèle quand un client **Responses** déclare `image_generation`. Table absente = inactif : l'outil du client est ignoré. Jamais présenté à un client Anthropic, pas d'appel direct par `/v1/tools` |
+| `model` | `""` | Modèle d'image, **préfixé** par son backend (`"bigchuck/Qwen-Image-2.1-heretic"`) ; appelé par `/v1/images/generations` de ce backend, avec sa clé. Vide ou préfixe inconnu → le modèle reçoit « non configuré », et un avertissement au démarrage |
+| `size` | `"512x512"` | Taille quand ni le client ni le modèle n'en demandent une permise |
+| `sizes` | `["512x512", "768x768", "1024x1024"]` | Tailles permises : celles que le modèle peut choisir, et parmi lesquelles le `size` de l'outil du client est respecté |
+| `steps` | `0` | Étapes de diffusion envoyées au backend (`steps`, extension de gufo) ; `0` = non envoyé |
+| `timeout` | `300` | Secondes pour la requête au backend, bascule de modèle comprise ; remplace `run_timeout` pour cet outil |
+| `max_per_response` | `2` | Images générées pour **une** réponse ; au-delà, erreur rendue au modèle (en plus de `max_calls`) |
 
 ### `[quotas]` (backends à quotas)
 
@@ -1044,10 +1160,10 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 - **Hors périmètre, volontairement** : Batches, Files, les outils
   serveur Anthropic autres que la recherche (`web_fetch`,
   `code_execution`…), et le sens proxy → backend Anthropic.
-- **Surface Responses** : des outils hébergés, seul `web_search` est
-  exécuté par le proxy, et seulement s'il est activé
-  ([Outils hébergés](#outils-hébergés)) ; les autres (`file_search`,
-  `code_interpreter`, `mcp`, `image_generation`…) sont toujours ignorés,
+- **Surface Responses** : des outils hébergés, seuls `web_search` et
+  `image_generation` sont exécutés par le proxy, et seulement s'ils sont
+  activés ([Outils hébergés](#outils-hébergés)) ; les autres (`file_search`,
+  `code_interpreter`, `mcp`…) sont toujours ignorés,
   pas exécutés (le modèle ne les voit pas), comme les outils intégrés au
   client sans équivalent chat (`custom`, `local_shell`…). Pas de `ping`
   pendant l'attente du quota du PREMIER tour : un flux vers un backend à
@@ -1065,6 +1181,14 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   navigateur rend peu de texte), pas de PDF. La mémoire des résultats
   (surface Responses) ne survit pas à un redémarrage. État de la
   validation : voir [Outils hébergés](#outils-hébergés).
+- **`image_generation` hébergé : pas de vrai client pour l'instant.**
+  Génération seule (pas d'édition, pas d'image partielle), une image par
+  appel, options de l'outil du client ignorées sauf `size`. L'image part
+  deux fois en flux (`output_item.done`, puis `response.completed`),
+  comme chez OpenAI. Un client qui raccroche annule la requête du proxy,
+  pas forcément la génération déjà lancée chez le backend. Codex CLI ne
+  déclare pas cet outil à un provider tiers (voir
+  [Génération d'image](#génération-dimage-image_generation)).
 
 ## Côté clients
 

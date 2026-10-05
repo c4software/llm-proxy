@@ -31,7 +31,7 @@ Rôles :
      POST /v1/responses, traduit vers /v1/chat/completions comme la
      surface Anthropic. Un client Codex CLI s'y branche avec
      wire_api = "responses". Les outils HÉBERGÉS (paquet tools/ :
-     recherche web) y sont exécutés ici même : le backend est relancé
+     recherche web, génération d'image) y sont exécutés ici même : le backend est relancé
      avec leurs résultats jusqu'à la réponse finale — `hosted_loop`,
      la boucle commune aux deux surfaces traduites ;
   5. auth optionnelle du proxy lui-même : proxy.api_keys (liste vide par
@@ -142,8 +142,8 @@ async def lifespan(app: FastAPI):
         )
     else:
         log.info("aucun outil hébergé ([tools.<nom>].enabled absent ou "
-                 "false) : `web_search` d'un client Responses ou Anthropic "
-                 "est ignoré")
+                 "false) : `web_search` d'un client Responses ou Anthropic, "
+                 "`image_generation` d'un client Responses sont ignorés")
     if albert.ROUTER_MODELS:
         log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 
@@ -1124,7 +1124,7 @@ def hosted_stream(call: Call, request: Request, payload: dict,
     # (ligne «:», ignorée par tout lecteur de flux) tient la connexion
     # pendant une recherche ou l'attente d'un quota.
     return hosted_loop(call, request, hosted, robinet, upstream,
-                       prompt_estimate, rebuild,
+                       prompt_estimate, rebuild, options=robinet.ctx.options,
                        ping=b": ping\n\n" if robinet.sse else None)
 
 
@@ -1185,6 +1185,7 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
     hard_limit = HOSTED_HARD_LIMIT if limit is None \
         else min(HOSTED_HARD_LIMIT, limit + HOSTED_EXTRA_CALLS)
     used = 0
+    same: dict[str, int] = {}   # appels exécutés, par fonction
     # L'attente en cours (exécution d'un outil, ou porte de quota + envoi
     # du tour suivant) : une tâche, pour pouvoir émettre des pings pendant
     # qu'elle dure, et l'annuler si le client raccroche.
@@ -1204,12 +1205,15 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                 return      # tour sans appel hébergé : le robinet a clos
             handback = robinet.client_calls > 0
             for pending in list(robinet.pending):
+                name = pending["name"]
                 task = asyncio.ensure_future(hosted.run(
-                    pending["name"], pending["arguments"], used, limit, options))
+                    name, pending["arguments"], used, limit, options,
+                    same.get(name, 0)))
                 while not await _settled(task, ping):
                     yield ping
                 result, task = task.result(), None
                 used += 1
+                same[name] = same.get(name, 0) + 1
                 out = robinet.resolve(pending, result)
                 if out:
                     yield out
@@ -1412,7 +1416,7 @@ async def root():
 async def tools_list():
     """Les outils hébergés actifs, à la forme d'une déclaration de
     fonction : de quoi les présenter tels quels à un modèle."""
-    active = tools.enabled()
+    active = tools.direct(tools.enabled())
     fetch = any(m.NAME == "web_fetch" for m in active)
     return {"object": "list", "data": [
         {"name": m.NAME, **{k: v for k, v in (
@@ -1428,11 +1432,15 @@ async def tools_run(name: str, request: Request):
     «Error: …» que le modèle doit lire, pas une erreur HTTP — `is_error`
     le signale au client."""
     hosted = tools.Hosted()
-    if name not in hosted.by_name:
+    # Les mêmes que GET /v1/tools : un outil dont le résultat n'est pas un
+    # texte (image_generation) ne s'appelle pas par ici.
+    names = [m.NAME for m in tools.direct(hosted.modules)]
+    if name not in names:
         return error_response(
             "openai", 404, "unknown_tool",
-            f"outil «{name}» inconnu ou désactivé ([tools.{name}] dans "
-            f"config.toml) ; actifs : {', '.join(hosted.by_name) or 'aucun'}")
+            f"outil «{name}» inconnu, désactivé ([tools.{name}] dans "
+            f"config.toml) ou sans appel direct ; actifs : "
+            f"{', '.join(names) or 'aucun'}")
     args = parse_json(await request.body())
     if not isinstance(args, dict):
         return error_response("openai", 400, "invalid_request_error",
