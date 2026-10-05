@@ -3,6 +3,8 @@ Les outils HÉBERGÉS du proxy : ceux qu'il exécute lui-même, au lieu de
 rendre la main au client. Un client de l'API Responses (Codex CLI)
 déclare `{"type": "web_search"}` en comptant qu'OpenAI fera la recherche ;
 derrière ce proxy il n'y a pas d'OpenAI — c'est donc ici qu'elle se fait.
+Même chose pour un client de l'API Messages (Claude Code) et son outil
+serveur `{"type": "web_search_20250305"}`, qu'Anthropic exécuterait.
 
 Un outil = un module de ce dossier, qui expose :
   NAME        le nom de la fonction présentée au modèle
@@ -17,6 +19,12 @@ Un outil = un module de ce dossier, qui expose :
 Ajouter un outil : un module, une ligne dans MODULES, une table
 [tools.<nom>] dans config.example.toml.
 
+La surface Anthropic ne se sert que de `web_search`, et lui demande en
+plus `definition(fetch=False)` (la fonction sans renvoi à `web_fetch`,
+qu'elle ne présente pas), `parse` et `render` (texte ↔ liste structurée,
+pour les blocs `web_search_result`), et que `run` accepte les listes de
+domaines du client.
+
 Ce module porte ce qui est commun : le registre, l'exécution bornée
 (délai, taille du résultat) et la MÉMOIRE des résultats. Cette mémoire
 est la seule chose que le proxy conserve entre deux requêtes : le client
@@ -24,11 +32,13 @@ renvoie au tour suivant l'élément `web_search_call` SANS son résultat
 (OpenAI le garde côté serveur), et il faut le rendre au modèle à
 l'identique — sinon il perd ce qu'il a lu, et le préfixe change sous un
 backend à cache. Bornée (entrées, durée), en mémoire : un redémarrage du
-proxy l'oublie, le modèle reçoit alors un mot qui le dit.
+proxy l'oublie, le modèle reçoit alors un mot qui le dit. La surface
+Anthropic n'y range RIEN : son client renvoie le résultat avec l'appel
+(blocs `web_search_tool_result`), le texte se reconstruit de là.
 
 La boucle qui relance le backend après un appel vit dans app.py ; la
-traduction des éléments, dans responses_api.py — qui ne connaît de ce
-paquet que l'objet `Hosted` qu'on lui passe.
+traduction des éléments, dans responses_api.py et anthropic_api.py — qui
+ne connaissent de ce paquet que l'objet `Hosted` qu'on leur passe.
 """
 
 import asyncio
@@ -95,9 +105,9 @@ MEMORY = Memory(CACHE_ENTRIES, CACHE_TTL)
 
 
 class Hosted:
-    """Ce que responses_api reçoit de ce paquet : quelles fonctions
-    présenter au modèle pour un type d'outil du client, comment rendre
-    compte d'un appel, et la mémoire des résultats."""
+    """Ce que responses_api et anthropic_api reçoivent de ce paquet :
+    quelles fonctions présenter au modèle pour un type d'outil du client,
+    comment rendre compte d'un appel, et la mémoire des résultats."""
 
     def __init__(self, modules=None, memory: Memory | None = None):
         self.modules = list(enabled() if modules is None else modules)
@@ -122,14 +132,28 @@ class Hosted:
                 return m
         return None
 
-    async def run(self, name: str, arguments: str, used: int) -> str:
+    def cap(self, limit=None) -> int:
+        """Appels exécutés au plus pour une réponse : MAX_CALLS, ou la
+        limite que le client a demandée (`max_uses` d'un outil serveur
+        Anthropic) si elle est plus basse — jamais plus haute."""
+        if isinstance(limit, int) and not isinstance(limit, bool):
+            return max(min(limit, MAX_CALLS), 0)
+        return MAX_CALLS
+
+    async def run(self, name: str, arguments: str, used: int,
+                  limit: int | None = None, options: dict | None = None) -> str:
         """Exécute la fonction `name`. `used` : appels déjà exécutés pour
-        cette réponse. Ne lève jamais : tout échec est un texte."""
+        cette réponse ; `limit` : voir cap(). `options` : ce que le CLIENT
+        a réglé sur son outil, par nom de fonction (les listes de domaines
+        de l'outil serveur Anthropic) — passé au module en plus des
+        arguments du modèle, qui ne peut donc pas s'en affranchir.
+        Ne lève jamais : tout échec est un texte."""
         module = self.by_name.get(name)
         if module is None:
             return f"Error: unknown tool {name}."
-        if used >= MAX_CALLS:
-            return (f"Error: the limit of {MAX_CALLS} web tool calls for one "
+        cap = self.cap(limit)
+        if used >= cap:
+            return (f"Error: the limit of {cap} web tool calls for one "
                     f"answer is reached. Answer now with what you already have.")
         try:
             args = json.loads(arguments or "{}")
@@ -139,7 +163,8 @@ class Hosted:
             return "Error: the tool arguments are not a JSON object."
         started = time.monotonic()
         try:
-            result = await asyncio.wait_for(module.run(args), RUN_TIMEOUT)
+            result = await asyncio.wait_for(
+                module.run(args, **(options or {}).get(name, {})), RUN_TIMEOUT)
         except asyncio.TimeoutError:
             result = f"Error: {name} timed out after {int(RUN_TIMEOUT)} s."
         except Exception as exc:  # un outil ne doit jamais casser la réponse

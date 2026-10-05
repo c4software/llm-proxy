@@ -48,6 +48,9 @@ exempt_paths = ["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]
 # Le proxy traduit /v1/messages en /v1/chat/completions (et la réponse,
 # flux SSE compris) vers le backend que désigne le préfixe, comme pour
 # tout autre client. Uniquement dans ce sens : aucun backend Anthropic.
+# L'outil WebSearch de Claude Code passe par l'outil serveur `web_search`
+# d'Anthropic : le proxy l'exécute lui-même si [tools.web_search] est
+# activé plus bas, et l'ignore sinon (WebSearch ne rend alors rien).
 # Table absente ou enabled = false → surface inactive (404), rien ne
 # change pour les clients OpenAI.
 [anthropic]
@@ -118,16 +121,22 @@ enabled = true
 reasoning_as_summary = true
 
 
-# ── Outils hébergés (surface Responses) ─────────────────────────────────
+# ── Outils hébergés (surfaces Responses et Anthropic) ───────────────────
 # Un client de l'API Responses — Codex CLI — déclare `{"type":
 # "web_search"}` en comptant qu'OpenAI fera la recherche. Derrière ce
 # proxy il n'y a pas d'OpenAI : c'est le proxy qui l'exécute. Il présente
 # au modèle deux fonctions, `web_search` et `web_fetch`, exécute leurs
 # appels, relance le backend avec le résultat, et ne rend au client que
 # des éléments `web_search_call` terminés.
-# Seule la surface Responses en profite (ni /v1/chat/completions ni
-# /v1/messages), et seulement pour un client qui DÉCLARE `web_search` :
-# rien n'est ajouté à une requête qui ne le demande pas.
+# Un client de l'API Messages — Claude Code, dont l'outil WebSearch envoie
+# une sous-requête à part — déclare de même l'outil serveur `{"type":
+# "web_search_20250305", "name": "web_search"}` en comptant sur Anthropic.
+# Pour lui le proxy ne présente QUE `web_search` (Claude Code lit les
+# pages sur le poste du client) et rend les blocs `server_tool_use` puis
+# `web_search_tool_result` ; `max_uses`, `allowed_domains` et
+# `blocked_domains` de l'outil sont respectés.
+# /v1/chat/completions n'en profite pas, et rien n'est ajouté à une
+# requête qui ne DÉCLARE pas l'outil.
 # Tables absentes ou enabled = false → comme avant : `web_search` est
 # ignoré, le modèle ne le voit pas.
 #
@@ -137,7 +146,9 @@ reasoning_as_summary = true
 # prompt) ; AUCUN réglage de ce fichier ne l'empêche.
 [tools]
 # Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
-# reçoit une erreur qui lui demande de conclure avec ce qu'il a.
+# reçoit une erreur qui lui demande de conclure avec ce qu'il a. Le
+# `max_uses` d'un outil serveur Anthropic peut abaisser cette limite pour
+# sa requête, jamais la relever.
 max_calls = 8
 # Délai (s) d'une exécution, tout compris (redirections suivies incluses) ;
 # chaque outil a aussi le sien, plus court, par requête. Dépassé → une
@@ -147,7 +158,9 @@ run_timeout = 60
 # et marqué «[truncated]».
 max_result_chars = 24000
 # Mémoire des résultats — la SEULE chose que le proxy conserve entre deux
-# requêtes. Le client renvoie au tour suivant l'élément `web_search_call`
+# requêtes, et pour la surface Responses seulement (un client Anthropic
+# renvoie le résultat avec l'appel : rien n'est gardé pour lui).
+# Le client renvoie au tour suivant l'élément `web_search_call`
 # SANS son résultat (OpenAI le garde côté serveur) : le proxy doit le
 # rendre au modèle à l'identique, sinon il perd ce qu'il a lu et le préfixe
 # change sous un backend à cache. Elle garde, par identifiant d'élément,
@@ -188,7 +201,8 @@ categories = ""
 
 # Lecture d'une page par son URL, pour que le modèle ouvre un résultat de
 # la recherche — sans elle il n'en a que les extraits. Présentée au modèle
-# en même temps que `web_search`, quand le client déclare `web_search`.
+# en même temps que `web_search`, quand un client Responses déclare
+# `web_search` ; jamais à un client Anthropic.
 [tools.web_fetch]
 enabled = true
 # Délai (s) de chaque requête (une par saut de redirection, 5 sauts au plus).

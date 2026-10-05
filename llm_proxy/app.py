@@ -24,13 +24,16 @@ Rôles :
   4ter. la surface Anthropic (anthropic_api.py), si [anthropic].enabled :
      POST /v1/messages et /v1/messages/count_tokens, et GET /v1/models à
      la forme Anthropic quand la requête porte `anthropic-version`. Un
-     client Claude Code s'y branche avec ANTHROPIC_BASE_URL ;
+     client Claude Code s'y branche avec ANTHROPIC_BASE_URL. Son outil
+     serveur `web_search_…` (la sous-requête de son `WebSearch`) est
+     exécuté ici quand la recherche hébergée est active ;
   4quater. la surface Responses (responses_api.py), si [responses].enabled :
      POST /v1/responses, traduit vers /v1/chat/completions comme la
      surface Anthropic. Un client Codex CLI s'y branche avec
      wire_api = "responses". Les outils HÉBERGÉS (paquet tools/ :
      recherche web) y sont exécutés ici même : le backend est relancé
-     avec leurs résultats jusqu'à la réponse finale (`hosted_stream`) ;
+     avec leurs résultats jusqu'à la réponse finale — `hosted_loop`,
+     la boucle commune aux deux surfaces traduites ;
   5. auth optionnelle du proxy lui-même : proxy.api_keys (liste vide par
      défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
      à la OpenAI — ou «x-api-key: <clé>», à l'Anthropic — (401 sinon,
@@ -133,13 +136,14 @@ async def lifespan(app: FastAPI):
                  "ou false) : /v1/responses → 404")
     if tools.enabled():
         log.info(
-            "outils hébergés ACTIFS (/v1/responses) : %s | %d appels au plus "
-            "par réponse",
+            "outils hébergés ACTIFS (/v1/responses ; /v1/messages : "
+            "web_search seul) : %s | %d appels au plus par réponse",
             ", ".join(m.NAME for m in tools.enabled()), tools.MAX_CALLS,
         )
     else:
         log.info("aucun outil hébergé ([tools.<nom>].enabled absent ou "
-                 "false) : `web_search` d'un client Responses est ignoré")
+                 "false) : `web_search` d'un client Responses ou Anthropic "
+                 "est ignoré")
     if albert.ROUTER_MODELS:
         log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 
@@ -343,6 +347,9 @@ class Call:
         self.dialect = dialect
         self.started = time.monotonic()
         self._done = False
+        # Le statut compté par done() : ce qu'une réponse construite APRÈS
+        # la boucle des outils hébergés doit porter (messages(), en JSON).
+        self.status = 0
 
     @property
     def plain_model(self) -> str:
@@ -357,6 +364,7 @@ class Call:
         if self._done or not self.model_key:
             return
         self._done = True
+        self.status = status
         # Erreur sans `usage` upstream (500, 429 local, client parti…) :
         # rien n'a été consommé de mesurable. Compter le corps envoyé en
         # tokens «estimés» gonflait l'entrée de ~20 k tokens par erreur
@@ -800,7 +808,13 @@ async def messages(request: Request):
     images = False
     if backend.images and anthropic_api.has_images(payload):
         images = await accepts_images(backend, resolved[len(backend.name) + 1:])
-    openai_payload = anthropic_api.to_openai(payload, images=images)
+    # La recherche que le proxy exécute lui-même (aucun outil hébergé =
+    # None : l'outil serveur `web_search_…` du client est ignoré, comme
+    # avant). `ctx.hosted` n'est rempli que si la requête le DÉCLARE.
+    hosted = tools.Hosted() or None
+    ctx = anthropic_api.Context(payload, hosted)
+    openai_payload = anthropic_api.to_openai(payload, images=images,
+                                             hosted=hosted)
     if inject_tool_choice(openai_payload, backend):
         log.info(
             "tool_choice=%s injecté (backend=%s, model=%s, %d tools)",
@@ -812,28 +826,81 @@ async def messages(request: Request):
 
     call = Call(backend, resolved, "/v1/messages", dialect)
     cost = albert.estimate_chat_cost(raw)
-    tap = lambda status, ct: anthropic_api.Translator(status, ct, resolved)
+    tap = lambda status, ct: anthropic_api.Translator(status, ct, resolved, ctx)
+    body = None
+    if ctx.hosted:
+        base = payload.get("messages")
+        base = list(base) if isinstance(base, list) else []
+
+        def rebuild(robinet) -> dict:
+            # Le tour suivant : les messages d'origine, puis CE que le
+            # robinet a déjà rendu, en message assistant — relu par
+            # to_openai comme le sera le rejeu du client.
+            return anthropic_api.to_openai(
+                {**payload, "messages": base + [
+                    {"role": "assistant", "content": robinet.content}]},
+                images=images, hosted=hosted, results=robinet.results)
+
+        def body(robinet, upstream):
+            # En flux, des `ping` pendant les attentes de la boucle
+            # (recherche en cours, quota d'un tour suivant) : même raison
+            # que pinged_stream, Claude Code coupe un flux muet.
+            ping = anthropic_api.ping_event() \
+                if robinet.sse and anthropic_api.PING_INTERVAL > 0 else None
+            return hosted_loop(call, request, hosted, robinet, upstream, cost,
+                               rebuild, limit=ctx.limit, options=ctx.options,
+                               ping=ping)
+
     if openai_payload.get("stream") and backend.quotas \
             and anthropic_api.PING_INTERVAL > 0:
         return StreamingResponse(
-            pinged_stream(call, request, openai_payload, raw, cost, tap),
+            pinged_stream(call, request, openai_payload, raw, cost, tap, body),
             media_type="text/event-stream",
             headers={"cache-control": "no-cache"},
         )
     blocked = await gate(call, request, openai_payload, cost)
     if blocked is not None:
         return blocked
-    return await forward(call, request, "v1/chat/completions", raw, tap=tap)
+    if body is None:
+        return await forward(call, request, "v1/chat/completions", raw, tap=tap)
+
+    # Le client a déclaré la recherche que le proxy héberge : même départ
+    # que `forward` (statut et en-têtes du PREMIER upstream), mais la
+    # réponse peut enchaîner plusieurs tours upstream.
+    upstream = await send_upstream(call, request, "v1/chat/completions", raw)
+    if isinstance(upstream, JSONResponse):
+        return upstream
+    robinet = tap(upstream.status_code, upstream.headers.get("content-type", ""))
+    if not robinet.ok:
+        # Erreur dès le premier tour : rien à boucler, le relais ordinaire.
+        return StreamingResponse(relay(call, upstream, robinet, cost),
+                                 status_code=upstream.status_code,
+                                 headers=response_headers(upstream))
+    if robinet.sse:
+        return StreamingResponse(body(robinet, upstream),
+                                 status_code=upstream.status_code,
+                                 headers=response_headers(upstream))
+    # En JSON rien ne part avant la fin : la boucle est menée à son terme
+    # ICI, et la réponse prend le statut de son issue — un backend qui
+    # tombe au deuxième tour donne un vrai 503 à la forme Anthropic, pas
+    # un 200 dont le corps serait une erreur (un SDK le lirait comme un
+    # Message). La surface Responses, elle, a un objet `failed` pour ça.
+    chunks = [chunk async for chunk in body(robinet, upstream)]
+    return Response(b"".join(chunks), status_code=call.status or 200,
+                    media_type="application/json")
 
 
 async def pinged_stream(call: Call, request: Request, payload: dict,
-                        raw: bytes, cost: int, tap):
+                        raw: bytes, cost: int, tap, body=None):
     """Flux Anthropic derrière un limiteur : le 200 part TOUT DE SUITE et
     des `event: ping` tiennent la connexion pendant l'attente du quota —
     un flux muet de plusieurs minutes, Claude Code le coupe. Ce que
     `gate` rendait en réponse HTTP devient ici un `event: error` ; un
     client qui raccroche annule ce générateur, l'attente s'arrête et le
-    quota n'est pas consommé (499)."""
+    quota n'est pas consommé (499).
+    `body(robinet, upstream)` : le générateur qui rend la réponse une
+    fois le premier upstream ouvert, à la place du relais ordinaire — la
+    boucle des outils hébergés (messages())."""
     limiter = call.backend.quota_state.get_limiter(payload)
     acquired = False
     try:
@@ -860,7 +927,9 @@ async def pinged_stream(call: Call, request: Request, payload: dict,
         robinet = tap(upstream.status_code,
                       upstream.headers.get("content-type", ""))
         if robinet.ok:
-            async for chunk in relay(call, upstream, robinet, cost):
+            stream = body(robinet, upstream) if body else \
+                relay(call, upstream, robinet, cost)
+            async for chunk in stream:
                 yield chunk
             return
         # Statut d'erreur upstream : le robinet en fait un corps d'erreur
@@ -1014,31 +1083,88 @@ async def responses(request: Request):
                              headers=response_headers(upstream))
 
 
+# ── Outils hébergés : la boucle ─────────────────────────────────────────
+
 # Garde-fou de la boucle : au-delà de tools.MAX_CALLS le modèle ne reçoit
 # plus que des erreurs qui lui demandent de conclure ; s'il insiste encore
 # autant de fois, la réponse est close sans lui.
-HOSTED_HARD_LIMIT = tools.MAX_CALLS + 4
+HOSTED_EXTRA_CALLS = 4
+HOSTED_HARD_LIMIT = tools.MAX_CALLS + HOSTED_EXTRA_CALLS
 
 
 def _error_message(response: Response) -> str:
-    """Le message d'une réponse d'erreur locale (gate, send_upstream)."""
+    """Le message d'une réponse d'erreur locale (gate, send_upstream),
+    quelle que soit sa forme : OpenAI ou Anthropic, les deux le portent
+    dans `error.message`."""
     return responses_api.error_body(
         parse_json(response.body), response.status_code)["error"]["message"]
 
 
-async def hosted_stream(call: Call, request: Request, payload: dict,
-                        images: bool, hosted, robinet, upstream,
-                        prompt_estimate: int):
-    """Une réponse Responses avec outils hébergés : relaie le tour
-    upstream ouvert, exécute les appels que le robinet a mis de côté
-    (`pending`), en rend le compte au client, puis relance le backend —
-    jusqu'à un tour sans appel hébergé, que le robinet clôt lui-même.
+def hosted_stream(call: Call, request: Request, payload: dict,
+                  images: bool, hosted, robinet, upstream,
+                  prompt_estimate: int):
+    """La boucle des outils hébergés pour une réponse Responses.
 
     Chaque tour suivant est RECONSTRUIT par responses_api.to_chat depuis
     l'`input` d'origine suivi des éléments déjà rendus : le chemin même
     par lequel passera le client quand il rejouera ces éléments à sa
     prochaine requête. Le backend voit donc deux fois les mêmes octets —
-    préfixe stable pour son cache — et il n'y a qu'une traduction à tenir.
+    préfixe stable pour son cache — et il n'y a qu'une traduction à tenir."""
+    base = payload.get("input")
+    if isinstance(base, str):
+        base = [{"type": "message", "role": "user", "content": base}]
+    base = list(base) if isinstance(base, list) else []
+
+    def rebuild(robinet) -> dict:
+        return responses_api.to_chat(
+            {**payload, "input": base + robinet.output},
+            images=images, hosted=hosted)[0]
+
+    return hosted_loop(call, request, hosted, robinet, upstream,
+                       prompt_estimate, rebuild)
+
+
+async def _next_upstream(quiet: Call, request: Request, chat_payload: dict,
+                         raw: bytes, cost: int):
+    """Un tour de plus : la porte de quota, puis l'envoi. Rend la réponse
+    upstream ouverte, ou la réponse d'erreur locale (429, 499, 502, 503)."""
+    blocked = await gate(quiet, request, chat_payload, cost)
+    if blocked is not None:
+        return blocked
+    return await send_upstream(quiet, request, "v1/chat/completions", raw)
+
+
+async def _settled(task: asyncio.Future, ping: bytes | None) -> bool:
+    """`task` est-elle finie ? Sans `ping`, n'en revient qu'à la fin ;
+    avec, au plus tard après anthropic.ping_interval secondes — à
+    l'appelant d'émettre son ping et de redemander."""
+    done, _ = await asyncio.wait(
+        {task}, timeout=anthropic_api.PING_INTERVAL if ping else None)
+    return bool(done)
+
+
+async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
+                      prompt_estimate: int, rebuild, limit: int | None = None,
+                      options: dict | None = None, ping: bytes | None = None):
+    """Une réponse avec outils hébergés, pour les deux surfaces traduites
+    (/v1/responses, /v1/messages) : relaie le tour upstream ouvert,
+    exécute les appels que le robinet a mis de côté (`pending`), en rend
+    le compte au client, puis relance le backend — jusqu'à un tour sans
+    appel hébergé, que le robinet clôt lui-même.
+
+    Ce que la boucle demande à un robinet, et que responses_api.Translator
+    et anthropic_api.Translator offrent tous deux : feed / finish,
+    `pending` (appels à exécuter : `name`, `arguments`), `client_calls`,
+    resolve(appel, résultat), next_turn(), finalize(), fail(message,
+    statut), `turns`, tokens / cached / sse. Ce qui diffère d'une surface
+    à l'autre lui est passé :
+      * `rebuild(robinet)` : le corps chat/completions du tour suivant,
+        reconstruit depuis la requête d'origine et ce que le robinet a
+        déjà rendu — par la traduction même que suivra le rejeu du client ;
+      * `limit` / `options` : la limite d'appels et les réglages que le
+        client a posés sur son outil (tools.Hosted.run) ;
+      * `ping` : l'événement à émettre pendant les attentes (exécution
+        d'un outil, quota d'un tour suivant), ou None.
 
     Un tour qui mêle appels hébergés et appels du client s'arrête après
     les premiers : la main revient au client, qui rejouera le tout.
@@ -1050,13 +1176,15 @@ async def hosted_stream(call: Call, request: Request, payload: dict,
     or la ligne de stats de cette réponse s'écrit UNE fois, ici, avec
     l'usage cumulé. Un client qui raccroche annule ce générateur : le
     `finally` compte ce qui a été consommé et ferme l'upstream."""
-    base = payload.get("input")
-    if isinstance(base, str):
-        base = [{"type": "message", "role": "user", "content": base}]
-    base = list(base) if isinstance(base, list) else []
     quiet = Call(call.backend, "", call.endpoint, call.dialect)
     status = upstream.status_code
+    hard_limit = HOSTED_HARD_LIMIT if limit is None \
+        else min(HOSTED_HARD_LIMIT, limit + HOSTED_EXTRA_CALLS)
     used = 0
+    # L'attente en cours (exécution d'un outil, ou porte de quota + envoi
+    # du tour suivant) : une tâche, pour pouvoir émettre des pings pendant
+    # qu'elle dure, et l'annuler si le client raccroche.
+    task: asyncio.Future | None = None
     try:
         while True:
             async for chunk in upstream.aiter_raw():
@@ -1072,28 +1200,29 @@ async def hosted_stream(call: Call, request: Request, payload: dict,
                 return      # tour sans appel hébergé : le robinet a clos
             handback = robinet.client_calls > 0
             for pending in list(robinet.pending):
-                result = await hosted.run(pending["name"],
-                                          pending["arguments"], used)
+                task = asyncio.ensure_future(hosted.run(
+                    pending["name"], pending["arguments"], used, limit, options))
+                while not await _settled(task, ping):
+                    yield ping
+                result, task = task.result(), None
                 used += 1
                 out = robinet.resolve(pending, result)
                 if out:
                     yield out
-            if handback or used >= HOSTED_HARD_LIMIT:
+            if handback or used >= hard_limit:
                 if not handback:
                     log.warning(
-                        "responses : %d appels d'outils hébergés, le modèle "
+                        "%s : %d appels d'outils hébergés, le modèle "
                         "ne conclut pas — réponse close (model=%s)",
-                        used, call.model_key)
+                        call.endpoint, used, call.model_key)
                 yield robinet.finalize()
                 return
 
             try:
-                chat_payload, _ = responses_api.to_chat(
-                    {**payload, "input": base + robinet.output},
-                    images=images, hosted=hosted)
+                chat_payload = rebuild(robinet)
             except responses_api.Refused as exc:
                 status = 500
-                yield robinet.fail(str(exc))
+                yield robinet.fail(str(exc), status)
                 return
             # Un `tool_choice` forcé par le client (`required`, ou une
             # fonction nommée) vaut pour SA requête : réappliqué à chaque
@@ -1106,16 +1235,17 @@ async def hosted_stream(call: Call, request: Request, payload: dict,
             raw = strip_backend_prefix(chat_payload, call.backend)
             cost = albert.estimate_chat_cost(raw)
             prompt_estimate += cost
-            blocked = await gate(quiet, request, chat_payload, cost)
-            if blocked is None:
-                blocked = await send_upstream(quiet, request,
-                                              "v1/chat/completions", raw)
-                if not isinstance(blocked, JSONResponse):
-                    upstream, blocked = blocked, None
+            task = asyncio.ensure_future(
+                _next_upstream(quiet, request, chat_payload, raw, cost))
+            while not await _settled(task, ping):
+                yield ping
+            blocked, task = task.result(), None
+            if not isinstance(blocked, Response):
+                upstream, blocked = blocked, None
             if blocked is not None:
                 status = blocked.status_code
                 if status != CLIENT_CLOSED:
-                    yield robinet.fail(_error_message(blocked))
+                    yield robinet.fail(_error_message(blocked), status)
                 return
             if upstream.status_code >= 400:
                 status = upstream.status_code
@@ -1130,14 +1260,27 @@ async def hosted_stream(call: Call, request: Request, payload: dict,
                 doc = parse_json(body)
                 yield robinet.fail(responses_api.error_body(
                     doc if doc is not None else body.decode("utf-8", "replace"),
-                    status)["error"]["message"])
+                    status)["error"]["message"], status)
                 return
             robinet.next_turn()
     finally:
+        if task is not None:
+            # Client parti pendant une attente : la recherche s'arrête,
+            # l'attente d'un quota le rend (`acquire`). Si la tâche venait
+            # de finir, l'upstream qu'elle a ouvert est à fermer.
+            if not task.done():
+                task.cancel()
+            elif not task.cancelled() and task.exception() is None \
+                    and hasattr(task.result(), "aclose"):
+                upstream = task.result()
         if used:
             log.info(
-                "responses : %d appel(s) d'outil hébergé en %d tour(s) "
-                "upstream (model=%s)", used, robinet.turns, call.model_key)
+                "%s : %d appel(s) d'outil hébergé en %d tour(s) "
+                "upstream (model=%s)", call.endpoint, used, robinet.turns,
+                call.model_key)
+        if anthropic_api.TRACE and hasattr(robinet, "summary"):
+            log.info("[%s] %s → %s", call.backend.name, call.model_key,
+                     robinet.summary())
         prompt, completion, exact = robinet.tokens(prompt_estimate)
         call.done(status, prompt, completion, exact, robinet.sse,
                   robinet.cached())
@@ -1251,6 +1394,46 @@ async def ui_usage(request: Request):
 @app.get("/")
 async def root():
     return RedirectResponse("/ui")
+
+
+# ── Outils hébergés, appelés directement ────────────────────────────────
+# Les mêmes outils que la boucle de /v1/responses, pour un client qui
+# préfère les déclarer LUI-MÊME à son modèle et garder l'appel et son
+# résultat dans son propre historique (pi, omp : une extension enregistre
+# un outil qui appelle ces routes — llmsetup, tools/llm-proxy-web.ts). Le
+# proxy n'a alors ni boucle ni mémoire à tenir : il exécute, c'est tout.
+# Derrière la clé du proxy comme le reste ; mêmes garde-fous (tools/).
+
+@app.get("/v1/tools")
+async def tools_list():
+    """Les outils hébergés actifs, à la forme d'une déclaration de
+    fonction : de quoi les présenter tels quels à un modèle."""
+    return {"object": "list", "data": [
+        {"name": m.NAME, **{k: v for k, v in m.DEFINITION["function"].items()
+                            if k != "name"}}
+        for m in tools.enabled()]}
+
+
+@app.post("/v1/tools/{name}")
+async def tools_run(name: str, request: Request):
+    """Exécute un outil hébergé. Corps : ses arguments (objet JSON).
+    Toujours 200 quand l'outil existe : un échec de l'outil est un texte
+    «Error: …» que le modèle doit lire, pas une erreur HTTP — `is_error`
+    le signale au client."""
+    hosted = tools.Hosted()
+    if name not in hosted.by_name:
+        return error_response(
+            "openai", 404, "unknown_tool",
+            f"outil «{name}» inconnu ou désactivé ([tools.{name}] dans "
+            f"config.toml) ; actifs : {', '.join(hosted.by_name) or 'aucun'}")
+    args = parse_json(await request.body())
+    if not isinstance(args, dict):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps attendu : les arguments de l'outil, "
+                              "en objet JSON")
+    result = await hosted.run(name, json.dumps(args, ensure_ascii=False), 0)
+    return {"name": name, "result": result,
+            "is_error": result.startswith("Error:")}
 
 
 @app.get("/v1/audio/voices")

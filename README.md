@@ -1,12 +1,23 @@
 # llm-proxy
 
-Passerelle OpenAI-compatible qui expose **plusieurs backends LLM derrière
-un seul endpoint** : Albert (DINUM), machines llama.cpp locales, ou tout
-autre serveur compatible OpenAI. Le client parle à une seule URL et
-choisit le backend par le **préfixe du nom de modèle**
-(`albert/deepseek-v4-flash`, `bigchuck/qwen3-32b`). Un client écrit pour
-l'API Anthropic — **Claude Code** — ou pour l'API Responses d'OpenAI —
-**Codex CLI** — s'y branche aussi, le proxy traduit.
+Passerelle LLM qui met **plusieurs backends derrière un seul endpoint** et
+laisse **chaque client parler sa propre API**. Les backends sont des
+serveurs compatibles OpenAI : machines locales (llama.cpp, gufo), service
+hébergé à quotas (Albert, de la DINUM), ou tout autre. Le client vise une
+seule URL et choisit le backend par le **préfixe du nom de modèle**
+(`bigchuck/qwen3.8-flash-next`, `albert/deepseek-v4-flash`).
+
+Trois API côté client, une seule côté backend (`/v1/chat/completions`) :
+
+- **OpenAI** (pi, omp, Hermes, tout SDK OpenAI) : relayée telle quelle.
+- **Anthropic Messages** (Claude Code) : traduite.
+- **OpenAI Responses** (Codex CLI) : traduite.
+
+Autour du relais : un catalogue `/v1/models` unifié, des **outils web
+hébergés** (recherche par une instance SearXNG, lecture de page) que le
+proxy exécute pour le modèle, un limiteur de quotas pour les backends qui
+en ont, des statistiques persistantes à la forme de l'Usage API d'OpenAI
+et un tableau de bord.
 
 ![Tableau de bord /ui : cartes de synthèse (requêtes, tokens, modèles actifs, erreurs) et détail par modèle](preview.jpg)
 
@@ -24,7 +35,9 @@ l'API Anthropic — **Claude Code** — ou pour l'API Responses d'OpenAI —
   ou du `n_ctx_train` côté llama.cpp) ; les détails internes (chemins
   `.gguf`, args…) ne sont jamais publiés. Les noms renvoyés sont
   directement routables.
-- **Limiteur de quotas Albert** — temporise les requêtes pour rester
+- **Limiteur de quotas** — pour un backend à quotas (`quotas = true` ;
+  aujourd'hui Albert, dont le limiteur connaît le compte) : temporise les
+  requêtes pour rester
   sous les limites du compte (fenêtres minute **et** jour, chargées via
   `/v1/me/info`, rafraîchies périodiquement). Retarde plutôt que
   rejeter ; si l'attente dépasse `quotas.max_queue_seconds` (quota journalier
@@ -37,8 +50,8 @@ l'API Anthropic — **Claude Code** — ou pour l'API Responses d'OpenAI —
   (souvent éteints) : connexion coupée à 1 s, backend éteint → 503
   `backend_offline` avec `Retry-After`, et simplement absent de
   `/v1/models`.
-- **Clé centralisée** — la clé Albert ne vit que dans le proxy ;
-  l'`Authorization` du client est remplacé. Les clients n'ont rien à
+- **Clés centralisées** — la clé d'un backend (`api_key`) ne vit que
+  dans le proxy ; l'`Authorization` du client est remplacé. Les clients n'ont rien à
   configurer (une valeur bidon suffit si leur SDK exige une clé).
 - **Correctif `tool_choice`** — quand `tools` est présent sans
   `tool_choice`, le proxy peut injecter `tool_choice: "auto"` (le schéma
@@ -73,7 +86,10 @@ l'API Anthropic — **Claude Code** — ou pour l'API Responses d'OpenAI —
   l'**exécute lui-même** (recherche par une instance SearXNG livrée dans
   le `docker-compose.yml`, lecture de pages par `web_fetch`), relance le
   backend avec le résultat et rend au client des éléments
-  `web_search_call`. Voir [Outils hébergés](#outils-hébergés).
+  `web_search_call`. Même service pour l'outil serveur
+  `web_search_20250305` d'un client Anthropic — celui par lequel passe
+  le `WebSearch` de Claude Code —, rendu en blocs `server_tool_use` /
+  `web_search_tool_result`. Voir [Outils hébergés](#outils-hébergés).
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
@@ -105,12 +121,12 @@ l'API Anthropic — **Claude Code** — ou pour l'API Responses d'OpenAI —
 | `llm_proxy/backends.py` | Déclaration des backends, clients HTTP, **routage au préfixe de modèle** |
 | `llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 | `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête), extraction de l'`usage` dans le flux de réponse, et l'Usage API |
-| `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` |
+| `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` ; outil serveur `web_search_…` remplacé par la recherche hébergée, rendue et rejouée en blocs `server_tool_use` / `web_search_tool_result` |
 | `llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés par le proxy présentés au modèle et rejoués, les autres ignorés, `namespace` aplatis |
 | `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre, exécution bornée (délai, taille du résultat, nombre d'appels par réponse), **mémoire des résultats** |
 | `llm_proxy/tools/net.py` | Garde-fou réseau : résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée |
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
-| `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) |
+| `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en liste structurée pour les blocs d'un client Anthropic ; filtre par domaines |
 | `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
 | `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
@@ -131,7 +147,10 @@ Anthropic, `{"type": "error", …}`). La porte de quota (`gate`) et le
 relais (`forward`) sont communs à toutes les routes ; `forward` fait
 passer les octets upstream par un « robinet » — `stats.UsageCollector`
 (identité, lit l'`usage` au passage), `anthropic_api.Translator` ou
-`responses_api.Translator` (réécrivent la réponse).
+`responses_api.Translator` (réécrivent la réponse). Ces deux-là portent
+aussi les outils hébergés, par un même contrat (`pending`, `resolve`,
+`next_turn`, `finalize`, `fail`) : une seule boucle, `hosted_loop`,
+exécute les appels et relance le backend pour les deux surfaces.
 
 `data/` est le seul dossier écrit à l'exécution (`config.toml`,
 `stats.db`) : c'est le volume à monter.
@@ -329,7 +348,10 @@ Ce qui se passe :
   | `tool_use` (assistant) | `tool_calls[]`, arguments sérialisés |
   | `tool_result` (user) | un message `tool` **par résultat**, placés avant le reste du message ; une image dans le résultat suit dans un message `user` |
   | `thinking` / `redacted_thinking` | jetés (aucun backend ne les rejoue) |
-  | `tools[{name, input_schema}]` | `tools[{type: function, …parameters}]` ; outils serveur Anthropic (`web_search`…) ignorés |
+  | `tools[{name, input_schema}]` | `tools[{type: function, …parameters}]` |
+  | outil serveur `web_search_…` (`{"type": "web_search_20250305", "name": "web_search"}`) | la fonction `web_search` du proxy, exécutée par lui, si `[tools.web_search].enabled` — voir [Outils hébergés](#claude-code-et-loutil-serveur-web_search) ; ignoré sinon |
+  | autres outils serveur (`web_fetch_…`, `code_execution_…`, `bash`…) | ignorés |
+  | blocs `server_tool_use` + `web_search_tool_result` rejoués (assistant) | un appel `web_search` et son message `tool`, si la requête déclare encore l'outil ; ignorés sinon |
   | `tool_choice` `auto` / `any` / `tool` / `none`, `disable_parallel_tool_use` | `auto` / `required` / `{function}` / `none`, `parallel_tool_calls: false` |
   | `stop_sequences`, `metadata.user_id`, `temperature`, `top_p`, `max_tokens` | `stop`, `user`, idem (plafond `max_tokens` du backend appliqué) |
   | `top_k`, `cache_control`, `thinking`, `output_config`, `context_management`, paramètres d'URL (`?beta=true`) | ignorés |
@@ -367,13 +389,21 @@ Ce qui se passe :
   flux ; un client qui raccroche pendant l'attente quitte la file sans
   consommer de quota (499), comme ailleurs.
 
+- **`WebSearch`** : l'outil de Claude Code ne cherche pas lui-même, il
+  compte sur l'outil serveur `web_search` d'Anthropic. Sans recherche
+  hébergée, cet outil est ignoré : le modèle répond sans chercher et
+  `WebSearch` ne rend aucun lien. Avec `[tools.web_search].enabled`, le
+  proxy fait la recherche — voir
+  [Claude Code et l'outil serveur `web_search`](#claude-code-et-loutil-serveur-web_search).
+  `WebFetch`, lui, lit les pages depuis le poste du client : le proxy
+  n'y est pour rien.
+
 À savoir : le prompt système de Claude Code pèse plusieurs milliers de
 tokens, renvoyés à chaque tour sans cache exploitable côté OpenAI — le
 quota journalier Albert se consomme vite ; `ANTHROPIC_SMALL_FAST_MODEL`
 vers un backend local soulage (les tâches d'arrière-plan sont
-nombreuses). Hors périmètre : Batches, Files, outils serveur
-(`web_search`, `code_execution`), PDF — aucun n'est nécessaire à Claude
-Code contre un backend OpenAI.
+nombreuses). Hors périmètre : Batches, Files, les outils serveur autres
+que la recherche (`web_fetch`, `code_execution`…), PDF.
 
 ## Codex CLI
 
@@ -442,7 +472,10 @@ qu'OpenAI fera la recherche côté serveur. Derrière ce proxy il n'y a pas
 d'OpenAI — sans rien faire, l'outil est retiré et le modèle n'a pas de
 recherche web. Un outil **hébergé** est un outil que le proxy exécute
 lui-même, à la place d'OpenAI. Il y en a deux, activés ensemble par le
-`web_search` du client :
+`web_search` du client. Un client de l'API Messages d'Anthropic est dans
+le même cas avec son outil serveur `web_search_20250305` ; pour lui,
+seule la recherche est branchée — voir
+[Claude Code et l'outil serveur `web_search`](#claude-code-et-loutil-serveur-web_search).
 
 | Fonction présentée au modèle | Ce qu'elle fait | Par quoi |
 |---|---|---|
@@ -469,6 +502,11 @@ Le schéma de `web_search` et la forme de sa sortie sont repris de l'outil
   lecture de page l'a été avec lui), un backend à quotas, et le service
   `searxng` du `docker-compose.yml` du dépôt tel quel (le déploiement
   d'essai l'intègre dans un compose local, sans la clé obligatoire).
+- **Surface Anthropic : pas encore jouée avec un vrai Claude Code.** La
+  forme de la requête vient d'une capture de Claude Code 2.1.287 ; celle
+  de la réponse, de la documentation publique d'Anthropic (« Web search
+  tool ») ; le tout n'est couvert que par les tests du dépôt, sans
+  réseau.
 
 ### Déroulé
 
@@ -501,6 +539,91 @@ tours upstream, avec l'usage cumulé ; chaque tour repasse par le limiteur
 d'un backend à quotas. Les outils actifs sont dits au démarrage dans les
 logs et dans `/healthz` (`tools` : fonctions actives, `max_calls`,
 nombre d'entrées en mémoire).
+
+### Claude Code et l'outil serveur `web_search`
+
+L'outil `WebSearch` de Claude Code ne cherche pas lui-même. À chaque
+appel il envoie une **sous-requête** `/v1/messages` à part — un court
+`system`, un message « Perform a web search for the query: … », et pour
+seul outil `{"type": "web_search_20250305", "name": "web_search",
+"max_uses": 8}` — en comptant qu'Anthropic exécutera la recherche. Il lit
+ensuite les blocs de la réponse. Avec `[tools.web_search].enabled`, le
+proxy tient ce rôle :
+
+1. L'outil serveur `web_search_…` (toute version datée) devient, pour le
+   modèle, la fonction `web_search` du tableau ci-dessus. **`web_fetch`
+   n'est pas présenté** sur cette surface : la lecture de page de Claude
+   Code (`WebFetch`) se fait sur le poste du client. Une fonction du
+   client nommée `web_search` garde son nom, l'outil hébergé n'est alors
+   pas présenté. Les autres outils serveur restent ignorés.
+2. Quand le modèle l'appelle, le proxy exécute la recherche et relance
+   le backend — la même boucle que pour Codex. Le modèle reçoit le même
+   texte de résultats que sur la surface Responses.
+3. Le client reçoit, en flux SSE comme en JSON, ce qu'Anthropic rend :
+
+       content_block_start  {"index": 1, "content_block": {"type": "server_tool_use",
+                             "id": "srvtoolu_…", "name": "web_search", "input": {}}}
+       content_block_delta  {"index": 1, "delta": {"type": "input_json_delta",
+                             "partial_json": "{\"query\": \"…\"}"}}
+       content_block_stop   {"index": 1}
+       ping …                                    (tant que la recherche dure)
+       content_block_start  {"index": 2, "content_block": {"type": "web_search_tool_result",
+                             "tool_use_id": "srvtoolu_…", "content": [
+                               {"type": "web_search_result", "title": "…", "url": "…",
+                                "encrypted_content": "<l'extrait>", "page_age": "2026-10-03"}]}}
+       content_block_stop   {"index": 2}
+       … le texte de la réponse …
+       message_delta        {"delta": {"stop_reason": "end_turn"}, "usage": {…,
+                             "server_tool_use": {"web_search_requests": 1}}}
+
+   Chaque résultat suit son appel, même quand le modèle lance deux
+   recherches d'un coup. L'`input` reprend les arguments du modèle
+   (`query`, et `recency` / `limit` s'il les a donnés). Aucun résultat :
+   `content` est une liste vide. Une recherche en échec n'est pas une
+   erreur HTTP : `content` est l'objet `{"type":
+   "web_search_tool_result_error", "error_code": …}` — `max_uses_exceeded`,
+   `invalid_tool_input` (pas de `query`), `unavailable` pour tout le
+   reste — et le modèle, lui, lit le texte `Error: …` complet.
+
+Ce qui vient de l'outil du client :
+
+- **`max_uses`** est respecté, sans jamais dépasser `[tools].max_calls`.
+- **`allowed_domains` / `blocked_domains`** filtrent les résultats avant
+  la limite, aux règles d'Anthropic : domaine nu, sous-domaines couverts
+  (`example.com` couvre `docs.example.com`), chemin optionnel
+  (`example.com/blog`). C'est un filtre sur ce que SearXNG a rendu, la
+  requête n'est pas réécrite : une liste étroite peut ne rien laisser.
+  Les jokers de chemin ne sont pas lus (le chemin s'arrête au premier
+  `*`), et les deux listes ensemble s'appliquent toutes les deux, là où
+  Anthropic répond 400. `user_location` est ignoré.
+
+Ce qui diffère d'Anthropic, à savoir :
+
+- **`encrypted_content` porte l'extrait, en clair.** Chez Anthropic
+  c'est un blob chiffré que le client doit renvoyer pour que l'API
+  retrouve le résultat au tour suivant ; ici rien n'est à cacher, et le
+  rôle est le même : avec l'extrait, le bloc porte tout ce que le modèle
+  a lu. **`page_age`** est la date du résultat (`AAAA-MM-JJ`) ou `null`.
+- **Aucune mémoire côté proxy pour cette surface.** Un client qui
+  rejoue les blocs `server_tool_use` + `web_search_tool_result` dans ses
+  `messages` les voit redevenir un appel et son message `tool`, dont le
+  texte est reconstruit depuis le bloc — le même, à l'octet près, que
+  celui que le modèle avait lu, donc le même préfixe pour le cache du
+  backend. Seule exception : d'un résultat en erreur il ne reste que le
+  code. (Dans les captures, Claude Code ne rejoue pas ces blocs : sa
+  sous-requête n'a qu'un tour.) Si la requête ne déclare plus l'outil,
+  les blocs rejoués sont ignorés, comme avant.
+- **Pas de citations** : les blocs `text` ne portent pas de `citations`.
+- **Recherche et outil du client dans le même tour** : la recherche est
+  exécutée, puis la main revient au client (`stop_reason: "tool_use"`),
+  le bloc de l'outil client précédant alors ceux de la recherche.
+  Anthropic, lui, rend la main sans exécuter la recherche.
+- **Jamais de `pause_turn`** : un modèle qui cherche sans conclure est
+  arrêté par le garde-fou du nombre d'appels, en `end_turn`.
+- En flux, des `event: ping` partent pendant l'exécution d'une recherche
+  et pendant l'attente d'un quota aux tours suivants (`ping_interval`).
+  En JSON rien ne part avant la fin : un backend qui tombe en cours de
+  boucle donne son vrai statut d'erreur, pas un `200`.
 
 ### Mise en route
 
@@ -580,9 +703,33 @@ Diagnostic, l'instance n'étant pas joignable de l'hôte :
   modèle reçoit une erreur qui lui demande de conclure avec ce qu'il a ;
   s'il insiste encore (4 appels de plus), la réponse est close sans lui.
 
+### Appel direct : `/v1/tools` (pi, omp)
+
+Un client qui parle `/v1/chat/completions` n'a pas d'outil « hébergé » à
+déclarer, et garde ses appels d'outils dans son propre historique. Pour
+lui, les mêmes outils s'appellent directement, derrière la clé du proxy
+et avec les mêmes garde-fous :
+
+    GET  /v1/tools            → les outils actifs (nom, description, schéma)
+    POST /v1/tools/<nom>      → corps : les arguments, en objet JSON
+                                réponse : {"name", "result", "is_error"}
+
+Le client déclare alors l'outil à son modèle comme n'importe quel outil
+à lui, et exécute l'appel par cette route : le proxy n'a ni boucle ni
+mémoire à tenir. Un échec de l'outil est un `200` avec un texte
+`Error: …` et `is_error: true` (c'est un texte pour le modèle) ; un outil
+inconnu ou désactivé, un `404` `unknown_tool`.
+
+C'est ce que fait l'extension pi / omp `tools/llm-proxy-web.ts` du dépôt
+[llmsetup](https://github.com/c4software/llmsetup) : elle lit
+`GET /v1/tools` au démarrage et enregistre `proxy_web_search` et
+`proxy_web_fetch`, plus les commandes `/web` et `/page`.
+
 ### Mémoire des résultats
 
-C'est **la seule chose que le proxy conserve entre deux requêtes**. Elle
+C'est **la seule chose que le proxy conserve entre deux requêtes**, et
+seulement pour la surface Responses (un client Anthropic renvoie le
+résultat avec l'appel : rien n'est gardé pour lui). Elle
 existe parce que le client rejoue l'élément `web_search_call` sans son
 résultat : sans elle le modèle perdrait, au tour suivant, tout ce qu'il a
 lu — et le début de la conversation changerait, ce qui fait manquer le
@@ -733,7 +880,7 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `max_calls` | `8` | Appels d'outils hébergés exécutés pour **une** réponse ; au-delà, le modèle reçoit une erreur qui lui demande de conclure |
+| `max_calls` | `8` | Appels d'outils hébergés exécutés pour **une** réponse ; au-delà, le modèle reçoit une erreur qui lui demande de conclure. Le `max_uses` d'un outil serveur Anthropic peut l'abaisser pour sa requête, jamais le relever |
 | `run_timeout` | `60` | Secondes pour une exécution, tout compris (redirections suivies incluses). Dépassé → erreur rendue au modèle |
 | `max_result_chars` | `24000` | Caractères d'un résultat rendu au modèle ; le surplus est coupé et marqué `[truncated]` |
 | `cache_entries` | `512` | Appels gardés par la [mémoire des résultats](#mémoire-des-résultats) ; les moins récemment relus sortent |
@@ -743,7 +890,7 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `enabled` | `false` | Présente `web_search` au modèle quand le client déclare `web_search`. Table absente = inactif : l'outil du client est ignoré |
+| `enabled` | `false` | Présente `web_search` au modèle quand le client déclare `web_search` (Responses) ou l'outil serveur `web_search_…` (Anthropic, Claude Code). Table absente = inactif : l'outil du client est ignoré |
 | `searxng_url` | `""` | Base de l'instance SearXNG ; le proxy appelle `<searxng_url>/search?q=…&format=json`. Dans le compose : `"http://searxng:8080"`. Vide → le modèle reçoit « recherche non configurée ». Adresse de configuration : le garde-fou des adresses publiques ne s'y applique pas |
 | `timeout` | `20` | Secondes pour la requête vers SearXNG |
 | `limit` | `8` | Résultats rendus quand le modèle ne précise pas `limit` (20 au plus) |
@@ -754,7 +901,7 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `enabled` | `false` | Présente `web_fetch` au modèle quand le client déclare `web_search` — sans elle, la recherche ne rend que des extraits de 240 caractères |
+| `enabled` | `false` | Présente `web_fetch` au modèle quand un client **Responses** déclare `web_search` — sans elle, la recherche ne rend que des extraits de 240 caractères. Jamais présenté à un client Anthropic |
 | `timeout` | `20` | Secondes par requête (une par saut de redirection, 5 sauts au plus) |
 | `max_bytes` | `2000000` | Octets lus au plus sur le corps d'une page |
 | `max_chars` | `20000` | Caractères de texte rendus par appel ; la suite se demande par `offset` |
@@ -882,9 +1029,9 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   où il y en a un.
 - **Images** : seul le catalogue du backend décide ; un modèle vision
   servi sans `--mmproj` est un modèle texte.
-- **Hors périmètre, volontairement** : Batches, Files, outils serveur
-  Anthropic (`web_search`, `code_execution`…), et le sens proxy →
-  backend Anthropic.
+- **Hors périmètre, volontairement** : Batches, Files, les outils
+  serveur Anthropic autres que la recherche (`web_fetch`,
+  `code_execution`…), et le sens proxy → backend Anthropic.
 - **Surface Responses** : des outils hébergés, seul `web_search` est
   exécuté par le proxy, et seulement s'il est activé
   ([Outils hébergés](#outils-hébergés)) ; les autres (`file_search`,
@@ -893,13 +1040,17 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   client sans équivalent chat (`custom`, `local_shell`…). Pas de `ping`
   pendant l'attente d'un quota : un flux vers un backend à quotas attend
   avant de répondre, comme pour un client OpenAI.
-- **Outils hébergés : surface Responses seulement.** Ni
-  `/v1/chat/completions` ni `/v1/messages` n'en profitent : les outils
-  serveur d'un client Anthropic (`web_search`…) restent ignorés. Pas de
-  rendu de JavaScript dans `web_fetch` (une page construite côté
-  navigateur rend peu de texte), pas de PDF. La mémoire des résultats ne survit pas à un
-  redémarrage. État de la validation : voir
-  [Outils hébergés](#outils-hébergés).
+- **Outils hébergés : surfaces Responses et Anthropic.**
+  `/v1/chat/completions` n'en profite pas (un client qui veut les
+  déclarer lui-même a `/v1/tools`). Sur `/v1/messages`, seule la
+  recherche est branchée, **pas encore jouée avec un vrai Claude Code** ;
+  pas de citations, pas de `pause_turn`, `user_location` ignoré, et les
+  listes de domaines ne font que filtrer ce que SearXNG a rendu — voir
+  [Claude Code et l'outil serveur `web_search`](#claude-code-et-loutil-serveur-web_search).
+  Pas de rendu de JavaScript dans `web_fetch` (une page construite côté
+  navigateur rend peu de texte), pas de PDF. La mémoire des résultats
+  (surface Responses) ne survit pas à un redémarrage. État de la
+  validation : voir [Outils hébergés](#outils-hébergés).
 
 ## Côté clients
 
@@ -910,6 +1061,9 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   [Codex CLI](#codex-cli).
 - Hermes : retirer `extra_body.tool_choice` du provider dans
   `~/.hermes/config.yaml`, pointer `api` sur le proxy.
+- pi et omp, outils web : l'extension `tools/llm-proxy-web.ts` de
+  llmsetup, qui appelle `/v1/tools` — voir
+  [Appel direct](#appel-direct--v1tools-pi-omp).
 - pi : un provider dans `~/.pi/agent/models.json` — `api:
   "openai-completions"` sur `http://…:8000/v1`, ou `api:
   "anthropic-messages"` sur `http://…:8000` (les deux marchent ; voir

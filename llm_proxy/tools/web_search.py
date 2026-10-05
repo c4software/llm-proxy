@@ -5,6 +5,11 @@ docker-compose). Le schéma et la forme de la sortie reprennent ceux de
 l'outil web_search d'oh-my-pi (can1357/oh-my-pi) : `query`, `recency`,
 `limit` ; une entrée numérotée par résultat — titre, date, URL, extrait.
 
+Ce que la recherche rend existe sous deux formes qui disent la même
+chose : la liste structurée (`entries`) et le texte du modèle (`render`),
+qu'on relit dans l'autre sens par `parse`. `run` ne rend que le texte ;
+la surface Anthropic en tire les blocs `web_search_result` de son client.
+
 L'instance est une adresse de CONFIGURATION ([tools.web_search].
 searxng_url), en général privée : le garde-fou des adresses publiques
 (net.py) ne s'y applique pas, il protège des cibles choisies par le
@@ -13,6 +18,9 @@ modèle.
 SearXNG ne sert le JSON que si `search.formats` le liste (settings.yml) ;
 sinon il répond 403, et l'erreur le dit.
 """
+
+import re
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -33,28 +41,41 @@ ITEM_TYPE = "web_search_call"
 # Types d'outil Responses qui activent cette fonction.
 KINDS = ("web_search", "web_search_preview", "web_search_2025_08_26")
 
-DEFINITION = {"type": "function", "function": {
-    "name": NAME,
-    "description": (
-        "Search the web. Returns a numbered list of results (title, date, "
-        "URL, snippet). The query accepts the usual operators: site:, "
-        "-site:, \"exact phrase\", -term, OR. Use web_fetch to read a "
-        "result page. Prefer primary sources and cite the URLs you rely on."),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "The search query."},
-            "recency": {"type": "string",
-                        "enum": ["day", "week", "month", "year"],
-                        "description": "Only results from the last day, "
-                                       "week, month or year."},
-            "limit": {"type": "integer",
-                      "description": f"Maximum number of results "
-                                     f"(default {LIMIT}, at most {MAX_LIMIT})."},
+# La description dit au modèle de lire une page par `web_fetch` : vrai
+# seulement là où `web_fetch` lui est présenté aussi. La surface Anthropic
+# ne présente que la recherche (Claude Code lit les pages sur le poste du
+# client) — elle prend `definition(fetch=False)`, sans cette phrase, pour
+# que le modèle n'appelle pas une fonction qui n'existe pas.
+_FETCH_HINT = "Use web_fetch to read a result page. "
+
+
+def definition(fetch: bool = True) -> dict:
+    return {"type": "function", "function": {
+        "name": NAME,
+        "description": (
+            "Search the web. Returns a numbered list of results (title, date, "
+            "URL, snippet). The query accepts the usual operators: site:, "
+            "-site:, \"exact phrase\", -term, OR. "
+            + (_FETCH_HINT if fetch else "")
+            + "Prefer primary sources and cite the URLs you rely on."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The search query."},
+                "recency": {"type": "string",
+                            "enum": ["day", "week", "month", "year"],
+                            "description": "Only results from the last day, "
+                                           "week, month or year."},
+                "limit": {"type": "integer",
+                          "description": f"Maximum number of results "
+                                         f"(default {LIMIT}, at most {MAX_LIMIT})."},
+            },
+            "required": ["query"],
         },
-        "required": ["query"],
-    },
-}}
+    }}
+
+
+DEFINITION = definition()
 
 
 def action(args: dict) -> dict:
@@ -66,29 +87,119 @@ def _limit(value) -> int:
         and not isinstance(value, bool) else LIMIT
 
 
-def format_results(query: str, results: list[dict], limit: int) -> str:
-    lines = []
+def _domain_match(url: str, domains) -> bool:
+    """`url` relève-t-elle d'une des entrées de `domains` ? Règles de
+    l'outil serveur d'Anthropic, d'où viennent ces listes : domaine nu,
+    sans schéma ; les sous-domaines sont couverts (`example.com` couvre
+    `docs.example.com`, l'inverse non) ; un chemin restreint à ce qui le
+    prolonge (`example.com/blog`). Les jokers de chemin ne sont pas lus :
+    le chemin s'arrête au premier `*`."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    for d in domains:
+        d = str(d).strip().lower().split("://", 1)[-1]
+        name, _, path = d.partition("/")
+        if not name or not (host == name or host.endswith("." + name)):
+            continue
+        path = path.split("*", 1)[0]
+        if not path or parts.path.lower().startswith("/" + path):
+            return True
+    return False
+
+
+def entries(results, limit: int, allowed=None, blocked=None) -> list[dict]:
+    """Résultats SearXNG → la liste STRUCTURÉE de ce qui est rendu : un
+    dict `title` / `url` / `date` / `snippet` par résultat, `limit` au
+    plus. C'est d'elle que sortent le texte du modèle (`render`) et, sur
+    la surface Anthropic, les blocs `web_search_result` du client.
+    `allowed` / `blocked` : listes de domaines (voir _domain_match),
+    appliquées AVANT `limit` — filtrer après rendrait une liste amputée."""
+    out = []
     for r in results:
         url = r.get("url") if isinstance(r, dict) else None
         if not isinstance(url, str) or not url:
             continue
-        title = " ".join(str(r.get("title") or url).split())
-        date = str(r.get("publishedDate") or "")[:10]
-        lines.append(f"[{len(lines) // 3 + 1}] {title}"
-                     + (f" ({date})" if date else ""))
-        lines.append(f"    {url}")
+        if allowed and not _domain_match(url, allowed):
+            continue
+        if blocked and _domain_match(url, blocked):
+            continue
         snippet = " ".join(str(r.get("content") or "").split())
         if len(snippet) > SNIPPET_CHARS:
             snippet = snippet[:SNIPPET_CHARS].rstrip() + "…"
-        lines.append(f"    {snippet}")
-        if len(lines) // 3 >= limit:
+        out.append({"title": " ".join(str(r.get("title") or url).split()),
+                    "url": url,
+                    "date": str(r.get("publishedDate") or "")[:10],
+                    "snippet": snippet})
+        if len(out) >= limit:
             break
+    return out
+
+
+def render(query: str, found: list[dict]) -> str:
+    """La liste structurée → le texte rendu au modèle : une entrée
+    numérotée par résultat — titre et date, URL, extrait (ligne omise
+    s'il est vide)."""
+    lines = []
+    for n, e in enumerate(found, 1):
+        lines.append(f"[{n}] {e['title']}"
+                     + (f" ({e['date']})" if e["date"] else ""))
+        lines.append(f"    {e['url']}")
+        lines.append(f"    {e['snippet']}")
     if not lines:
         return f"No results for «{query}»."
     return "\n".join(line for line in lines if line.strip())
 
 
-async def run(args: dict, transport=None) -> str:
+_HEAD = re.compile(r"^\[(\d+)\] (.*)$")
+_DATED = re.compile(r"^(.*) \((\d{4}-\d{2}-\d{2})\)$")
+
+
+def parse(text: str) -> list[dict]:
+    """L'inverse de `render` : le texte rendu au modèle → la liste
+    structurée. La surface Anthropic en a besoin dans ce sens-là : ce
+    qu'elle reçoit de l'exécution (tools.Hosted.run) est le TEXTE, borné
+    et tel que le modèle le lira ; les blocs du client en sont déduits,
+    donc ne peuvent pas dire autre chose que lui. Et `render(parse(t))`
+    redonne `t` : un client qui rejoue ses blocs fait retrouver au modèle
+    le texte d'origine, sans que le proxy ait rien conservé.
+    Un texte d'erreur, «No results», une entrée coupée par la troncature
+    (sans URL) : rien."""
+    out: list[dict] = []
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        head = _HEAD.match(lines[i])
+        i += 1
+        if not head or i >= len(lines) or not lines[i].startswith("    "):
+            continue
+        title, date = head.group(2), ""
+        # Une date est collée au titre, entre parenthèses ; seule la
+        # forme AAAA-MM-JJ en est relue (une date d'une autre forme reste
+        # dans le titre). Un titre qui finirait de lui-même par une telle
+        # date est lu comme daté : `render` recolle les deux à l'identique.
+        dated = _DATED.match(title)
+        if dated:
+            title, date = dated.group(1), dated.group(2)
+        entry = {"title": title, "url": lines[i][4:], "date": date,
+                 "snippet": ""}
+        i += 1
+        if i < len(lines) and lines[i].startswith("    "):
+            entry["snippet"] = lines[i][4:]
+            i += 1
+        out.append(entry)
+    return out
+
+
+def format_results(query: str, results: list[dict], limit: int,
+                   allowed=None, blocked=None) -> str:
+    return render(query, entries(results, limit, allowed, blocked))
+
+
+async def run(args: dict, transport=None, allowed_domains=None,
+              blocked_domains=None) -> str:
+    """`allowed_domains` / `blocked_domains` ne viennent jamais du modèle :
+    ce sont les listes que le CLIENT pose sur son outil serveur (surface
+    Anthropic), passées par tools.Hosted.run."""
     query = args.get("query")
     if not isinstance(query, str) or not query.strip():
         return "Error: `query` is required."
@@ -123,4 +234,5 @@ async def run(args: dict, transport=None) -> str:
         results = []
     if not isinstance(data, dict) or not isinstance(results, list):
         return "Error: unreadable search engine response."
-    return format_results(query.strip(), results, limit)
+    return format_results(query.strip(), results, limit, allowed_domains,
+                          blocked_domains)

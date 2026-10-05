@@ -1309,3 +1309,72 @@ def test_hosted_enabled_et_defauts(monkeypatch):
     assert tools.Hosted([]).modules == []
     m = tools.Memory(1, 1)
     assert tools.Hosted([web_fetch], m).memory is m
+
+
+# ── routes /v1/tools (appel direct, pour pi et omp) ─────────────────────
+
+@pytest.fixture
+def routes(monkeypatch):
+    from fastapi.testclient import TestClient
+    from llm_proxy import app as A
+    from llm_proxy import tools as T
+    from llm_proxy.tools import web_fetch, web_search
+
+    monkeypatch.setattr(A, "PROXY_API_KEYS", frozenset())
+    monkeypatch.setattr(web_search, "ENABLED", True)
+    monkeypatch.setattr(web_fetch, "ENABLED", False)
+    seen = []
+
+    async def run(args, transport=None):
+        seen.append(args)
+        return "Error: moteur éteint." if args.get("query") == "panne" \
+            else "[1] Titre\n    https://e.org\n    extrait"
+    monkeypatch.setattr(web_search, "run", run)
+    return TestClient(A.app), seen
+
+
+def test_route_tools_list_ne_montre_que_les_outils_actifs(routes):
+    client, _ = routes
+    r = client.get("/v1/tools")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert [t["name"] for t in data] == ["web_search"]
+    assert data[0]["parameters"]["required"] == ["query"]
+    assert "description" in data[0]
+
+
+def test_route_tools_run(routes):
+    client, seen = routes
+    r = client.post("/v1/tools/web_search", json={"query": "é", "limit": 3})
+    assert r.status_code == 200
+    assert r.json() == {"name": "web_search", "is_error": False,
+                        "result": "[1] Titre\n    https://e.org\n    extrait"}
+    assert seen == [{"query": "é", "limit": 3}]
+    # Échec de l'outil : 200 quand même, c'est un texte pour le modèle.
+    r = client.post("/v1/tools/web_search", json={"query": "panne"})
+    assert r.status_code == 200 and r.json()["is_error"] is True
+
+
+def test_route_tools_run_refus(routes):
+    client, seen = routes
+    # Outil désactivé ou inconnu : 404, rien n'est exécuté.
+    for name in ("web_fetch", "rm_rf"):
+        r = client.post(f"/v1/tools/{name}", json={"url": "https://e.org"})
+        assert r.status_code == 404
+        assert r.json()["error"]["type"] == "unknown_tool"
+    for body in ("[1]", "pas du json", ""):
+        r = client.post("/v1/tools/web_search", content=body)
+        assert r.status_code == 400
+    assert seen == []
+
+
+def test_route_tools_exige_la_cle_du_proxy(routes, monkeypatch):
+    from llm_proxy import app as A
+    client, seen = routes
+    monkeypatch.setattr(A, "PROXY_API_KEYS", frozenset({"secret"}))
+    assert client.get("/v1/tools").status_code == 401
+    assert client.post("/v1/tools/web_search",
+                       json={"query": "x"}).status_code == 401
+    r = client.post("/v1/tools/web_search", json={"query": "x"},
+                    headers={"Authorization": "Bearer secret"})
+    assert r.status_code == 200 and seen == [{"query": "x"}]

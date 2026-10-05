@@ -800,10 +800,13 @@ class Translator:
         return json.dumps(self._snapshot(_final_status(self._finish_reason)),
                           ensure_ascii=False).encode()
 
-    def fail(self, message: str) -> bytes:
+    def fail(self, message: str, status: int = 500) -> bytes:
         """Échec d'un tour ULTÉRIEUR (quota, backend injoignable, statut
         d'erreur) : la réponse HTTP est déjà partie, il ne reste que
-        `response.failed` en flux, ou un objet Response `failed` en JSON."""
+        `response.failed` en flux, ou un objet Response `failed` en JSON.
+        `status` : sans effet ici (l'objet `failed` n'a qu'un code) ; le
+        robinet Anthropic, piloté par la même boucle, en tire son type
+        d'erreur."""
         if self._finished:
             return b""
         if self.sse:
