@@ -7,8 +7,8 @@ extension, ni boucle. Les deux autres surfaces ont ça par leur API
 chat/completions n'a PAS de forme standard pour le dire.
 
 La déclaration retenue, dans `tools` : la forme de l'API Responses, telle
-quelle — `{"type": "web_search"}`, `{"type": "image_generation"}` (tous
-les `KINDS` des modules de tools/). Un backend chat/completions ne
+quelle — `{"type": "web_search"}` (tous les `KINDS` des modules de
+tools/). Un backend chat/completions ne
 connaît que `function` dans `tools` et refuse le reste : le proxy peut
 donc la reconnaître sans ambiguïté, et ce qu'il remplace n'aurait de
 toute façon pas marché. Ce qui existe ailleurs, au 05/10/2026 :
@@ -77,8 +77,7 @@ répondu — puis la suite.
   * Cloisonnée par client comme tools.Memory (le condensé de la clé du
     proxy fait partie de la clé d'entrée), en mémoire vive seulement,
     bornée en entrées, en durée ET en caractères — un échange porte
-    jusqu'à 8 résultats de 24 000 caractères. Jamais d'image : le
-    résultat gardé est le texte rendu au modèle. Rien n'en est journalisé
+    jusqu'à 8 résultats de 24 000 caractères. Rien n'en est journalisé
     que des comptes.
   * Seule une requête qui DÉCLARE un outil hébergé est relue ainsi. Un
     client qui cesse de déclarer en cours de conversation repasse au
@@ -151,9 +150,6 @@ class Context:
     def __init__(self):
         # Fonctions exécutées par le proxy : nom → module de tools/.
         self.hosted: dict = {}
-        # Par nom de fonction, ce que le client a réglé sur sa déclaration
-        # (`size` d'`image_generation`) : passé à l'exécution.
-        self.options: dict[str, dict] = {}
         # Le client a-t-il demandé `stream_options.include_usage` ? Le
         # proxy, lui, le demande toujours au backend (stats exactes).
         self.include_usage = False
@@ -197,9 +193,9 @@ def prepare(payload: dict, hosted, kinds) -> Context:
     le paquet ne connaît pas n'est pas touché : c'est l'affaire du
     backend.
 
-    `tool_choice` à la forme Responses (`{"type": "web_search"}`,
-    `{"type": "image_generation"}`) : traduit vers la fonction présentée
-    pour ce type — la première, `web_search` pour la recherche. Il ne
+    `tool_choice` à la forme Responses (`{"type": "web_search"}`) :
+    traduit vers la fonction présentée pour ce type — la première,
+    `web_search` pour la recherche. Il ne
     vaut que pour le premier tour (app.hosted_loop ramène un choix forcé
     à `auto` ensuite). S'il vise un outil désactivé, ou que la requête ne
     déclare pas (ou dont une fonction du client a pris le nom) : 400 —
@@ -238,8 +234,6 @@ def prepare(payload: dict, hosted, kinds) -> Context:
         for m in modules:
             taken.add(m.NAME)
             ctx.hosted[m.NAME] = m
-            if hasattr(m, "options"):
-                ctx.options[m.NAME] = m.options(t)
             out.append(m.definition(fetch=fetch) if hasattr(m, "definition")
                        else m.DEFINITION)
     if out:
@@ -465,10 +459,9 @@ class Translator:
         tour, émis une fois à la fin : annotations éventuelles, UN
         `finish_reason` (`stop` quand le dernier tour s'arrête sur des
         appels hébergés que la limite dure a coupés), UN bloc `usage`
-        cumulé si le client a demandé `include_usage`, `[DONE]` ;
-      * une image générée, dès qu'elle l'est : `delta.images`.
+        cumulé si le client a demandé `include_usage`, `[DONE]`.
     En JSON, rien ne part avant la fin : le dernier corps upstream, avec
-    le contenu de tous les tours, l'usage cumulé, `annotations`, `images`.
+    le contenu de tous les tours, l'usage cumulé, `annotations`.
 
     Un échec à un tour ultérieur (fail) : en flux, un bloc
     `{"error": …}` puis `[DONE]` — le 200 est parti ; en JSON, le corps
@@ -508,7 +501,6 @@ class Translator:
         self._history: list[dict] = []    # messages des tours clos
         self._ids: list[str] = []         # id des appels client du tour
         self._sources: dict[str, str] = {}        # URL → titre
-        self._images: list[dict] = []
         # JSON : dernier corps upstream, appels client et raisonnement.
         self._doc: dict = {}
         self._client: list[dict] = []
@@ -596,16 +588,15 @@ class Translator:
 
     def resolve(self, call: dict, result: str) -> bytes:
         """Le résultat d'un appel de `pending`, exécuté par la boucle :
-        gardé pour le tour suivant (son TEXTE seul, `str` — pas l'image
-        qu'il porterait), ses URL notées pour les annotations. Le client
-        n'en voit rien, sauf une image générée."""
+        gardé pour le tour suivant, ses URL notées pour les annotations.
+        Le client n'en voit rien."""
         self.pending = [c for c in self.pending if c is not call]
-        self._done.append((call, str(result)))
+        self._done.append((call, result))
         module = self.ctx.hosted[call["name"]]
         if hasattr(module, "parse"):
-            for entry in module.parse(str(result)):
+            for entry in module.parse(result):
                 self._sources.setdefault(entry["url"], entry["title"])
-        elif hasattr(module, "action") and not str(result).startswith("Error:"):
+        elif hasattr(module, "action") and not result.startswith("Error:"):
             try:
                 args = json.loads(call["arguments"] or "{}")
             except ValueError:
@@ -613,13 +604,7 @@ class Translator:
             url = module.action(args if isinstance(args, dict) else {}).get("url")
             if url:
                 self._sources.setdefault(url, url)
-        b64 = getattr(result, "b64", None)
-        if not b64:
-            return b""
-        image = {"type": "image_url", "image_url": {
-            "url": f"data:image/{getattr(result, 'format', 'png')};base64,{b64}"}}
-        self._images.append(image)
-        return self._block({"images": [image]}) if self.sse else b""
+        return b""
 
     def next_turn(self) -> None:
         """Avant de recevoir le flux upstream suivant : l'état propre au
@@ -663,8 +648,6 @@ class Translator:
         annotations = self._annotations()
         if annotations:
             msg["annotations"] = annotations
-        if self._images:
-            msg["images"] = self._images
         choice["message"] = msg
         choice["finish_reason"] = self._final_reason()
         doc["choices"] = [choice]

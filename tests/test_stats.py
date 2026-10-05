@@ -96,11 +96,11 @@ def flushed():
                          "result_chars FROM tool_calls ORDER BY id").fetchall()
 
 
-def outil(name, run, **extra):
+def outil(name, run):
     import types
     return types.SimpleNamespace(
         NAME=name, KINDS=("web_search",), ITEM_TYPE="web_search_call",
-        ENABLED=True, action=lambda args: {"type": "search"}, run=run, **extra)
+        ENABLED=True, action=lambda args: {"type": "search"}, run=run)
 
 
 def test_tool_run_recorded_from_each_of_the_three_paths(proxy, db):
@@ -144,8 +144,8 @@ def test_tool_run_recorded_from_each_of_the_three_paths(proxy, db):
 
 def test_tool_run_outcome_ok_error_limit(db):
     """Succès, échec (le résultat commence par «Error:», quelle qu'en soit
-    la cause) et refus par limite d'appels — de la réponse ou de l'outil —
-    sont trois issues distinctes ; un refus n'a pas de durée. Un nom
+    la cause) et refus par limite d'appels sont trois issues distinctes ;
+    un refus n'a pas de durée. Un nom
     inconnu ne laisse pas de ligne : ce n'est pas un outil."""
     import asyncio
     from llm_proxy import tools
@@ -155,8 +155,7 @@ def test_tool_run_outcome_ok_error_limit(db):
             raise RuntimeError("secret")
         return args.get("rend", "ok")
 
-    h = tools.Hosted([outil("echo", run), outil("rare", run, MAX_CALLS=1)],
-                     tools.Memory(4, 60))
+    h = tools.Hosted([outil("echo", run)], tools.Memory(4, 60))
     go = lambda *a, **kw: asyncio.run(h.run(*a, endpoint="/v1/tools", **kw))
     go("echo", "{}", 0)
     go("echo", '{"rend": "Error: moteur éteint."}', 0)
@@ -164,13 +163,12 @@ def test_tool_run_outcome_ok_error_limit(db):
     go("echo", "pas du json", 0)
     go("echo", "{}", tools.MAX_CALLS)
     go("echo", "{}", 1, limit=1)
-    go("rare", "{}", 1, same=1)
     go("rm_rf", "{}", 0)
     rows = flushed()
     assert [(row[0], row[3]) for row in rows] == [
         ("echo", "ok"), ("echo", "error"), ("echo", "error"), ("echo", "error"),
-        ("echo", "limit"), ("echo", "limit"), ("rare", "limit")]
-    assert [row[4] for row in rows[4:]] == [0.0] * 3
+        ("echo", "limit"), ("echo", "limit")]
+    assert [row[4] for row in rows[4:]] == [0.0] * 2
     assert rows[0][5] == 2 and rows[1][5] == len("Error: moteur éteint.")
 
 

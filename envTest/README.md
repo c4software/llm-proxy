@@ -477,8 +477,6 @@ Ce que ce banc ne dit pas :
 - le tour mixte (outil hébergé et outil du client dans le même tour), le
   `400` d'un outil déclaré mais désactivé, `web_search_options`, la
   requête suivante de la conversation : seulement dans les tests du dépôt ;
-- `image_generation` : pas de scénario, chaque image décharge le modèle
-  de conversation du serveur ;
 - le compteur est celui du proxy entier : « au moins », jamais « exactement ».
 
 ## Ce qui n'est PAS vérifié ici

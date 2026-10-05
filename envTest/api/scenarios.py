@@ -18,9 +18,6 @@ Un scénario est SAUTÉ (SKIP, ni PASS ni FAIL) quand le proxy visé n'a pas
 ce qu'il vérifie — lu dans /healthz, exempté de clé : `tools.enabled` sans
 `web_search`, `chat.hosted_tools` faux, `responses.enabled` faux — ou, pour
 le compteur, quand la route d'usage des outils n'existe pas.
-
-Pas de scénario `image_generation` : chaque image décharge le modèle de
-conversation du serveur.
 """
 
 import http.client

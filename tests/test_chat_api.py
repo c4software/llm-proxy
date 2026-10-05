@@ -323,13 +323,11 @@ def test_declared_but_disabled_tool_is_refused(chat):
     """Ni retiré en silence (le client croirait à une recherche), ni
     laissé au backend (son erreur ne dirait pas pourquoi) : un 400 qui
     nomme le réglage. Rien ne part."""
-    # Les outils factices n'ont pas `image_generation`.
-    r = post(chat, tools=[{"type": "image_generation"}])
-    assert r.status_code == 400
-    assert "«image_generation» déclaré mais désactivé" in r.json()["error"]["message"]
     chat.hosted = type(chat.hosted)(modules=[])  # aucun outil actif
     for extra in ({}, {"tools": [], "web_search_options": {}}):
-        assert post(chat, **extra).status_code == 400
+        r = post(chat, **extra)
+        assert r.status_code == 400
+        assert "«web_search» déclaré mais désactivé" in r.json()["error"]["message"]
     assert not chat.sent and not chat.lines
 
 
@@ -442,7 +440,7 @@ def test_without_declaration_the_history_is_not_read(chat, monkeypatch):
     assert len(ask(chat, [Q1, A1, Q2])) == 5
 
 
-def test_memory_is_bounded_and_never_holds_an_image(chat, monkeypatch):
+def test_memory_is_bounded():
     memory = C.Memory(2, 60, 100)
     exchange = lambda n: [{"role": "tool", "tool_call_id": "c", "content": "x" * n}]
     for key, n in (("a", 40), ("b", 40), ("c", 40), ("gros", 101)):
@@ -454,16 +452,6 @@ def test_memory_is_bounded_and_never_holds_an_image(chat, monkeypatch):
     assert (len(memory), memory.size) == (2, 86)
     memory.store("d", exchange(1), "")
     assert len(memory) == 2 and memory.recall("b") is None      # borne en entrées
-
-    # Un résultat qui porte une image : le client la reçoit, la mémoire
-    # ne garde que le texte rendu au modèle.
-    class Picture(str):
-        b64, format = "QUJDREVGRw==", "png"
-
-    chat.hosted.result = Picture("Image generated.")
-    searched(chat)
-    kept = json.dumps([entry for _, _, entry in C.MEMORY._data.values()])
-    assert "Image generated." in kept and Picture.b64 not in kept
 
 
 def test_one_annotation_per_written_occurrence_of_a_source(chat):
@@ -518,8 +506,10 @@ def test_responses_shaped_tool_choice_names_the_hosted_function(chat):
     for extra, reason in (
         ({"tools": [fn("ls")]}, "ne déclare pas"),
         ({"tools": [fn("web_search"), fn("web_fetch"), WEB]}, "ne déclare pas"),
-        ({"tool_choice": {"type": "image_generation"}}, "désactivé"),
     ):
         r = post(chat, **{"tool_choice": WEB, **extra})
         assert r.status_code == 400 and reason in r.json()["error"]["message"]
+    chat.hosted = type(chat.hosted)(modules=[])  # aucun outil actif
+    r = post(chat, tool_choice=WEB, tools=[fn("ls")])
+    assert r.status_code == 400 and "désactivé" in r.json()["error"]["message"]
     assert len(chat.sent) == sent

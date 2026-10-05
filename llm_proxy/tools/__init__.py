@@ -16,24 +16,10 @@ Un outil = un module de ce dossier, qui expose :
   async run(args) → str    l'exécution ; ne lève pas : une erreur est un
                            texte «Error: …» rendu au modèle, qui s'adapte
 
-Et, pour un outil dont le résultat n'est pas qu'un texte ou dont
-l'élément n'a pas d'`action` (`image_generation`), FACULTATIFS :
+Et, FACULTATIF, pour un outil dont l'élément terminé dépend du résultat
+(`web_fetch` : la plage de caractères lue, à côté de l'URL) :
   item(args, résultat) → dict   les champs de l'élément terminé, à la
-                           place d'`action` — `status` compris. `run` peut
-                           alors rendre une SOUS-CLASSE de `str` : le
-                           texte du modèle, qui porte ce que l'élément
-                           doit montrer au client (l'image). Tout le
-                           reste n'y voit qu'un texte ; la mémoire range
-                           `str(résultat)`, le texte nu
-  replay(élément) → (arguments, résultat)   l'appel reconstruit d'un
-                           élément rejoué que la mémoire a perdu, là où
-                           les autres le sont depuis leur `action`
-  options(outil) → dict    ce que le client a réglé sur SA déclaration
-                           de l'outil, passé à `run` en mots-clés
-  RUN_TIMEOUT, MAX_CALLS   délai d'une exécution et nombre d'appels de
-                           cette fonction par réponse, à la place des
-                           réglages communs
-  DIRECT = False           pas d'appel direct par /v1/tools
+                           place d'`action` — `status` compris
 
 Ajouter un outil : un module, une ligne dans MODULES, une table
 [tools.<nom>] dans config.example.toml.
@@ -75,9 +61,9 @@ from collections import OrderedDict
 
 from .. import config, stats
 from ..settings import log
-from . import image_generation, web_fetch, web_search, webcache
+from . import web_fetch, web_search, webcache
 
-MODULES = (web_search, web_fetch, image_generation)
+MODULES = (web_search, web_fetch)
 
 # Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
 # reçoit une erreur qui lui demande de conclure.
@@ -96,12 +82,6 @@ EXPIRED = ("[result no longer available: the proxy was restarted or the "
 
 def enabled() -> list:
     return [m for m in MODULES if m.ENABLED]
-
-
-def direct(modules) -> list:
-    """Ceux de `modules` qui s'appellent aussi par /v1/tools : tous, sauf
-    ceux dont le résultat n'est pas un texte (`DIRECT = False`)."""
-    return [m for m in modules if getattr(m, "DIRECT", True)]
 
 
 # Sel du condensé des clés clientes : tiré à chaque démarrage, jamais
@@ -183,15 +163,10 @@ class Hosted:
 
     def for_item(self, item: dict):
         """Le module qui a produit cet élément rejoué (web_search_call…),
-        d'après son action — pour le reconstruire si la mémoire l'a perdu.
-        Un module à `replay` est seul de son type d'élément : pas d'action
-        à départager."""
+        d'après son action — pour le reconstruire si la mémoire l'a perdu."""
         for m in self.modules:
-            if m.ITEM_TYPE != item.get("type"):
-                continue
-            if hasattr(m, "replay"):
-                return m
-            if isinstance(item.get("action"), dict) \
+            if m.ITEM_TYPE == item.get("type") and isinstance(
+                    item.get("action"), dict) \
                     and m.action({}).get("type") == item["action"].get("type"):
                 return m
         return None
@@ -206,10 +181,9 @@ class Hosted:
 
     async def run(self, name: str, arguments: str, used: int,
                   limit: int | None = None, options: dict | None = None,
-                  same: int = 0, endpoint: str = "", model: str = "") -> str:
+                  endpoint: str = "", model: str = "") -> str:
         """Exécute la fonction `name`. `used` : appels déjà exécutés pour
-        cette réponse, `same` : ceux de CETTE fonction (un module peut
-        avoir sa limite, `MAX_CALLS`) ; `limit` : voir cap(). `options` : ce que le CLIENT
+        cette réponse ; `limit` : voir cap(). `options` : ce que le CLIENT
         a réglé sur son outil, par nom de fonction (les listes de domaines
         de l'outil serveur Anthropic) — passé au module en plus des
         arguments du modèle, qui ne peut donc pas s'en affranchir.
@@ -229,7 +203,7 @@ class Hosted:
             # outil, c'est un texte venu du modèle ou du client.
             return f"Error: unknown tool {name}."
         started = time.monotonic()
-        result = self._refusal(module, used, limit, same)
+        result = self._refusal(used, limit)
         outcome = "limit"
         if result is None:
             result = await self._execute(module, arguments, options)
@@ -242,16 +216,12 @@ class Hosted:
             log.exception("stats : exécution de %s non enregistrée", name)
         return result
 
-    def _refusal(self, module, used: int, limit, same: int) -> str | None:
-        """Le refus par limite d'appels, ou None s'il reste de la marge :
-        la limite de la réponse (cap()), puis celle du module."""
+    def _refusal(self, used: int, limit) -> str | None:
+        """Le refus par limite d'appels (cap()), ou None s'il reste de la
+        marge."""
         cap = self.cap(limit)
         if used >= cap:
             return (f"Error: the limit of {cap} web tool calls for one "
-                    f"answer is reached. Answer now with what you already have.")
-        own = getattr(module, "MAX_CALLS", None)
-        if own is not None and same >= own:
-            return (f"Error: the limit of {own} {module.NAME} calls for one "
                     f"answer is reached. Answer now with what you already have.")
         return None
 
@@ -263,15 +233,12 @@ class Hosted:
             args = None
         if not isinstance(args, dict):
             return "Error: the tool arguments are not a JSON object."
-        # Le délai commun coupe une recherche qui traîne ; une génération
-        # d'image a le sien, bien plus long.
-        timeout = getattr(module, "RUN_TIMEOUT", RUN_TIMEOUT)
         started = time.monotonic()
         try:
             result = await asyncio.wait_for(
-                module.run(args, **(options or {}).get(name, {})), timeout)
+                module.run(args, **(options or {}).get(name, {})), RUN_TIMEOUT)
         except asyncio.TimeoutError:
-            result = f"Error: {name} timed out after {int(timeout)} s."
+            result = f"Error: {name} timed out after {int(RUN_TIMEOUT)} s."
         except Exception as exc:  # un outil ne doit jamais casser la réponse
             log.exception("outil hébergé %s en échec", name)
             result = f"Error: {name} failed ({type(exc).__name__})."
