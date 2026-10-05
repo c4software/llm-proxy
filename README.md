@@ -319,7 +319,8 @@ lecture de page. **Le proxy ne la sert pas** : une seule route couvre
 tous ses outils.
 
 `model` est `null` pour un appel direct (le proxy n'y voit pas de
-modèle) ; `endpoint` vaut `/v1/responses`, `/v1/messages` ou
+modèle) ; `endpoint` vaut `/v1/responses`, `/v1/messages`,
+`/v1/chat/completions` ou
 `/v1/tools`. `avg_duration_seconds` porte sur les appels réellement
 lancés (`num_requests - num_limited`). Comme pour les requêtes, tout
 s'additionne ou se maximise : pas de percentile.

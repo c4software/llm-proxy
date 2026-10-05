@@ -1,13 +1,21 @@
 # envTest — valider le proxy avec de vrais clients
 
-Trois clients jetables, chacun dans son conteneur, qui tapent le proxy
+Cinq clients jetables, chacun dans son conteneur, qui tapent le proxy
 et jouent des scénarios de validation — **Claude Code** (API Anthropic,
-traduite par le proxy), **pi** ([pi.dev](https://pi.dev), API OpenAI) et
-**Codex CLI** (API Responses, traduite par le proxy).
+traduite par le proxy), **pi** ([pi.dev](https://pi.dev), API OpenAI),
+**Codex CLI** (API Responses, traduite par le proxy), **omp**
+([oh-my-pi](https://github.com/can1357/oh-my-pi), fork de pi, API OpenAI
+par ses extensions) et **api**, qui n'est pas un agent : un client HTTP nu
+pour le chemin qu'aucun agent ne prend de lui-même, l'outil hébergé
+*déclaré* sur `/v1/chat/completions`.
 Chaque jeu est rejoué pour **chaque modèle** de `MODELS`. Rien n'est
-installé sur l'hôte ; `~/.claude`, `~/.pi` et `~/.codex` ne sont jamais
-lus ni écrits : chaque client a sa configuration dans l'image, et son dossier
-de travail disparaît avec le conteneur.
+installé sur l'hôte ; `~/.claude`, `~/.pi`, `~/.codex` et `~/.omp` ne sont
+jamais lus ni écrits : chaque client a sa configuration dans l'image, et son
+dossier de travail disparaît avec le conteneur.
+
+Les bancs `omp` et `api` ont été **écrits le 05/10/2026 et pas encore
+joués** : aucun chiffre ci-dessous ne les concerne. Ce qui en a été vérifié
+sans les lancer est dit dans leurs sections.
 
 ## Derniers résultats
 
@@ -53,6 +61,8 @@ joignable s'il est déjà déployé ailleurs — voir
     docker compose run --rm claude    # scénarios Claude Code, pour chaque modèle
     docker compose run --rm pi        # scénarios pi (API OpenAI), pour chaque modèle
     docker compose run --rm codex     # scénarios Codex (API Responses), pour chaque modèle
+    docker compose run --rm omp       # scénarios omp (API OpenAI), pour chaque modèle
+    docker compose run --rm api       # requêtes directes (outil déclaré, /v1/tools, compteur), pour chaque modèle
 
 Chaque scénario imprime `PASS` ou `FAIL` avec ce qu'il a vu ; la commande
 sort en erreur si l'un échoue. Un scénario de recherche web imprime `SKIP`
@@ -92,7 +102,10 @@ Pour essayer à la main, même image, même configuration :
 
 Variables utiles à `docker compose run -e …` : `MODELS` (un seul modèle
 pour aller vite), `ONLY=5` (ne joue que les N premiers scénarios Claude
-Code), `MAX_TURNS` (plafond de tours par scénario, 40 par défaut).
+Code), `MAX_TURNS` (plafond de tours par scénario, 40 par défaut),
+`MAX_TIME` (omp : durée au bout de laquelle il arrête un scénario, `20m`
+par défaut), `TIMEOUT` (api : secondes sans un octet avant d'abandonner
+une requête, 600 par défaut).
 `PROXY_URL`, lui, se change dans `.env`. Avec
 `[anthropic] trace = true` dans le `config.toml` du proxy, chaque réponse
 du modèle apparaît dans `docker compose logs` (outils appelés, tokens).
@@ -113,7 +126,8 @@ réseau Docker, le réseau hôte ne le verra pas : remplacer alors
 client en tire sa propre adresse — `ANTHROPIC_BASE_URL` pour Claude Code
 (posée par le `docker-compose.yml`, qui lit `.env` : d'où le changement
 dans le fichier plutôt que par `-e`), `${PROXY_URL}/v1` pour pi et Codex,
-`LLM_PROXY_URL` pour l'extension web de pi.
+`LLM_PROXY_URL` pour l'extension web de pi et pour les deux extensions
+d'omp, `PROXY_URL` tel quel pour `api`.
 
 Les images prennent la **dernière** version de chaque client. Pour
 rejouer celles qui ont été validées à la main le 05/10/2026 :
@@ -121,13 +135,18 @@ rejouer celles qui ont été validées à la main le 05/10/2026 :
     docker compose build --build-arg CLAUDE_CODE_VERSION=2.1.287 claude
     docker compose build --build-arg PI_VERSION=0.87.1 pi
     docker compose build --build-arg CODEX_VERSION=0.157.1 codex
+    docker compose build --build-arg OMP_VERSION=18.3.2 omp
+
+(Pour omp, « validée à la main » veut dire : la commande du banc, lancée
+sur un poste contre le proxy déployé — pas le banc lui-même, qui n'a pas
+encore été joué.)
 
 ## Fichiers
 
 | Fichier | Rôle |
 |---|---|
 | `.env.example` | `PROXY_URL` (le proxy vu des conteneurs, local ou distant), `PROXY_API_KEY`, `MODELS` (préfixés, séparés par des espaces), `SMALL_MODEL` — copié en `.env`, ignoré par git |
-| `docker-compose.yml` | Les trois services, en **réseau hôte** (`127.0.0.1:8000` = le proxy de la racine) |
+| `docker-compose.yml` | Les cinq services, en **réseau hôte** (`127.0.0.1:8000` = le proxy de la racine) |
 | `claude/Dockerfile` | `node:22-slim` + `@anthropic-ai/claude-code` (`CLAUDE_CODE_VERSION`, la dernière par défaut), utilisateur non root (requis par `--dangerously-skip-permissions`), télémétrie et mises à jour coupées |
 | `claude/settings.json` | Le `~/.claude/settings.json` **du conteneur** : `CLAUDE_CODE_ATTRIBUTION_HEADER=0`, pour que l'attribution (variable d'une requête à l'autre) ne décale pas le préfixe et ne fasse pas manquer le cache du backend |
 | `claude/scenarios.sh` | Les 14 scénarios Claude Code, rejoués pour chaque modèle de `MODELS` (`ANTHROPIC_MODEL` posé par le script) ; `ONLY=N` pour n'en jouer que N |
@@ -138,6 +157,12 @@ rejouer celles qui ont été validées à la main le 05/10/2026 :
 | `codex/Dockerfile` | `node:22-slim` + `@openai/codex` (`CODEX_VERSION`), `CODEX_HOME=/codex` |
 | `codex/entrypoint.sh` | Génère `config.toml` : provider `llm-proxy`, `wire_api = "responses"`, `${PROXY_URL}/v1`, clé lue dans `PROXY_API_KEY` (non vide), `model` = le premier de `MODELS` pour un essai à la main |
 | `codex/scenarios.sh` | 7 scénarios (les cinq de pi, puis deux sur les outils web), rejoués pour chaque modèle de `MODELS` |
+| `omp/Dockerfile` | `node:22-slim` + le binaire `omp-linux-x64` des [releases GitHub](https://github.com/can1357/oh-my-pi/releases) (`OMP_VERSION`, la dernière par défaut), `PI_CODING_AGENT_DIR=/omp/agent` (vide) ; les deux extensions de [llmsetup](https://github.com/c4software/llmsetup) dans `/omp/extensions`, au même commit **épinglé** que pi, sha256 vérifiés |
+| `omp/install.mjs` | Ce que le Dockerfile exécute à la construction : télécharge omp (sha256 lu dans le `SHA256SUMS.txt` de la release) et les deux extensions (sha256 épinglés), puis remplace dans `llm-proxy.ts` les deux lignes qui portent l'adresse et la clé en dur par la lecture de `LLM_PROXY_URL` / `LLM_PROXY_API_KEY` |
+| `omp/entrypoint.sh` | Pose `LLM_PROXY_URL`, `LLM_PROXY_API_KEY` et `LLM_PROXY_KEY` (lues par les extensions) depuis `PROXY_URL` et `PROXY_API_KEY` ; aucun fichier de configuration à générer |
+| `omp/scenarios.sh` | 6 scénarios (ceux de pi), rejoués pour chaque modèle de `MODELS` sous le nom `albert/<modèle>` |
+| `api/Dockerfile` | `python:3-slim`, rien à installer |
+| `api/scenarios.py` | 7 scénarios en requêtes HTTP (bibliothèque standard), rejoués pour chaque modèle de `MODELS` |
 
 ## Ce que les scénarios vérifient
 
@@ -221,12 +246,57 @@ clés du provider (`name`, `base_url`, `wire_api`, `env_key`), options de
 `codex exec` (`--skip-git-repo-check`, `--ephemeral`, `--json`,
 `--sandbox`) et forme des événements JSON.
 
+**omp** (`omp --no-session --no-extensions -e /omp/extensions/llm-proxy.ts
+--no-skills --no-rules --no-lsp --no-title --max-time 20m --model
+albert/… -p "…"`, plus `--auto-approve` : aucun outil n'attend d'accord) —
+les six scénarios de pi, sous les mêmes prompts : les outils d'omp
+s'appellent aussi `read`, `write`, `edit` et `bash`. Le chemin dans le
+proxy est celui de pi, le relais brut de `/v1/chat/completions` ; ce qui
+change est le client, et son provider :
+
+- **le provider vient de l'extension `tools/llm-proxy.ts`** de llmsetup,
+  celle des postes : elle lit `GET /v1/models` du proxy et enregistre ses
+  modèles sous le nom `albert`, avec ses réglages de raisonnement
+  (`chat_template_kwargs`). Le fichier *versionné* a l'adresse du proxy
+  en dur ; la copie installée sur les postes, non versionnée, lit
+  `LLM_PROXY_URL` et `LLM_PROXY_API_KEY`, et ne diffère de lui que par ces
+  deux lignes (et, sans effet, par la langue des commentaires et des
+  messages). L'image prend donc le
+  fichier versionné à un commit épinglé, vérifie son sha256, puis y
+  remplace ces deux lignes-là (`omp/install.mjs`, qui s'arrête si elles
+  n'y sont plus). omp a bien un fichier de providers, `models.yml` dans
+  son dossier d'agent (sa doc `docs/models.md`), l'équivalent du
+  `models.json` de pi : il aurait donné un provider sans rien substituer,
+  mais pas celui des postes, et un chemin qu'aucune validation à la main
+  n'a pris ;
+- le dossier d'agent du conteneur est **vide** : ni configuration, ni
+  extension découverte d'office. En mode interactif omp y ouvrirait son
+  assistant de premier lancement ; pas constaté en `-p`.
+
+Banc écrit le 05/10/2026, **pas encore joué**. Vérifié sans le lancer :
+l'artefact (`omp-linux-x64` de la release `v18.3.2`, 278 132 192 octets,
+sha256 `8cbbcd4b…2534` au `SHA256SUMS.txt` de la release : le binaire
+installé sur le poste de validation a le même) et `omp/install.mjs`, joué
+hors conteneur avec `OMP_VERSION=18.3.2` (téléchargement, sommes,
+substitution : le fichier obtenu ne diffère du versionné que des deux
+lignes) ; chaque option, lue dans `omp --help` de la 18.3.2 ; la forme des
+événements de `--mode json` et la règle de `--tools`, lues dans les
+sources d'omp à l'étiquette `v18.3.2` (`modes/print-mode.ts`,
+`packages/agent/src/types.ts`, `sdk.ts`, `cli/args.ts`) ; la logique du
+script, contre un faux `omp` et un faux proxy. La commande elle-même a été
+validée à la main le même jour avec omp 18.3.2, `--auto-approve`,
+`--max-time` et `--mode json` en moins.
+
+**api** (`python3 scenarios.py`, des requêtes `urllib`) — sept scénarios,
+détaillés dans [Le banc `api`](#le-banc-api--loutil-hébergé-déclaré-sur-chatcompletions).
+
 ### Outils web hébergés par le proxy
 
 Un scénario « recherche web » par client, à la suite des autres, et pour
 Codex un second qui enchaîne recherche et lecture de page. Écrits le
 05/10/2026 et joués le jour même contre un proxy déployé avec SearXNG :
-les quatre passent (voir « Derniers résultats »).
+les quatre passent (voir « Derniers résultats »). Celui d'omp, écrit le
+même jour, n'a pas encore été joué.
 
 | Client | N° | Ce qui est demandé | Chemin dans le proxy |
 |---|---|---|---|
@@ -234,6 +304,7 @@ les quatre passent (voir « Derniers résultats »).
 | pi | 6 | la même URL, avec pour seul outil `proxy_web_search` (extension `llm-proxy-web.ts`) | `GET /v1/tools`, `POST /v1/tools/web_search` |
 | Codex | 6 | la même URL (`--sandbox read-only`) | `web_search` déclaré dans `/v1/responses`, boucle du proxy |
 | Codex | 7 | une recherche sur le dépôt `c4software/llmsetup`, puis la lecture de `tools/llm-proxy-web.ts` à un commit donné, et la ligne qui y définit `PREFIXE` | `web_search` puis `web_fetch` dans la même boucle |
+| omp | 6 | la même URL que pi, avec pour seuls outils ceux de l'extension `llm-proxy-web.ts` (`proxy_web_search`, et `proxy_web_fetch` si le proxy l'héberge) | `GET /v1/tools`, `POST /v1/tools/web_search` |
 
 **Sauté plutôt qu'échoué.** Avant de jouer, chaque banc lit `GET
 /healthz` du proxy visé (`tools.enabled`, sans clé). Sans `web_search` —
@@ -253,6 +324,21 @@ répond pas sur `/healthz`, donne une liste vide : sauté aussi.
    - pi (`--mode json`) : un événement `tool_execution_end` de
      `proxy_web_search`, `isError` faux, dont le résultat porte au moins
      une URL — le texte rendu par `POST /v1/tools/web_search`.
+   - omp (`--mode json`) : comme pi, un `tool_execution_end` de
+     `proxy_web_search`, `isError` faux, résultat avec une URL. Mais omp a
+     un `web_search` **intégré**, qui cherche depuis le conteneur
+     (DuckDuckGo et d'autres, sans clé), et son `read` lit une URL : la
+     trace doit aussi ne montrer **aucun autre outil exécuté** que
+     `proxy_web_search` et `proxy_web_fetch` — des noms que seuls les
+     outils de l'extension portent. `--tools` ne laisse d'ailleurs aucun
+     outil intégré au modèle. Et une preuve **côté proxy** s'y ajoute : le
+     compteur d'exécutions de `web_search` par la route `/v1/tools`
+     ([Usage API des outils](../README.md#usage-des-outils-hébergés)), lu
+     avant et après l'appel, doit avoir avancé d'au moins 1. Le compteur
+     est celui du proxy entier — un autre client peut l'avancer : il
+     confirme la trace, il ne la remplace pas. Devant un proxy sans cette
+     route, il n'est pas exigé et le libellé le dit (« compteur du proxy
+     illisible »).
    - Codex (`--json`) : un élément `web_search` terminé dans la trace, et
      pour le scénario 7 un second dont l'action est `open_page`. Codex ne
      les construit que depuis les `web_search_call` du proxy. La trace ne
@@ -289,8 +375,77 @@ Ce que ces scénarios ne peuvent pas dire :
   par `/v1/tools/web_fetch` (pi) non plus.
 - Le scénario de pi limite le modèle à l'outil de recherche : pi avec
   tous ses outils **et** l'extension n'est pas joué.
+- Celui d'omp aussi : omp avec ses outils intégrés **et** l'extension —
+  deux recherches côte à côte, le modèle choisit — n'est pas joué, ni la
+  lecture de page par `proxy_web_fetch` (l'outil est offert au modèle
+  quand le proxy l'héberge, rien ne l'exige), ni `/web` et `/page`.
+- Le compteur du proxy dit qu'une recherche a été exécutée par
+  `/v1/tools` pendant l'appel, pas par qui : sur un proxy que d'autres
+  utilisent au même moment, seule la trace du client relie la recherche
+  au scénario.
 - Le scénario 7 de Codex lit `raw.githubusercontent.com` : un proxy dont
   `[tools.web_fetch].allowed_domains` ne le permet pas le fera échouer.
+
+### Le banc `api` : l'outil hébergé déclaré sur chat/completions
+
+Aucun client agentique ne met `{"type": "web_search"}` dans les `tools`
+d'une requête `/v1/chat/completions` : c'est une forme que le proxy
+définit ([README principal](../README.md#client-chatcompletions--déclarer-loutil)),
+active seulement avec `[chat].hosted_tools = true`. Le banc est donc un
+client HTTP minimal — `api/scenarios.py`, Python et sa bibliothèque
+standard — qui envoie les requêtes et lit les réponses. Il n'exécute
+aucun outil et ne tient aucune conversation. Écrit le 05/10/2026, **pas
+encore joué** contre un proxy : seulement à blanc, contre un faux serveur
+local dont les réponses chat/completions sortaient du vrai
+`llm_proxy.chat_api.Translator`.
+
+La question posée est celle des autres bancs — l'URL de la page des
+releases de `ggml-org/llama.cpp`, « recopiée telle qu'elle apparaît dans
+les résultats » — et la sous-chaîne attendue la même,
+`github.com/ggml-org/llama.cpp`.
+
+| N° | Requête | Ce qui est vérifié |
+|---|---|---|
+| 1 | `POST /v1/chat/completions`, `tools: [{"type": "web_search"}]`, `stream: true`, `include_usage` | un flux SSE ; **un seul `id`** sur tous les blocs ; **aucun `tool_calls`** dans les deltas ; **un seul `finish_reason`** ; au plus un bloc `usage` ; `[DONE]` une fois, en dernier ; pas de bloc `error` ; la sous-chaîne dans le texte ; **au moins une annotation `url_citation`**, et pour chacune `contenu[start_index:end_index] == url` |
+| 2 | la même, `stream: false` | un seul choix, pas de `tool_calls`, un `finish_reason`, la sous-chaîne, les annotations (`message.annotations`) aux mêmes conditions |
+| 3 | la même **sans** `tools` | relais ordinaire : `200`, un contenu, un `finish_reason`, **aucune annotation**. La réponse elle-même n'est pas jugée (le modèle répond de mémoire) |
+| 4 | `GET /v1/tools` | `web_search` dans la liste, avec une description et un paramètre `query` |
+| 5 | `POST /v1/tools/web_search`, `{"query": …}` | `{"name": "web_search", "result", "is_error": false}`, au moins une URL dans le résultat |
+| 6 | `POST /v1/responses`, `tools: [{"type": "web_search"}]`, `stream: false` | réponse `completed` ; un élément `web_search_call` **terminé**, puis un `message` ; aucun `function_call` ; la sous-chaîne dans le texte |
+| 7 | `GET /v1/organization/usage/tools` (`bucket_width=all`, `group_by[]=endpoint`, `group_by[]=tool`), lu au début du jeu puis à la fin | par route — `/v1/chat/completions`, `/v1/tools`, `/v1/responses` — le compteur de `web_search` a avancé d'**au moins autant que de scénarios réussis sur cette route** |
+
+**Ce qui prouve la recherche.** Côté client, pour 1 et 2, l'annotation :
+le proxy n'en pose que pour une URL qu'un outil a rendue *et* que le
+modèle a écrite à l'identique — une réponse de mémoire n'en porte pas.
+(Le client ne voit rien d'autre : c'est le principe de ce chemin, les
+appels hébergés ne lui arrivent jamais.) Pour 6, l'élément
+`web_search_call`. Côté proxy, pour les trois routes, le compteur du
+scénario 7 — et chaque scénario affiche déjà le sien (`compteur
+/v1/chat/completions : +1`), pour qu'un échec se lise sans les logs du
+proxy : `+0` sous « aucune annotation » dit que le modèle n'a pas
+cherché, `+1` qu'il a cherché sans recopier une URL des résultats.
+
+**Sauté plutôt qu'échoué**, d'après `GET /healthz` : sans `web_search`
+dans `tools.enabled`, tout sauf le scénario 3 ; avec `chat.hosted_tools`
+faux, 1 et 2 ; avec `responses.enabled` faux, 6 ; et 7 si la route
+d'usage des outils ne répond pas `200` (proxy antérieur au 05/10/2026).
+
+Ce que ce banc ne dit pas :
+
+- l'usage **cumulé** sur les tours : le client reçoit un seul bloc
+  `usage` et n'a aucun moyen de savoir combien de tours il additionne.
+  Le banc l'affiche et vérifie qu'il n'y en a pas deux ; le cumul se
+  vérifie dans `tests/test_chat_api.py` ;
+- `[chat].annotations = false` sur le proxy fait échouer 1 et 2 (rien
+  dans `/healthz` ne le dit) ;
+- la lecture de page (`web_fetch`) n'est pas exigée : le modèle l'a sous
+  la main dans 1, 2 et 6, libre à lui ;
+- le tour mixte (outil hébergé et outil du client dans le même tour), le
+  `400` d'un outil déclaré mais désactivé, `web_search_options`, la
+  requête suivante de la conversation : seulement dans les tests du dépôt ;
+- `image_generation` : pas de scénario, chaque image décharge le modèle
+  de conversation du serveur ;
+- le compteur est celui du proxy entier : « au moins », jamais « exactement ».
 
 ## Ce qui n'est PAS vérifié ici
 
@@ -321,7 +476,9 @@ d'entrée) ; les 13 scénarios font 80 à 90 appels **par modèle**, soit
 ~1,5 M de tokens d'entrée sur un 27B (qui tâtonne davantage) et
 ~0,75 M sur le 35B-A3B. Viser des backends **sans quota** dans `.env`,
 pas Albert. Durée : ~40 min sur un 27B dense local, ~20 min sur un
-35B-A3B, pi compris.
+35B-A3B, pi compris. Les bancs `omp` et `api` n'ont pas encore été
+chronométrés ; `api` fait, par modèle, trois réponses avec recherche, une
+sans, et une recherche directe.
 
 ## Docker Desktop (mac / Windows)
 

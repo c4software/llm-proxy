@@ -1,7 +1,10 @@
-# Trois clients jetables pour valider le proxy : Claude Code (API Anthropic,
-# traduite), pi (pi.dev — API OpenAI, et API Anthropic aussi) et Codex CLI
-# (API Responses, traduite). Rien n'est installé sur l'hôte, rien ne touche
-# ~/.claude, ~/.pi ni ~/.codex : chaque client
+# Cinq clients jetables pour valider le proxy : Claude Code (API Anthropic,
+# traduite), pi (pi.dev — API OpenAI, et API Anthropic aussi), Codex CLI
+# (API Responses, traduite), omp (oh-my-pi, fork de pi — API OpenAI, par ses
+# extensions) et `api`, un client HTTP nu pour ce qu'aucun agent n'envoie de
+# lui-même (outil hébergé déclaré sur /v1/chat/completions). Rien n'est
+# installé sur l'hôte, rien ne touche ~/.claude, ~/.pi, ~/.codex ni ~/.omp :
+# chaque client
 # vit dans son image, avec SA configuration, et son dossier de travail
 # disparaît avec le conteneur.
 #
@@ -9,6 +12,8 @@
 #   docker compose run --rm claude            # tous les scénarios Claude Code
 #   docker compose run --rm pi                # tous les scénarios pi (API OpenAI)
 #   docker compose run --rm codex             # tous les scénarios Codex (API Responses)
+#   docker compose run --rm omp               # tous les scénarios omp (API OpenAI)
+#   docker compose run --rm api               # les requêtes directes (aucun agent)
 #   docker compose run --rm claude claude     # Claude Code interactif
 #   docker compose run --rm pi pi             # pi interactif
 #
@@ -41,3 +46,21 @@ services:
     network_mode: host
     env_file: .env
     command: ["./scenarios.sh"]
+
+  # LLM_PROXY_URL, LLM_PROXY_API_KEY et LLM_PROXY_KEY, que lisent les deux
+  # extensions d'omp, ne sont pas posées ici : omp/entrypoint.sh les dérive
+  # de PROXY_URL et PROXY_API_KEY (env_file), pour n'avoir qu'une source.
+  omp:
+    build: ./omp
+    network_mode: host
+    env_file: .env
+    command: ["./scenarios.sh"]
+
+  # Pas un agent : des requêtes HTTP (Python, bibliothèque standard) et ce
+  # qu'on lit dans les réponses. PROXY_URL, PROXY_API_KEY et MODELS
+  # (env_file) lui suffisent.
+  api:
+    build: ./api
+    network_mode: host
+    env_file: .env
+    command: ["python3", "scenarios.py"]
