@@ -52,6 +52,19 @@ PROMPT = ("Cherche sur le web la page des releases du dépôt GitHub "
           "recopiée telle qu'elle apparaît dans les résultats de la recherche.")
 QUERY = "ggml-org llama.cpp releases github"
 
+# L'exemple en deux tours (scénario 8) : une page LONGUE — plus d'un morceau
+# de web_fetch (20 000 caractères par défaut) — puis une question dont la
+# réponse n'est que dans la page. Par défaut une page de cours du
+# propriétaire du dépôt (environ 51 000 caractères le 05/10/2026), dont le
+# TP interdit de supprimer une tâche non terminée. Autre page : LONG_URL,
+# LONG_NEEDLE (dans le résumé), LONG_QUESTION, LONG_ANSWER (dans la réponse).
+LONG_URL = os.environ.get("LONG_URL") or \
+    "https://cours.brosseau.ovh/tp/laravel/base_de_donnees.html"
+LONG_NEEDLE = os.environ.get("LONG_NEEDLE") or "eloquent"
+LONG_QUESTION = os.environ.get("LONG_QUESTION") or \
+    "Et quelle règle métier s'applique à la suppression ?"
+LONG_ANSWER = os.environ.get("LONG_ANSWER") or "termin"
+
 # Fenêtre du compteur : la MÊME à chaque lecture, pour que deux lectures ne
 # diffèrent que par ce qui s'est exécuté entre elles. Large des deux côtés
 # (un jour avant, deux jours après) : l'horloge du proxy n'est pas celle
@@ -421,6 +434,87 @@ def responses_json(model):
     return passed(seen)
 
 
+def _answer(output):
+    return " ".join(
+        part.get("text") or ""
+        for i in output if i.get("type") == "message"
+        for part in (i.get("content") or [])
+        if isinstance(part, dict) and part.get("type") == "output_text")
+
+
+def long_page(model):
+    """8. L'exemple en deux tours, comme un client Responses le joue.
+    Tour 1 : résumer une page longue — elle doit être lue en morceaux
+    contigus depuis 0, chacun rendu au client avec sa plage (« url [a, b] »).
+    Tour 2 : le client renvoie la conversation SANS le contenu de la page
+    (les éléments `web_search_call` n'en portent que l'URL) et pose une
+    question dont la réponse n'est que dans la page : le modèle doit y
+    répondre sans rien relire — c'est la mémoire des résultats du proxy —,
+    et le backend reprendre l'essentiel du prompt de son cache, signe que la
+    conversation rejouée est celle qu'il a calculée."""
+    question = f"Résume-moi {LONG_URL} en un paragraphe."
+    first = [{"type": "message", "role": "user",
+              "content": [{"type": "input_text", "text": question}]}]
+    tools = [{"type": "web_search"}]
+    status, _, text = http_call("POST", ROUTE_RESPONSES, {
+        "model": model, "input": first, "stream": False, "tools": tools})
+    if status != 200:
+        return failed("tour 1 : " + refused(status, text))
+    out1 = [i for i in (as_json(text).get("output") or []) if isinstance(i, dict)]
+    spans = []
+    for i in out1:
+        action = i.get("action") if isinstance(i.get("action"), dict) else {}
+        url = str(action.get("url") or "")
+        if i.get("type") == "web_search_call" and action.get("type") == "open_page" \
+                and url.startswith(LONG_URL) and url.endswith("]") and " [" in url:
+            a, _, b = url.rsplit(" [", 1)[1][:-1].partition(", ")
+            if a.isdigit() and b.isdigit():
+                spans.append((int(a), int(b)))
+    summary = _answer(out1)
+    seen = f"tour 1 : morceaux {spans or 'aucun'} — {short(summary, 120)}"
+    if len(spans) < 2:
+        return failed("la page n'a pas été lue en plusieurs morceaux "
+                      f"(trop courte, ou plage absente de l'URL rendue) : {seen}")
+    if spans[0][0] != 0 or any(spans[n][0] != spans[n - 1][1]
+                               for n in range(1, len(spans))):
+        return failed(f"morceaux non contigus depuis 0 : {seen}")
+    if LONG_NEEDLE.lower() not in summary.lower():
+        return failed(f"résumé sans « {LONG_NEEDLE} » : {seen}")
+
+    before = counts()
+    follow = first + out1 + [{"type": "message", "role": "user", "content": [
+        {"type": "input_text", "text": LONG_QUESTION}]}]
+    status, _, text = http_call("POST", ROUTE_RESPONSES, {
+        "model": model, "input": follow, "stream": False, "tools": tools})
+    if status != 200:
+        return failed("tour 2 : " + refused(status, text))
+    doc = as_json(text)
+    out2 = [i for i in (doc.get("output") or []) if isinstance(i, dict)]
+    reread = sum(1 for i in out2 if i.get("type") == "web_search_call")
+    usage = doc.get("usage") if isinstance(doc.get("usage"), dict) else {}
+    prompt = int(usage.get("input_tokens") or 0)
+    cached = int((usage.get("input_tokens_details") or {}).get("cached_tokens") or 0)
+    share = 100 * cached // prompt if prompt else 0
+    answer = _answer(out2)
+    seen = (f"{len(spans)} morceaux {spans}, puis tour 2 : {reread} relecture(s), "
+            f"{cached}/{prompt} tokens du cache ({share} %) — {short(answer, 160)}")
+    if reread:
+        return failed(f"le modèle a rappelé un outil au tour 2 (il n'avait "
+                      f"plus la page) : {seen}")
+    if LONG_ANSWER.lower() not in answer.lower():
+        return failed(f"réponse sans « {LONG_ANSWER} » : {seen}")
+    if before is not None:
+        now = counts() or {}
+        key = (ROUTE_RESPONSES, "web_fetch")
+        if now.get(key, 0) != before.get(key, 0):
+            return failed(f"une lecture de page comptée au tour 2 : {seen}")
+    # Moins de la moitié du prompt reprise : la conversation rejouée n'est
+    # pas celle que le backend a calculée (ou il n'a pas de cache de préfixe).
+    if prompt and share < 50:
+        return failed(f"cache du backend non repris au tour 2 : {seen}")
+    return passed(seen)
+
+
 def usage_proof(base, expected):
     """7. Le compteur du proxy, entre le début du jeu (`base`) et
     maintenant, par route : au moins une exécution de web_search par
@@ -518,9 +612,18 @@ def main():
         else:
             usage_proof(base, expected)
 
+        print("8. Page longue lue par morceaux, puis question de suivi sans "
+              "relecture (mémoire des résultats, cache du backend)")
+        if "web_fetch" in hosted and responses:
+            long_page(model)
+        else:
+            skipped("web_fetch n'est pas hébergé par ce proxy, ou la surface "
+                    f"Responses est inactive (/healthz : tools.enabled = "
+                    f"[{' '.join(hosted)}])")
+
         failed_here = fails - fails_before
         skipped_here = skips - skips_before
-        played = 7 - skipped_here
+        played = 8 - skipped_here
         line = f"{played - failed_here}/{played}"
         if skipped_here:
             line += f", {skipped_here} sauté(s)"

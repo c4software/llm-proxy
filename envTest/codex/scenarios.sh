@@ -67,6 +67,48 @@ verdict() { node -e '
     : "";
   process.stdout.write(ko ? "KO " + ko : "OK " + seen);' "$@"; }
 
+# Verdict de l'exemple en deux tours (scénario 8). $1, $2 : les traces JSONL
+# des deux tours ; $3 : l'URL de la page ; $4 : texte attendu dans le
+# résumé ; $5 : dans la réponse de suivi. Tour 1 : la page est lue en
+# morceaux contigus depuis 0, que Codex affiche « url [a, b] ». Tour 2 :
+# aucune lecture ni recherche — le modèle répond de ce qu'il a déjà lu, que
+# seul le proxy peut lui avoir rendu (Codex ne renvoie pas le contenu).
+suivi() { node -e '
+  const [f1, f2, url, needle1, needle2] = process.argv.slice(1);
+  const read = f => require("fs").readFileSync(f, "utf8").split("\n")
+    .flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } })
+    .filter(e => e.type === "item.completed" && e.item).map(e => e.item);
+  const answer = items => (items.filter(i => i.type === "agent_message")
+    .map(i => i.text || "").pop() || "").replace(/\s+/g, " ").trim();
+  const [t1, t2] = [read(f1), read(f2)];
+  const spans = t1.filter(i => i.type === "web_search" && (i.action || {}).type === "open_page")
+    .map(i => String(i.action.url || "")).filter(u => u.startsWith(url))
+    .map(u => (/ \[(\d+), (\d+)\]$/.exec(u) || []).slice(1).map(Number))
+    .filter(s => s.length === 2);
+  const again = t2.filter(i => i.type === "web_search").length;
+  const [a1, a2] = [answer(t1), answer(t2)];
+  const seen = spans.length + " morceau(x) " + JSON.stringify(spans) + ", puis tour 2 : "
+    + again + " relecture(s) — " + (a2.slice(0, 160) || "pas de réponse");
+  const ko = !t1.length ? "aucun événement JSON au tour 1"
+    : spans.length < 2 ? "la page n a pas été lue en plusieurs morceaux : " + seen
+    : spans[0][0] !== 0 || spans.some((s, n) => n && s[0] !== spans[n - 1][1])
+      ? "morceaux non contigus depuis 0 : " + seen
+    : !a1.toLowerCase().includes(needle1.toLowerCase()) ? "résumé sans « " + needle1 + " » : " + seen
+    : !t2.length ? "aucun événement JSON au tour 2 (reprise de session) : " + seen
+    : again ? "le modèle a relu ou recherché au tour 2 : " + seen
+    : !a2.toLowerCase().includes(needle2.toLowerCase()) ? "réponse sans « " + needle2 + " » : " + seen
+    : "";
+  process.stdout.write(ko ? "KO " + ko : "OK " + seen);' "$@"; }
+
+# L'exemple en deux tours : une page longue (plus d'un morceau de web_fetch),
+# puis une question dont la réponse n'est que dans la page. Par défaut une
+# page de cours du propriétaire du dépôt ; LONG_URL, LONG_NEEDLE,
+# LONG_QUESTION et LONG_ANSWER pour une autre.
+LONG_URL="${LONG_URL:-https://cours.brosseau.ovh/tp/laravel/base_de_donnees.html}"
+LONG_NEEDLE="${LONG_NEEDLE:-eloquent}"
+LONG_QUESTION="${LONG_QUESTION:-Et quelle règle métier s'applique à la suppression ?}"
+LONG_ANSWER="${LONG_ANSWER:-termin}"
+
 version=$(codex --version 2>/dev/null | tail -n 1)
 summary=""
 
@@ -160,9 +202,25 @@ JS
     skip "web_search et web_fetch ne sont pas tous deux hébergés par ce proxy (/healthz : tools.enabled = [${hosted}])"
   fi
 
+  echo "8. Page longue lue par morceaux, puis question de suivi sans relecture (mémoire des résultats du proxy)"
+  # Deux tours d'une MÊME session : le premier sans --ephemeral, pour que
+  # le second la reprenne (codex exec resume --last). Codex renvoie alors la
+  # conversation sans le contenu de la page ; le modèle ne peut répondre
+  # que si le proxy le lui a rendu.
+  if hosts web_fetch; then
+    codex exec --skip-git-repo-check --sandbox read-only --json -m "$MODEL" \
+      "Résume-moi $LONG_URL en un paragraphe." </dev/null >/tmp/codex-t1.jsonl 2>/tmp/codex-web.err
+    codex exec resume --last --skip-git-repo-check --json -m "$MODEL" \
+      "$LONG_QUESTION" </dev/null >/tmp/codex-t2.jsonl 2>>/tmp/codex-web.err
+    out=$(suivi /tmp/codex-t1.jsonl /tmp/codex-t2.jsonl "$LONG_URL" "$LONG_NEEDLE" "$LONG_ANSWER")
+    case "$out" in "OK "*) pass "${out#OK }" ;; *) fail "${out#KO }$(diag)" ;; esac
+  else
+    skip "web_fetch n'est pas hébergé par ce proxy (/healthz : tools.enabled = [${hosted}])"
+  fi
+
   failed=$((fails - fails_before))
   skipped=$((skips - skips_before))
-  played=$((7 - skipped))
+  played=$((8 - skipped))
   line="$((played - failed))/$played"
   [ "$skipped" -gt 0 ] && line="$line, $skipped sauté(s)"
   summary="$summary

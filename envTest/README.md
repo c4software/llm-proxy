@@ -170,13 +170,13 @@ encore été joué.)
 | `pi/scenarios.sh` | 6 scénarios, rejoués pour chaque modèle de `MODELS` |
 | `codex/Dockerfile` | `node:22-slim` + `@openai/codex` (`CODEX_VERSION`), `CODEX_HOME=/codex` |
 | `codex/entrypoint.sh` | Génère `config.toml` : provider `llm-proxy`, `wire_api = "responses"`, `${PROXY_URL}/v1`, clé lue dans `PROXY_API_KEY` (non vide), `model` = le premier de `MODELS` pour un essai à la main |
-| `codex/scenarios.sh` | 7 scénarios (les cinq de pi, puis deux sur les outils web), rejoués pour chaque modèle de `MODELS` |
+| `codex/scenarios.sh` | 8 scénarios (les cinq de pi, deux sur les outils web, et l'exemple en deux tours), rejoués pour chaque modèle de `MODELS` |
 | `omp/Dockerfile` | `node:22-slim` + le binaire `omp-linux-x64` des [releases GitHub](https://github.com/can1357/oh-my-pi/releases) (`OMP_VERSION`, la dernière par défaut), `PI_CODING_AGENT_DIR=/omp/agent` (vide) ; les deux extensions de [llmsetup](https://github.com/c4software/llmsetup) dans `/omp/extensions`, au même commit **épinglé** que pi, sha256 vérifiés |
 | `omp/install.mjs` | Ce que le Dockerfile exécute à la construction : télécharge omp (sha256 lu dans le `SHA256SUMS.txt` de la release) et les deux extensions (sha256 épinglés), puis remplace dans `llm-proxy.ts` les deux lignes qui portent l'adresse et la clé en dur par la lecture de `LLM_PROXY_URL` / `LLM_PROXY_API_KEY` |
 | `omp/entrypoint.sh` | Pose `LLM_PROXY_URL`, `LLM_PROXY_API_KEY` et `LLM_PROXY_KEY` (lues par les extensions) depuis `PROXY_URL` et `PROXY_API_KEY` ; aucun fichier de configuration à générer |
 | `omp/scenarios.sh` | 6 scénarios (ceux de pi), rejoués pour chaque modèle de `MODELS` sous le nom `albert/<modèle>` |
 | `api/Dockerfile` | `python:3-slim`, rien à installer |
-| `api/scenarios.py` | 7 scénarios en requêtes HTTP (bibliothèque standard), rejoués pour chaque modèle de `MODELS` |
+| `api/scenarios.py` | 8 scénarios en requêtes HTTP (bibliothèque standard), rejoués pour chaque modèle de `MODELS` |
 
 ## Ce que les scénarios vérifient
 
@@ -302,7 +302,7 @@ script, contre un faux `omp` et un faux proxy. La commande elle-même a été
 validée à la main le même jour avec omp 18.3.2, `--auto-approve`,
 `--max-time` et `--mode json` en moins.
 
-**api** (`python3 scenarios.py`, des requêtes `urllib`) — sept scénarios,
+**api** (`python3 scenarios.py`, des requêtes `urllib`) — huit scénarios,
 détaillés dans [Le banc `api`](#le-banc-api--loutil-hébergé-déclaré-sur-chatcompletions).
 
 ### Outils web hébergés par le proxy
@@ -319,6 +319,7 @@ même jour, n'a pas encore été joué.
 | pi | 6 | la même URL, avec pour seul outil `proxy_web_search` (extension `llm-proxy-web.ts`) | `GET /v1/tools`, `POST /v1/tools/web_search` |
 | Codex | 6 | la même URL (`--sandbox read-only`) | `web_search` déclaré dans `/v1/responses`, boucle du proxy |
 | Codex | 7 | une recherche sur le dépôt `c4software/llmsetup`, puis la lecture de `tools/llm-proxy-web.ts` à un commit donné, et la ligne qui y définit `PREFIXE` | `web_search` puis `web_fetch` dans la même boucle |
+| Codex | 8 | l'exemple en deux tours : résumer une page longue, puis, dans la même session (`codex exec resume --last`), une question dont la réponse n'est que dans la page | `web_fetch` par morceaux (`offset`), puis la mémoire des résultats du proxy |
 | omp | 6 | la même URL que pi, avec pour seuls outils ceux de l'extension `llm-proxy-web.ts` (`proxy_web_search`, et `proxy_web_fetch` si le proxy l'héberge) | `GET /v1/tools`, `POST /v1/tools/web_search` |
 
 **Sauté plutôt qu'échoué.** Avant de jouer, chaque banc lit `GET
@@ -428,6 +429,24 @@ les résultats » — et la sous-chaîne attendue la même,
 | 5 | `POST /v1/tools/web_search`, `{"query": …}` | `{"name": "web_search", "result", "is_error": false}`, au moins une URL dans le résultat |
 | 6 | `POST /v1/responses`, `tools: [{"type": "web_search"}]`, `stream: false` | réponse `completed` ; un élément `web_search_call` **terminé**, puis un `message` ; aucun `function_call` ; la sous-chaîne dans le texte |
 | 7 | `GET /v1/organization/usage/tools` (`bucket_width=all`, `group_by[]=endpoint`, `group_by[]=tool`), lu au début du jeu puis à la fin | par route — `/v1/chat/completions`, `/v1/tools`, `/v1/responses` — le compteur de `web_search` a avancé d'**au moins autant que de scénarios réussis sur cette route** |
+| 8 | deux `POST /v1/responses` : résumer une page longue, puis la même conversation renvoyée avec ses éléments `web_search_call` et une question de suivi | tour 1 : au moins deux morceaux contigus depuis 0, rendus « url [a, b] », résumé pertinent ; tour 2 : aucun outil rappelé, aucune lecture comptée par le proxy, réponse juste, et au moins la moitié du prompt reprise du cache du backend |
+
+**L'exemple en deux tours (scénario 8 des bancs codex et api).** Né
+d'un essai à la main du 05/10/2026 : « résume-moi cette page », puis
+« et quelle règle métier s'applique à la suppression ? ». Il tient
+ensemble ce que les autres scénarios ne voient pas : une page plus longue
+qu'un morceau de `web_fetch`, lue par `offset` et affichée par le client
+avec ses plages ; puis un second tour où le client renvoie la
+conversation SANS le contenu de la page — le modèle ne peut répondre que
+si le proxy le lui a rendu (mémoire des résultats), et le backend ne
+reprend son cache que si la conversation rejouée est celle qu'il a
+calculée. La page par défaut est une page de cours du propriétaire du
+dépôt (51 143 caractères ce jour-là, dont le TP interdit de supprimer une
+tâche non terminée) ; `LONG_URL`, `LONG_NEEDLE`, `LONG_QUESTION` et
+`LONG_ANSWER` en choisissent une autre. Joué le jour même : banc api 8/8
+contre le proxy déployé ; scénario Codex joué hors conteneur avec Codex
+0.157.1 (trois morceaux, aucune relecture au second tour), pas encore
+dans son image.
 
 **Ce qui prouve la recherche.** Côté client, pour 1 et 2, l'annotation :
 le proxy n'en pose que pour une URL qu'un outil a rendue *et* que le
