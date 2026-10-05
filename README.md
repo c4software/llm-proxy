@@ -452,14 +452,23 @@ lui-même, à la place d'OpenAI. Il y en a deux, activés ensemble par le
 Le schéma de `web_search` et la forme de sa sortie sont repris de l'outil
 `web_search` d'[oh-my-pi](https://github.com/can1357/oh-my-pi).
 
-État de la validation au 05/10/2026 : **la lecture de page a tourné de
-bout en bout, la recherche non**. `web_fetch` a été joué par Codex CLI
-0.157.1 à travers le proxy vers gufo 0.8.0
-(`bigchuck/qwen3.8-flash-next`) : deux pages publiques lues dans une même
-réponse, éléments `web_search_call` affichés par Codex, et une adresse
-locale refusée par le garde-fou. `web_search` et le service `searxng` du
-compose n'ont **jamais tourné** : aucune instance SearXNG n'était
-disponible, seuls les tests sans réseau les couvrent.
+État de la validation au 05/10/2026, vers gufo 0.8.0
+(`bigchuck/qwen3.8-flash-next`) :
+
+- `web_fetch` joué par Codex CLI 0.157.1 à travers le proxy : deux pages
+  publiques lues dans une même réponse, éléments `web_search_call`
+  affichés par Codex, et une adresse locale refusée par le garde-fou.
+- `web_search` joué sur un déploiement réel, avec l'image SearXNG et le
+  `settings.yml` du dépôt : une requête `/v1/responses` déclarant
+  `web_search` a enchaîné une recherche puis l'ouverture d'un résultat
+  avant de répondre. Ce jour-là SearXNG rendait 20 résultats, deux de ses
+  moteurs étant refusés par leur source (Brave en limite de débit,
+  DuckDuckGo en CAPTCHA) : la qualité dépend des moteurs que l'adresse de
+  la machine peut encore joindre.
+- Pas encore joué : Codex déclenchant lui-même une recherche (seule la
+  lecture de page l'a été avec lui), un backend à quotas, et le service
+  `searxng` du `docker-compose.yml` du dépôt tel quel (le déploiement
+  d'essai l'intègre dans un compose local, sans la clé obligatoire).
 
 ### Déroulé
 
@@ -889,8 +898,8 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   serveur d'un client Anthropic (`web_search`…) restent ignorés. Pas de
   rendu de JavaScript dans `web_fetch` (une page construite côté
   navigateur rend peu de texte), pas de PDF. La mémoire des résultats ne survit pas à un
-  redémarrage. `web_search` et le service `searxng` n'ont pas encore tourné
-  contre une instance réelle (voir [Outils hébergés](#outils-hébergés)).
+  redémarrage. État de la validation : voir
+  [Outils hébergés](#outils-hébergés).
 
 ## Côté clients
 
