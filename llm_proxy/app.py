@@ -62,9 +62,11 @@ association routeurs ↔ modèles) vit dans albert.py.
 
 import asyncio
 import fnmatch
+import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 
@@ -210,6 +212,24 @@ app.mount("/ui/static", StaticFiles(directory=os.path.join(WEB_DIR, "static")),
 # La page du tableau de bord : du HTML statique, sans moteur de template —
 # tout est rempli par dashboard.js à partir de l'Usage API.
 UI_HTML = os.path.join(WEB_DIR, "templates", "index.html")
+
+
+def _static_version() -> str:
+    """Empreinte des fichiers de web/static, posée en «?v=» sur leurs URL
+    dans la page. Le gabarit et dashboard.js vont ENSEMBLE : après une mise
+    à jour, un navigateur qui gardait l'ancien script en cache recevait le
+    nouveau gabarit, dont les variables n'existaient pas encore — page
+    blanche jusqu'au rechargement forcé. Une URL qui change avec le contenu
+    ne peut pas sortir du cache par erreur."""
+    h = hashlib.blake2b(digest_size=6)
+    static = os.path.join(WEB_DIR, "static")
+    for name in sorted(os.listdir(static)):
+        st = os.stat(os.path.join(static, name))
+        h.update(f"{name}:{st.st_size}:{st.st_mtime_ns};".encode())
+    return h.hexdigest()
+
+
+UI_VERSION = _static_version()
 
 
 UI_PREFIX = "/ui"
@@ -1552,7 +1572,11 @@ async def ui_page(request: Request):
     """Tableau de bord : page statique. Les chiffres sont lus côté client
     sur /ui/usage, toutes les 5 s, sans jamais recharger la page."""
     with open(UI_HTML, encoding="utf-8") as fh:
-        response = HTMLResponse(fh.read())
+        html = re.sub(r'(/ui/static/[\w.-]+)(?=")', rf"\1?v={UI_VERSION}",
+                      fh.read())
+    # La page elle-même n'est jamais gardée : c'est elle qui porte les URL
+    # versionnées de ses fichiers.
+    response = HTMLResponse(html, headers={"Cache-Control": "no-cache"})
     # Auth active + clé passée en «?key=» : mémorisée pour que les appels
     # suivants (sans en-tête possible depuis le navigateur) restent
     # authentifiés.

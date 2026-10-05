@@ -315,3 +315,17 @@ def test_purge_drops_old_tool_calls_with_old_requests(db, monkeypatch):
         stats._purge(conn)
         assert count() == [1, 1]
         assert conn.execute("SELECT ts FROM tool_calls").fetchone()[0] == recent
+
+
+def test_page_ui_versionne_ses_fichiers_statiques():
+    """Gabarit et script vont ensemble : leurs URL portent une empreinte,
+    pour qu'un navigateur ne marie pas le nouveau gabarit à l'ancien script
+    resté en cache (page blanche), et la page elle-même n'est pas gardée."""
+    from fastapi.testclient import TestClient
+    from llm_proxy import app as A
+    r = TestClient(A.app).get("/ui")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    for name in ("dashboard.js", "dashboard.css", "vue.global.prod.js"):
+        assert f'/ui/static/{name}?v={A.UI_VERSION}"' in r.text, name
+    assert TestClient(A.app).get(
+        f"/ui/static/dashboard.js?v={A.UI_VERSION}").status_code == 200
