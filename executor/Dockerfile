@@ -22,8 +22,8 @@
 #     --privileged) s'y transpose paquet pour paquet. Arch, la base de
 #     dev-box, n'est pas reprise : image glissante, et ses binaires
 #     newuidmap perdent leurs capacités de fichier dans l'image (dev-box
-#     les repose par setcap) — ceux de Debian sont setuid, ce qu'une
-#     couche d'image garde.
+#     les repose par setcap). Ceux de Debian sont setuid, et NE MARCHENT
+#     PAS ici : setcap les remplace aussi, plus bas.
 
 # ── 1. Le système de fichiers d'un bac ──────────────────────────────────
 FROM python:3.13-slim-trixie AS sandbox
@@ -93,16 +93,25 @@ ENV PYTHONUNBUFFERED=1 \
 # Pas de fuse-overlayfs (magasin `vfs`, voir containers/storage.conf), ni
 # passt/slirp4netns (un bac n'a PAS de réseau).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends podman crun uidmap catatonit \
+ && apt-get install -y --no-install-recommends \
+      podman crun uidmap catatonit libcap2-bin \
  && rm -rf /var/lib/apt/lists/* \
  && test -x /usr/libexec/podman/catatonit \
  && podman --version
-# Ce conteneur tourne sans no-new-privileges (newuidmap l'exige) : qui s'y
-# trouverait après s'être évadé d'un bac pourrait lancer un binaire
-# setuid. Seuls les deux dont podman a besoin gardent leur bit.
-RUN find / -xdev -perm /6000 -type f \
-      ! -name newuidmap ! -name newgidmap -exec chmod a-s {} + \
- && test -u /usr/bin/newuidmap && test -u /usr/bin/newgidmap
+# newuidmap et newgidmap par CAPACITÉS DE FICHIER (libcap2-bin), pas par
+# setuid — la recette de dev-box. Vu sur Docker 29, noyau 6.1 : le binaire
+# setuid de Debian échoue sur « newuidmap: write to uid_map failed:
+# Operation not permitted » — il écrit la table sous l'uid 0, à qui le
+# noyau demande alors CAP_SYS_ADMIN, que ce conteneur n'a pas ; avec
+# cap_setuid posée sur le fichier il reste sous l'uid de l'exécuteur,
+# propriétaire de l'espace d'utilisateurs, et l'écriture passe.
+# Et plus AUCUN binaire setuid : ce conteneur tourne sans
+# no-new-privileges (les capacités de fichier en dépendent), qui s'y
+# trouverait après s'être évadé d'un bac n'en trouvera pas à lancer.
+RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + \
+ && setcap cap_setuid=ep /usr/bin/newuidmap \
+ && setcap cap_setgid=ep /usr/bin/newgidmap \
+ && getcap /usr/bin/newuidmap /usr/bin/newgidmap | grep -c cap_set | grep -qx 2
 
 COPY containers/storage.conf /etc/containers/storage.conf
 COPY containers/containers.conf /etc/containers/containers.conf.d/10-executor.conf
@@ -140,6 +149,11 @@ RUN cd /opt/sandbox/rootfs \
  && touch etc/hosts etc/hostname etc/resolv.conf run/.containerenv
 
 # 8080, sur le réseau interne du compose seulement : JAMAIS publié.
+# Le point d'entrée démarre en ROOT, le temps de déléguer le cgroup du
+# conteneur à l'utilisateur `executor` (les bornes par bac en dépendent),
+# puis lui cède la place : le serveur et podman ne tournent jamais en root.
+USER root
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

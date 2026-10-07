@@ -162,7 +162,10 @@ async def main() -> int:
             "    socket.create_connection(('1.1.1.1', 53), 2); print('RESEAU OUVERT')\n"
             "except OSError as e:\n"
             "    print('pas de réseau :', e)\n"
-            "print('interfaces', sorted(os.listdir('/sys/class/net')))\n"))
+            # Les interfaces du bac, demandées au NOYAU : /sys/class/net,
+            # lui, montre celles du conteneur exécuteur (podman imbriqué
+            # ne monte pas un sysfs neuf, il reprend celui de son hôte).
+            "print('interfaces', sorted(n for _, n in socket.if_nameindex()))\n"))
         verdict("6. réseau : aucun (ni route, ni interface autre que lo)",
                 "RESEAU OUVERT" not in out.output
                 and (a.light or "interfaces ['lo']" in out.output), out,
@@ -189,6 +192,11 @@ async def main() -> int:
                     f"{', --pids-limit' if held['pids'] else ''})",
                     bool(stopped) and int(stopped.group(1)) <= limits.pids,
                     out, out.output.strip()[-200:])
+
+            # Les enfants de la bombe dorment 2 s : les laisser finir,
+            # sinon ils tiennent encore le plafond de processus du bac
+            # et le cas 9 n'a plus de quoi lancer une commande.
+            await asyncio.sleep(2.5)
 
             out = await run("clientA", "conv1", "python", (
                 "b = bytearray(b'\\x01') * 1_000_000_000\n"
@@ -320,4 +328,11 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    if os.geteuid() == 0:
+        # `docker compose exec executor …` entre en root (le point d'entrée
+        # de l'image y démarre) : podman, lui, est celui de `executor`.
+        os.execvp("setpriv", [
+            "setpriv", "--reuid", "executor", "--regid", "executor",
+            "--init-groups", "env", "HOME=/home/executor",
+            sys.executable, "-m", "executor.validate", *sys.argv[1:]])
     sys.exit(asyncio.run(main()))

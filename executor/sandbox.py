@@ -259,24 +259,50 @@ class Sandboxes:
         seulement ?), puis avec les trois bornes de cgroups, puis — si
         podman les refuse en bloc — une à une. `podman info` ne suffit
         pas : dans un conteneur, il liste des contrôleurs que l'on ne peut
-        pas écrire. Lève SandboxError si rien ne démarre."""
+        pas écrire. Et un drapeau ACCEPTÉ ne suffit pas non plus : sans
+        cgroup délégué podman le prend sans rien borner (vu sur Docker
+        29, cgroup v2 : `--memory 512m` accepté, 1 Go alloué). Une borne
+        n'est donc dite tenue que si le bac LIT, dans son propre cgroup,
+        une autre valeur que sans le drapeau. Lève SandboxError si rien
+        ne démarre."""
+        files = {"memory": "memory.max", "cpu": "cpu.max", "pids": "pids.max"}
+        read = ("sh", "-c", "".join(
+            f"echo {f} $(cat /sys/fs/cgroup/{f} 2>/dev/null);"
+            for f in files.values()))
+
         async def trial(names) -> tuple[bool, bytes]:
             try:
                 code, out, _ = await self._run(
                     "run", "--rm", "--network", "none", *self._bounds(names),
-                    *self._source(), "true", timeout=90)
+                    *self._source(), *read, timeout=90)
             except TimeoutError:
                 return False, b"sans reponse apres 90 s"
             return code == 0, out
+
+        def seen(out: bytes) -> dict:
+            return dict(line.split(" ", 1) for line in
+                        out.decode("utf-8", "replace").splitlines()
+                        if " " in line and line.split(" ", 1)[0] in
+                        files.values())
 
         ok, out = await trial(())
         if not ok:
             raise SandboxError("podman ne démarre aucun conteneur : "
                                + _tail(out))
-        every = ("memory", "cpu", "pids")
-        ok, _ = await trial(every)
-        self.cgroup = frozenset(every) if ok else frozenset(
-            [name for name in every if (await trial((name,)))[0]])
+        free = seen(out)
+        held = set()
+        every = tuple(files)
+        ok, out = await trial(every)
+        for names in ((every,) if ok else [(name,) for name in every]):
+            if not ok:
+                accepted, out = await trial(names)
+                if not accepted:
+                    continue
+            bound = seen(out)
+            held.update(name for name in names
+                        if bound.get(files[name])
+                        and bound[files[name]] != free.get(files[name]))
+        self.cgroup = frozenset(held)
         return self.cgroup
 
     async def _create(self, slot: int) -> str:

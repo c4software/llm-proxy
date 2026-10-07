@@ -311,7 +311,14 @@ def test_langage_compile(service, monkeypatch, tmp_path, language, compiler,
 
 
 def test_sonde_des_cgroups(service, monkeypatch):
-    """Ce que podman refuse ici n'est plus demandé, et l'état le dit."""
+    """Ce que podman refuse ici n'est plus demandé, et l'état le dit — de
+    même ce qu'il ACCEPTE sans le tenir (pas de cgroup délégué : le bac
+    lit la même valeur avec et sans le drapeau)."""
+    monkeypatch.setenv("FAKE_PODMAN_IGNORE", "--memory")
+    client, box = service()
+    status = client.get("/v1/status", headers=AUTH).json()
+    assert status["cgroup"] == {"memory": False, "cpu": True, "pids": True}
+    monkeypatch.delenv("FAKE_PODMAN_IGNORE")
     monkeypatch.setenv("FAKE_PODMAN_DENY", "--memory,--cpus")
     client, box = service()
     status = client.get("/v1/status", headers=AUTH).json()

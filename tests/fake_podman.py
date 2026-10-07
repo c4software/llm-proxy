@@ -13,6 +13,8 @@ cloisonnement ni sur les temps de podman.
 
   FAKE_PODMAN_DENY   drapeaux de `run` refusés, séparés par des virgules
                      («--memory,--cpus») : un podman sans ces cgroups ;
+  FAKE_PODMAN_IGNORE drapeaux de `run` acceptés SANS effet : un podman sans
+                     cgroup délégué, qui prend --memory et ne borne rien ;
   FAKE_PODMAN_DOWN   non vide : tout échoue (podman ne démarre pas).
 """
 import json
@@ -40,7 +42,15 @@ if cmd == "run":
               if f and f in args]
     if denied:
         refuse(f"crun: cgroup controller for {denied[0]} is not available")
-    if "--rm" not in args:          # sinon : un conteneur jetable de la sonde
+    if "--rm" in args:              # un conteneur jetable de la sonde : il
+        # lit ses bornes dans son cgroup. Un drapeau de FAKE_PODMAN_IGNORE
+        # est accepté sans rien borner (un podman sans cgroup délégué).
+        ignored = os.environ.get("FAKE_PODMAN_IGNORE", "").split(",")
+        for flag, name in (("--memory", "memory.max"), ("--cpus", "cpu.max"),
+                           ("--pids-limit", "pids.max")):
+            print(name, value(flag) if flag in args and flag not in ignored
+                  else "max")
+    else:
         name = value("--name")
         os.makedirs(os.path.join(root, name, value("--workdir").lstrip("/")))
         with open(os.path.join(root, name, ".args"), "w") as fh:
