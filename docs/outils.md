@@ -9,11 +9,11 @@ client, les garde-fous, la mise en route : voir
 décrit l'autre côté : **ce qu'est un outil pour le code du proxy**, et
 comment en écrire un.
 
-Le dépôt en porte deux, `web_search` et `web_fetch`
+Le dépôt en porte trois, `web_search`, `web_fetch` et `transcribe`
 (`llm_proxy/tools/`). Le contrat est écrit pour ceux qui suivront — une
-lecture d'image par un modèle de vision, une transcription, les outils
-d'un serveur MCP découverts au démarrage, une exécution de code — sans
-les construire : voir [Prévu, pas construit](#prévu-pas-construit).
+lecture d'image par un modèle de vision, les outils d'un serveur MCP
+découverts au démarrage, une exécution de code — sans les construire :
+voir [Prévu, pas construit](#prévu-pas-construit).
 
 Tout tient dans `llm_proxy/tools/contract.py`, réexporté par le paquet :
 `from llm_proxy import tools` puis `tools.Tool`, `tools.Result`…
@@ -328,7 +328,7 @@ Ce qu'il faut tenir :
   doit réessayer. « Do not retry the search now » évite huit appels
   identiques.
 
-### Les deux outils du dépôt
+### Les deux outils web
 
 | | `web_search` | `web_fetch` |
 |---|---|---|
@@ -337,6 +337,44 @@ Ce qu'il faut tenir :
 | `meta` | — | `url` (réellement lue, après redirections), `title`, `content_type`, `total` (caractères de la page), `range` (`[début, fin]`, seulement pour un morceau) |
 | `settings` lus | `allowed_domains`, `blocked_domains` | `allowed_domains`, `blocked_domains`, `max_chars` |
 | Codes rendus | `invalid_input` (pas de `query`), `unavailable` (tout le reste : SearXNG injoignable, non configuré, moteurs bloqués) | `invalid_input`, `not_allowed`, `not_accessible`, `too_many_requests`, `unsupported` |
+
+### `transcribe` : un outil sans liaison, qui appelle un backend
+
+`llm_proxy/tools/transcribe.py` — le modèle passe l'URL d'un fichier
+audio, le proxy rend sa transcription. Présenté sur
+`/v1/chat/completions` (déclaré `{"type": "transcribe"}`, ou d'office par
+`[chat].always`) et exécutable par `POST /v1/tools/transcribe` ; ni
+l'API Responses ni l'API Messages n'ont d'outil à lui lier.
+
+| | `transcribe` |
+|---|---|
+| Arguments | `url` (obligatoire), `language` (code ISO 639-1, facultatif), `offset` |
+| `summary` | `{"type": "transcribe", "url"}` — l'URL suivie de la plage lue pour un morceau |
+| `sources` | une : l'URL telle que le modèle l'a écrite |
+| `meta` | `url` (réellement lue), `total` (caractères), `language` et `duration` (secondes) s'ils sont connus, `range` pour un morceau |
+| `settings` lus | `allowed_domains`, `blocked_domains`, `max_chars` |
+| `timeout` | le sien : `download_timeout` + `timeout` de `[tools.transcribe]` (360 s par défaut), à la place de `run_timeout` |
+| Codes rendus | `invalid_input` (URL, langue), `not_allowed`, `not_accessible`, `too_many_requests` (la cible, ou le modèle de transcription), `unsupported` (pas de l'audio, trop gros, audio que le modèle ne lit pas), `timeout`, `unavailable` (non configuré, backend éteint ou en erreur) |
+
+Ce qu'il montre du contrat :
+
+- **Un outil peut appeler un backend du proxy** sans passer par `app.py` :
+  `backends.route_backend` sur le modèle de sa configuration, puis le
+  client HTTP du backend. Il refait alors lui-même ce que `app.py` fait
+  autour d'un relais : la porte de quota (`settings.is_exempt`, le
+  limiteur du backend) et la ligne de statistiques « requête »
+  (`stats.record`, sur `/v1/audio/transcriptions`) — en plus de celle de
+  l'outil, écrite par `Hosted.run`. Le modèle de transcription apparaît
+  donc dans l'usage, qu'il serve un client ou l'outil.
+- **Un délai à lui** (`Tool.timeout`, une propriété qui lit sa
+  configuration) : une transcription ne tient pas dans le délai commun.
+- **Reconnaître un contenu** : les premiers octets d'abord, le
+  `Content-Type` ensuite, jamais l'extension de l'URL. La borne de
+  lecture passée à `net.download` est une fonction : rien n'est lu d'un
+  fichier annoncé trop gros, et la lecture s'arrête aux douze premiers
+  octets de ce qui n'est pas de l'audio.
+- **Garder le travail, pas l'entrée** : le texte est en cache (par URL et
+  langue), l'audio ne l'est jamais.
 
 ## Prévu, pas construit
 

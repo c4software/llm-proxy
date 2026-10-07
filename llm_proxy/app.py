@@ -151,8 +151,9 @@ async def lifespan(app: FastAPI):
                  "ou false) : /v1/responses → 404")
     if tools.enabled():
         log.info(
-            "outils hébergés ACTIFS (/v1/responses, /v1/messages, "
-            "/v1/tools) : %s | %d appels au plus par réponse",
+            "outils hébergés ACTIFS (/v1/tools, et selon l'outil "
+            "/v1/responses, /v1/messages, /v1/chat/completions) : %s | "
+            "%d appels au plus par réponse",
             ", ".join(t.name for t in tools.enabled()), tools.MAX_CALLS,
         )
     else:
@@ -655,6 +656,11 @@ async def healthz():
                           "bytes": tools.webcache.CACHE.size,
                           "hits": tools.webcache.CACHE.hits,
                           "misses": tools.webcache.CACHE.misses},
+            # Cache des transcriptions (le texte, jamais l'audio).
+            "transcribe_cache": {"ttl": tools.transcribe.CACHE.ttl,
+                                 "entries": len(tools.transcribe.CACHE),
+                                 "hits": tools.transcribe.CACHE.hits,
+                                 "misses": tools.transcribe.CACHE.misses},
         },
         "backends": {
             name: {

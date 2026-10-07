@@ -330,6 +330,48 @@ allow_private = false
 # allowed_domains = ["github.com", "docs.python.org", "wikipedia.org"]
 # blocked_domains = ["pastebin.com"]
 
+# Transcription d'un fichier audio : le modèle donne une URL, le proxy
+# télécharge le fichier (sous le garde-fou de [tools.net]) et le confie au
+# modèle de transcription d'un de ses backends (API OpenAI
+# /v1/audio/transcriptions). Le fichier n'arrive QUE par URL.
+# Sans liaison à l'API Responses ni à l'API Messages (aucune des deux n'a
+# d'outil de ce nom) : l'outil se présente sur /v1/chat/completions —
+# déclaré par {"type": "transcribe"} ([chat].hosted_tools) ou d'office
+# ([chat].always) — et s'appelle par POST /v1/tools/transcribe.
+[tools.transcribe]
+enabled = false
+# Le modèle de transcription, PRÉFIXÉ comme tout modèle du proxy :
+# "<backend>/<modèle>". Vide, sans préfixe ou backend inconnu → l'outil
+# répond au modèle que la transcription n'est pas configurée.
+# C'est une adresse de CONFIGURATION : le garde-fou des adresses publiques
+# ne s'y applique pas (il protège de l'URL choisie par le modèle).
+# Chaque transcription laisse, en plus de la ligne d'usage de l'outil, une
+# ligne de requête de ce modèle (/v1/audio/transcriptions).
+model = ""
+# model = "bigchuck/qwen3-asr-1.7b"
+# Délai (s) de la requête de transcription, et délai (s) du téléchargement,
+# redirections comprises. Leur SOMME est le délai de l'outil : elle
+# remplace [tools].run_timeout pour lui (une heure d'audio ne se
+# transcrit pas en 60 s). Le client attend pendant ce temps.
+timeout = 300
+download_timeout = 60
+# Octets téléchargés au plus. Au-delà le fichier est REFUSÉ, pas coupé
+# (une transcription partielle passerait pour entière). 25 Mo ≈ 25 min de
+# MP3 à 128 kbit/s. Le fichier est tenu en mémoire le temps de l'appel.
+max_bytes = 25000000
+# Caractères rendus par appel ; transcription plus longue : le modèle
+# redemande la suite par `offset`, sans que rien soit retranscrit.
+max_chars = 20000
+# Langue passée au modèle de transcription quand l'appel n'en donne pas
+# (code ISO 639-1 : "fr", "en"). Vide = il la détecte.
+language = ""
+# Cache des TRANSCRIPTIONS (le texte, jamais l'audio) : par URL et langue,
+# en mémoire vive, commun à tous les clients. Plus long que le cache web :
+# un enregistrement ne change pas, et le retranscrire coûte cher.
+# cache_ttl en secondes (0 = pas de cache).
+cache_ttl = 3600
+cache_entries = 64
+
 
 
 # ── Statistiques ────────────────────────────────────────────────────────

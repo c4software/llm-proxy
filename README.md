@@ -95,6 +95,10 @@ et un tableau de bord.
   (`{"type": "web_search"}`) et reçoit une réponse ordinaire, la boucle
   faite ; `[chat].always` les présente d'office à un client qui ne
   déclare rien (Open WebUI). Voir [Outils hébergés](#outils-hébergés).
+  Sur cette route et par `/v1/tools` seulement, si
+  `[tools.transcribe].enabled`, l'outil `transcribe` rend le texte d'un
+  fichier audio donné par son URL, par le modèle de transcription d'un
+  backend.
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
@@ -138,6 +142,7 @@ et un tableau de bord.
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
 | `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en sources pour les annotations et les blocs d'un client Anthropic ; filtre par domaines |
 | `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page (ou du texte d'un PDF) par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
+| `llm_proxy/tools/transcribe.py` | L'outil `transcribe` : téléchargement d'un fichier audio par son URL sous le garde-fou, transcription par le modèle d'un backend (`/v1/audio/transcriptions`), texte découpé et gardé en cache |
 | `docs/outils.md` | Le contrat des outils hébergés, membre par membre, et comment en écrire un |
 | `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
@@ -672,6 +677,16 @@ et [L'outil serveur `web_fetch`](#loutil-serveur-web_fetch).
 
 Le schéma de `web_search` et la forme de sa sortie sont repris de l'outil
 `web_search` d'[oh-my-pi](https://github.com/can1357/oh-my-pi).
+
+D'autres outils hébergés ne remplacent l'outil d'aucun fournisseur :
+aucun type de l'API Responses ni de l'API Messages ne les active. Ils se
+présentent sur `/v1/chat/completions` — déclarés par leur nom dans
+`tools` (`{"type": "transcribe"}`), ou d'office par `[chat].always` — et
+s'appellent par [`/v1/tools`](#appel-direct--v1tools-pi-omp) :
+
+| Fonction présentée au modèle | Ce qu'elle fait | Par quoi |
+|---|---|---|
+| `transcribe` (`url`, `language`, `offset`) | Transcrit un fichier audio (mp3, wav, flac, ogg, m4a, aac, webm, amr, mp4 ; 25 Mo au plus) et rend le texte, sans horodatage ; reconnu à ses premiers octets ou à son type, refusé sinon | Téléchargement par le proxy sous le garde-fou réseau, puis `POST /v1/audio/transcriptions` au modèle de `[tools.transcribe].model` |
 
 Ce qu'est un outil pour le code du proxy — son contrat, ses codes
 d'erreur et leur traduction par surface, ses liaisons aux protocoles — et
@@ -1482,6 +1497,21 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 | `max_chars` | `20000` | Caractères de texte rendus par appel ; la suite se demande par `offset` |
 
 Ce que `web_fetch` a le droit de joindre se règle dans `[tools.net]`.
+
+### `[tools.transcribe]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Active l'outil `transcribe` (`/v1/chat/completions` et `/v1/tools`) |
+| `model` | `""` | Le modèle de transcription, préfixé : `"<backend>/<modèle>"`. Vide ou préfixe inconnu → le modèle reçoit « transcription non configurée » |
+| `timeout` | `300` | Secondes pour la requête de transcription |
+| `download_timeout` | `60` | Secondes pour le téléchargement, redirections comprises. `timeout` + `download_timeout` est le délai de l'outil, à la place de `[tools].run_timeout` |
+| `max_bytes` | `25000000` | Taille au plus du fichier ; plus gros, il est **refusé** (une transcription partielle passerait pour entière) |
+| `max_chars` | `20000` | Caractères rendus par appel ; la suite se demande par `offset`, sans rien retranscrire |
+| `language` | `""` | Langue passée au modèle quand l'appel n'en donne pas (ISO 639-1) ; vide = détection |
+| `cache_ttl`, `cache_entries` | `3600`, `64` | Cache des transcriptions (le texte, jamais l'audio), par URL et langue ; `cache_ttl = 0` = pas de cache |
+
+Ce que l'outil a le droit de joindre : `[tools.net]`.
 
 ### `[tools.net]`
 

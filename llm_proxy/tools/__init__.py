@@ -70,7 +70,8 @@ from collections import OrderedDict
 
 from .. import config, stats
 from ..settings import log
-from . import net, web_fetch, web_search, webcache  # noqa: F401
+from . import (net, transcribe, web_fetch, web_search,  # noqa: F401
+               webcache)
 # Le contrat, tel que le reste du proxy et un outil l'importent d'ici.
 from .contract import (ERRORS, Anthropic, Artifact, Call,  # noqa: F401
                        Responses, Result, Source, Tool, ToolError, failure)
@@ -93,6 +94,7 @@ def register(tool: Tool) -> Tool:
 
 register(web_search.TOOL)
 register(web_fetch.TOOL)
+register(transcribe.TOOL)
 
 # Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
 # reçoit une erreur qui lui demande de conclure.
