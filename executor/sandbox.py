@@ -462,7 +462,10 @@ class Sandboxes:
             return 0
         names = out.decode("utf-8", "replace").split() if code == 0 else []
         known = {s.name for s in self._sessions.values()}
-        names = [n for n in names if n not in known]
+        # Nos noms seulement : la sortie porte aussi ce que podman écrit
+        # sur son erreur standard (son avertissement « "/" is not a shared
+        # mount », dans un conteneur), dont les mots ne sont pas des bacs.
+        names = [n for n in names if n.startswith("sbx-") and n not in known]
         if names:
             await self._remove(*names)
         return len(names)
