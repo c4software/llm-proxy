@@ -71,8 +71,11 @@ services:
       # SANDBOX_CPUS: "1.0"         # aussi le nombre de fils des bibliothèques
       # SANDBOX_PIDS: "128"         # processus et fils d'un bac
       # SANDBOX_TIMEOUT: "120"      # délai d'un programme, AU PLUS
-      # SANDBOX_IDLE: "1800"        # bac sans appel → détruit (s)
-      # SANDBOX_LIFETIME: "14400"   # vie maximale d'un bac (s)
+      # Délai de PURGE d'une zone de travail : un bac sans appel depuis
+      # tant de secondes est détruit, avec ses fichiers (défaut 3 h).
+      # SANDBOX_IDLE: "10800"
+      # Vie maximale d'un bac, même utilisé sans arrêt (s, défaut 4 h).
+      # SANDBOX_LIFETIME: "14400"
       # SANDBOX_MAX_SESSIONS: "8"   # bacs ouverts, tous clients confondus
       # SANDBOX_MAX_SESSIONS_PER_CLIENT: "4"
       # SANDBOX_WORK_SIZE: 256m     # tmpfs /work d'un bac

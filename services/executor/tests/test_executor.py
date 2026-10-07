@@ -431,6 +431,6 @@ def test_requetes_invalides(service):
 def test_bornes_par_l_environnement():
     lim = sandbox.Limits.from_env({"SANDBOX_MEMORY": "1g", "SANDBOX_PIDS": "64",
                                    "SANDBOX_CPUS": "0.5", "SANDBOX_IDLE": ""})
-    assert (lim.memory, lim.pids, lim.cpus, lim.idle) == ("1g", 64, 0.5, 1800.0)
+    assert (lim.memory, lim.pids, lim.cpus, lim.idle) == ("1g", 64, 0.5, 10800.0)
     with pytest.raises(SystemExit, match="SANDBOX_PIDS"):
         sandbox.Limits.from_env({"SANDBOX_PIDS": "beaucoup"})

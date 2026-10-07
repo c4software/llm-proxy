@@ -123,7 +123,8 @@ class Limits:
     timeout: float = 120.0          # une exécution, AU PLUS (s) : l'appelant
                                     # demande le sien, ramené sous celui-ci
     lifetime: int = 4 * 3600        # vie maximale d'un bac (s)
-    idle: float = 1800.0            # bac sans appel → détruit (s)
+    idle: float = 3 * 3600.0        # bac sans appel → détruit (s) : le
+                                    # délai de purge d'une zone de travail
     max_output: int = 20_000        # octets de sortie gardés (début et fin)
     work_size: str = "256m"         # tmpfs /work
     tmp_size: str = "128m"          # tmpfs /tmp (caches, compilations)

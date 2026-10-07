@@ -554,9 +554,9 @@ cache_entries = 64
 # module Go, ni crate. Ce qui manque s'ajoute à l'IMAGE de l'exécuteur
 # (services/executor/sandbox/requirements.txt, services/executor/Dockerfile).
 # Un bac par CONVERSATION : ses fichiers sont gardés d'un appel au suivant
-# (pas ses variables), jusqu'à son expiration côté exécuteur (30 min sans
-# appel, 4 h au plus, ou place à faire) — le modèle est alors prévenu que
-# le bac est neuf. La conversation est reconnue par la mémoire des
+# (pas ses variables), jusqu'à son expiration côté exécuteur (3 h sans
+# appel — SANDBOX_IDLE dans docker-compose.override.yml —, 4 h au plus,
+# ou place à faire) — le modèle est alors prévenu que le bac est neuf. La conversation est reconnue par la mémoire des
 # échanges cachés ([chat].memory) : sans elle, un bac par requête.
 # Des fichiers peuvent ENTRER dans le bac : le modèle en liste les URL
 # (`files`), le PROXY les télécharge — sous le garde-fou de [tools.net],

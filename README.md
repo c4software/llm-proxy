@@ -1486,7 +1486,8 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
   [mémoire des échanges cachés](#client-chatcompletions--déclarer-loutil)
   (`[chat].memory`) : elle garde son bac tant que le client renvoie ses
   réponses inchangées ; sinon, ou par `/v1/tools`, un bac neuf. Un bac
-  expire après 30 min sans appel, 4 h au plus, ou quand il faut de la
+  expire après 3 h sans appel (`SANDBOX_IDLE`, réglable dans
+  `docker-compose.override.yml`), 4 h au plus, ou quand il faut de la
   place (8 bacs, 4 par clé) : le modèle est prévenu que le suivant est
   vide.
 - **Langages** (`language`) : `python` (3.13, avec numpy, pandas, scipy,
@@ -1632,7 +1633,7 @@ qui suivent restent entières :
   sa borne mémoire peut être recréé à l'appel suivant : il repart vide.
 - **Un programme peut laisser un processus derrière lui.** Détaché
   (`setsid`), il échappe au délai de l'appel et tourne jusqu'à la fin de
-  son bac (30 min sans appel, 4 h au plus), dans les bornes du bac ; les
+  son bac (3 h sans appel, 4 h au plus), dans les bornes du bac ; les
   appels suivants de la même conversation le côtoient. Il ne sort pas du
   bac.
 - **Le réseau interne joint le proxy.** Depuis le conteneur `executor`
