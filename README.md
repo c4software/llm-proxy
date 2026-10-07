@@ -697,7 +697,7 @@ s'appellent par [`/v1/tools`](#appel-direct--v1tools-pi-omp) :
 | Fonction présentée au modèle | Ce qu'elle fait | Par quoi |
 |---|---|---|
 | `ocr` (`url`, `pages`) | Lit le texte d'une image (PNG, JPEG, GIF, WebP) ou d'un PDF scanné — les images embarquées dans ses pages, 4 pages par appel ; le recours de `web_fetch`, dont la description y renvoie le modèle | Téléchargement par le proxy sous le garde-fou réseau, puis une requête chat/completions par page au modèle de vision de `[tools.ocr].model` |
-| `transcribe` (`url`, `language`, `offset`) | Transcrit un fichier audio (mp3, wav, flac, ogg, m4a, aac, webm, amr, mp4 ; 25 Mo au plus) et rend le texte, sans horodatage ; reconnu à ses premiers octets ou à son type, refusé sinon | Téléchargement par le proxy sous le garde-fou réseau, puis `POST /v1/audio/transcriptions` au modèle de `[tools.transcribe].model` |
+| `transcribe` (`url`, `language`, `offset`) | Transcrit un fichier audio (mp3, wav, flac, ogg, m4a, aac, webm, amr, mp4 — ou les seuls formats que le modèle de transcription lit, `formats` : le proxy ne convertit pas ; 25 Mo au plus) et rend le texte, sans horodatage, avec la langue et la durée si le backend les donne ; reconnu à ses premiers octets ou à son type, refusé sinon | Téléchargement par le proxy sous le garde-fou réseau, puis `POST /v1/audio/transcriptions` au modèle de `[tools.transcribe].model` |
 
 Ce qu'est un outil pour le code du proxy — son contrat, ses codes
 d'erreur et leur traduction par surface, ses liaisons aux protocoles — et
@@ -731,6 +731,29 @@ ne le fait pas), le service `searxng` du `docker-compose.yml` du dépôt
 tel quel (le déploiement d'essai l'intègre dans un compose local, sans la
 clé obligatoire), et pi ou omp avec tous leurs outils (les essais
 limitaient le modèle aux deux outils web).
+
+**Essais du 07/10/2026** — `ocr`, `transcribe`, les serveurs MCP et
+`[chat].always`, par un proxy lancé à la main (`uvicorn`) vers gufo
+(`bigchuck/qwen3.8-flash-next`, qui lit les images, et
+`bigchuck/qwen3-asr-1.7b`) :
+
+| Ce qui a été joué | Résultat |
+|---|---|
+| Non-régression : `web_fetch_20250910` sur `/v1/messages` (JSON, rejeu au tour 2, flux, adresse privée, domaine bloqué par le client) ; `POST /v1/tools/web_fetch` (page, PDF, adresses privées) — sous une configuration d'**avant** `[tools.net]` | identique aux essais précédents ; l'avertissement de repli sur `[tools.web_fetch].allow_private` est émis au démarrage |
+| `[chat].always = ["web_fetch"]`, requête **sans** `tools` : JSON, flux, `tool_choice: "none"`, tour suivant | le modèle lit la page et répond (JSON et flux, appel caché) ; avec `none`, relais brut, il dit ne pas pouvoir lire ; au tour suivant l'échange caché est réinséré et le cache du backend relu (499 tokens sur 529) |
+| `ocr` direct : image PNG, PDF scanné d'une page (accents français), PDF de 6 pages mixte, suite par `pages`, refus | les 8 vers et le pangramme exacts ; `Pages: 1,3-4 of 6 (pass pages="5-6" to continue)`, page 2 dite non lue (image trop grande) ; 2 à 6 s par page ; relecture servie par le cache en 2 ms |
+| `ocr` par le modèle (`web_fetch`, `ocr` d'office) | `web_fetch` rend « no extractable text », le modèle appelle `ocr` sur la même URL et cite le texte |
+| MCP : `mslearn` (2026-07-28, sans état), `deepwiki` (2025-11-25), un serveur éteint | découverte au démarrage, 3 outils chacun, le serveur éteint ne retient rien ; appels directs (succès, `isError` → `failed`) ; `deepwiki_read_wiki_structure` appelé par le modèle, d'office ; `{"type": "mcp:eteint"}` → 400 du proxy |
+| `transcribe` : `jfk.wav` (11 s, deux redirections), cache, `language`, refus, puis par le modèle | texte exact, `Language: english`, `Duration: 0:11`, 3 s puis 1 s ; le modèle cite la phrase et la durée |
+| `transcribe` : `jfk.flac` | gufo ne lit que le WAV (HTTP 500) : rendu `unsupported` ; avec `formats = ["wav"]`, refusé avant l'envoi |
+
+Pas joué ce jour-là : `web_search` (pas d'instance SearXNG sur la
+machine d'essai), Open WebUI (pas de moteur de conteneurs), un backend à
+quotas derrière `ocr` ou `transcribe`, un enregistrement long (délai
+propre de l'outil, découpage par `offset`), un MP3 ou un Ogg contre un
+modèle de transcription qui les lit, une image WebP ou GIF, un serveur
+MCP à session ou à en-têtes d'authentification, et la ligne « Serveurs
+MCP » du tableau de bord vue dans un navigateur.
 
 Les bancs `envTest/` rejouent depuis ce jour une recherche web par client
 en conteneur (Codex, pi, Claude Code) : 27 scénarios sur 27 au run du
@@ -1155,6 +1178,10 @@ envoie ses messages, parfois ses propres fonctions, et c'est tout.
     hosted_tools = true
     always = ["web_search", "web_fetch"]
 
+Tout outil hébergé s'y nomme : `ocr`, `transcribe`, et les outils d'un
+serveur MCP, chacun par son nom `<serveur>_<outil>` (il n'y a pas de forme
+pour « tous ceux d'un serveur » dans cette liste).
+
 Une requête qui les reçoit est traitée comme si elle les avait déclarés :
 même boucle, **une** réponse ordinaire, annotations `url_citation`,
 [mémoire des échanges cachés](#client-chatcompletions--déclarer-loutil).
@@ -1531,6 +1558,8 @@ Ce que l'outil a le droit de joindre : `[tools.net]`.
 |---|---|---|
 | `enabled` | `false` | Active l'outil `transcribe` (`/v1/chat/completions` et `/v1/tools`) |
 | `model` | `""` | Le modèle de transcription, préfixé : `"<backend>/<modèle>"`. Vide ou préfixe inconnu → le modèle reçoit « transcription non configurée » |
+| `formats` | tous | Formats que le modèle de transcription lit, parmi `mp3`, `wav`, `flac`, `ogg`, `m4a`, `aac`, `webm`, `amr`, `mp4`. Le proxy ne convertit pas : un autre format est refusé avant l'envoi, et la description de l'outil ne cite que ceux-là. Qwen3-ASR sous gufo : `["wav"]` |
+| `response_format` | `"verbose_json"` | Ce qui est demandé au backend : `verbose_json` rend aussi la langue et la durée ; `json` le texte seul, pour un backend qui refuse l'autre |
 | `timeout` | `300` | Secondes pour la requête de transcription |
 | `download_timeout` | `60` | Secondes pour le téléchargement, redirections comprises. `timeout` + `download_timeout` est le délai de l'outil, à la place de `[tools].run_timeout` |
 | `max_bytes` | `25000000` | Taille au plus du fichier ; plus gros, il est **refusé** (une transcription partielle passerait pour entière) |

@@ -87,6 +87,39 @@ _TYPES = {v: k for k, v in FORMATS.items()} | {
 _HEAD = 12
 
 
+def _accepted() -> list[str]:
+    """[tools.transcribe].formats : les formats que le modèle de
+    transcription lit, parmi FORMATS. Le proxy ne convertit rien (aucun
+    décodeur audio ici) : un modèle qui ne lit que le WAV — Qwen3-ASR sous
+    gufo, vu le 07/10/2026 — ne recevra que du WAV, et le modèle de
+    conversation le sait par la description de l'outil."""
+    names = [f.lower().lstrip(".") for f in config.strings(
+        "tools.transcribe.formats", FORMATS)]
+    unknown = [f for f in names if f not in FORMATS]
+    if unknown or not names:
+        raise SystemExit(
+            f"{config.CONFIG_PATH} : tools.transcribe.formats doit lister "
+            f"des formats parmi {', '.join(FORMATS)} (reçu {unknown or names})")
+    return names
+
+
+ACCEPTED = _accepted()
+# Le `response_format` demandé au backend. «verbose_json» rend, en plus du
+# texte, la langue entendue et la durée (vu sous gufo : `language`,
+# `duration`) ; «json» ne rend que le texte — pour un backend qui refuse
+# l'autre.
+RESPONSE_FORMAT = config.text("tools.transcribe.response_format",
+                              "verbose_json").strip() or "json"
+
+
+def _readable(kind: str | None) -> bool:
+    """Ce format part-il au modèle de transcription ? Un audio de format
+    inconnu («») ne part que si rien n'est restreint."""
+    if kind is None:
+        return False
+    return kind in ACCEPTED or (not kind and len(ACCEPTED) == len(FORMATS))
+
+
 def audio_kind(url: str, content_type: str, head: bytes) -> str | None:
     """L'extension du format («mp3»…, «» : de l'audio dont on ne sait pas
     le format), ou None si ce n'est pas de l'audio.
@@ -129,14 +162,15 @@ def _limit(r, body: bytes) -> int:
     """La borne de lecture d'une réponse (net.download) : rien d'une
     réponse qui n'est pas 2xx ni d'un fichier ANNONCÉ trop gros, et pas
     un octet de plus dès que les premiers disent que ce n'est pas de
-    l'audio — une page HTML ou une archive de 25 Mo n'est pas téléchargée
-    pour être refusée. Un octet au-delà de MAX_BYTES : de quoi savoir que
-    le fichier le dépasse."""
+    l'audio, ou pas un format que le modèle de transcription lit — une
+    page HTML ou une archive de 25 Mo n'est pas téléchargée pour être
+    refusée. Un octet au-delà de MAX_BYTES : de quoi savoir que le
+    fichier le dépasse."""
     if not 200 <= r.status_code < 300 or _announced(r) > MAX_BYTES:
         return 0
-    if len(body) >= _HEAD and audio_kind(
+    if len(body) >= _HEAD and not _readable(audio_kind(
             str(r.request.url), r.headers.get("content-type", ""),
-            body[:_HEAD]) is None:
+            body[:_HEAD])):
         return len(body)
     return MAX_BYTES + 1
 
@@ -170,7 +204,14 @@ async def download(url: str, settings, transport) -> tuple[str, bytes, str, str]
         raise _refused(url, (
             f"is {content_type or 'not audio'}" if kind is None else "is empty")
             + ", which this tool cannot transcribe (audio files only: "
-            + ", ".join(FORMATS) + ")")
+            + ", ".join(ACCEPTED) + ")")
+    if not _readable(kind):
+        # De l'audio, mais pas pour ce modèle : dit avant de le lui envoyer
+        # — et le proxy ne convertit pas.
+        raise _refused(url, (
+            f"is {kind or 'audio of an unknown format'}, which the "
+            f"transcription model of this proxy cannot read (it reads: "
+            + ", ".join(ACCEPTED) + "). This tool does not convert audio"))
     return url, body, kind, content_type
 
 
@@ -227,7 +268,7 @@ async def _transcribe(name: str, content_type: str, body: bytes,
             raise ToolError("too_many_requests", (
                 "the transcription model is over its rate limit. "
                 "Try again later."))
-    data = {"model": model, "response_format": "json"}
+    data = {"model": model, "response_format": RESPONSE_FORMAT}
     if language:
         data["language"] = language
     started = time.monotonic()
@@ -257,7 +298,13 @@ async def _transcribe(name: str, content_type: str, body: bytes,
         if r.status_code == 429:
             raise ToolError("too_many_requests", (
                 "the transcription model is busy. Try again later."))
-        if r.status_code in (400, 413, 415, 422):
+        # Le fichier est en cause, pas le backend : un statut qui le dit,
+        # ou un corps qui le dit sous un autre statut (gufo rend un 500
+        # `invalid_request_error` pour un format qu'il ne lit pas).
+        error = doc.get("error") if isinstance(doc, dict) else None
+        refused = isinstance(error, dict) \
+            and error.get("type") == "invalid_request_error"
+        if r.status_code in (400, 413, 415, 422) or refused:
             raise ToolError("unsupported", (
                 f"the transcription model could not read this audio file "
                 f"(HTTP {r.status_code})."))
@@ -269,6 +316,8 @@ async def _transcribe(name: str, content_type: str, body: bytes,
                         "the transcription backend returned no text.")
     # La durée : `duration` (verbose_json) ou `usage.seconds` (ce que rend
     # un backend qui compte l'audio à la durée), si l'un des deux est là.
+    # La langue : telle que le backend la dit — un code ou un nom
+    # («english» sous gufo) ; à défaut, celle qui a été demandée.
     usage = doc.get("usage") if isinstance(doc.get("usage"), dict) else {}
     duration = next((float(d) for d in (doc.get("duration"),
                                         usage.get("seconds"))
@@ -328,7 +377,7 @@ class Transcribe(Tool):
             "name": NAME,
             "description": (
                 "Transcribe the speech of an audio file, given its URL, and "
-                "return the text (" + ", ".join(FORMATS) + f"; up to "
+                "return the text (" + ", ".join(ACCEPTED) + f"; up to "
                 f"{MAX_BYTES // 1_000_000} MB). The text has no timestamps "
                 "and no speaker names. Long transcripts are truncated: pass "
                 "`offset` to continue from a given character position (the "

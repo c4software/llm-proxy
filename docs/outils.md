@@ -430,6 +430,7 @@ l'API Responses ni l'API Messages n'ont d'outil à lui lier.
 | | `transcribe` |
 |---|---|
 | Arguments | `url` (obligatoire), `language` (code ISO 639-1, facultatif), `offset` |
+| Texte | `URL: …`, puis `Language: …` et `Duration: m:ss` si le backend les rend, `Characters: …` pour un morceau, `---`, la transcription |
 | `summary` | `{"type": "transcribe", "url"}` — l'URL suivie de la plage lue pour un morceau |
 | `sources` | une : l'URL telle que le modèle l'a écrite |
 | `meta` | `url` (réellement lue), `total` (caractères), `language` et `duration` (secondes) s'ils sont connus, `range` pour un morceau |
@@ -457,6 +458,21 @@ Ce qu'il montre du contrat :
   octets de ce qui n'est pas de l'audio.
 - **Garder le travail, pas l'entrée** : le texte est en cache (par URL et
   langue), l'audio ne l'est jamais.
+- **Ne promettre que ce que le backend sait faire.** Le proxy ne
+  convertit pas l'audio (aucun décodeur ici). `[tools.transcribe].formats`
+  dit ce que le modèle de transcription lit : la description de l'outil
+  ne cite que ces formats, et un autre est refusé (`unsupported`) avant
+  d'être envoyé.
+
+Ce qu'un vrai backend rend (gufo, `qwen3-asr-1.7b`, relevé le
+07/10/2026) : `response_format=json` → `{"text"}` seul ;
+`verbose_json` → en plus `"language": "english"` (un **nom**, pas un
+code) et `"duration": 11` — d'où le `verbose_json` demandé par défaut
+(`response_format`). Le champ `language` en code ISO (`en`) est accepté.
+Tout ce qui n'est pas du WAV vaut un **HTTP 500** dont le corps dit
+`invalid_request_error` (« input must be a RIFF WAV ») : l'outil lit ce
+type dans le corps, quel que soit le statut, et rend `unsupported` (le
+fichier est en cause) plutôt qu'`unavailable` (le backend le serait).
 
 ## Serveurs MCP
 

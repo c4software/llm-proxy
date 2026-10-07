@@ -87,6 +87,8 @@ def asr(monkeypatch):
     monkeypatch.setattr(transcribe, "MAX_CHARS", 20_000)
     monkeypatch.setattr(transcribe, "LANGUAGE", "")
     monkeypatch.setattr(transcribe, "TIMEOUT", 300)
+    monkeypatch.setattr(transcribe, "ACCEPTED", list(transcribe.FORMATS))
+    monkeypatch.setattr(transcribe, "RESPONSE_FORMAT", "verbose_json")
     monkeypatch.setattr(transcribe, "DOWNLOAD_TIMEOUT", 60)
     # Le garde-fou commun ([tools.net]).
     monkeypatch.setattr(net, "ALLOW_PRIVATE", False)
@@ -172,7 +174,7 @@ def test_transcription_fichier_envoye_au_backend_et_texte_rendu(asr):
     assert sent.headers["authorization"] == "Bearer k"
     assert multipart.model_field(
         sent.content, sent.headers["content-type"]) == "whisper-test"
-    assert asr.champ("response_format") == "json"
+    assert asr.champ("response_format") == "verbose_json"
     assert asr.champ("language") is None
     assert b'filename="audio.wav"' in sent.content and WAV in sent.content
     # La ligne de statistiques de cette requête, comme pour un relais.
@@ -486,3 +488,70 @@ def test_au_registre_presente_sur_chat_completions_et_tools_seulement(
         {"type": "transcribe_20260101", "name": "transcribe"}]}, h).hosted
     monkeypatch.setattr(transcribe, "ENABLED", False)
     assert transcribe.TOOL not in tools.enabled()
+
+
+def test_formats_que_le_modele_lit_refus_avant_l_envoi(monkeypatch, asr):
+    """[tools.transcribe].formats : un modèle de transcription qui ne lit
+    que le WAV (Qwen3-ASR sous gufo, vu en vrai) ne reçoit que du WAV —
+    le reste est refusé avant de lui être envoyé, sans être téléchargé en
+    entier, et la description de l'outil le dit au modèle."""
+    monkeypatch.setattr(transcribe, "ACCEPTED", ["wav"])
+    lus = []
+
+    def gros_mp3(request):
+        async def blocs():
+            for _ in range(50):
+                lus.append(1)
+                yield MP3
+        return httpx.Response(200, content=blocs(),
+                              headers={"content-type": "audio/mpeg"})
+
+    web = Web({("site.test", "/a.wav"): audio(),
+               ("site.test", "/a.mp3"): gros_mp3,
+               ("site.test", "/inconnu"): audio(b"\x00" * 64, "audio/x-rare")})
+    out = web.run("https://site.test/a.mp3")
+    assert (out.error, out.text) == ("unsupported", (
+        "Error: https://site.test/a.mp3 is mp3, which the transcription "
+        "model of this proxy cannot read (it reads: wav). This tool does "
+        "not convert audio."))
+    assert len(lus) == 1 and asr.requests == []
+    out = web.run("https://site.test/inconnu")
+    assert out.error == "unsupported" and "audio of an unknown format" in out.text
+    assert web.run("https://site.test/a.wav").error is None
+    description = transcribe.TOOL.spec(())["function"]["description"]
+    assert "return the text (wav; up to 25 MB)" in description
+    # La configuration : des formats connus, au moins un.
+    from llm_proxy import config
+    for value, ok in ((["WAV", ".flac"], ["wav", "flac"]), (["wma"], None),
+                      ([], None)):
+        monkeypatch.setattr(config, "CONFIG", {"tools": {"transcribe": {
+            "formats": value}}})
+        if ok is None:
+            with pytest.raises(SystemExit):
+                transcribe._accepted()
+        else:
+            assert transcribe._accepted() == ok
+
+
+def test_ce_que_rend_un_vrai_backend_langue_duree_et_refus_en_500(asr):
+    """Les réponses de gufo (Qwen3-ASR), relevées le 07/10/2026 :
+    `verbose_json` rend la langue par son NOM et la durée en secondes ;
+    un fichier qu'il ne lit pas vaut un 500 dont le corps dit
+    `invalid_request_error` — le fichier est en cause, pas le backend."""
+    asr.reply = {"text": "And so, my fellow Americans.", "task": "transcribe",
+                 "language": "english", "duration": 11, "segments": []}
+    out = un_son().run("https://site.test/a.wav", language="en")
+    assert out.text == ("URL: https://site.test/a.wav\nLanguage: english\n"
+                        "Duration: 0:11\n\n---\nAnd so, my fellow Americans.")
+    assert out.meta == {"url": "https://site.test/a.wav", "total": 28,
+                        "language": "english", "duration": 11.0}
+    assert asr.champ("language") == "en"
+    transcribe.CACHE.clear()
+    asr.reply = httpx.Response(500, json={"error": {
+        "message": "Qwen3-ASR input must be a RIFF WAV",
+        "type": "invalid_request_error", "code": "transcription_failed"}})
+    out = un_son().run("https://site.test/a.wav")
+    assert (out.error, out.text) == ("unsupported", (
+        "Error: the transcription model could not read this audio file "
+        "(HTTP 500)."))
+    assert "RIFF" not in out.text and len(transcribe.CACHE) == 0
