@@ -203,6 +203,21 @@ async def lifespan(app: FastAPI):
     if tools.net.ALLOW_PRIVATE:
         log.warning("[tools.net].allow_private = true : les outils qui "
                     "téléchargent joignent AUSSI les adresses privées")
+    # Conversion audio de `transcribe` : ffmpeg, s'il est là.
+    tr = tools.transcribe
+    if tr.ENABLED and len(tr.ACCEPTED) < len(tr.FORMATS):
+        if tr.FFMPEG:
+            log.info("transcribe : hors %s, l'audio est converti en WAV par "
+                     "%s", ", ".join(tr.ACCEPTED), tr.FFMPEG)
+        elif tr.CONVERT and "wav" in tr.ACCEPTED:
+            log.warning(
+                "transcribe : ffmpeg introuvable — l'audio qui n'est pas du "
+                "%s sera REFUSÉ (l'image Docker du proxy l'embarque ; hors "
+                "conteneur, l'installer ou régler [tools.transcribe].ffmpeg)",
+                ", ".join(tr.ACCEPTED))
+        else:
+            log.info("transcribe : pas de conversion — seul l'audio en %s "
+                     "est transcrit", ", ".join(tr.ACCEPTED))
     if albert.ROUTER_MODELS:
         log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 

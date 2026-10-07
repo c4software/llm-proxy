@@ -697,7 +697,7 @@ s'appellent par [`/v1/tools`](#appel-direct--v1tools-pi-omp) :
 | Fonction présentée au modèle | Ce qu'elle fait | Par quoi |
 |---|---|---|
 | `ocr` (`url`, `pages`) | Lit le texte d'une image (PNG, JPEG, GIF, WebP) ou d'un PDF scanné — les images embarquées dans ses pages, 4 pages par appel ; le recours de `web_fetch`, dont la description y renvoie le modèle | Téléchargement par le proxy sous le garde-fou réseau, puis une requête chat/completions par page au modèle de vision de `[tools.ocr].model` |
-| `transcribe` (`url`, `language`, `offset`) | Transcrit un fichier audio (mp3, wav, flac, ogg, m4a, aac, webm, amr, mp4 — ou les seuls formats que le modèle de transcription lit, `formats` : le proxy ne convertit pas ; 25 Mo au plus) et rend le texte, sans horodatage, avec la langue et la durée si le backend les donne ; reconnu à ses premiers octets ou à son type, refusé sinon | Téléchargement par le proxy sous le garde-fou réseau, puis `POST /v1/audio/transcriptions` au modèle de `[tools.transcribe].model` |
+| `transcribe` (`url`, `language`, `offset`) | Transcrit un fichier audio (mp3, wav, flac, ogg, m4a, aac, webm, amr, mp4 — ce que le modèle de transcription ne lit pas tel quel, `formats`, est converti en WAV par ffmpeg, ou refusé sans lui ; 25 Mo au plus) et rend le texte, sans horodatage, avec la langue et la durée si le backend les donne ; reconnu à ses premiers octets ou à son type, refusé sinon | Téléchargement par le proxy sous le garde-fou réseau, puis `POST /v1/audio/transcriptions` au modèle de `[tools.transcribe].model` |
 
 Ce qu'est un outil pour le code du proxy — son contrat, ses codes
 d'erreur et leur traduction par surface, ses liaisons aux protocoles — et
@@ -1558,10 +1558,14 @@ Ce que l'outil a le droit de joindre : `[tools.net]`.
 |---|---|---|
 | `enabled` | `false` | Active l'outil `transcribe` (`/v1/chat/completions` et `/v1/tools`) |
 | `model` | `""` | Le modèle de transcription, préfixé : `"<backend>/<modèle>"`. Vide ou préfixe inconnu → le modèle reçoit « transcription non configurée » |
-| `formats` | tous | Formats que le modèle de transcription lit, parmi `mp3`, `wav`, `flac`, `ogg`, `m4a`, `aac`, `webm`, `amr`, `mp4`. Le proxy ne convertit pas : un autre format est refusé avant l'envoi, et la description de l'outil ne cite que ceux-là. Qwen3-ASR sous gufo : `["wav"]` |
+| `formats` | tous | Formats que le modèle de transcription lit **tels quels**, parmi `mp3`, `wav`, `flac`, `ogg`, `m4a`, `aac`, `webm`, `amr`, `mp4`. Qwen3-ASR sous gufo : `["wav"]` |
+| `convert` | `true` | Convertir en WAV 16 kHz mono, par ffmpeg, ce que `formats` ne liste pas (il faut `wav` dans `formats`). L'image Docker embarque ffmpeg ; lancé hors conteneur sans lui, le proxy démarre, le dit, et ces formats sont refusés avant l'envoi — comme avec `false`. ffmpeg décode des octets venus du web : arguments fixes, format d'entrée imposé, protocole `file` seul, dossier temporaire supprimé, délai et taille bornés, mais **pas isolé** du proxy |
+| `ffmpeg` | `"ffmpeg"` | Le binaire : un nom cherché dans `PATH`, ou un chemin |
+| `convert_timeout` | `60` | Secondes pour une conversion ; s'ajoute au délai de l'outil |
+| `convert_max_bytes` | `100000000` | Taille au plus du WAV produit (1,92 Mo par minute : ≈ 52 min) ; au-delà le fichier est refusé, pas coupé |
 | `response_format` | `"verbose_json"` | Ce qui est demandé au backend : `verbose_json` rend aussi la langue et la durée ; `json` le texte seul, pour un backend qui refuse l'autre |
 | `timeout` | `300` | Secondes pour la requête de transcription |
-| `download_timeout` | `60` | Secondes pour le téléchargement, redirections comprises. `timeout` + `download_timeout` est le délai de l'outil, à la place de `[tools].run_timeout` |
+| `download_timeout` | `60` | Secondes pour le téléchargement, redirections comprises. `timeout` + `download_timeout` (+ `convert_timeout` quand ffmpeg convertit) est le délai de l'outil, à la place de `[tools].run_timeout` |
 | `max_bytes` | `25000000` | Taille au plus du fichier ; plus gros, il est **refusé** (une transcription partielle passerait pour entière) |
 | `max_chars` | `20000` | Caractères rendus par appel ; la suite se demande par `offset`, sans rien retranscrire |
 | `language` | `""` | Langue passée au modèle quand l'appel n'en donne pas (ISO 639-1) ; vide = détection |

@@ -22,9 +22,36 @@ est gardé en cache (le sien, plus long que le cache web — un
 enregistrement ne change pas comme une page d'actualité), et chaque
 morceau (`offset`) en sort sans rien refaire. L'audio, lui, n'est jamais
 gardé.
+
+CONVERSION ([tools.transcribe].convert, `convert`). Un modèle de
+transcription ne lit pas tout — Qwen3-ASR sous gufo, que du WAV. Ce que
+`formats` ne liste pas est converti ici en WAV 16 kHz mono par ffmpeg,
+puis envoyé. ffmpeg décode alors des octets HOSTILES, venus du web :
+  * un sous-processus sans shell, aux arguments FIXES — rien n'y vient de
+    l'URL ni du fichier —, sans entrée standard, sans environnement que
+    PATH, dans un dossier temporaire à lui (0700), supprimé dans tous les
+    cas avec l'entrée et la sortie ;
+  * le format d'entrée est IMPOSÉ (`-f`, d'après les premiers octets déjà
+    reconnus) : pas de sondage, donc aucun des « formats » qui ne sont
+    que des listes d'autres fichiers (HLS, concat, SDP…) ; et le seul
+    protocole permis est `file` (`-protocol_whitelist`) : ni réseau, ni
+    tube, ni `data:` ;
+  * un délai (`convert_timeout`), au-delà duquel le processus est tué, et
+    une sortie bornée (`convert_max_bytes`, par `-fs`) : un fichier qui
+    la dépasse est REFUSÉ, pas coupé ;
+  * hors de la boucle asyncio (sous-processus asyncio, écritures dans un
+    fil), et tué si l'appel est annulé.
+Ce que cela ne fait PAS : isoler ffmpeg du proxy. Une faille de décodeur
+s'exécuterait avec les droits du proxy — d'où `convert = false` pour qui
+préfère refuser.
+ffmpeg absent (lancement hors conteneur) : le proxy démarre, app.py le
+dit, et un format à convertir est refusé comme sans conversion.
 """
 
 import asyncio
+import os
+import shutil
+import tempfile
 import time
 from urllib.parse import urlsplit
 
@@ -89,10 +116,9 @@ _HEAD = 12
 
 def _accepted() -> list[str]:
     """[tools.transcribe].formats : les formats que le modèle de
-    transcription lit, parmi FORMATS. Le proxy ne convertit rien (aucun
-    décodeur audio ici) : un modèle qui ne lit que le WAV — Qwen3-ASR sous
-    gufo, vu le 07/10/2026 — ne recevra que du WAV, et le modèle de
-    conversation le sait par la description de l'outil."""
+    transcription lit TELS QUELS, parmi FORMATS. Un modèle qui ne lit que
+    le WAV — Qwen3-ASR sous gufo, vu le 07/10/2026 — ne recevra que du
+    WAV : le reste est converti (convert), ou refusé."""
     names = [f.lower().lstrip(".") for f in config.strings(
         "tools.transcribe.formats", FORMATS)]
     unknown = [f for f in names if f not in FORMATS]
@@ -112,12 +138,43 @@ RESPONSE_FORMAT = config.text("tools.transcribe.response_format",
                               "verbose_json").strip() or "json"
 
 
+# Convertir en WAV ce que `formats` ne liste pas (tête de module).
+CONVERT = config.flag("tools.transcribe.convert", True)
+# Le binaire : un nom cherché dans PATH, ou un chemin. Cherché UNE fois, à
+# l'import : «» = pas de conversion, dit au démarrage (app.py). Sans objet
+# pour un backend qui ne lit pas le WAV : c'est en WAV qu'on convertit.
+FFMPEG = (shutil.which(config.text("tools.transcribe.ffmpeg", "ffmpeg")
+                       .strip() or "ffmpeg") or "") \
+    if CONVERT and "wav" in ACCEPTED else ""
+# Délai (s) d'une conversion ; s'ajoute au délai de l'outil.
+CONVERT_TIMEOUT = config.num("tools.transcribe.convert_timeout", 60)
+# Octets du WAV produit, au plus. 16 kHz mono 16 bits = 1,92 Mo par
+# minute : 100 Mo ≈ 52 min. Au-delà le fichier est refusé — coupé, sa
+# transcription passerait pour entière. C'est aussi ce que le proxy tient
+# en mémoire le temps de l'envoi.
+CONVERT_MAX_BYTES = config.integer("tools.transcribe.convert_max_bytes",
+                                   100_000_000)
+# Format reconnu → démultiplexeur IMPOSÉ à ffmpeg (`-f`).
+DEMUXERS = {"mp3": "mp3", "wav": "wav", "flac": "flac", "ogg": "ogg",
+            "m4a": "mov", "mp4": "mov", "aac": "aac", "webm": "matroska",
+            "amr": "amr"}
+
+
+def _offered() -> list[str]:
+    """Les formats que l'outil annonce au modèle : ceux que le backend
+    lit, plus ceux que ffmpeg lui convertit."""
+    return list(FORMATS) if FFMPEG else ACCEPTED
+
+
 def _readable(kind: str | None) -> bool:
-    """Ce format part-il au modèle de transcription ? Un audio de format
-    inconnu («») ne part que si rien n'est restreint."""
+    """Ce format part-il au modèle de transcription, tel quel ou
+    converti ? Un audio de format inconnu («») ne part que si rien n'est
+    restreint — et n'est jamais converti : sans format à imposer, ffmpeg
+    sonderait."""
     if kind is None:
         return False
-    return kind in ACCEPTED or (not kind and len(ACCEPTED) == len(FORMATS))
+    return kind in ACCEPTED or (not kind and len(ACCEPTED) == len(FORMATS)) \
+        or bool(FFMPEG and kind in DEMUXERS)
 
 
 def audio_kind(url: str, content_type: str, head: bytes) -> str | None:
@@ -204,15 +261,103 @@ async def download(url: str, settings, transport) -> tuple[str, bytes, str, str]
         raise _refused(url, (
             f"is {content_type or 'not audio'}" if kind is None else "is empty")
             + ", which this tool cannot transcribe (audio files only: "
-            + ", ".join(ACCEPTED) + ")")
+            + ", ".join(_offered()) + ")")
     if not _readable(kind):
-        # De l'audio, mais pas pour ce modèle : dit avant de le lui envoyer
-        # — et le proxy ne convertit pas.
+        # De l'audio, mais pas pour ce modèle, et pas de conversion ici
+        # (désactivée, ffmpeg absent, format inconnu) : dit avant l'envoi.
         raise _refused(url, (
             f"is {kind or 'audio of an unknown format'}, which the "
             f"transcription model of this proxy cannot read (it reads: "
             + ", ".join(ACCEPTED) + "). This tool does not convert audio"))
     return url, body, kind, content_type
+
+
+def _ffmpeg_args(kind: str, limit: int) -> list[str]:
+    """Les arguments de la conversion — FIXES : seuls le démultiplexeur
+    (une valeur de DEMUXERS) et la borne changent. `in` et `out.wav` sont
+    des noms du dossier de travail."""
+    return [FFMPEG, "-nostdin", "-hide_banner", "-nostats",
+            "-loglevel", "error", "-y",
+            "-protocol_whitelist", "file", "-f", DEMUXERS[kind], "-i", "in",
+            # La première piste son, et rien d'autre : ni image (la
+            # pochette d'un MP3, la vidéo d'un MP4), ni sous-titres, ni
+            # données, ni métadonnées.
+            "-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1",
+            "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+            "-fs", str(limit), "-f", "wav", "out.wav"]
+
+
+def _work() -> str:
+    return tempfile.mkdtemp(prefix="llm-proxy-audio-")
+
+
+def _put(path: str, data: bytes) -> None:
+    with open(path, "wb") as fh:
+        fh.write(data)
+
+
+def _take(path: str, limit: int) -> bytes:
+    """Le fichier, lu jusqu'à `limit` + 1 octets ; b"" s'il n'existe pas."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(limit + 1)
+    except OSError:
+        return b""
+
+
+async def convert(url: str, body: bytes, kind: str) -> bytes:
+    """`body` (un fichier de format `kind`) en WAV 16 kHz mono, par ffmpeg
+    (tête de module). Lève ToolError : `unsupported` si ffmpeg ne le
+    décode pas ou si le WAV dépasse CONVERT_MAX_BYTES, `timeout` au-delà
+    de CONVERT_TIMEOUT."""
+    started = time.monotonic()
+    work = await asyncio.to_thread(_work)
+    proc = None
+    try:
+        await asyncio.to_thread(_put, os.path.join(work, "in"), body)
+        with open(os.path.join(work, "err"), "wb") as err:
+            proc = await asyncio.create_subprocess_exec(
+                *_ffmpeg_args(kind, CONVERT_MAX_BYTES), cwd=work,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL, stderr=err,
+                env={"PATH": os.environ.get("PATH", os.defpath)})
+        try:
+            code = await asyncio.wait_for(proc.wait(), CONVERT_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise ToolError("timeout", (
+                f"converting {url} to WAV took more than "
+                f"{int(CONVERT_TIMEOUT)} s. Do not retry with this file."))
+        wav = await asyncio.to_thread(
+            _take, os.path.join(work, "out.wav"), CONVERT_MAX_BYTES)
+        if code != 0 or len(wav) <= 44:     # 44 octets : l'en-tête seul
+            said = await asyncio.to_thread(_take, os.path.join(work, "err"), 300)
+            log.warning("transcribe : ffmpeg n'a pas converti %s (%s, code "
+                        "%s) : %s", url, kind, code,
+                        said.decode("utf-8", "replace").strip()[:300])
+            raise _refused(url, (
+                f"is {kind} audio that could not be decoded, so it cannot "
+                f"be transcribed"))
+        if len(wav) >= CONVERT_MAX_BYTES:
+            raise _refused(url, (
+                f"is too long: converted for the transcription model it "
+                f"exceeds {CONVERT_MAX_BYTES // 1_000_000} MB (about "
+                f"{CONVERT_MAX_BYTES // 1_920_000} minutes), which this "
+                f"tool does not transcribe"))
+        log.info("transcribe : %s converti en WAV par ffmpeg (%d → %d "
+                 "octets, %.1fs)", kind, len(body), len(wav),
+                 time.monotonic() - started)
+        return wav
+    except OSError as exc:      # ffmpeg disparu, disque plein
+        log.warning("transcribe : conversion impossible (%s)", exc)
+        raise ToolError("unavailable", (
+            "audio conversion failed on this proxy. Try a WAV file, or "
+            "try again later."))
+    finally:
+        # Délai, annulation de l'appel, erreur : ffmpeg ne survit pas.
+        if proc is not None and proc.returncode is None:
+            proc.kill()
+            await asyncio.shield(proc.wait())
+        await asyncio.to_thread(shutil.rmtree, work, True)
 
 
 def _backend() -> tuple[backends.Backend, str]:
@@ -369,15 +514,16 @@ class Transcribe(Tool):
     @property
     def timeout(self) -> float:
         """Le délai de l'outil (contrat : Tool.timeout), à la place de
-        [tools].run_timeout : le téléchargement, puis la transcription."""
-        return DOWNLOAD_TIMEOUT + TIMEOUT
+        [tools].run_timeout : le téléchargement, la conversion s'il y en
+        a une, puis la transcription."""
+        return DOWNLOAD_TIMEOUT + TIMEOUT + (CONVERT_TIMEOUT if FFMPEG else 0)
 
     def spec(self, present) -> dict:
         return {"type": "function", "function": {
             "name": NAME,
             "description": (
                 "Transcribe the speech of an audio file, given its URL, and "
-                "return the text (" + ", ".join(ACCEPTED) + f"; up to "
+                "return the text (" + ", ".join(_offered()) + f"; up to "
                 f"{MAX_BYTES // 1_000_000} MB). The text has no timestamps "
                 "and no speaker names. Long transcripts are truncated: pass "
                 "`offset` to continue from a given character position (the "
@@ -452,6 +598,9 @@ class Transcribe(Tool):
         _backend()
         url, body, kind, content_type = await download(
             url, call.settings, transport)
+        if kind and kind not in ACCEPTED:
+            # Lisible seulement converti (_readable l'a admis pour cela).
+            body, kind = await convert(url, body, kind), "wav"
         text, heard, duration = await _transcribe(
             f"audio.{kind}" if kind else "audio",
             FORMATS.get(kind) or content_type or "application/octet-stream",

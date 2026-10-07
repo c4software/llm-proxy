@@ -10,8 +10,13 @@ Un test par comportement ; les familles d'entrées sont des tables, et
 l'assertion nomme l'entrée fautive."""
 
 import asyncio
+import json
+import os
 import re
+import shutil
 import socket
+import sys
+import tempfile
 
 import httpx
 import pytest
@@ -90,6 +95,8 @@ def asr(monkeypatch):
     monkeypatch.setattr(transcribe, "ACCEPTED", list(transcribe.FORMATS))
     monkeypatch.setattr(transcribe, "RESPONSE_FORMAT", "verbose_json")
     monkeypatch.setattr(transcribe, "DOWNLOAD_TIMEOUT", 60)
+    # Pas de conversion, que ffmpeg soit installé ici ou non.
+    monkeypatch.setattr(transcribe, "FFMPEG", "")
     # Le garde-fou commun ([tools.net]).
     monkeypatch.setattr(net, "ALLOW_PRIVATE", False)
     monkeypatch.setattr(net, "ALLOWED_DOMAINS", [])
@@ -531,6 +538,135 @@ def test_formats_que_le_modele_lit_refus_avant_l_envoi(monkeypatch, asr):
                 transcribe._accepted()
         else:
             assert transcribe._accepted() == ok
+
+
+# Un faux ffmpeg : note ses arguments, et fait de `in` ce que son premier
+# mot demande — un WAV (les octets d'entrée derrière un en-tête), un WAV
+# trop gros, un échec, ou rien avant longtemps.
+FAUX_FFMPEG = """#!{python}
+import json, os, sys, time
+args = sys.argv[1:]
+json.dump({{"args": args, "cwd": os.getcwd(), "env": sorted(os.environ),
+           "files": sorted(os.listdir("."))}}, open({seen!r}, "w"))
+data = open("in", "rb").read()
+if b"ECHEC" in data:
+    sys.stderr.write("in: Invalid data found when processing input\\n")
+    sys.exit(1)
+if b"LENT" in data:
+    time.sleep(30)
+limit = int(args[args.index("-fs") + 1])
+out = b"RIFF\\x00\\x00\\x00\\x00WAVEfmt " + b"\\x00" * 32 + data
+open(args[-1], "wb").write(out * 50 if b"LONG" in data else out[:limit])
+"""
+
+
+def test_conversion_par_ffmpeg_de_ce_que_le_backend_ne_lit_pas(
+        monkeypatch, asr, tmp_path):
+    """[tools.transcribe].convert : hors `formats`, l'audio est converti
+    en WAV par ffmpeg puis envoyé. ffmpeg lit des octets hostiles : ses
+    arguments sont fixes, le format d'entrée imposé, le seul protocole
+    `file`, et rien ne reste du dossier de travail — conversion réussie,
+    en échec, trop longue ou trop grosse."""
+    seen = tmp_path / "seen.json"
+    faux = tmp_path / "ffmpeg"
+    faux.write_text(FAUX_FFMPEG.format(python=sys.executable, seen=str(seen)))
+    faux.chmod(0o755)
+    monkeypatch.setattr(transcribe, "ACCEPTED", ["wav"])
+    monkeypatch.setattr(transcribe, "FFMPEG", str(faux))
+    monkeypatch.setattr(transcribe, "CONVERT_TIMEOUT", 0.5)
+    monkeypatch.setattr(transcribe, "CONVERT_MAX_BYTES", 1000)
+    dossiers = []
+    monkeypatch.setattr(transcribe, "_work", lambda: dossiers.append(
+        tempfile.mkdtemp(dir=tmp_path)) or dossiers[-1])
+    web = Web({("site.test", "/a.mp3"): audio(MP3, "audio/mpeg"),
+               ("site.test", "/a.m4a"): audio(
+                   b"\x00\x00\x00\x20ftypM4A " + b"\x00" * 32, "audio/mp4"),
+               ("site.test", "/casse.mp3"): audio(MP3 + b"ECHEC", "audio/mpeg"),
+               ("site.test", "/lent.mp3"): audio(MP3 + b"LENT", "audio/mpeg"),
+               ("site.test", "/long.mp3"): audio(MP3 + b"LONG", "audio/mpeg"),
+               ("site.test", "/a.wav"): audio(),
+               ("site.test", "/inconnu"): audio(b"\x00" * 64, "audio/x-rare")})
+    # Le MP3 part converti : un WAV, nommé et typé comme tel.
+    out = web.run("https://site.test/a.mp3")
+    assert out.error is None and out.text.endswith("bonjour tout le monde")
+    sent = asr.requests[-1].content
+    assert b'filename="audio.wav"' in sent and b"audio/wav" in sent
+    assert b"RIFF\x00\x00\x00\x00WAVEfmt " in sent and MP3 in sent
+    vu = json.loads(seen.read_text())
+    assert vu["args"] == [
+        "-nostdin", "-hide_banner", "-nostats", "-loglevel", "error", "-y",
+        "-protocol_whitelist", "file", "-f", "mp3", "-i", "in",
+        "-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1",
+        "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+        "-fs", "1000", "-f", "wav", "out.wav"]
+    # (LC_CTYPE : posée par l'interpréteur du faux ffmpeg lui-même.)
+    assert vu["cwd"] == dossiers[0] \
+        and set(vu["env"]) - {"LC_CTYPE"} == {"PATH"}
+    assert vu["files"] == ["err", "in"]
+    # Le format imposé suit les premiers octets, pas l'URL.
+    assert web.run("https://site.test/a.m4a").error is None
+    vu = json.loads(seen.read_text())["args"]
+    assert vu[vu.index("-f") + 1] == "mov"
+    # Un WAV part tel quel ; un format inconnu n'est jamais sondé.
+    seen.unlink()
+    n = len(asr.requests)
+    assert web.run("https://site.test/a.wav").error is None
+    assert web.run("https://site.test/inconnu").error == "unsupported"
+    assert not seen.exists() and len(asr.requests) == n + 1
+    # Les échecs : rien n'est envoyé au backend, rien n'est gardé.
+    for path, code, mot in [
+            ("/casse.mp3", "unsupported", "could not be decoded"),
+            ("/lent.mp3", "timeout", "took more than 0 s"),
+            ("/long.mp3", "unsupported", "is too long")]:
+        out = web.run("https://site.test" + path)
+        assert (out.error, mot in out.text) == (code, True), (path, out)
+    assert len(asr.requests) == n + 1 and len(transcribe.CACHE) == 3
+    assert len(dossiers) == 5 and not any(map(os.path.exists, dossiers))
+    # La description annonce ce qui est lu, converti compris ; le délai de
+    # l'outil compte la conversion.
+    description = transcribe.TOOL.spec(())["function"]["description"]
+    assert "return the text (mp3, wav, flac, ogg, m4a, aac" in description
+    assert transcribe.TOOL.timeout == 60 + 300 + 0.5
+    # ffmpeg disparu depuis le démarrage : une panne dite, pas une trace.
+    monkeypatch.setattr(transcribe, "FFMPEG", str(tmp_path / "absent"))
+    transcribe.CACHE.clear()
+    out = web.run("https://site.test/a.mp3")
+    assert (out.error, "audio conversion failed" in out.text) == (
+        "unavailable", True)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg absent")
+def test_conversion_par_le_vrai_ffmpeg(monkeypatch, asr, tmp_path):
+    """Le vrai ffmpeg, s'il est installé : un FLAC d'une seconde devient
+    un WAV 16 kHz mono que `wave` relit ; un fichier qui ment sur son
+    format, ou qui en désigne un autre (liste HLS), n'est pas lu."""
+    import subprocess
+    import wave
+    flac = tmp_path / "a.flac"
+    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "sine=frequency=440:duration=1:sample_rate=44100",
+                    "-ac", "2", str(flac)], check=True)
+    monkeypatch.setattr(transcribe, "ACCEPTED", ["wav"])
+    monkeypatch.setattr(transcribe, "FFMPEG", shutil.which("ffmpeg"))
+    secret = tmp_path / "secret.txt"
+    secret.write_text("SECRET")
+    hls = (b"fLaC#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\n"
+           + f"file://{secret}\n".encode() + b"#EXT-X-ENDLIST\n")
+    web = Web({("site.test", "/a"): audio(flac.read_bytes(), "audio/flac"),
+               ("site.test", "/faux"): audio(hls, "audio/flac")})
+    assert web.run("https://site.test/a").error is None
+    sent = asr.requests[-1].content
+    at = sent.index(b"RIFF")
+    wav = tmp_path / "out.wav"
+    wav.write_bytes(sent[at:sent.index(b"\r\n--", at)])
+    with wave.open(str(wav)) as w:
+        assert (w.getnchannels(), w.getframerate(), w.getsampwidth()) == (
+            1, 16000, 2)
+        assert 15000 <= w.getnframes() <= 17000
+    n = len(asr.requests)
+    out = web.run("https://site.test/faux")
+    assert out.error == "unsupported" and "could not be decoded" in out.text
+    assert len(asr.requests) == n
 
 
 def test_ce_que_rend_un_vrai_backend_langue_duree_et_refus_en_500(asr):

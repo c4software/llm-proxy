@@ -6,6 +6,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# ffmpeg : l'outil hébergé `transcribe` convertit en WAV l'audio que le
+# modèle de transcription ne lit pas ([tools.transcribe].convert). Sans
+# lui le proxy tourne, et refuse ces fichiers.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

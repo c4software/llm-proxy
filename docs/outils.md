@@ -439,8 +439,8 @@ l'API Responses ni l'API Messages n'ont d'outil à lui lier.
 | `sources` | une : l'URL telle que le modèle l'a écrite |
 | `meta` | `url` (réellement lue), `total` (caractères), `language` et `duration` (secondes) s'ils sont connus, `range` pour un morceau |
 | `settings` lus | `allowed_domains`, `blocked_domains`, `max_chars` |
-| `timeout` | le sien : `download_timeout` + `timeout` de `[tools.transcribe]` (360 s par défaut), à la place de `run_timeout` |
-| Codes rendus | `invalid_input` (URL, langue), `not_allowed`, `not_accessible`, `too_many_requests` (la cible, ou le modèle de transcription), `unsupported` (pas de l'audio, trop gros, audio que le modèle ne lit pas), `timeout`, `unavailable` (non configuré, backend éteint ou en erreur) |
+| `timeout` | le sien : `download_timeout` + `timeout` de `[tools.transcribe]` (360 s par défaut), plus `convert_timeout` (60 s) quand ffmpeg convertit, à la place de `run_timeout` |
+| Codes rendus | `invalid_input` (URL, langue), `not_allowed`, `not_accessible`, `too_many_requests` (la cible, ou le modèle de transcription), `unsupported` (pas de l'audio, trop gros, audio que le modèle ne lit pas et qui n'est pas converti, audio que ffmpeg ne décode pas, WAV converti trop long), `timeout` (dont une conversion trop longue), `unavailable` (non configuré, backend éteint ou en erreur, ffmpeg qui ne se lance plus) |
 
 Ce qu'il montre du contrat :
 
@@ -462,11 +462,25 @@ Ce qu'il montre du contrat :
   octets de ce qui n'est pas de l'audio.
 - **Garder le travail, pas l'entrée** : le texte est en cache (par URL et
   langue), l'audio ne l'est jamais.
-- **Ne promettre que ce que le backend sait faire.** Le proxy ne
-  convertit pas l'audio (aucun décodeur ici). `[tools.transcribe].formats`
-  dit ce que le modèle de transcription lit : la description de l'outil
-  ne cite que ces formats, et un autre est refusé (`unsupported`) avant
-  d'être envoyé.
+- **Ne promettre que ce qui sera lu.** `[tools.transcribe].formats` dit
+  ce que le modèle de transcription lit tel quel. Le reste est converti
+  en WAV 16 kHz mono par ffmpeg (`convert`, actif par défaut) quand
+  ffmpeg est là — l'image Docker l'embarque — et refusé (`unsupported`)
+  avant l'envoi sinon. La description de l'outil cite ce qui sera
+  réellement lu : tous les formats avec la conversion, ceux de `formats`
+  sans elle.
+- **Un décodeur lit des octets hostiles.** ffmpeg reçoit un fichier venu
+  du web : sous-processus sans shell ni entrée standard, arguments fixes
+  (rien n'y vient de l'URL ni du fichier), environnement réduit à `PATH`,
+  dossier temporaire à lui supprimé dans tous les cas ; format d'entrée
+  **imposé** d'après les premiers octets (`-f` : pas de sondage, donc
+  aucune des listes de fichiers — HLS, concat — qu'ffmpeg sait suivre) ;
+  seul protocole `file` (`-protocol_whitelist`) ; première piste son
+  seulement ; délai (`convert_timeout`, processus tué) et sortie bornée
+  (`convert_max_bytes`, par `-fs` : au-delà le fichier est refusé, pas
+  coupé) ; tué aussi si l'appel est annulé. Un audio de format inconnu
+  n'est jamais converti. Ce que cela ne fait pas : isoler ffmpeg — une
+  faille de décodeur s'exécute avec les droits du proxy.
 
 Ce qu'un vrai backend rend (gufo, `qwen3-asr-1.7b`, relevé le
 07/10/2026) : `response_format=json` → `{"text"}` seul ;
