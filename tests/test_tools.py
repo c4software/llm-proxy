@@ -948,7 +948,11 @@ def test_hosted_limite_d_appels_par_reponse(monkeypatch):
     assert [texte(h, "echo", "{}", n) for n in (0, 1, 2)] == ["ok"] * 3
     for n in (3, 100):
         assert texte(h, "echo", "{}", n).startswith(
-            "Error: the limit of 3 web tool calls"), n
+            "Error: the limit of 3 tool calls for one answer"), n
+    # Un outil web garde son texte, à l'octet près.
+    assert texte(hosted(web_search.TOOL), "web_search", "{}", 3) == (
+        "Error: the limit of 3 web tool calls for one answer is reached. "
+        "Answer now with what you already have.")
     # La limite du client (`max_uses`) ne peut que l'abaisser.
     assert texte(h, "echo", "{}", 1, limit=1).startswith("Error: the limit of 1 ")
     assert texte(h, "echo", "{}", 3, limit=50).startswith("Error: the limit of 3 ")
@@ -1415,7 +1419,7 @@ def test_contrat_tout_echec_est_un_result_avec_son_code(monkeypatch):
          "Error: the tool arguments are not a JSON object.", "error"),
         ('{"cas": "quota"}', 0, "limit", "Error: quota spent.", "limit"),
         ("{}", tools.MAX_CALLS, "limit",
-         f"Error: the limit of {tools.MAX_CALLS} web tool calls for one "
+         f"Error: the limit of {tools.MAX_CALLS} tool calls for one "
          "answer is reached. Answer now with what you already have.", "limit"),
     ]
     for arguments, used, code, text, _ in attendu:
@@ -1428,9 +1432,143 @@ def test_contrat_tout_echec_est_un_result_avec_son_code(monkeypatch):
         ("cas", "/v1/x", "essai/qwen", issue) for *_, issue in attendu]
     # Les réglages du client sur CET outil, la route, le modèle, le client.
     assert len(calls) == 7 and all(c == tools.Call(
-        {"max_chars": 5}, "/v1/x", "essai/qwen", "abc") for c in calls)
+        {"max_chars": 5}, "/v1/x", "essai/qwen", "abc", "") for c in calls)
+    # `session` : ce que la surface en dit, «» tant qu'aucune n'en a.
+    go(h.run("cas", "{}", 0, session="conv-1"))
+    assert calls.pop().session == "conv-1" and lines.pop()
     # Un nom qui n'est celui d'aucun outil : une erreur, sans statistiques.
     assert go(h.run("rm_rf", "{}", 0)) == tools.failure(
         "invalid_input", "unknown tool rm_rf.")
     assert len(lines) == len(attendu)
 
+
+
+def test_contrat_delai_et_nombre_d_appels_propres_a_un_outil(monkeypatch):
+    """Tool.timeout et Tool.max_calls : None = les bornes communes de
+    [tools] ; posés, ils les REMPLACENT pour cet outil — un délai plus
+    long ou plus court, un compte d'appels à lui."""
+    monkeypatch.setattr(tools, "RUN_TIMEOUT", 0.05)
+    monkeypatch.setattr(tools, "MAX_CALLS", 2)
+
+    async def lent(args):
+        await asyncio.sleep(args.get("s", 0))
+        return "fini"
+
+    commun, patient, presse, compte = (
+        outil("commun", run=lent), outil("patient", run=lent),
+        outil("presse", run=lent), outil("compte", run=lent))
+    patient.timeout, presse.timeout, compte.max_calls = 5, 0.01, 5
+    h = hosted(commun, patient, presse, compte)
+    assert texte(h, "commun", '{"s": 0.2}', 0) == (
+        "Error: commun timed out after 0 s.")
+    assert texte(h, "patient", '{"s": 0.2}', 0) == "fini"
+    assert texte(h, "presse", '{"s": 0.03}', 0) == (
+        "Error: presse timed out after 0 s.")
+    # Le compte propre : sa limite, son texte ; la limite du client ne
+    # peut que l'abaisser.
+    assert not h.own("commun") and h.own("compte") and not h.own("inconnu")
+    assert (h.cap(), h.cap(name="commun"), h.cap(name="compte"),
+            h.cap(3, "compte"), h.cap(50, "compte")) == (2, 2, 5, 3, 5)
+    assert texte(h, "compte", "{}", 4) == "fini"
+    result = go(h.run("compte", "{}", 5))
+    assert result == tools.failure("limit", (
+        "the limit of 5 compte calls for one answer is reached. "
+        "Answer now with what you already have."))
+
+
+def test_contrat_fichiers_ignores_et_code_failed(proxy, monkeypatch):
+    """Result.files : le type existe, RIEN ne le garde ni ne le rend —
+    l'enveloppe de /v1/tools, les mémoires et le tour suivant ne portent
+    que `text`. Et `failed`, le code d'un outil qui a tourné et dit avoir
+    échoué : une erreur comme une autre, comptée `error`."""
+    from llm_proxy import anthropic_api, chat_api
+    lines = []
+    monkeypatch.setattr(tools.stats, "record_tool", lambda *a: lines.append(a))
+    monkeypatch.setattr(tools, "MAX_RESULT_CHARS", 30)
+    png = tools.Artifact("courbe.png", "image/png", b"\x89PNG")
+
+    class Produit(Echo):
+        name = "produit"
+
+        async def run(self, args, call):
+            if args.get("rate"):
+                return tools.failure("failed", "exit status 1.")
+            return tools.Result("x" * int(args.get("n", 3)), files=(png,),
+                                meta={"files": [png.name]})
+
+    monkeypatch.setattr(tools, "REGISTRY", [Produit()])
+    proxy.hosted = h = type(proxy.hosted)(tools.enabled(), tools.Memory(4, 60))
+    # L'exécuteur ne touche pas aux fichiers, même en coupant le texte.
+    assert go(h.run("produit", '{"n": 40}', 0)) == tools.Result(
+        "x" * 30 + "\n[truncated]", files=(png,), meta={"files": [png.name]})
+    r = proxy.client.post("/v1/tools/produit", json={})
+    assert r.json() == {"name": "produit", "result": "xxx", "is_error": False,
+                        "error": None, "sources": [],
+                        "meta": {"files": ["courbe.png"]}}
+    r = proxy.client.post("/v1/tools/produit", json={"rate": True})
+    assert r.json()["error"] == "failed" and r.json()["is_error"] is True
+    assert r.json()["result"] == "Error: exit status 1."
+    assert [line[3] for line in lines] == ["ok", "ok", "error"]
+    assert "failed" in tools.ERRORS \
+        and anthropic_api.ERROR_CODES["failed"] == "unavailable"
+
+    # chat/completions : le tour suivant et la mémoire des échanges cachés
+    # ne portent que le texte.
+    monkeypatch.setattr(chat_api, "ENABLED", True)
+    memory = chat_api.Memory(8, 60, 100_000)
+    monkeypatch.setattr(chat_api, "MEMORY", memory)
+    proxy.replies = [
+        FakeUpstream(chat_doc({"content": None, "tool_calls": [{
+            "id": "c", "function": {"name": "produit", "arguments": "{}"}}]},
+            "tool_calls", 1, 1)),
+        FakeUpstream(chat_doc({"content": "Fait."}, "stop", 1, 1))]
+    r = proxy.client.post("/v1/chat/completions", json={
+        "model": "essai/qwen", "tools": [{"type": "produit"}],
+        "messages": [{"role": "user", "content": "Trace."}]})
+    assert r.json()["choices"][0]["message"]["content"] == "Fait."
+    assert proxy.sent[1]["messages"][-1] == {
+        "role": "tool", "tool_call_id": "c", "content": "xxx"}
+    assert len(memory) == 1 and "PNG" not in repr(memory.__dict__)
+
+
+def test_boucle_un_outil_a_compte_propre_ne_pese_pas_sur_le_commun(
+        proxy, monkeypatch):
+    """Dans la boucle : les appels d'un outil à `max_calls` sont comptés
+    contre SA limite, ceux des autres contre le plafond commun — et un
+    modèle qui insiste au-delà de sa limite est arrêté de même."""
+    from llm_proxy import app as A, chat_api
+    monkeypatch.setattr(tools, "MAX_CALLS", 1)
+    monkeypatch.setattr(A, "HOSTED_HARD_LIMIT", 1 + A.HOSTED_EXTRA_CALLS)
+    monkeypatch.setattr(chat_api, "ENABLED", True)
+    monkeypatch.setattr(chat_api, "MEMORY", chat_api.Memory(8, 60, 100_000))
+    propre, commun = outil("propre"), outil("commun")
+    propre.max_calls = 2
+    monkeypatch.setattr(tools, "REGISTRY", [propre, commun])
+    proxy.hosted = type(proxy.hosted)(tools.enabled(), tools.Memory(4, 60))
+
+    def tour(*noms):
+        return FakeUpstream(chat_doc({"content": None, "tool_calls": [
+            {"id": f"c{i}", "function": {"name": n, "arguments": "{}"}}
+            for i, n in enumerate(noms)]}, "tool_calls", 1, 1))
+
+    def post():
+        return proxy.client.post("/v1/chat/completions", json={
+            "model": "essai/qwen",
+            "tools": [{"type": "propre"}, {"type": "commun"}],
+            "messages": [{"role": "user", "content": "Va."}]})
+
+    proxy.replies = [tour("propre", "commun", "propre", "propre", "commun"),
+                     FakeUpstream(chat_doc({"content": "Fini."}, "stop", 1, 1))]
+    assert post().json()["choices"][0]["message"]["content"] == "Fini."
+    rendus = [m["content"] for m in proxy.sent[1]["messages"]
+              if m["role"] == "tool"]
+    assert rendus == [
+        "reçu {}", "reçu {}", "reçu {}",
+        "Error: the limit of 2 propre calls for one answer is reached. "
+        "Answer now with what you already have.",
+        "Error: the limit of 1 tool calls for one answer is reached. "
+        "Answer now with what you already have."]
+    # Il insiste : 2 exécutés + 4 refus, puis la réponse est close.
+    proxy.sent.clear()
+    proxy.replies = [tour("propre") for _ in range(9)]
+    assert post().status_code == 200 and len(proxy.sent) == 6

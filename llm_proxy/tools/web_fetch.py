@@ -228,6 +228,7 @@ def render(url: str, content_type: str, body: bytes | str,
 
 class WebFetch(Tool):
     name = NAME
+    family = "web"
     # Activée avec la recherche, et rendue par le même élément : une
     # recherche sans lecture ne rend que des extraits de 240 caractères.
     responses = Responses(

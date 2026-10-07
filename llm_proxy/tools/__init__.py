@@ -18,11 +18,13 @@ le décrit membre par membre, avec un exemple complet) :
                           vient pas du modèle : réglages du client, route,
                           modèle. Rend un Result — `text` pour le modèle,
                           `error` (un code d'ERRORS, None = succès),
-                          `sources`, `meta` — ou lève ToolError(code,
+                          `sources`, `meta`, `files` — ou lève ToolError(code,
                           message). Une erreur est un texte «Error: …»
                           que le modèle lit, et s'adapte
   summary(args, result) → dict
                           ce que le client affiche de l'appel
+  timeout, max_calls      son délai et son nombre d'appels par réponse,
+                          s'il a les siens (None = ceux de [tools])
   responses, anthropic    ses LIAISONS aux protocoles, en données : quels
                           types d'outil l'activent, quel élément ou quel
                           bloc rend compte de l'appel. Sans liaison,
@@ -58,6 +60,7 @@ leur passe, et le contrat.
 """
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 import os
@@ -69,8 +72,8 @@ from .. import config, stats
 from ..settings import log
 from . import web_fetch, web_search, webcache
 # Le contrat, tel que le reste du proxy et un outil l'importent d'ici.
-from .contract import (ERRORS, Anthropic, Call, Responses, Result,  # noqa: F401
-                       Source, Tool, ToolError, failure)
+from .contract import (ERRORS, Anthropic, Artifact, Call,  # noqa: F401
+                       Responses, Result, Source, Tool, ToolError, failure)
 
 # Le registre : tous les outils que le proxy SAIT héberger, actifs ou non,
 # dans l'ordre où ils sont présentés au modèle.
@@ -218,20 +221,34 @@ class Hosted:
         return next((t for t in self.tools if t.anthropic and re.fullmatch(
             re.escape(t.anthropic.prefix) + r"_\d+", kind)), None)
 
-    def cap(self, limit=None) -> int:
-        """Appels exécutés au plus pour une réponse : MAX_CALLS, ou la
-        limite que le client a demandée (`max_uses` d'un outil serveur
-        Anthropic) si elle est plus basse — jamais plus haute."""
+    def own(self, name: str) -> bool:
+        """Cet outil a-t-il son PROPRE compte d'appels (Tool.max_calls) ?
+        Ses appels ne pèsent alors pas sur le plafond commun, ni ceux des
+        autres sur le sien."""
+        tool = self.by_name.get(name)
+        return tool is not None and tool.max_calls is not None
+
+    def cap(self, limit=None, name: str | None = None) -> int:
+        """Appels exécutés au plus pour une réponse : le plafond de
+        l'outil `name` s'il a le sien (Tool.max_calls), sinon MAX_CALLS,
+        commun — ou la limite que le client a demandée (`max_uses` d'un
+        outil serveur Anthropic) si elle est plus basse, jamais plus
+        haute."""
+        ceiling = self.by_name[name].max_calls if name and self.own(name) \
+            else MAX_CALLS
         if isinstance(limit, int) and not isinstance(limit, bool):
-            return max(min(limit, MAX_CALLS), 0)
-        return MAX_CALLS
+            return max(min(limit, ceiling), 0)
+        return max(ceiling, 0)
 
     async def run(self, name: str, arguments: str, used: int,
                   limit: int | None = None, options: dict | None = None,
                   endpoint: str = "", model: str = "",
-                  client: str = "") -> Result:
+                  client: str = "", session: str = "") -> Result:
         """Exécute la fonction `name`. `used` : appels déjà exécutés pour
-        cette réponse ; `limit` : voir cap(). `options` : ce que le CLIENT
+        cette réponse AU COMPTE dont relève l'outil — le sien s'il en a un
+        (own()), sinon le compte commun ; `limit` : voir cap(). `session` :
+        l'identifiant de conversation de la surface, «» si elle n'en a
+        pas. `options` : ce que le CLIENT
         a réglé sur son outil, par nom de fonction (les listes de domaines
         et la taille de contenu des outils serveur Anthropic) — l'outil
         les reçoit dans `call.settings`, à côté des arguments du modèle,
@@ -253,10 +270,11 @@ class Hosted:
             # outil, c'est un texte venu du modèle ou du client.
             return failure("invalid_input", f"unknown tool {name}.")
         started = time.monotonic()
-        result = self._refusal(used, limit)
+        result = self._refusal(tool, used, limit)
         if result is None:
             result = await self._execute(tool, arguments, Call(
-                (options or {}).get(name, {}), endpoint, model, client))
+                (options or {}).get(name, {}), endpoint, model, client,
+                session))
         # L'issue des statistiques : le code, pas le texte. `limit` : le
         # refus d'ici, ou celui que l'outil prononce lui-même — sans durée.
         outcome = "ok" if result.error is None \
@@ -269,13 +287,17 @@ class Hosted:
             log.exception("stats : exécution de %s non enregistrée", name)
         return result
 
-    def _refusal(self, used: int, limit) -> Result | None:
+    def _refusal(self, tool: Tool, used: int, limit) -> Result | None:
         """Le refus par limite d'appels (cap()), ou None s'il reste de la
-        marge."""
-        cap = self.cap(limit)
+        marge. Le texte nomme ce qui est compté : les appels de CET outil
+        s'il a son compte, sinon ceux du plafond commun (« web tool
+        calls » pour un outil web, « tool calls » pour un autre)."""
+        cap = self.cap(limit, tool.name)
         if used >= cap:
+            counted = f"{tool.name} calls" if self.own(tool.name) \
+                else f"{tool.family} tool calls".lstrip()
             return failure("limit", (
-                f"the limit of {cap} web tool calls for one "
+                f"the limit of {cap} {counted} for one "
                 f"answer is reached. Answer now with what you already have."))
         return None
 
@@ -289,15 +311,17 @@ class Hosted:
             return failure("invalid_input",
                            "the tool arguments are not a JSON object.")
         started = time.monotonic()
+        # Le délai de l'outil s'il a le sien (Tool.timeout), sinon le commun.
+        delay = RUN_TIMEOUT if tool.timeout is None else tool.timeout
         try:
-            result = await asyncio.wait_for(tool.run(args, call), RUN_TIMEOUT)
+            result = await asyncio.wait_for(tool.run(args, call), delay)
             if not isinstance(result, Result):
                 raise TypeError(f"{name}.run n'a pas rendu un Result")
         except ToolError as exc:  # l'échec prévu : son code, son message
             result = failure(exc.code, exc.message)
         except asyncio.TimeoutError:
             result = failure(
-                "timeout", f"{name} timed out after {int(RUN_TIMEOUT)} s.")
+                "timeout", f"{name} timed out after {int(delay)} s.")
         except Exception as exc:  # un outil ne doit jamais casser la réponse
             log.exception("outil hébergé %s en échec", name)
             result = failure("unavailable",
@@ -305,13 +329,12 @@ class Hosted:
         if result.error is not None and result.error not in ERRORS:
             log.warning("outil hébergé %s : code d'erreur %r hors contrat, "
                         "rendu `unavailable`", name, result.error)
-            result = Result(result.text, "unavailable", result.sources,
-                            result.meta)
+            result = dataclasses.replace(result, error="unavailable")
         if len(result.text) > MAX_RESULT_CHARS:
-            # Seul le texte est borné : `sources` et `meta` disent ce que
-            # l'outil a trouvé, coupé ou non.
-            result = Result(result.text[:MAX_RESULT_CHARS] + "\n[truncated]",
-                            result.error, result.sources, result.meta)
+            # Seul le texte est borné : `sources`, `meta` et `files` disent
+            # ce que l'outil a trouvé ou produit, coupé ou non.
+            result = dataclasses.replace(
+                result, text=result.text[:MAX_RESULT_CHARS] + "\n[truncated]")
         # Le texte d'une erreur est journalisé : sur la surface Anthropic
         # le client n'en reçoit qu'un code, seul le modèle lit le détail.
         log.info("outil hébergé %s(%s) → %d car. en %.1fs%s", name,

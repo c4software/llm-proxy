@@ -1424,7 +1424,8 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
     budget = sum(limits.values()) if limits is not None else limit
     hard_limit = HOSTED_HARD_LIMIT if budget is None \
         else min(HOSTED_HARD_LIMIT, budget + HOSTED_EXTRA_CALLS)
-    used = 0
+    used = 0                          # appels comptés au plafond COMMUN
+    ran = 0                           # tous les appels exécutés
     spent: dict[str, int] = {}        # appels exécutés, par fonction
     # Le client, pour l'outil (tools.Call) : le condensé de sa clé.
     client = tools.owner(client_token(request)) if PROXY_API_KEYS else ""
@@ -1449,7 +1450,13 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
             for pending in list(robinet.pending):
                 name = pending["name"]
                 count, cap = used, limit
-                if limits is not None:
+                # Un outil qui a son propre compte (Tool.max_calls) : ses
+                # appels, contre sa limite — ils ne pèsent pas sur le
+                # plafond commun.
+                own = hosted.own(name)
+                if own:
+                    count, cap = spent.get(name, 0), (limits or {}).get(name)
+                elif limits is not None:
                     # Limites par fonction : c'est le compte de CETTE
                     # fonction que l'exécution compare à sa limite — tant
                     # que la borne du proxy, commune à toutes, n'est pas
@@ -1463,17 +1470,24 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                 while not await _settled(task, ping):
                     yield ping
                 result, task = task.result(), None
-                used += 1
+                ran += 1
+                used += not own
                 spent[name] = spent.get(name, 0) + 1
                 out = robinet.resolve(pending, result)
                 if out:
                     yield out
-            if handback or used >= hard_limit:
+            # Même garde-fou pour un outil à compte propre : sa limite,
+            # plus la même marge.
+            stuck = used >= hard_limit or any(
+                n >= hosted.cap((limits or {}).get(name), name)
+                + HOSTED_EXTRA_CALLS
+                for name, n in spent.items() if hosted.own(name))
+            if handback or stuck:
                 if not handback:
                     log.warning(
                         "%s : %d appels d'outils hébergés, le modèle "
                         "ne conclut pas — réponse close (model=%s)",
-                        call.endpoint, used, call.model_key)
+                        call.endpoint, ran, call.model_key)
                 yield robinet.finalize()
                 return
 
@@ -1532,10 +1546,10 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
             elif not task.cancelled() and task.exception() is None \
                     and hasattr(task.result(), "aclose"):
                 upstream = task.result()
-        if used:
+        if ran:
             log.info(
                 "%s : %d appel(s) d'outil hébergé en %d tour(s) "
-                "upstream (model=%s)", call.endpoint, used, robinet.turns,
+                "upstream (model=%s)", call.endpoint, ran, robinet.turns,
                 call.model_key)
         if anthropic_api.TRACE and hasattr(robinet, "summary"):
             log.info("[%s] %s → %s", call.backend.name, call.model_key,

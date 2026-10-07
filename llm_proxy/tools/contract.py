@@ -21,6 +21,7 @@ ERRORS = (
     "too_many_requests",    # la cible demande de ralentir
     "timeout",              # délai de l'exécution dépassé
     "limit",                # limite d'appels de la réponse atteinte
+    "failed",               # l'outil a tourné et rapporte lui-même un échec
     "unavailable",          # l'outil lui-même est en panne, ou non configuré
 )
 
@@ -36,6 +37,16 @@ class Source:
 
 
 @dataclass(frozen=True)
+class Artifact:
+    """Un FICHIER produit par un outil : le graphique ou le tableur sorti
+    d'une exécution de code. `name` : un nom de fichier, sans chemin ;
+    `media_type` : son type MIME ; `data` : ses octets."""
+    name: str
+    media_type: str
+    data: bytes
+
+
+@dataclass(frozen=True)
 class Result:
     """Ce qu'un outil rend — le SEUL format d'échange entre un outil et le
     reste du proxy.
@@ -48,11 +59,16 @@ class Result:
     `sources` : les pages citées, pour le client (annotations, blocs).
     `meta`    : des faits pour l'affichage du client — l'URL réellement
                 lue, un titre, une plage de caractères… Rien que le
-                modèle doive lire, rien qui soit gardé."""
+                modèle doive lire, rien qui soit gardé.
+    `files`   : des fichiers produits (Artifact). Aucune mémoire ne les
+                garde, aucune surface ne les rend encore : seul `text`
+                continue de l'être — il doit donc les NOMMER pour que le
+                modèle sache qu'ils existent."""
     text: str
     error: str | None = None
     sources: tuple[Source, ...] = ()
     meta: Mapping = field(default_factory=dict)
+    files: tuple[Artifact, ...] = ()
 
 
 def failure(code: str, message: str) -> Result:
@@ -85,11 +101,16 @@ class Call:
     `model`    : le modèle PRÉFIXÉ de la conversation, «» pour l'appel
                  direct.
     `client`   : le condensé de la clé du client (tools.owner), «» pour
-                 un proxy ouvert — jamais la clé."""
+                 un proxy ouvert — jamais la clé.
+    `session`  : l'identifiant de la CONVERSATION, fourni par la surface
+                 — de quoi retrouver un état d'un appel au suivant (un
+                 conteneur d'exécution). «» = la surface n'en a pas ; un
+                 outil à état s'en passe alors (un état par appel)."""
     settings: Mapping = field(default_factory=dict)
     endpoint: str = ""
     model: str = ""
     client: str = ""
+    session: str = ""
 
 
 # ── liaisons aux protocoles ─────────────────────────────────────────────
@@ -128,6 +149,16 @@ class Tool:
     enabled = True
     responses: Responses | None = None
     anthropic: Anthropic | None = None
+    # Délai (s) d'UNE exécution, propre à l'outil ; None = le délai
+    # commun, [tools].run_timeout. L'exécuteur l'applique.
+    timeout: float | None = None
+    # Appels exécutés au plus pour UNE réponse, propres à l'outil et
+    # comptés À PART des autres ; None = le plafond commun,
+    # [tools].max_calls, que tous ces outils-là partagent.
+    max_calls: int | None = None
+    # Ce que le refus par limite d'appels dit des appels comptés au
+    # plafond commun : «the limit of 8 <family> tool calls». «» = rien.
+    family = ""
 
     @property
     def kinds(self) -> tuple[str, ...]:

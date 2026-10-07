@@ -123,6 +123,7 @@ def found(query: str, sources) -> Result:
 
 class WebSearch(Tool):
     name = NAME
+    family = "web"
     responses = Responses(
         kinds=("web_search", "web_search_preview", "web_search_2025_08_26"),
         item="web_search_call")

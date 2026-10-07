@@ -30,8 +30,8 @@ Tout tient dans `llm_proxy/tools/contract.py`, réexporté par le paquet :
   (`spec`), une exécution (`run`), de quoi dire l'appel au client
   (`summary`), et ses **liaisons** aux protocoles, en données.
 - Il rend un **`Result`** : le texte que lit le modèle, un code d'erreur
-  à côté, des sources, des faits pour l'affichage. C'est le seul format
-  d'échange entre un outil et le reste du proxy.
+  à côté, des sources, des faits pour l'affichage, des fichiers produits.
+  C'est le seul format d'échange entre un outil et le reste du proxy.
 - **Rien d'autre ne connaît l'outil.** Ni les surfaces, ni `/v1/tools`,
   ni les statistiques ne relisent son texte, ne testent son nom ou ne
   devinent ce qu'il sait faire.
@@ -45,6 +45,7 @@ class Result:
     error: str | None = None            # un code de la liste, None = succès
     sources: tuple[Source, ...] = ()    # les pages citées
     meta: Mapping = {}                  # des faits pour l'affichage du client
+    files: tuple[Artifact, ...] = ()    # des fichiers produits
 ```
 
 | Membre | Pour qui | Règle |
@@ -54,8 +55,21 @@ class Result:
 | `sources` | le client | `Source(url, title, date, snippet)` — seule `url` est obligatoire, `date` est `AAAA-MM-JJ` ou vide. Elles font les annotations `url_citation` d'un client chat/completions et les blocs `web_search_result` d'un client Anthropic. Une erreur n'en a pas |
 | `meta` | le client | Un dictionnaire de valeurs JSON : l'URL réellement lue, un titre, une plage de caractères… Rien que le modèle doive lire, rien qui soit gardé. Les clés sont à l'outil |
 
-Quand l'exécuteur coupe un texte trop long, `sources` et `meta` ne sont
-pas touchés : ils disent ce que l'outil a trouvé.
+| `files` | personne encore | `Artifact(name, media_type, data)` : un fichier **produit** par l'outil — un nom sans chemin, son type MIME, ses octets. Voir ci-dessous |
+
+Quand l'exécuteur coupe un texte trop long, `sources`, `meta` et `files`
+ne sont pas touchés : ils disent ce que l'outil a trouvé ou produit.
+
+**Les fichiers ne vont nulle part pour l'instant.** Le type existe pour
+que l'exécution de code s'écrive contre lui ; rien ne le branche encore.
+L'exécuteur les laisse passer tels quels, puis ils sont **ignorés** :
+l'enveloppe de `/v1/tools` ne les porte pas, aucune surface ne les rend
+au client, aucune mémoire ne les garde — `tools.Memory` et la mémoire des
+échanges cachés ne retiennent que `text`, et le tour suivant ne rend que
+lui au modèle. Un outil qui produit un fichier le **nomme donc dans son
+texte** : c'est tout ce que le modèle en saura. Où vit un fichier,
+combien de temps, et ce que chaque protocole en rend : c'est le chantier
+de l'exécution de code, pas ce contrat.
 
 Un échec se construit par `tools.failure(code, message)` —
 `Result("Error: <message>", code)` — ou, depuis `run`, en levant
@@ -74,6 +88,9 @@ reste a un défaut.
 | `spec(present) -> dict` | La fonction à la forme chat/completions : `{"type": "function", "function": {name, description, parameters}}`. `present` est l'ensemble des noms des outils hébergés présentés **avec lui** dans cette requête, le sien compris : une description ne renvoie qu'à ce que le modèle peut appeler (`web_search` ne dit « Use web_fetch… » que si `web_fetch` est là, et inversement) |
 | `async run(args, call) -> Result` | L'exécution. `args` : les arguments du modèle, un objet JSON déjà lu et **rien de validé**. `call` : voir plus bas. Rend un `Result` ou lève `ToolError` |
 | `summary(args, result=None) -> dict` | Ce que le client affiche de l'appel : un `type`, et ce qui le distingue (`{"type": "search", "query": …}`). C'est l'`action` d'un élément Responses. `result` vaut `None` pour l'appel seul — un élément rejoué dont la mémoire a perdu le résultat. Défaut : `{"type": <name>}` |
+| `timeout` | Délai (s) d'**une** exécution, propre à l'outil ; `None` (le défaut) = `[tools].run_timeout`. Il **remplace** le délai commun — plus long pour une transcription, plus court si l'outil le veut. L'exécuteur l'applique |
+| `max_calls` | Appels exécutés au plus pour **une** réponse, propres à l'outil et **comptés à part** : ses appels ne pèsent pas sur le plafond commun, ni ceux des autres sur le sien. `None` (le défaut) = le plafond commun, `[tools].max_calls`, que ces outils-là se partagent |
+| `family` | Un mot pour le refus par limite du plafond commun : `"web"` donne « the limit of 8 web tool calls », le défaut `""` « the limit of 8 tool calls ». Un outil à `max_calls` est nommé, lui : « the limit of 3 code_execution calls » |
 | `responses`, `anthropic` | Les [liaisons aux protocoles](#liaisons-aux-protocoles), ou `None` |
 | `kinds` | Les types qui déclarent l'outil dans `tools` d'une requête chat/completions : ceux de sa liaison Responses, ou son nom s'il n'en a pas. Calculé |
 | `render(args, sources) -> str` | Le texte du modèle **refait** depuis des sources. À écrire seulement par un outil lié au bloc Anthropic `web_search_tool_result`, dont le client rejoue les sources et non le texte |
@@ -88,6 +105,7 @@ Ce qui ne vient **pas** du modèle — qui ne peut donc pas s'en affranchir.
 | `endpoint` | La route par où l'appel arrive (`/v1/responses`, `/v1/tools`…) |
 | `model` | Le modèle préfixé de la conversation ; vide pour l'appel direct |
 | `client` | Le condensé de la clé du client (`tools.owner`), vide pour un proxy ouvert — jamais la clé |
+| `session` | L'identifiant de la **conversation**, fourni par la surface : de quoi retrouver un état d'un appel au suivant (un conteneur d'exécution). **Vide partout pour l'instant** — aucune des trois API n'identifie une conversation, et aucune surface n'en fabrique encore un. Un outil à état doit donc marcher avec `""` : un état par appel, rien de partagé |
 
 ### Ce que `run` peut faire, et ce qui lui arrive
 
@@ -96,8 +114,8 @@ Ce qui ne vient **pas** du modèle — qui ne peut donc pas s'en affranchir.
 - Lever autre chose : c'est une panne. Le modèle lit
   `Error: <nom> failed (<Exception>).`, le code est `unavailable`, la
   trace part dans le journal. Rien ne remonte au client.
-- Dépasser `[tools].run_timeout` : la coroutine est annulée, code
-  `timeout`.
+- Dépasser son délai — `Tool.timeout`, ou `[tools].run_timeout` s'il n'en
+  a pas : la coroutine est annulée, code `timeout`.
 - Rendre un code hors liste, ou autre chose qu'un `Result` :
   `unavailable`, avec un avertissement dans le journal.
 
@@ -113,8 +131,9 @@ chaque surface le traduit dans son vocabulaire.
 | `not_accessible` | Cible injoignable, introuvable ou en erreur : hôte inconnu, HTTP 4xx/5xx, trop de redirections | l'outil |
 | `unsupported` | Contenu que l'outil ne sait pas rendre : type non textuel, PDF sans texte | l'outil |
 | `too_many_requests` | La cible demande de ralentir (HTTP 429) | l'outil |
-| `timeout` | Délai de l'exécution dépassé (`run_timeout`) | l'exécuteur |
-| `limit` | Limite d'appels de la réponse atteinte (`max_calls`, `max_uses` du client) — rien n'a été exécuté | l'exécuteur |
+| `timeout` | Délai de l'exécution dépassé (`Tool.timeout`, `run_timeout`) | l'exécuteur |
+| `limit` | Limite d'appels de la réponse atteinte (`[tools].max_calls`, `Tool.max_calls`, `max_uses` du client) — rien n'a été exécuté | l'exécuteur |
+| `failed` | L'outil **a tourné** et rapporte lui-même un échec ; le texte dit lequel : `isError` d'un outil MCP, un programme sorti en erreur. Ni les arguments (`invalid_input`) ni l'outil (`unavailable`) ne sont en cause a priori — le modèle lit, et décide | l'outil |
 | `unavailable` | L'outil lui-même est en panne ou n'est pas configuré : moteur de recherche injoignable, exception | l'outil, l'exécuteur |
 
 Ce que chaque surface en fait :
@@ -129,6 +148,7 @@ Ce que chaque surface en fait :
 | `too_many_requests` | `too_many_requests` | idem | `error` | idem |
 | `timeout` | `unavailable` | idem | `error` | idem |
 | `limit` | `max_uses_exceeded` | idem | `limit` | idem |
+| `failed` | `unavailable` (Anthropic n'a pas de code commun pour cela ; aucun outil lié ne le rend aujourd'hui) | idem | `error` | idem |
 | `unavailable` | `unavailable` | idem | `error` | idem |
 
 La table Anthropic est `anthropic_api.ERROR_CODES`. Dans tous les cas le
@@ -181,8 +201,13 @@ rien pour rendre compte de l'appel.
    `Hosted.run`, le point unique. Dans l'ordre : nom inconnu →
    `invalid_input` ; limite d'appels atteinte → `limit`, sans exécuter ;
    arguments qui ne sont pas un objet JSON → `invalid_input` ; puis
-   `run(args, call)` sous `run_timeout`, toute exception rattrapée ; enfin
-   le texte coupé à `max_result_chars`.
+   `run(args, call)` sous le délai de l'outil (`Tool.timeout`, sinon
+   `run_timeout`), toute exception rattrapée ; enfin le texte coupé à
+   `max_result_chars`. La limite d'appels se compte **par réponse** : un
+   compte commun (`[tools].max_calls`) pour tous les outils qui n'ont pas
+   le leur, un compte à part pour chaque outil à `Tool.max_calls`. Un
+   modèle qui insiste quatre fois au-delà d'une limite voit sa réponse
+   close sans lui (`app.HOSTED_EXTRA_CALLS`).
 3. **Résultat.** La surface reçoit le `Result` (`resolve`) et en fait ce
    que son protocole prévoit : un élément `completed` (Responses), un
    bloc de résultat ou d'erreur (Anthropic), des annotations à la fin de
@@ -216,7 +241,8 @@ rien pour rendre compte de l'appel.
 
 `name`, `result` et `is_error` sont stables : des extensions de clients
 les lisent. `error` est le [code](#codes-derreur) (`null` pour un succès),
-`sources` et `meta` ceux du `Result`. Toujours `200` quand l'outil
+`sources` et `meta` ceux du `Result` (ses `files` n'y sont pas : voir
+[Le résultat](#le-résultat--result)). Toujours `200` quand l'outil
 existe ; `404` `unknown_tool` sinon, `400` si le corps n'est pas un objet.
 
 ## Écrire un outil
@@ -309,17 +335,16 @@ Ce qu'il faut tenir :
 
 ## Prévu, pas construit
 
-Le contrat s'arrête au texte. Trois extensions sont attendues, et rien
-de ce qui précède ne les construit :
+Le contrat porte de quoi écrire un outil à fichiers, à état, lent ou
+compté à part. Ce qui n'est **pas** construit derrière :
 
-- **Résultats non textuels, fichiers.** Une image produite, un fichier
-  sorti d'une exécution de code. Aujourd'hui `Result` n'a que `text` ;
-  il faudra dire où vit le fichier, combien de temps, et ce que chaque
-  protocole en rend. `meta` n'est pas fait pour cela.
-- **État de session entre appels.** Un conteneur d'exécution qui survit
-  d'un appel au suivant, une session MCP. `Call.client` identifie le
-  client, pas la conversation — qu'aucune des trois API n'identifie.
-- **Délai et quota propres à un outil.** Les bornes sont celles de
-  `[tools]`, communes : `run_timeout`, `max_calls`. Un outil peut déjà
-  refuser de lui-même par `ToolError("limit", …)` (compté `limit`), mais
-  rien ne lui donne un délai plus long ni un compteur à lui.
+- **Les fichiers produits ne sont rendus à personne.** `Result.files`
+  existe ; aucune surface ne le rend, aucune mémoire ne le garde (voir
+  [Le résultat](#le-résultat--result)). Reste à dire où vit un fichier,
+  combien de temps, et ce que chaque protocole en fait.
+- **Aucune surface ne fournit de `session`.** `Call.session` vaut `""`
+  partout : aucune des trois API n'identifie une conversation, et il
+  reste à décider de quoi le proxy en dérive un identifiant stable.
+- **Un outil à `max_calls` sous un `max_uses` du client** : la limite du
+  client abaisse la sienne comme elle abaisse la commune ; aucun outil
+  lié à l'API Messages n'a encore de compte propre pour l'éprouver.

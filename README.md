@@ -1450,8 +1450,8 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `max_calls` | `8` | Appels d'outils hébergés exécutés pour **une** réponse ; au-delà, le modèle reçoit une erreur qui lui demande de conclure. Le `max_uses` d'un outil serveur Anthropic peut l'abaisser pour sa requête, jamais le relever |
-| `run_timeout` | `60` | Secondes pour une exécution, tout compris (redirections suivies incluses). Dépassé → erreur rendue au modèle |
+| `max_calls` | `8` | Appels d'outils hébergés exécutés pour **une** réponse ; au-delà, le modèle reçoit une erreur qui lui demande de conclure. Le `max_uses` d'un outil serveur Anthropic peut l'abaisser pour sa requête, jamais le relever. Un outil peut avoir son propre compte, à part (`Tool.max_calls`, [docs/outils.md](docs/outils.md)) |
+| `run_timeout` | `60` | Secondes pour une exécution, tout compris (redirections suivies incluses). Dépassé → erreur rendue au modèle. Un outil peut avoir son propre délai (`Tool.timeout`) |
 | `max_result_chars` | `24000` | Caractères d'un résultat rendu au modèle ; le surplus est coupé et marqué `[truncated]` |
 | `cache_entries` | `512` | Appels gardés par la [mémoire des résultats](#mémoire-des-résultats) ; les moins récemment relus sortent |
 | `cache_ttl` | `86400` | Secondes de vie d'une entrée de cette mémoire |

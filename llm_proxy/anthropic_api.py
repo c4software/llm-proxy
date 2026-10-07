@@ -125,6 +125,9 @@ ERROR_CODES = {
     "too_many_requests": "too_many_requests",
     "limit": "max_uses_exceeded",
     "timeout": "unavailable",
+    # L'outil a tourné et dit avoir échoué : Anthropic n'a pas de code
+    # commun pour cela, et seul le modèle en lit le détail.
+    "failed": "unavailable",
     "unavailable": "unavailable",
 }
 
