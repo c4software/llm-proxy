@@ -9,7 +9,9 @@ fichiers de /work (un tmpfs borné) — pas les variables d'un interpréteur.
 
 Rien ne passe par un chemin de l'hôte : le code entre par l'entrée
 standard, les fichiers produits sortent par un `tar` lu sur la sortie
-standard. Aucun volume, aucun montage de l'extérieur.
+standard, et les fichiers d'ENTRÉE (ceux que l'appelant dépose dans /work
+avant le programme) entrent de même, par un `tar` construit en mémoire.
+Aucun volume, aucun montage de l'extérieur.
 
 Ce qui borne un bac, du plus sûr au moins sûr ICI (podman imbriqué dans
 un conteneur Docker, sans systemd : le cgroup n'y est délégué que si le
@@ -45,6 +47,7 @@ import asyncio
 import io
 import math
 import os
+import re
 import tarfile
 import time
 import uuid
@@ -57,6 +60,29 @@ STAMP = ".sbx_stamp"            # dans /work : repère « avant l'exécution »
 # n° i tourne sous UID_BASE + i. Un uid par bac, pour que RLIMIT_NPROC
 # (compté par uid) borne chaque bac à part, cgroups ou non.
 UID_BASE = 20000
+# Le nom d'un fichier d'ENTRÉE : un nom nu, sans chemin, qui ne commence
+# ni par un point (caché : le repère, les caches) ni par un tiret (une
+# option), fait de lettres, chiffres, `_`, `.` et `-`. C'est l'appelant
+# qui assainit ; ici le nom est seulement JUGÉ, et refusé.
+INPUT_NAME = re.compile(r"\w[\w.-]{0,79}")
+# Le dépôt, dans le bac : l'archive arrive sur l'entrée standard, puis ce
+# qui EST réellement là est relu (taille et nom, entre deux octets nuls :
+# rien d'autre de la sortie ne s'y confond).
+#   --unlink-first : ce qui porte déjà ce nom est RETIRÉ avant l'écriture
+#     — un lien symbolique posé là par un programme précédent du bac est
+#     remplacé, jamais suivi (GNU tar ne traverse un lien existant qu'avec
+#     --dereference, qui n'est pas demandé ; vu avec tar 1.35). Un dossier
+#     non vide de ce nom ne se retire pas : le fichier est refusé ;
+#   --touch : la date est celle du dépôt, pas celle de l'archive.
+# `find` sans -L ne suit pas non plus : seul un fichier ordinaire compte.
+# Tout cela tourne sous l'uid du bac, DANS le bac : un lien suivi n'aurait
+# écrit que là où le programme écrit déjà — mais le fichier ne serait pas
+# où le modèle l'attend.
+DEPOSIT = ("sh", "-c",
+           "tar -xf - --unlink-first --touch --no-same-owner "
+           "--no-same-permissions 2>/dev/null; "
+           r"""exec find "$@" -maxdepth 0 -type f -printf '\0%s %f\0' """
+           "2>/dev/null", "sh")
 
 
 
@@ -104,6 +130,9 @@ class Limits:
     max_files: int = 8              # fichiers rendus par exécution
     max_file_bytes: int = 5_000_000
     max_total_bytes: int = 10_000_000
+    max_inputs: int = 8             # fichiers DÉPOSÉS par exécution
+    max_input_bytes: int = 20_000_000
+    max_input_total_bytes: int = 40_000_000
     max_sessions: int = 8           # bacs ouverts, tous clients confondus
     max_sessions_per_client: int = 4
 
@@ -138,6 +167,10 @@ class Outcome:
     files: list[File] = field(default_factory=list)
     # fichiers non rendus : {"name", "reason"}
     skipped: list[dict] = field(default_factory=list)
+    # fichiers d'entrée déposés dans /work : {"name", "size"} ; et ceux
+    # qui ne l'ont pas été : {"name", "reason"}
+    inputs: list[dict] = field(default_factory=list)
+    rejected: list[dict] = field(default_factory=list)
     seconds: float = 0.0
 
 
@@ -475,10 +508,13 @@ class Sandboxes:
 
     # ── exécution ───────────────────────────────────────────────────────
     async def execute(self, client: str, session: str, language: str,
-                      code: str, timeout: float | None = None) -> Outcome:
+                      code: str, timeout: float | None = None,
+                      inputs=()) -> Outcome:
         """Exécute `code` dans le bac de (client, session), créé au
         besoin. `session` vide : un bac d'UN appel, détruit aussitôt.
         `timeout` : le délai demandé, ramené sous celui des bornes.
+        `inputs` : des File à déposer dans /work AVANT le programme ; un
+        fichier refusé n'empêche pas l'exécution (Outcome.rejected).
         Lève ValueError (langage inconnu), Busy, SandboxError."""
         if language not in LANGS:
             raise ValueError(f"langage inconnu : {language}")
@@ -505,7 +541,7 @@ class Sandboxes:
             try:
                 if fresh:
                     await self._boot(key, s)
-                out = await self._exec(s, language, code, limit)
+                out = await self._exec(s, language, code, limit, inputs)
                 if out.exit_code == 125 and not fresh \
                         and self._sessions.get(key) is s \
                         and not await self._alive(s.name):
@@ -515,7 +551,7 @@ class Sandboxes:
                     await self._remove(s.name)
                     s.name, fresh = "", True
                     await self._boot(key, s)
-                    out = await self._exec(s, language, code, limit)
+                    out = await self._exec(s, language, code, limit, inputs)
             except TimeoutError:
                 # Le `timeout` du bac n'a pas suffi (ou podman ne
                 # répond plus) : on détruit, l'état est perdu.
@@ -546,9 +582,13 @@ class Sandboxes:
             raise
 
     async def _exec(self, s: _Session, language: str, code: str,
-                    limit: float) -> Outcome:
+                    limit: float, inputs=()) -> Outcome:
         lim = self.limits
         t = max(int(limit), 1)
+        # Les fichiers d'entrée AVANT le repère : déposés, ils ne sont pas
+        # « plus récents » que lui, et ne repartent donc pas à la récolte
+        # comme des fichiers produits — sauf si le programme les modifie.
+        placed, rejected = await self._deposit(s, inputs)
         started = time.monotonic()
         # Le repère, puis le programme sous `timeout` : TERM à t, KILL 2 s
         # plus tard. Le programme arrive sur l'entrée standard. Les 20 ms
@@ -571,10 +611,76 @@ class Sandboxes:
             text += f"\n[… {lost} bytes of output omitted …]\n"
         text += tail.decode("utf-8", "replace")
         out = Outcome(text, None if timed_out else rc, timed_out=timed_out,
-                      truncated=bool(lost))
+                      truncated=bool(lost), inputs=placed, rejected=rejected)
         if rc != 125:
             out.files, out.skipped = await self._harvest(s)
         return out
+
+    async def _deposit(self, s: _Session, inputs):
+        """Dépose les fichiers d'entrée dans /work, sous l'uid du bac, sans
+        chemin de l'hôte : UNE archive tar construite ici, en mémoire, de
+        fichiers ordinaires aux noms jugés, dépliée dans le bac par son
+        entrée standard (DEPOSIT). Les bornes sont celles d'ICI : ni les
+        tailles ni les noms de l'appelant ne sont crus. Puis ce qui est
+        réellement là est RELU — un fichier absent, coupé (/work plein) ou
+        qui n'est pas un fichier ordinaire (un dossier de ce nom) n'est pas
+        déposé, et ce qu'il en reste est retiré : un CSV à moitié écrit se
+        lirait sans erreur. Un fichier du même nom est REMPLACÉ. Rend
+        (déposés, refusés) ; ne lève pas."""
+        lim = self.limits
+        wanted, rejected, total = {}, [], 0
+        for f in inputs:
+            if not INPUT_NAME.fullmatch(f.name) \
+                    or len(f.name.encode("utf-8", "replace")) > 200:
+                why = "invalid name"
+            elif f.name in wanted:
+                why = "duplicate name"
+            elif len(f.data) > lim.max_input_bytes:
+                why = "too large"
+            elif len(wanted) >= lim.max_inputs:
+                why = "too many files"
+            elif total + len(f.data) > lim.max_input_total_bytes:
+                why = "total too large"
+            else:
+                wanted[f.name] = f.data
+                total += len(f.data)
+                continue
+            rejected.append({"name": f.name[:200], "reason": why})
+        if not wanted:
+            return [], rejected[:50]
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as tar:
+            for name, data in wanted.items():
+                # «./» devant chaque nom, 0644, ni propriétaire ni date :
+                # l'uid est celui du bac, la date celle du dépôt.
+                info = tarfile.TarInfo("./" + name)
+                info.size, info.mode = len(data), 0o644
+                tar.addfile(info, io.BytesIO(data))
+        try:
+            rc, raw, _ = await self._run(
+                "exec", "--interactive", "--workdir", WORKDIR, s.name,
+                *DEPOSIT, *("./" + name for name in wanted),
+                stdin=archive.getvalue(), timeout=30, cap=200_000)
+        except TimeoutError:
+            rc, raw = 1, b""
+        there = {name for size, _, name in (
+            entry.partition(" ") for entry in
+            raw.decode("utf-8", "replace").split("\0"))
+            if name in wanted and size == str(len(wanted[name]))}
+        missing = [name for name in wanted if name not in there]
+        # 125 : podman n'a rien lancé (le bac a disparu) — rien à retirer,
+        # et execute repart d'un bac neuf, où le dépôt est refait.
+        if missing and rc != 125:
+            try:
+                await self._run(
+                    "exec", "--workdir", WORKDIR, s.name, "rm", "-f", "--",
+                    *("./" + name for name in missing), timeout=15)
+            except TimeoutError:
+                pass
+        rejected += [{"name": name, "reason": "could not be written"}
+                     for name in missing]
+        return [{"name": name, "size": len(wanted[name])}
+                for name in wanted if name in there], rejected[:50]
 
     async def _harvest(self, s: _Session):
         """Les fichiers de /work créés ou modifiés par l'exécution :
@@ -583,7 +689,10 @@ class Sandboxes:
         `__pycache__` et les `node_modules` ne sont pas des fichiers
         produits. « Modifié » se lit au ctime (-cnewer), que le programme
         ne peut pas antidater : un fichier sorti d'une archive avec sa
-        vieille date compte. Rend (fichiers, écartés)."""
+        vieille date compte. Un fichier d'entrée (_deposit) est posé AVANT
+        le repère : il n'est repris que si le programme l'a modifié — il
+        est alors un fichier produit comme un autre. Rend (fichiers,
+        écartés)."""
         lim = self.limits
         try:
             rc, raw, lost = await self._run(

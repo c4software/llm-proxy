@@ -4,20 +4,22 @@ conteneur — et le magasin des fichiers rendus (llm_proxy/files.py). La
 configuration est posée par monkeypatch sur les constantes des modules.
 
 Ce qui est vérifié : ce que l'outil envoie, le texte qu'il écrit pour le
-modèle, ses codes d'erreur, les fichiers qu'il rend ; les bornes du
-magasin et les en-têtes sous lesquels un fichier est servi. L'exécuteur
-lui-même est dans test_executor.py."""
+modèle, ses codes d'erreur, les fichiers qu'il rend ; les fichiers
+d'entrée (`files`) téléchargés d'un faux web, sous le garde-fou et leurs
+bornes ; les bornes du magasin et les en-têtes sous lesquels un fichier
+est servi. L'exécuteur lui-même est dans test_executor.py."""
 
 import asyncio
 import base64
 import json
+import socket
 
 import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
 import httpx
 import pytest
 
 from llm_proxy import files, tools
-from llm_proxy.tools import code_execution
+from llm_proxy.tools import code_execution, net
 
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(40)
 TOOL = code_execution.TOOL
@@ -35,6 +37,19 @@ def reglages(monkeypatch):
     monkeypatch.setattr(code_execution, "TIMEOUT", 30)
     monkeypatch.setattr(code_execution, "MAX_CALLS", 8)
     monkeypatch.setattr(code_execution, "MAX_OUTPUT_CHARS", 12_000)
+    monkeypatch.setattr(code_execution, "MAX_FILES", 8)
+    monkeypatch.setattr(code_execution, "MAX_FILE_BYTES", 1000)
+    monkeypatch.setattr(code_execution, "MAX_FILES_BYTES", 2500)
+    monkeypatch.setattr(code_execution, "DOWNLOAD_TIMEOUT", 60)
+    # Le garde-fou commun ([tools.net]), et un DNS sans réseau.
+    monkeypatch.setattr(net, "ALLOW_PRIVATE", False)
+    monkeypatch.setattr(net, "ALLOWED_DOMAINS", [])
+    monkeypatch.setattr(net, "BLOCKED_DOMAINS", ["interdit.test"])
+    table = {"site.test": "93.184.216.34", "interdit.test": "1.1.1.1",
+             "intern.test": "10.0.0.5"}
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda host, port, *a, **k: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (table[host], port))])
     monkeypatch.setattr(files, "PUBLIC_URL", "https://proxy.test")
     monkeypatch.setattr(files, "STORE", files.Store(3600, 10_000, 4_000))
     monkeypatch.setattr(tools, "MAX_RESULT_CHARS", 24_000)
@@ -65,12 +80,36 @@ def executor(reply, seen=None):
     return httpx.MockTransport(handler)
 
 
+CSV = b"mois,ventes\njanvier,12\n"
+
+
+def web(request):
+    """Le faux web d'où viennent les fichiers d'entrée."""
+    path = request.url.path
+    if path == "/data/ventes.csv":
+        return httpx.Response(200, content=CSV,
+                              headers={"content-type": "text/csv"})
+    if path == "/export":
+        return httpx.Response(200, content=b"PK" + bytes(598), headers={
+            "content-disposition": 'attachment; filename="rapport 2026.xlsx"'})
+    if path == "/suivre":
+        return httpx.Response(302, headers={"location": "/data/ventes.csv"})
+    if path == "/fuite":
+        return httpx.Response(302, headers={"location": "http://intern.test/x"})
+    if path == "/gros.bin":
+        return httpx.Response(200, content=b"0" * 1001)
+    if path == "/vide.csv":
+        return httpx.Response(200, content=b"")
+    return httpx.Response(404, text="rien")
+
+
 def rendu(args, reply=None, session="conv", seen=None) -> tools.Result:
     """Ce que tools.Hosted fait d'un `run` appelé à la main."""
     call = tools.Call(client="clientA", session=session, endpoint="/v1/tools")
     try:
         return go(TOOL.run(args, call, transport=executor(
-            answer() if reply is None else reply, seen)))
+            answer() if reply is None else reply, seen),
+            downloads=httpx.MockTransport(web)))
     except tools.ToolError as exc:
         return tools.failure(exc.code, exc.message)
 
@@ -83,7 +122,9 @@ def test_contrat_de_l_outil():
     assert TOOL.responses is None and TOOL.anthropic is None
     # Son délai couvre celui du programme et le travail de l'exécuteur ;
     # ses appels sont comptés à part.
-    assert TOOL.timeout == 150 and TOOL.max_calls == 8 and TOOL.enabled
+    # … et, avant lui, le téléchargement des fichiers d'entrée.
+    assert TOOL.timeout == 30 + 120 + 60 + 45
+    assert TOOL.max_calls == 8 and TOOL.enabled
     fn = TOOL.spec({"code_execution"})["function"]
     assert fn["name"] == "code_execution"
     assert fn["parameters"]["required"] == ["language", "code"]
@@ -94,6 +135,133 @@ def test_contrat_de_l_outil():
     assert "no Go module, no Rust crate" in fn["description"]
     assert TOOL.summary({"language": "bash"}) == {
         "type": "code_execution", "language": "bash"}
+
+
+def test_contrat_des_fichiers_d_entree(monkeypatch):
+    fn = TOOL.spec({"code_execution"})["function"]
+    entry = fn["parameters"]["properties"]["files"]["items"]
+    assert entry["required"] == ["url"] and set(entry["properties"]) == {
+        "url", "name"}
+    assert "list it in `files`" in fn["description"]
+    assert "do not list it again" in fn["description"]
+    # Ce qui n'est qu'à LIRE a ses outils — nommés s'ils sont présentés.
+    assert "web_fetch" not in fn["description"]
+    fn = TOOL.spec({"code_execution", "web_fetch", "ocr"})["function"]
+    assert "To only READ a page or a document, use web_fetch or ocr " \
+        "instead." in fn["description"]
+    # max_files = 0 : le paramètre n'est ni offert, ni accepté.
+    monkeypatch.setattr(code_execution, "MAX_FILES", 0)
+    fn = TOOL.spec({"code_execution"})["function"]
+    assert "files" not in fn["parameters"]["properties"]
+    assert "`files`" not in fn["description"]
+    r = rendu({**CODE, "files": ["https://site.test/data/ventes.csv"]})
+    assert r.error == "invalid_input" and "without `files`" in r.text
+
+
+def test_fichiers_d_entree():
+    """Téléchargés sous le garde-fou, nommés, passés à l'exécuteur ; ceux
+    qui manquent sont dits, et le programme tourne quand même."""
+    seen = []
+    here = "https://site.test"
+    r = rendu({**CODE, "files": [
+        {"url": f"{here}/data/ventes.csv"},
+        f" {here}/export?id=3 ",                         # une URL nue
+        {"url": f"{here}/data/ventes.csv", "name": "../mes données.csv"},
+        {"url": f"{here}/data/ventes.csv"},              # le même nom
+        {"url": f"{here}/suivre"},
+        {"url": f"{here}/gros.bin"},
+        {"url": f"{here}/fuite"},
+        {"url": "https://interdit.test/a.csv"}]}, answer(
+            output="ok\n", inputs=[
+                {"name": "ventes.csv", "size": 23},
+                {"name": "rapport_2026.xlsx", "size": 600},
+                {"name": "ventes-2.csv", "size": 23},
+                {"name": "jamais-envoye.txt", "size": 1}],
+            rejected=[{"name": "mes_données.csv", "reason": "too large"}]),
+        seen=seen)
+    sent = json.loads(seen[0].content)["inputs"]
+    assert [f["name"] for f in sent] == [
+        "ventes.csv", "rapport_2026.xlsx", "mes_données.csv", "ventes-2.csv",
+        "suivre.csv"]
+    assert base64.b64decode(sent[0]["data"]) == CSV
+    assert (r.error, r.files) == (None, ())
+    assert r.text == (
+        "Exit code: 0\n"
+        "Files copied into the working directory before the run (kept there "
+        "for the next calls):\n"
+        f"- ventes.csv (23 bytes), from {here}/data/ventes.csv\n"
+        f"- rapport_2026.xlsx (600 bytes), from {here}/export?id=3\n"
+        f"- ventes-2.csv (23 bytes), from {here}/data/ventes.csv\n"
+        "Files NOT copied — the program ran without them:\n"
+        f"- {here}/data/ventes.csv: the sandbox did not accept it (too "
+        "large).\n"
+        f"- {here}/suivre: the sandbox did not accept it (could not be "
+        "written).\n"
+        f"- {here}/gros.bin: is larger than 1000 bytes, the limit for a "
+        "file.\n"
+        # Le garde-fou vaut à CHAQUE saut, et les listes de [tools.net].
+        f"- {here}/fuite: intern.test is a private or local address, which "
+        "this proxy does not read.\n"
+        "- https://interdit.test/a.csv: interdit.test is not a domain this "
+        "proxy is allowed to read.\n"
+        "Output:\nok\n")
+    assert r.meta["inputs"] == ["ventes.csv", "rapport_2026.xlsx",
+                                "ventes-2.csv"]
+    # Sans `files` : la requête d'avant, sans le champ.
+    for none in ([], None):
+        rendu({**CODE, "files": none}, seen=seen)
+        assert "inputs" not in json.loads(seen[-1].content)
+    # Un exécuteur d'avant le dépôt ignore le champ : le texte le dit.
+    r = rendu({**CODE, "files": [f"{here}/data/ventes.csv"]}, session="")
+    assert r.error is None and r.text == (
+        "Exit code: 0\n"
+        "Sandbox: single-use — nothing is kept after this call.\n"
+        "Files NOT copied — the program ran without them:\n"
+        f"- {here}/data/ventes.csv: the sandbox service is too old to "
+        "receive files.\nOutput:\n(no output)")
+
+
+def test_fichiers_d_entree_refuses(monkeypatch):
+    seen = []
+    here = "https://site.test"
+    # AUCUN fichier n'entre : rien n'est exécuté, et le code est celui du
+    # refus — le leur s'il est unique.
+    r = rendu({**CODE, "files": [f"{here}/absent.csv", f"{here}/suivre/.."]},
+              seen=seen)
+    assert r.error == "not_accessible" and r.text == (
+        "Error: the program was NOT run: none of its files could be copied "
+        "into the sandbox.\n"
+        f"- {here}/absent.csv: returned HTTP 404.\n"
+        f"- {here}/suivre/..: returned HTTP 404.")
+    for asked, code in (([f"{here}/gros.bin", f"{here}/vide.csv"], "unsupported"),
+                        (["ftp://site.test/a.csv"], "invalid_input"),
+                        (["http://intern.test/a.csv"], "not_allowed"),
+                        ([f"{here}/gros.bin", f"{here}/absent.csv"],
+                         "not_accessible")):
+        assert rendu({**CODE, "files": asked}, seen=seen).error == code, asked
+    # Le total de l'appel : le fichier de trop est refusé, pas coupé.
+    monkeypatch.setattr(code_execution, "MAX_FILES_BYTES", 620)
+    r = rendu({**CODE, "files": [f"{here}/export", f"{here}/data/ventes.csv"]},
+              answer(inputs=[{"name": "export", "size": 600}]))
+    assert r.error is None and "would take the files of this call over 620 " \
+        "bytes in total." in r.text
+    assert len(seen) == 0
+    # Le temps donné à tous les téléchargements.
+    monkeypatch.setattr(code_execution, "DOWNLOAD_TIMEOUT", 0)
+    r = rendu({**CODE, "files": [f"{here}/data/ventes.csv"]}, seen=seen)
+    assert r.error == "not_accessible" and "took too long" in r.text
+    # Arguments inutilisables : refusés avant tout téléchargement.
+    for asked in ("https://site.test/a.csv", [3], [{"name": "a.csv"}],
+                  [{"url": ""}], [{"url": f"{here}/a.csv", "name": 3}],
+                  [f"{here}/a.csv"] * 9):
+        r = rendu({**CODE, "files": asked}, seen=seen)
+        assert r.error == "invalid_input", asked
+    assert seen == []
+    # Les bornes d'ici au-delà de celles de l'exécuteur : il refuse le
+    # corps, le modèle sait quoi faire.
+    monkeypatch.setattr(code_execution, "DOWNLOAD_TIMEOUT", 60)
+    r = rendu({**CODE, "files": [f"{here}/data/ventes.csv"]}, 413)
+    assert r.error == "unsupported" and "fewer or smaller files" in r.text
 
 
 def test_requete_et_resultat():

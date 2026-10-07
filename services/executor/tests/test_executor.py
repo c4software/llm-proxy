@@ -2,8 +2,9 @@
 de Starlette, contre une DOUBLURE de podman (tests/fake_podman.py) — un
 « conteneur » y est un dossier, et le programme tourne sur la machine du
 test, SANS aucune isolation. Ce qui est vérifié ici : la logique —
-sessions et leur clé, état gardé, récolte et plafonds des fichiers,
-délais, quotas, expiration, orphelins, sonde des cgroups, jeton. Ce qui
+sessions et leur clé, état gardé, dépôt des fichiers d'entrée, récolte
+et plafonds des fichiers, délais, quotas, expiration, orphelins, sonde
+des cgroups, jeton. Ce qui
 ne l'est PAS : tout ce que podman fait des drapeaux qu'on lui passe
 (réseau, mémoire, processus, lecture seule, uid) — un test vérifie
 seulement qu'ils sont demandés.
@@ -178,6 +179,67 @@ def test_fichiers_plafonnes_et_noms_hostiles(service):
     assert base64.b64decode(doc["files"][0]["data"]) == b"option ?"
 
 
+def test_fichiers_d_entree_deposes(service):
+    """`inputs` : déposés dans /work avant le programme, sous des noms et
+    des bornes jugés ICI ; jamais à travers un lien laissé par un appel
+    précédent ; pas repris à la récolte, sauf modifiés. Le `tar` qui
+    déplie est celui de la machine du test (GNU tar attendu)."""
+    client, _ = service(max_inputs=5, max_input_bytes=1000,
+                        max_input_total_bytes=1500)
+    ailleurs, absent = service.root / "ailleurs.txt", service.root / "absent"
+    ailleurs.write_text("intact")
+    # Un programme précédent du même bac a piégé les noms à venir.
+    run(client, (
+        "import os\n"
+        f"os.symlink({str(ailleurs)!r}, 'data.csv')\n"
+        f"os.symlink({str(absent)!r}, 'notes.txt')\n"
+        "os.makedirs('dossier.csv'); open('dossier.csv/x', 'w').write('x')\n"))
+
+    def entree(name, data):
+        return {"name": name, "data": base64.b64encode(data).decode()}
+    doc = run(client, (
+        "import os\n"
+        "print(open('data.csv').read(), os.path.islink('data.csv'),\n"
+        "      os.path.islink('notes.txt'), os.stat('data.csv').st_uid == os.getuid())\n"
+        "open('notes.txt', 'a').write(' et la suite')\n"), inputs=[
+            entree("data.csv", b"a,b\n1,2\n"), entree("notes.txt", b"notes"),
+            entree("dossier.csv", b"0123456789"), entree("a.bin", b"a" * 900),
+            entree("lourd.bin", b"b" * 900), entree("d.txt", b"d"),
+            entree("e.txt", b"e"), entree("gros.bin", b"0" * 1001),
+            entree("data.csv", b"autre"), entree("../evade", b"x"),
+            entree("sous/fichier", b"x"), entree(".cache", b"x"),
+            entree("-rf", b"x"), entree("", b"x"), entree("a b", b"x")])
+    assert doc["output"] == "a,b\n1,2\n False False True\n", doc
+    assert doc["inputs"] == [{"name": "data.csv", "size": 8},
+                             {"name": "notes.txt", "size": 5},
+                             {"name": "a.bin", "size": 900},
+                             {"name": "d.txt", "size": 1}]
+    assert [(r["name"], r["reason"]) for r in doc["rejected"]] == [
+        ("lourd.bin", "total too large"), ("e.txt", "too many files"),
+        ("gros.bin", "too large"), ("data.csv", "duplicate name"),
+        ("../evade", "invalid name"), ("sous/fichier", "invalid name"),
+        (".cache", "invalid name"), ("-rf", "invalid name"),
+        ("", "invalid name"), ("a b", "invalid name"),
+        ("dossier.csv", "could not be written")]
+    # Les liens ont été REMPLACÉS, pas suivis ; rien n'est sorti de /work.
+    assert ailleurs.read_text() == "intact" and not absent.exists()
+    assert sorted(p.name for p in service.root.iterdir() if p.is_file()) \
+        == ["ailleurs.txt"]
+    # Seul le fichier d'entrée que le programme a MODIFIÉ est un fichier
+    # produit ; les autres restent dans le bac, sans repartir.
+    assert names(doc) == ["notes.txt"]
+    assert base64.b64decode(doc["files"][0]["data"]) == b"notes et la suite"
+    doc = run(client, "cat data.csv; ls", "sh")
+    assert doc["output"] == "a,b\n1,2\na.bin\nd.txt\ndata.csv\ndossier.csv\nnotes.txt\n"
+    # Sans `inputs` (un proxy plus ancien) : rien de déposé, et les deux
+    # champs sont là, vides.
+    assert (doc["files"], doc["inputs"], doc["rejected"]) == ([], [], [])
+    # Un fichier déposé de nouveau REMPLACE le premier, sans compter comme
+    # produit.
+    doc = run(client, "cat data.csv", "sh", inputs=[entree("data.csv", b"neuf")])
+    assert (doc["output"], doc["files"]) == ("neuf", [])
+
+
 def test_cloisonnement_par_client_et_bac_jetable(service):
     client, box = service()
     run(client, "open('secret.txt', 'w').write('A')")
@@ -347,12 +409,22 @@ def test_requetes_invalides(service):
     for body in ([], "x", {**ok, "language": "cobol"}, {**ok, "language": None},
                  {**ok, "code": ""}, {**ok, "code": 3}, {**ok, "client": 3},
                  {**ok, "session": "s" * 129}, {**ok, "timeout": "long"},
-                 {**ok, "timeout": True}):
+                 {**ok, "timeout": True}, {**ok, "inputs": "a.csv"},
+                 {**ok, "inputs": 3}, {**ok, "inputs": ["a.csv"]},
+                 {**ok, "inputs": [{"name": "a.csv"}]},
+                 {**ok, "inputs": [{"name": 3, "data": "eA=="}]},
+                 {**ok, "inputs": [{"name": "a.csv", "data": "%%%"}]},
+                 {**ok, "inputs": [{"name": "a", "data": ""}] * 65}):
         r = client.post("/v1/execute", headers=AUTH, json=body)
         assert r.status_code == 400, body
         assert r.json()["error"]["code"] == "invalid_request"
     r = client.post("/v1/execute", headers=AUTH, content=b"{pas du json")
     assert r.status_code == 400
+    # Un corps au-delà de ce que le code et les entrées permettent : pas lu.
+    box.limits = sandbox.Limits(max_input_total_bytes=3000)
+    r = client.post("/v1/execute", headers=AUTH, json={
+        **ok, "inputs": [{"name": "a.bin", "data": "A" * 2_010_000}]})
+    assert (r.status_code, r.json()["error"]["code"]) == (413, "too_large")
     assert len(box) == 0 and os.listdir(service.root) == []
 
 

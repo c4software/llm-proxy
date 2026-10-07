@@ -77,6 +77,12 @@ services:
       # SANDBOX_MAX_SESSIONS_PER_CLIENT: "4"
       # SANDBOX_WORK_SIZE: 256m     # tmpfs /work d'un bac
       # SANDBOX_TMP_SIZE: 128m      # tmpfs /tmp d'un bac (caches, compilations)
+      # Fichiers d'ENTRÉE déposés dans /work par appel (`files` de
+      # l'outil) : au moins autant que [tools.code_execution] du proxy
+      # (max_files, max_file_bytes, max_files_bytes).
+      # SANDBOX_MAX_INPUTS: "8"
+      # SANDBOX_MAX_INPUT_BYTES: "20000000"
+      # SANDBOX_MAX_INPUT_TOTAL_BYTES: "40000000"
     security_opt:
       # La recette de dev-box (compose.override.example.yaml), trouvée par
       # essais ; sans --privileged ni CAP_SYS_ADMIN. Le prix : l'isolation

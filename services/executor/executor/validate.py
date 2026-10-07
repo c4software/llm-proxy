@@ -10,7 +10,8 @@ si l'ISOLATION tient ici. Il crée ses propres bacs, à côté de ceux du
 serveur (mêmes réglages SANDBOX_*, mais des délais courts), déroule les
 cas de la maquette — état gardé, sortie bornée, délai, réseau, bombe de
 processus, mémoire, racine en lecture seule, cloisonnement entre clients,
-expiration, langages compilés, processus laissés derrière soi —, juge
+expiration, langages compilés, processus laissés derrière soi, fichiers
+d'entrée déposés —, juge
 chacun, mesure le démarrage à froid et à chaud, puis détruit ses bacs.
 Code de sortie 0 si aucun cas n'ÉCHOUE. Il n'a besoin ni du jeton, ni du
 proxy, ni du réseau : il parle à podman, pas au serveur. Ses bacs ont
@@ -42,7 +43,7 @@ import shlex
 import sys
 import time
 
-from .sandbox import UID_BASE, Limits, SandboxError, Sandboxes
+from .sandbox import UID_BASE, File, Limits, SandboxError, Sandboxes
 
 # Les uid des bacs d'ici, à l'écart de ceux du serveur.
 UID = UID_BASE + 1000
@@ -302,6 +303,46 @@ async def main() -> int:
                     "dans les bornes du bac, et l'appel suivant du MÊME bac "
                     "le voit. Attendu : `timeout` ne tue que son groupe."
                     if left else "", unbounded=left)
+
+        # Un fichier d'ENTRÉE : déposé par l'entrée standard de `podman
+        # exec` (tar), sous l'uid du bac, à la place du lien qu'un
+        # programme précédent a posé à son nom — jamais à travers lui.
+        await run("clientA", "depot", "python", (
+            "import os\n"
+            "os.symlink('piege.txt', 'data.csv')\n"
+            "os.symlink('/tmp/sbx-piege.txt', 'notes.txt')\n"))
+        out = await box.execute("clientA", "depot", "python", (
+            "import os\n"
+            "print(open('data.csv').read().strip(), open('notes.txt').read(),\n"
+            "      os.path.islink('data.csv'), os.path.islink('notes.txt'),\n"
+            "      os.path.lexists('piege.txt'),\n"
+            "      os.path.lexists('/tmp/sbx-piege.txt'),\n"
+            "      os.stat('data.csv').st_uid == os.getuid(),\n"
+            "      oct(os.stat('data.csv').st_mode & 0o777))\n"),
+            timeout=3, inputs=[File("data.csv", b"a,b\n1,2\n"),
+                               File("notes.txt", b"notes"),
+                               File("../evade.txt", b"x"),
+                               File(".cache", b"x")])
+        verdict("15. fichiers d'entrée : déposés sous l'uid du bac, les liens "
+                "piégés remplacés et non suivis, les noms à chemin refusés, "
+                "rien à la récolte",
+                out.exit_code == 0 and out.output.split() == [
+                    "a,b", "1,2", "notes", "False", "False", "False", "False",
+                    "True", "0o644"]
+                and out.inputs == [{"name": "data.csv", "size": 8},
+                                   {"name": "notes.txt", "size": 5}]
+                and [r["reason"] for r in out.rejected] == ["invalid name"] * 2
+                and not out.files, out,
+                f"déposés : {out.inputs} ; refusés : {out.rejected} ; "
+                f"récoltés : {[f.name for f in out.files]} ; "
+                + out.output.strip().replace("\n", " ; "))
+        out = await run("clientA", "depot", "sh",
+                        "echo '3,4' >> data.csv; cat notes.txt > /dev/null")
+        verdict("15bis. fichier d'entrée MODIFIÉ par le programme : rendu "
+                "comme un fichier produit, l'autre non",
+                [f.name for f in out.files] == ["data.csv"]
+                and out.files[0].data == b"a,b\n1,2\n3,4\n", out,
+                f"récoltés : {[f.name for f in out.files]}")
     except SandboxError as exc:
         print(f"[ÉCHEC   ] PANNE DU BAC À SABLE : {exc}")
         FAILED.append("panne")

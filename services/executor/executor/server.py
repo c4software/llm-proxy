@@ -5,20 +5,35 @@ L'API HTTP de l'exécuteur : trois routes derrière un jeton, une de santé.
                       seulement si le service est prêt.
   GET  /v1/status     l'état : bacs ouverts, bornes, ce que podman tient
                       réellement ici (cgroups), langages.
-  POST /v1/execute    {"client", "session", "language", "code", "timeout"?}
+  POST /v1/execute    {"client", "session", "language", "code", "timeout"?,
+                      "inputs"?: [{"name", "data" (base64)}]}
                       → exécute dans le bac de (client, session), créé au
                       besoin. `session` vide = un bac d'un seul appel.
+                      `inputs` : des fichiers DÉPOSÉS dans /work avant le
+                      programme (un nom nu : lettres, chiffres, `_`, `.`,
+                      `-`, sans point ni tiret en tête) ; un fichier du
+                      même nom est remplacé. Les bornes SANDBOX_MAX_INPUT*
+                      sont jugées ici, fichier par fichier : un fichier
+                      refusé n'empêche pas l'exécution, il est dit.
                       200 : {"exit_code", "timed_out", "output",
                       "truncated", "fresh", "reset", "seconds",
                       "files": [{"name", "size", "data" (base64)}],
-                      "skipped": [{"name", "reason"}]}.
+                      "skipped": [{"name", "reason"}],
+                      "inputs": [{"name", "size"}],
+                      "rejected": [{"name", "reason"}]}.
                       Un programme qui sort en erreur ou dépasse son délai
                       est un 200 : c'est un résultat.
+                      `inputs` de la RÉPONSE est toujours là, vide au
+                      besoin : c'est à lui qu'un appelant reconnaît un
+                      exécuteur qui sait déposer (un plus ancien ignore le
+                      champ de la requête, et n'en rend aucun).
   POST /v1/destroy    {"client", "session"} → {"destroyed": bool}
 
 Erreurs : {"error": {"code", "message"}} — 400 `invalid_request`, 401
-`unauthorized`, 429 `busy` (tous les bacs exécutent), 503 `not_ready`
-(podman ne démarre pas ici, ou pas de jeton) et `sandbox_failed`.
+`unauthorized`, 413 `too_large` (corps au-delà de ce que les bornes
+d'entrée permettent), 429 `busy` (tous les bacs exécutent), 503
+`not_ready` (podman ne démarre pas ici, ou pas de jeton) et
+`sandbox_failed`.
 
 Le JETON (EXECUTOR_TOKEN) est partagé avec le proxy et exigé sur /v1/* :
 le réseau du compose est interne, mais tout conteneur qui le rejoindrait
@@ -27,7 +42,9 @@ démarre et REFUSE tout (503) — il ne tourne jamais ouvert.
 
 Ce que le service ne fait pas : parler au modèle (les textes sont écrits
 par l'outil du proxy), garder un fichier (ils repartent dans la réponse),
-journaliser le code ou sa sortie (des mesures seulement).
+journaliser le code ou sa sortie (des mesures seulement), aller chercher
+un fichier d'entrée (il n'a pas de route vers l'extérieur : l'appelant
+les télécharge et les lui passe).
 
 Réglages, par l'environnement (le service n'a ni volume ni fichier de
 configuration) : EXECUTOR_TOKEN, SANDBOX_ROOTFS ou SANDBOX_IMAGE, et les
@@ -36,6 +53,7 @@ bornes SANDBOX_* de sandbox.Limits.
 
 import asyncio
 import base64
+import binascii
 import hmac
 import json
 import logging
@@ -46,12 +64,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .sandbox import LANGS, Busy, Limits, SandboxError, Sandboxes
+from .sandbox import LANGS, Busy, File, Limits, SandboxError, Sandboxes
 
 log = logging.getLogger("executor")
 
-# Corps d'une requête : le code d'un appel, pas un fichier.
+# Corps d'une requête SANS fichier d'entrée : le code d'un appel. Ceux-ci
+# s'y ajoutent, en base64 (4 octets pour 3), dans la limite de leur borne.
 MAX_BODY = 2_000_000
+# Entrées lues au plus dans `inputs`, avant tout tri par les bornes.
+MAX_INPUTS = 64
 SWEEP_EVERY = 30.0      # s, entre deux passages du nettoyage
 
 
@@ -152,13 +173,13 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
         }
 
     async def body(request: Request) -> dict | JSONResponse:
+        most = MAX_BODY + box.limits.max_input_total_bytes * 4 // 3 + 4096
         # La taille annoncée d'abord : un corps démesuré n'est pas lu.
         announced = request.headers.get("content-length", "")
-        raw = b"" if announced.isdigit() and int(announced) > MAX_BODY \
+        raw = b"" if announced.isdigit() and int(announced) > most \
             else await request.body()
-        if len(raw) > MAX_BODY or not raw and announced not in ("", "0"):
-            return error(400, "invalid_request",
-                         f"corps de plus de {MAX_BODY} octets")
+        if len(raw) > most or not raw and announced not in ("", "0"):
+            return error(413, "too_large", f"corps de plus de {most} octets")
         try:
             doc = json.loads(raw)
         except ValueError:
@@ -188,11 +209,25 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
         if limit is not None and (isinstance(limit, bool)
                                   or not isinstance(limit, (int, float))):
             return error(400, "invalid_request", "`timeout` : un nombre")
+        # La FORME des entrées est jugée ici (400 : l'appelant se trompe) ;
+        # leurs noms et leurs tailles par le bac, fichier par fichier.
+        inputs = []
+        try:
+            for f in doc.get("inputs") or ():
+                inputs.append(File(f["name"] + "", base64.b64decode(
+                    f["data"], validate=True)))
+        except (TypeError, KeyError, ValueError, binascii.Error):
+            inputs = None
+        if inputs is None or len(inputs) > MAX_INPUTS:
+            return error(400, "invalid_request",
+                         f"`inputs` : une liste de {MAX_INPUTS} objets au "
+                         "plus, `name` en chaîne et `data` en base64")
         if not state["ready"]:
             return error(503, "not_ready", state["error"])
         client, session = doc.get("client", ""), doc.get("session", "")
         try:
-            out = await box.execute(client, session, language, code, limit)
+            out = await box.execute(client, session, language, code, limit,
+                                    inputs)
         except Busy as exc:
             return error(429, "busy", str(exc))
         except SandboxError as exc:
@@ -200,9 +235,11 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
             return error(503, "sandbox_failed", str(exc))
         # Des mesures, jamais le code ni sa sortie.
         log.info("exécution %s client=%s : code=%s délai=%s %.2fs, %d octets "
-                 "de sortie, %d fichier(s), %d écarté(s)%s%s", language,
+                 "de sortie, %d fichier(s), %d écarté(s), %d déposé(s), %d "
+                 "refusé(s)%s%s", language,
                  client[:8] or "-", out.exit_code, out.timed_out, out.seconds,
                  len(out.output), len(out.files), len(out.skipped),
+                 len(out.inputs), len(out.rejected),
                  " [bac neuf]" if out.fresh else "",
                  " [bac détruit]" if out.reset else "")
         return {
@@ -214,6 +251,7 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
                        "data": base64.b64encode(f.data).decode("ascii")}
                       for f in out.files],
             "skipped": out.skipped,
+            "inputs": out.inputs, "rejected": out.rejected,
         }
 
     @app.post("/v1/destroy")
