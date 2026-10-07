@@ -15,7 +15,7 @@
 # Mettre à jour un bac (une bibliothèque de plus) = reconstruire cette image.
 #
 # Base : python:3.13-slim-trixie, pour les deux étapes.
-#   * la même que le proxy (dockerfile à la racine) : une seule base à
+#   * la même que le proxy (proxy/Dockerfile) : une seule base à
 #     suivre, et ses couches sont déjà sur la machine ;
 #   * Debian 13 a podman 5.4, crun, uidmap et catatonit en paquets : la
 #     recette de dev-box (podman sans root dans un conteneur Docker, sans
@@ -137,7 +137,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # uid sans droit, racine en lecture seule) n'y écrit rien.
 COPY --from=sandbox --chown=executor:executor / /opt/sandbox/rootfs/
 
-COPY __init__.py sandbox.py server.py validate.py /app/executor/
+COPY executor/ /app/executor/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
 USER executor

@@ -10,12 +10,12 @@ décrit l'autre côté : **ce qu'est un outil pour le code du proxy**, et
 comment en écrire un.
 
 Le dépôt en porte cinq, `web_search`, `web_fetch`, `ocr`, `transcribe`
-et `code_execution` (`llm_proxy/tools/`), plus un **fournisseur**,
+et `code_execution` (`proxy/llm_proxy/tools/`), plus un **fournisseur**,
 `mcp.py`, qui y ajoute les outils des [serveurs MCP](#serveurs-mcp) de la
 configuration. Ce que le contrat porte et qu'aucune surface ne fait
 encore : voir [Prévu, pas construit](#prévu-pas-construit).
 
-Tout tient dans `llm_proxy/tools/contract.py`, réexporté par le paquet :
+Tout tient dans `proxy/llm_proxy/tools/contract.py`, réexporté par le paquet :
 `from llm_proxy import tools` puis `tools.Tool`, `tools.Result`…
 
 ## En une page
@@ -60,7 +60,7 @@ class Result:
 Quand l'exécuteur coupe un texte trop long, `sources`, `meta` et `files`
 ne sont pas touchés : ils disent ce que l'outil a trouvé ou produit.
 
-**Les fichiers sont rendus en liens.** Le magasin `llm_proxy/files.py`
+**Les fichiers sont rendus en liens.** Le magasin `proxy/llm_proxy/files.py`
 les garde quelques heures, en mémoire vive, et les sert par
 `GET <public_url>/v1/files/<jeton>/<nom>` — hors clé du proxy (un
 navigateur n'en envoie pas) : le jeton, imprévisible, vaut droit d'accès.
@@ -259,8 +259,8 @@ existe ; `404` `unknown_tool` sinon, `400` si le corps n'est pas un objet.
 ## Écrire un outil
 
 L'outil minimal, complet — celui que joue
-`tests/test_tools.py::test_contrat_outil_minimal_sans_liaison`
-(`tests/fakes.py`) :
+`proxy/tests/test_tools.py::test_contrat_outil_minimal_sans_liaison`
+(`proxy/tests/fakes.py`) :
 
 ```python
 from llm_proxy import tools
@@ -305,11 +305,11 @@ Une fois enregistré, sans une ligne de plus ailleurs :
 
 Pour un outil du dépôt :
 
-1. Un module dans `llm_proxy/tools/`, qui importe le contrat par
+1. Un module dans `proxy/llm_proxy/tools/`, qui importe le contrat par
    `from .contract import …` (pas par le paquet : celui-ci importe ses
    outils), lit ses réglages dans `[tools.<nom>]` (`config.flag`,
    `config.text`…) et finit par `TOOL = MonOutil()`.
-2. `register(mon_outil.TOOL)` dans `llm_proxy/tools/__init__.py` — l'ordre
+2. `register(mon_outil.TOOL)` dans `proxy/llm_proxy/tools/__init__.py` — l'ordre
    du registre est celui où les fonctions sont présentées.
 3. Une table `[tools.<nom>]` commentée dans `data/config.example.toml`,
    et sa section dans le README.
@@ -358,7 +358,7 @@ Ce qu'il faut tenir :
 
 ### `ocr` : lire le texte d'une image ou d'un PDF scanné
 
-`llm_proxy/tools/ocr.py`, `[tools.ocr]` (désactivé par défaut). Le texte
+`proxy/llm_proxy/tools/ocr.py`, `[tools.ocr]` (désactivé par défaut). Le texte
 est lu par un **modèle de vision** qu'un backend du proxy relaie déjà
 (`model = "<backend>/<modèle>"`, backend avec `images = true`) : pas de
 Tesseract, pas de route OCR dédiée.
@@ -436,9 +436,9 @@ outil qui peut ne plus l'être au tour suivant.
 
 ### `code_execution` : un outil à état, à fichiers, derrière un service
 
-`llm_proxy/tools/code_execution.py`, `[tools.code_execution]` (désactivé
+`proxy/llm_proxy/tools/code_execution.py`, `[tools.code_execution]` (désactivé
 par défaut) — le modèle écrit un programme, le service `executor` du
-compose (`executor/`, mis en route par `docker-compose.override.yml`) le
+compose (`services/executor/`, mis en route par `docker-compose.override.yml`) le
 fait tourner dans un bac à sable. L'exécuteur a été validé sur le
 déploiement le 07/10/2026 (`python -m executor.validate`, 0 échec) ;
 l'outil y a été appelé le même jour par le proxy et par un modèle, sur
@@ -462,7 +462,7 @@ Ce qu'il montre du contrat :
   session (`/v1/tools`), un bac par appel.
 - **Le texte nomme les fichiers, le proxy écrit les liens.** Le modèle ne
   recopie pas une URL à jeton ; la surface range `Result.files`
-  (`llm_proxy/files.py`) et ajoute les liens à la réponse.
+  (`proxy/llm_proxy/files.py`) et ajoute les liens à la réponse.
 - **Ne rien annoncer qu'on ne peut tenir** : un fichier que le magasin
   refuserait (`files.refusal`) est listé comme non remis.
 - **Un service voisin est une adresse de configuration**, avec un jeton :
@@ -476,11 +476,11 @@ Ce qu'il montre du contrat :
   description dit ce que l'absence de réseau interdit — ni module Go, ni
   crate — parce que le modèle, sinon, l'essaie.
 
-L'API de l'exécuteur : en tête de `executor/server.py`.
+L'API de l'exécuteur : en tête de `services/executor/executor/server.py`.
 
 ### `transcribe` : un outil sans liaison, qui appelle un backend
 
-`llm_proxy/tools/transcribe.py` — le modèle passe l'URL d'un fichier
+`proxy/llm_proxy/tools/transcribe.py` — le modèle passe l'URL d'un fichier
 audio, le proxy rend sa transcription. Présenté sur
 `/v1/chat/completions` (déclaré `{"type": "transcribe"}`, ou d'office par
 `[chat].always`) et exécutable par `POST /v1/tools/transcribe` ; ni
@@ -549,7 +549,7 @@ fichier est en cause) plutôt qu'`unavailable` (le backend le serait).
 
 ## Serveurs MCP
 
-`llm_proxy/tools/mcp.py` est un **client MCP** : le proxy se connecte aux
+`proxy/llm_proxy/tools/mcp.py` est un **client MCP** : le proxy se connecte aux
 serveurs listés dans `[tools.mcp.<serveur>]`, leur demande leurs outils
 (`tools/list`), et chacun devient un outil hébergé — un `Tool` du contrat
 comme les autres, sans liaison de protocole : présentable sur

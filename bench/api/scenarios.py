@@ -536,7 +536,7 @@ def usage_proof(base, expected):
 
 def main():
     if not PROXY_URL or not MODELS:
-        print("PROXY_URL et MODELS sont requis (envTest/.env).")
+        print("PROXY_URL et MODELS sont requis (bench/.env).")
         return 2
     status, _, text = http_call("GET", "/healthz", timeout=10)
     health = as_json(text) if status == 200 else {}

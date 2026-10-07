@@ -1,6 +1,11 @@
 services:
   albert-proxy:
-    build: .
+    # Contexte à la RACINE : l'image embarque data/config.example.toml,
+    # qui y reste avec le data/ du déploiement. Le .dockerignore de la
+    # racine n'y laisse que proxy/ et ce modèle.
+    build:
+      context: .
+      dockerfile: proxy/Dockerfile
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -42,14 +47,14 @@ services:
     image: docker.io/searxng/searxng:2026.10.4-d48c4b555
     restart: unless-stopped
     # PAS de `ports:` — volontaire. L'instance n'a pas de limiteur
-    # (searxng/settings.yml) : elle ne doit être joignable que du proxy, par
+    # (services/searxng/settings.yml) : elle ne doit être joignable que du proxy, par
     # le réseau du compose, sous le nom `searxng` et le port 8080 de l'image.
     volumes:
       # Le FICHIER seul, en lecture seule, pas le dossier : le conteneur
       # démarre en root et son point d'entrée ferait un `chown -R` du
       # dossier monté vers son utilisateur (uid 977) — ici, un dossier
       # versionné de l'hôte. Le fichier existant, il ne génère rien non plus.
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./services/searxng/settings.yml:/etc/searxng/settings.yml:ro
       # Données persistantes de SearXNG (caches) : un volume nommé, pour
       # qu'elles survivent à la recréation du conteneur.
       - searxng-cache:/var/cache/searxng

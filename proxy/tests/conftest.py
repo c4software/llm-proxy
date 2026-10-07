@@ -2,7 +2,7 @@
 (qui porte les réglages d'un déploiement réel et n'est pas versionné).
 Posé AVANT tout import du paquet — config.py lit CONFIG_PATH à l'import.
 Aucun import du paquet en tête de ce fichier : la fixture importe le sien
-à l'usage, et tests/fakes.py importe ce module en premier."""
+à l'usage, et fakes.py importe ce module en premier."""
 
 import json
 import os
@@ -10,7 +10,10 @@ import types
 
 import pytest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# La racine du DÉPÔT (proxy/tests/ → deux crans plus haut) : data/ et
+# docs/ y sont restés.
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
 os.environ.setdefault(
     "CONFIG_PATH", os.path.join(ROOT, "data", "config.example.toml"))
 

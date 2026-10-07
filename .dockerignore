@@ -1,10 +1,21 @@
+# Le contexte de build du PROXY (docker-compose.yml : `context: .`,
+# `dockerfile: proxy/Dockerfile`) : la racine du dépôt, dont l'image ne
+# prend que proxy/ (main.py, requirements.txt, llm_proxy/) et
+# data/config.example.toml. Tout le reste est écarté — l'exécuteur a son
+# contexte à lui (services/executor, avec son .dockerignore).
 .git
 .env
-__pycache__/
-*.pyc
+.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
 README.md
-preview.jpg
+docs/
+services/
+bench/
+docker-compose*.yml
+proxy/tests/
+proxy/pytest.ini
+proxy/requirements-dev.txt
 data/config.toml
 data/stats.db*
-# Le contexte de build du proxy n'emporte pas le service exécuteur.
-executor/

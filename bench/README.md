@@ -1,4 +1,4 @@
-# envTest — valider le proxy avec de vrais clients
+# bench — valider le proxy avec de vrais clients
 
 Cinq clients jetables, chacun dans son conteneur, qui tapent le proxy
 et jouent des scénarios de validation — **Claude Code** (API Anthropic,
@@ -12,6 +12,16 @@ Chaque jeu est rejoué pour **chaque modèle** de `MODELS`. Rien n'est
 installé sur l'hôte ; `~/.claude`, `~/.pi`, `~/.codex` et `~/.omp` ne sont
 jamais lus ni écrits : chaque client a sa configuration dans l'image, et son
 dossier de travail disparaît avec le conteneur.
+
+**Renommage du 07/10/2026.** Ce dossier s'appelait `envTest/` ; il
+s'appelle `bench/` depuis la réorganisation du dépôt en un dossier par
+rôle (`proxy/`, `services/`, `bench/`). Rien d'autre n'a changé : mêmes
+scénarios, mêmes images, et les résultats ci-dessous sont ceux des runs
+tels qu'ils ont été joués, sous l'ancien nom pour les plus anciens. Seul
+effet visible : Compose nomme le projet d'après le dossier, donc les
+images construites s'appellent `bench-claude`, `bench-pi`… au lieu de
+`envtest-…` — les anciennes se suppriment par
+`docker image rm envtest-claude envtest-pi envtest-codex envtest-omp envtest-api`.
 
 Les bancs `omp` et `api` ont été **écrits le 05/10/2026 et pas encore
 joués** : aucun chiffre ci-dessous ne les concerne. Ce qui en a été vérifié
@@ -72,7 +82,7 @@ Le même jour, après ajout des bancs `omp` et `api` (proxy `e8ab35d`, omp
 Un premier passage avait donné 5/6 et 5/7 : les trois échecs venaient de
 SearXNG, dont les trois moteurs web actifs par défaut avaient bloqué
 l'instance après une journée d'essais (limite de débit, CAPTCHA). Rejoué
-après l'ajout de cinq moteurs à `searxng/settings.yml`. Hors banc, dans
+après l'ajout de cinq moteurs à `services/searxng/settings.yml`. Hors banc, dans
 l'image `codex` avec un catalogue de modèles déclarant `apply_patch` en
 texte libre : Codex 0.157.1 a écrit `hello.txt` par l'outil `custom`.
 
@@ -96,7 +106,7 @@ Le proxy doit tourner (depuis la racine : `docker compose up -d`), ou être
 joignable s'il est déjà déployé ailleurs — voir
 [Viser un proxy distant](#viser-un-proxy-distant). Puis :
 
-    cd envTest
+    cd bench
     cp .env.example .env        # PROXY_URL, MODELS, clé — voir le fichier
     docker compose run --rm claude    # scénarios Claude Code, pour chaque modèle
     docker compose run --rm pi        # scénarios pi (API OpenAI), pour chaque modèle
@@ -510,7 +520,7 @@ Ce que ce banc ne dit pas :
 - l'usage **cumulé** sur les tours : le client reçoit un seul bloc
   `usage` et n'a aucun moyen de savoir combien de tours il additionne.
   Le banc l'affiche et vérifie qu'il n'y en a pas deux ; le cumul se
-  vérifie dans `tests/test_chat_api.py` ;
+  vérifie dans `proxy/tests/test_chat_api.py` ;
 - `[chat].annotations = false` sur le proxy fait échouer 1 et 2 (rien
   dans `/healthz` ne le dit) ;
 - la lecture de page (`web_fetch`) n'est pas exigée : le modèle l'a sous
@@ -523,7 +533,7 @@ Ce que ce banc ne dit pas :
 ## Ce qui n'est PAS vérifié ici
 
 - Le limiteur de quotas et les `event: ping` pendant l'attente : il faut
-  un backend à quotas et de la contention (voir `tests/` pour la
+  un backend à quotas et de la contention (voir `proxy/tests/` pour la
   traduction, et la section Claude Code du README principal pour le
   scénario joué à la main).
 - La qualité des réponses : un modèle qui «corrige» `a - b` en autre chose

@@ -19,7 +19,40 @@ proxy exécute pour le modèle, un limiteur de quotas pour les backends qui
 en ont, des statistiques persistantes à la forme de l'Usage API d'OpenAI
 et un tableau de bord.
 
-![Tableau de bord /ui : cartes de synthèse (requêtes, tokens, modèles actifs, erreurs) et détail par modèle](preview.jpg)
+![Tableau de bord /ui : cartes de synthèse (requêtes, tokens, modèles actifs, erreurs) et détail par modèle](docs/preview.jpg)
+
+## Le dépôt, un dossier par rôle
+
+La racine ne porte que l'orchestration ; chaque rôle a son dossier, avec
+son image et ses tests.
+
+    llm-proxy/
+    ├── docker-compose.yml                    la pile de base : le proxy et SearXNG
+    ├── docker-compose.override.example.yml   le facultatif : l'exécuteur de code, la machine
+    ├── .env.example                          les secrets
+    ├── data/       la configuration et les statistiques DU DÉPLOIEMENT (config.toml,
+    │               stats.db, non versionnés) ; config.example.toml, le modèle
+    ├── docs/       outils.md (le contrat des outils hébergés), preview.jpg
+    ├── proxy/      LE PROXY : Dockerfile, requirements*.txt, main.py, le paquet
+    │               llm_proxy/, ses tests (tests/)
+    ├── services/   LES SERVICES TIERS de la pile
+    │   ├── executor/   l'exécuteur de code : Dockerfile, le paquet executor/, l'image
+    │   │               d'un bac (sandbox/), ses tests (tests/)
+    │   └── searxng/    settings.yml, monté dans l'image officielle
+    └── bench/      LES CLIENTS RÉELS (ex `envTest/`) : Claude Code, Codex, pi, omp et un
+                    client HTTP nu, en conteneurs jetables — voir bench/README.md
+
+| Dossier | On y trouve | On y lance |
+|---|---|---|
+| `proxy/` | Le proxy, et lui seul | `pytest` ; `uvicorn main:app` |
+| `services/` | Ce que le proxy appelle sans le contenir : l'exécuteur de code, SearXNG | `pytest` dans `services/executor/` |
+| `bench/` | Les bancs de vrais clients, leur compose à eux | `docker compose run --rm <client>` |
+| `data/`, `docs/` | L'état du déploiement ; la documentation | — |
+
+`docker compose` se lance de la racine ; l'image du proxy s'y construit
+aussi (`context: .`, `dockerfile: proxy/Dockerfile`), parce qu'elle
+embarque `data/config.example.toml`. Depuis le 07/10/2026 ; avant, tout
+vivait à la racine et les bancs s'appelaient `envTest/`.
 
 ## Fonctionnalités
 
@@ -67,7 +100,7 @@ et un tableau de bord.
   génération et édition d'image passent par le même routage au préfixe
   de modèle. Les corps multipart (transcription, édition) sont routés
   d'après leur champ `model`, préfixe retiré, le reste recopié octet pour
-  octet (`llm_proxy/multipart.py`) ; sans cela ils partaient vers le
+  octet (`proxy/llm_proxy/multipart.py`) ; sans cela ils partaient vers le
   backend de repli. `GET /v1/audio/voices?model=<backend>/<modèle>` liste
   les voix du modèle de synthèse.
 - **Compatible Claude Code** — si `[anthropic].enabled`, le proxy parle
@@ -138,38 +171,40 @@ et un tableau de bord.
 
 | Fichier | Rôle |
 |---|---|
-| `main.py` | Point d'entrée (`uvicorn main:app`) — trois lignes, tout le code est dans le paquet |
-| `llm_proxy/config.py` | Chargement de `data/config.toml` : substitution des `${VAR}`, accès typés, création du fichier depuis l'exemple au premier démarrage |
-| `llm_proxy/settings.py` | La table `[proxy]`, en constantes typées |
-| `llm_proxy/backends.py` | Déclaration des backends, clients HTTP, **routage au préfixe de modèle** |
-| `llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
-| `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête, une par exécution d'outil hébergé), extraction de l'`usage` dans le flux de réponse, et l'Usage API (requêtes, outils) |
-| `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` ; outils serveur `web_search_…` et `web_fetch_…` remplacés par la recherche et la lecture hébergées, rendues et rejouées en blocs `server_tool_use` / `web_search_tool_result` / `web_fetch_tool_result` |
-| `llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés par le proxy présentés au modèle et rejoués, les autres ignorés, `namespace` aplatis |
-| `llm_proxy/chat_api.py` | Les outils hébergés sur `/v1/chat/completions` : déclaration dans `tools` remplacée par les fonctions du proxy, robinet qui rend une seule réponse chat/completions pour plusieurs tours upstream |
-| `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre (`register`), exécution bornée (délai, taille du résultat, nombre d'appels par réponse) qui rend toujours un `Result`, ligne de statistiques de chaque exécution, **mémoire des résultats** |
-| `llm_proxy/tools/contract.py` | Le **contrat** d'un outil hébergé : `Tool`, `Result` (texte, code d'erreur, sources, `meta`), `Call`, `ToolError`, la liste fermée des codes d'erreur, les liaisons aux protocoles — décrit dans [`docs/outils.md`](docs/outils.md) |
-| `llm_proxy/tools/net.py` | Garde-fou réseau, commun à tous les outils qui téléchargent (`[tools.net]`) : listes de domaines, résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée, redirections suivies saut par saut — le téléchargement gardé `net.download` |
-| `llm_proxy/tools/webcache.py` | Cache web : pages lues et recherches gardées quelques minutes, borné, en mémoire vive |
-| `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
-| `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en sources pour les annotations et les blocs d'un client Anthropic ; filtre par domaines |
-| `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page (ou du texte d'un PDF) par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
-| `llm_proxy/tools/mcp.py` | Client MCP (Streamable HTTP, sans SDK) : découverte des outils des serveurs de la configuration, chacun enregistré comme outil hébergé ; révision 2026-07-28 sans état et révisions à `initialize`/session ; résultats ramenés à du texte |
-| `llm_proxy/tools/ocr.py` | L'outil `ocr` : texte d'une image ou d'un PDF scanné (images embarquées dans ses pages) par son URL, téléchargée sous le garde-fou, lue par un modèle de vision d'un backend — limiteur de quotas et statistiques compris |
-| `llm_proxy/tools/transcribe.py` | L'outil `transcribe` : téléchargement d'un fichier audio par son URL sous le garde-fou, transcription par le modèle d'un backend (`/v1/audio/transcriptions`), texte découpé et gardé en cache |
-| `llm_proxy/tools/code_execution.py` | L'outil `code_execution` : client HTTP de l'exécuteur, texte rendu au modèle, fichiers produits |
-| `llm_proxy/files.py` | Le magasin des fichiers rendus par les outils : en mémoire, borné, servi par `GET /v1/files/<jeton>/<nom>` hors clé du proxy |
-| `executor/` | Le service exécuteur de code (hors du proxy, son image à lui) : podman sans root, un bac par conversation, son API, le contenu d'un bac (`sandbox/`), `validate.py` |
+| `proxy/Dockerfile` | L'image du proxy — contexte de build à la **racine** du dépôt (`docker build -f proxy/Dockerfile .`), borné par `.dockerignore` |
+| `proxy/requirements.txt`, `proxy/requirements-dev.txt` | Dépendances du proxy ; celles de ses tests |
+| `proxy/main.py` | Point d'entrée (`uvicorn main:app`) — trois lignes, tout le code est dans le paquet |
+| `proxy/llm_proxy/config.py` | Chargement de `data/config.toml` : substitution des `${VAR}`, accès typés, création du fichier depuis l'exemple au premier démarrage |
+| `proxy/llm_proxy/settings.py` | La table `[proxy]`, en constantes typées |
+| `proxy/llm_proxy/backends.py` | Déclaration des backends, clients HTTP, **routage au préfixe de modèle** |
+| `proxy/llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
+| `proxy/llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête, une par exécution d'outil hébergé), extraction de l'`usage` dans le flux de réponse, et l'Usage API (requêtes, outils) |
+| `proxy/llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` ; outils serveur `web_search_…` et `web_fetch_…` remplacés par la recherche et la lecture hébergées, rendues et rejouées en blocs `server_tool_use` / `web_search_tool_result` / `web_fetch_tool_result` |
+| `proxy/llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés par le proxy présentés au modèle et rejoués, les autres ignorés, `namespace` aplatis |
+| `proxy/llm_proxy/chat_api.py` | Les outils hébergés sur `/v1/chat/completions` : déclaration dans `tools` remplacée par les fonctions du proxy, robinet qui rend une seule réponse chat/completions pour plusieurs tours upstream |
+| `proxy/llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre (`register`), exécution bornée (délai, taille du résultat, nombre d'appels par réponse) qui rend toujours un `Result`, ligne de statistiques de chaque exécution, **mémoire des résultats** |
+| `proxy/llm_proxy/tools/contract.py` | Le **contrat** d'un outil hébergé : `Tool`, `Result` (texte, code d'erreur, sources, `meta`), `Call`, `ToolError`, la liste fermée des codes d'erreur, les liaisons aux protocoles — décrit dans [`docs/outils.md`](docs/outils.md) |
+| `proxy/llm_proxy/tools/net.py` | Garde-fou réseau, commun à tous les outils qui téléchargent (`[tools.net]`) : listes de domaines, résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée, redirections suivies saut par saut — le téléchargement gardé `net.download` |
+| `proxy/llm_proxy/tools/webcache.py` | Cache web : pages lues et recherches gardées quelques minutes, borné, en mémoire vive |
+| `proxy/llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
+| `proxy/llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en sources pour les annotations et les blocs d'un client Anthropic ; filtre par domaines |
+| `proxy/llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page (ou du texte d'un PDF) par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
+| `proxy/llm_proxy/tools/mcp.py` | Client MCP (Streamable HTTP, sans SDK) : découverte des outils des serveurs de la configuration, chacun enregistré comme outil hébergé ; révision 2026-07-28 sans état et révisions à `initialize`/session ; résultats ramenés à du texte |
+| `proxy/llm_proxy/tools/ocr.py` | L'outil `ocr` : texte d'une image ou d'un PDF scanné (images embarquées dans ses pages) par son URL, téléchargée sous le garde-fou, lue par un modèle de vision d'un backend — limiteur de quotas et statistiques compris |
+| `proxy/llm_proxy/tools/transcribe.py` | L'outil `transcribe` : téléchargement d'un fichier audio par son URL sous le garde-fou, transcription par le modèle d'un backend (`/v1/audio/transcriptions`), texte découpé et gardé en cache |
+| `proxy/llm_proxy/tools/code_execution.py` | L'outil `code_execution` : client HTTP de l'exécuteur, texte rendu au modèle, fichiers produits |
+| `proxy/llm_proxy/files.py` | Le magasin des fichiers rendus par les outils : en mémoire, borné, servi par `GET /v1/files/<jeton>/<nom>` hors clé du proxy |
+| `services/executor/` | Le service exécuteur de code (hors du proxy, son image à lui) : `Dockerfile`, `entrypoint.sh`, `containers/` (réglages de podman sans root), le paquet `executor/` (`sandbox.py` : un bac par conversation ; `server.py` : son API ; `validate.py`), le contenu d'un bac (`sandbox/`), ses tests (`tests/`, sur un faux podman) |
 | `docker-compose.yml` | La pile de base, versionnée : le proxy et SearXNG |
 | `docker-compose.override.example.yml` | Le modèle de `docker-compose.override.yml` (non versionné, fusionné par Docker Compose) : l'exécuteur de code et son réseau interne, les adaptations à la machine — voir [Le compose de base et son override](#le-compose-de-base-et-son-override) |
 | `docs/outils.md` | Le contrat des outils hébergés, membre par membre, et comment en écrire un |
-| `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
-| `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
-| `tests/` | Tests des traducteurs et des stats (`pytest`, `requirements-dev.txt`) — sur des octets et une base temporaire, sans réseau |
-| `envTest/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi et Codex CLI, scénarios PASS/FAIL — voir `envTest/README.md` |
-| `llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `dashboard.css`, `vue.global.prod.js`) |
+| `proxy/llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
+| `proxy/llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
+| `proxy/tests/` | Tests du proxy : traducteurs, outils, stats (`cd proxy && pytest`, `requirements-dev.txt`, `pytest.ini`) — sur des octets et une base temporaire, sans réseau |
+| `bench/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi, Codex CLI, omp et un client HTTP nu, scénarios PASS/FAIL — voir `bench/README.md` |
+| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `dashboard.css`, `vue.global.prod.js`) |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
-| `searxng/settings.yml` | Réglages de l'instance SearXNG du compose : les défauts de SearXNG, plus le format JSON. Monté en lecture seule dans le service `searxng` |
+| `services/searxng/settings.yml` | Réglages de l'instance SearXNG du compose : les défauts de SearXNG, plus le format JSON. Monté en lecture seule dans le service `searxng` |
 
 `app.py` ne connaît d'Albert que « un backend `quotas = true` passe par
 sa `QuotaState` » ; toute la mécanique de quotas vit dans `albert.py`.
@@ -477,7 +512,7 @@ variable d'une fois à l'autre, elle décale le préfixe et fait manquer le
 cache du backend (colonne *Cache* du tableau de bord pour le vérifier).
 
 Validé avec un vrai Claude Code et avec pi, en conteneurs, sur des
-scénarios d'outils et de création de code — voir `envTest/`.
+scénarios d'outils et de création de code — voir `bench/`.
 
 Ce qui se passe :
 
@@ -732,7 +767,7 @@ Depuis le 07/10/2026, pi et omp ne passent plus par l'extension
 par `[chat].always`, comme Open WebUI — voir
 [pi et omp](#pi-et-omp--les-outils-doffice). Les deux lignes du tableau
 disent ce qui a été joué le 05/10/2026, par l'ancien chemin ; le nouveau
-l'a été le 07/10/2026 par les bancs `envTest` (pi 1.0.4, omp 18.8.0 :
+l'a été le 07/10/2026 par les bancs `bench/` (pi 1.0.4, omp 18.8.0 :
 6/6 chacun, recherche comprise).
 
 Ce jour-là SearXNG rendait 20 résultats, deux de ses moteurs étant
@@ -793,11 +828,11 @@ de conteneurs sur la machine d'essai ; l'exécuteur a été validé le même
 jour sur le déploiement, hors du proxy — voir
 [Exécution de code](#exécution-de-code)), l'image Docker du proxy
 avec ffmpeg, un format audio autre que le FLAC contre le backend, les
-bancs `envTest/pi` et `envTest/omp` sous leur nouvelle forme, Open WebUI.
+bancs `bench/pi` et `bench/omp` sous leur nouvelle forme, Open WebUI.
 
-Les bancs `envTest/` rejouent depuis ce jour une recherche web par client
+Les bancs `bench/` rejouent depuis ce jour une recherche web par client
 en conteneur (Codex, pi, Claude Code) : 27 scénarios sur 27 au run du
-05/10/2026, voir `envTest/README.md`.
+05/10/2026, voir `bench/README.md`.
 
 ### Déroulé
 
@@ -1042,7 +1077,7 @@ Ce qu'il faut savoir du service :
 - **L'image est épinglée** sur un tag daté (`AAAA.M.J-<commit>`), pas
   sur `latest`. Mise à jour : changer le tag dans `docker-compose.yml`,
   puis `docker compose up -d searxng`.
-- **`searxng/settings.yml`** part des défauts de SearXNG
+- **`services/searxng/settings.yml`** part des défauts de SearXNG
   (`use_default_settings: true`) et n'y ajoute que le format `json` —
   sans lui, `format=json` est refusé en 403. Moteurs, langue et délais
   sont ceux de SearXNG ; les changer se fait dans ce fichier, puis
@@ -1205,7 +1240,7 @@ déclare l'outil et passe par
 l'[appel direct](#appel-direct--v1tools).
 
 La mémoire des échanges n'a été jouée que par les tests du dépôt
-(`tests/test_chat_api.py`, backend simulé).
+(`proxy/tests/test_chat_api.py`, backend simulé).
 
 ### Open WebUI : présenter les outils d'office
 
@@ -1319,7 +1354,7 @@ Limites :
   conversations, sans que le client l'ait demandé : voir
   [Ce qu'aucun garde-fou n'empêche](#ce-quaucun-garde-fou-nempêche).
 
-Joué par les tests du dépôt seulement (`tests/test_chat_api.py`, backend
+Joué par les tests du dépôt seulement (`proxy/tests/test_chat_api.py`, backend
 simulé) ; pas encore contre un Open WebUI réel.
 
 ### pi et omp : les outils d'office
@@ -1357,10 +1392,10 @@ commandes `/web` et `/page`) :
   appel décide et l'autre est réémis au tour suivant — voir
   [Client chat/completions](#client-chatcompletions--déclarer-loutil).
 
-Les bancs `envTest/pi` et `envTest/omp` jouent leur recherche web par ce
+Les bancs `bench/pi` et `bench/omp` jouent leur recherche web par ce
 chemin depuis le 07/10/2026, et l'ont joué ce jour-là contre le proxy
 déployé : 6/6 chacun (pi 1.0.4, omp 18.8.0, `bigchuck/qwen3.8-flash-next`),
-voir `envTest/README.md`.
+voir `bench/README.md`.
 
 ### Appel direct : `/v1/tools`
 
@@ -1399,7 +1434,7 @@ reste, pour tout client ou script qui veut exécuter un outil lui-même.
 
 `code_execution` fait tourner un programme écrit par le modèle et lui en
 rend le code de sortie, la sortie et les fichiers produits. Le proxy
-n'exécute rien : un service à part, `executor` (`executor/` dans le
+n'exécute rien : un service à part, `executor` (`services/executor/` dans le
 dépôt), non exposé, est le seul à avoir un moteur de conteneurs.
 
     client ─▶ proxy ──HTTP + jeton──▶ executor ──podman exec──▶ bac (sans réseau)
@@ -1458,7 +1493,7 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
 - **Pas de réseau, rien ne s'installe** : ni paquet pip, ni module Go, ni
   crate — la bibliothèque standard seulement pour les compilés, et la
   description de l'outil le dit au modèle. Ajouter une bibliothèque :
-  `executor/sandbox/requirements.txt` ou `executor/Dockerfile`, puis
+  `services/executor/sandbox/requirements.txt` ou `services/executor/Dockerfile`, puis
   reconstruire l'image de l'exécuteur.
 - **Délai** : `[tools.code_execution].timeout`, 30 s par programme,
   **compilation comprise**. Une première compilation Go dans un bac paie
@@ -1685,8 +1720,8 @@ conteneur : <message> », le message de podman dit quoi :
 | `cannot clone: Operation not permitted` | `seccomp=unconfined` manque |
 | `mount proc … Operation not permitted` | `systempaths=unconfined` manque |
 | `… apparmor … denied`, `mount … permission denied` | `apparmor=unconfined` manque |
-| `catatonit … not found`, `executable file not found` | l'init : `executor/containers/containers.conf`, `init_path` |
-| une erreur sur `--rootfs`, `--tmpfs … exec`, `overlay`, `vfs` | noter le message **entier** : c'est un drapeau de `executor/sandbox.py` (`_create`) à corriger |
+| `catatonit … not found`, `executable file not found` | l'init : `services/executor/containers/containers.conf`, `init_path` |
+| une erreur sur `--rootfs`, `--tmpfs … exec`, `overlay`, `vfs` | noter le message **entier** : c'est un drapeau de `services/executor/executor/sandbox.py` (`_create`) à corriger |
 
 Le proxy, lui, doit être « healthy » quoi que fasse l'exécuteur.
 
@@ -1956,7 +1991,9 @@ aux reconstructions d'image.
 
 ### Coolify
 
-Nouvelle ressource → Dockerfile, pointer sur ce dépôt. Port 8000.
+Nouvelle ressource → Dockerfile, pointer sur ce dépôt : répertoire de
+base `/` (la racine, c'est le contexte de build), emplacement du
+Dockerfile `/proxy/Dockerfile`. Port 8000.
 Déclarer un **volume persistant sur `/app/data`** (configuration et base
 de statistiques), ajouter les secrets en variables d'environnement
 (`ALBERT_API_KEY`…), puis exposer le service via Nginx Proxy Manager sur
@@ -1973,7 +2010,9 @@ démarrage à partir de `data/config.example.toml`, qui est documenté ligne
 à ligne — c'est la référence à lire. L'environnement ne sert plus qu'à
 deux choses :
 
-- `CONFIG_PATH` : où trouver le TOML (défaut `data/config.toml`) ;
+- `CONFIG_PATH` : où trouver le TOML (défaut `data/config.toml` — à la
+  racine du dépôt hors conteneur, d'où qu'on lance le proxy ;
+  `/app/data/config.toml` dans l'image) ;
 - les **secrets** : toute chaîne du TOML peut contenir `${VAR}`, remplacé
   au chargement par la variable d'environnement. Les clés d'API restent
   ainsi hors du fichier, donc hors du dépôt, tandis que la structure
@@ -2312,12 +2351,19 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
            "max_output_tokens":64}' \
       | jq '{model, status, text: .output[0].content[0].text}'
 
-    # tests des traducteurs
-    python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-    .venv/bin/python -m pytest -q tests
+    # tests du proxy (traducteurs, outils, stats), puis ceux de l'exécuteur
+    # de code — deux jeux séparés, aucun n'importe le code de l'autre
+    python -m venv .venv
+    .venv/bin/pip install -r proxy/requirements-dev.txt -r services/executor/requirements-dev.txt
+    (cd proxy && ../.venv/bin/python -m pytest -q)
+    (cd services/executor && ../../.venv/bin/python -m pytest -q)
+
+    # le proxy hors conteneur : data/config.toml de la racine, ou CONFIG_PATH
+    cd proxy && ../.venv/bin/uvicorn main:app --port 8000
 
     # validation avec de vrais clients (Claude Code, pi, Codex), en conteneurs
-    cd envTest && cp .env.example .env && docker compose run --rm claude && docker compose run --rm pi && docker compose run --rm codex
+    # (depuis la racine)
+    cd bench && cp .env.example .env && docker compose run --rm claude && docker compose run --rm pi && docker compose run --rm codex
 
 ## Limites connues
 
@@ -2425,6 +2471,6 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 - pi : un provider dans `~/.pi/agent/models.json` — `api:
   "openai-completions"` sur `http://…:8000/v1`, ou `api:
   "anthropic-messages"` sur `http://…:8000` (les deux marchent ; voir
-  `envTest/pi/models.json.tpl`). `apiKey` reste obligatoire — `"unused"`
+  `bench/pi/models.json.tpl`). `apiKey` reste obligatoire — `"unused"`
   suffit si le proxy est ouvert. L'ancienne extension
   `patchFetchForAlbert()` n'a plus lieu d'être.

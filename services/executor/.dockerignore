@@ -1,0 +1,9 @@
+# Le contexte de build de l'exécuteur : ce dossier. L'image ne prend que
+# requirements.txt, entrypoint.sh, containers/, sandbox/ et le paquet
+# executor/.
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+tests/
+pytest.ini
+requirements-dev.txt

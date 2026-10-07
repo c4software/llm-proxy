@@ -6,7 +6,8 @@
 #  l'environnement au chargement. Les CLÉS D'API passent par là et ne
 #  sont donc jamais écrites dans ce fichier.
 #
-#  Emplacement surchargeable par la variable d'environnement CONFIG_PATH.
+#  Emplacement surchargeable par la variable d'environnement CONFIG_PATH
+#  (défaut : data/config.toml, à la racine du dépôt ; /app/data dans l'image).
 # ════════════════════════════════════════════════════════════════════════
 
 [proxy]
@@ -273,7 +274,7 @@ enabled = true
 # C'est une adresse de CONFIGURATION, en général privée : le garde-fou des
 # adresses publiques de [tools.net] ne s'y applique pas.
 # SearXNG ne sert le JSON que si `search.formats` le liste
-# (searxng/settings.yml) ; sinon 403, et l'erreur rendue au modèle le dit.
+# (services/searxng/settings.yml) ; sinon 403, et l'erreur rendue au modèle le dit.
 searxng_url = "http://searxng:8080"
 # Délai (s) de la requête vers SearXNG, qui interroge lui-même plusieurs
 # moteurs avant de répondre.
@@ -540,7 +541,7 @@ cache_entries = 64
 
 # Exécution de code : le modèle écrit un programme, il tourne dans un BAC
 # À SABLE et le modèle en lit le code de sortie et la sortie. Le proxy
-# n'exécute rien lui-même : il appelle le service `executor` (executor/
+# n'exécute rien lui-même : il appelle le service `executor` (services/executor/
 # dans le dépôt ; mis en route par docker-compose.override.yml, copié de
 # docker-compose.override.example.yml), seul à avoir un moteur de
 # conteneurs (podman sans root), sur un réseau interne sans sortie.
@@ -551,7 +552,7 @@ cache_entries = 64
 # le délai de l'appel, bibliothèque standard seulement.
 # Pas de réseau dans un bac, rien ne s'y installe : ni paquet pip, ni
 # module Go, ni crate. Ce qui manque s'ajoute à l'IMAGE de l'exécuteur
-# (executor/sandbox/requirements.txt, executor/Dockerfile).
+# (services/executor/sandbox/requirements.txt, services/executor/Dockerfile).
 # Un bac par CONVERSATION : ses fichiers sont gardés d'un appel au suivant
 # (pas ses variables), jusqu'à son expiration côté exécuteur (30 min sans
 # appel, 4 h au plus, ou place à faire) — le modèle est alors prévenu que

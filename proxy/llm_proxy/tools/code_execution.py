@@ -4,7 +4,7 @@ dans un BAC À SABLE et lui rend le code de sortie, la sortie et la liste
 des fichiers produits.
 
 Le proxy n'exécute RIEN lui-même : il appelle en HTTP le service
-`executor` du docker-compose (executor/ à la racine du dépôt), le seul à
+`executor` du docker-compose (services/executor/ dans le dépôt), le seul à
 avoir un moteur de conteneurs — sur un réseau interne, sans sortie, sans
 aucun secret ni volume du proxy. Cet outil en est le client, et écrit le
 texte que lit le modèle. Entre les deux, un jeton partagé

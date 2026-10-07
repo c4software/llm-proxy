@@ -48,7 +48,7 @@ services:
   # et n'activer l'outil que sur un verdict « activable » (README,
   # « Exécution de code »).
   executor:
-    build: ./executor
+    build: ./services/executor
     restart: unless-stopped
     # PAS de `ports:`, PAS de `volumes:` — volontaire. Ni secret, ni
     # dossier du proxy, ni socket Docker : ce conteneur ne voit rien de
@@ -64,8 +64,9 @@ services:
       # ne tourne jamais ouvert — et compose n'arrête pas les autres
       # services.
       EXECUTOR_TOKEN: "${EXECUTOR_TOKEN:-}"
-      # Bornes d'un bac et quotas : défauts de executor/sandbox.py
-      # (Limits), à surcharger ici — SANDBOX_<NOM>.
+      # Bornes d'un bac et quotas : défauts de
+      # services/executor/executor/sandbox.py (Limits), à surcharger ici —
+      # SANDBOX_<NOM>.
       # SANDBOX_MEMORY: 512m        # mémoire d'un bac (si les cgroups la tiennent)
       # SANDBOX_CPUS: "1.0"         # aussi le nombre de fils des bibliothèques
       # SANDBOX_PIDS: "128"         # processus et fils d'un bac
@@ -110,7 +111,7 @@ services:
       # service ne l'étend PAS : il recopie ce qu'il en veut.
     # PAS de `devices:` : ni /dev/fuse (le magasin de podman est `vfs`, et
     # un bac démarre d'un système de fichiers déplié, sans image — voir
-    # executor/Dockerfile), ni /dev/net/tun (un bac n'a pas de réseau).
+    # services/executor/Dockerfile), ni /dev/net/tun (un bac n'a pas de réseau).
     tmpfs:
       # L'état d'exécution de podman : vide à chaque démarrage du
       # conteneur, comme après un redémarrage de machine — c'est à cela

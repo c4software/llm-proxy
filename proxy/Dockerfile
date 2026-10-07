@@ -1,3 +1,9 @@
+# L'image du PROXY. Contexte de build : la RACINE du dépôt, pas ce
+# dossier — l'image embarque data/config.example.toml, resté à la racine
+# avec le data/ du déploiement (docker-compose.yml : `context: .`,
+# `dockerfile: proxy/Dockerfile`). À la main :
+#   docker build -f proxy/Dockerfile .
+# Ce que le contexte emporte est borné par le .dockerignore de la racine.
 FROM python:3.13-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -13,11 +19,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY proxy/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
-COPY llm_proxy/ llm_proxy/
+COPY proxy/main.py .
+COPY proxy/llm_proxy/ llm_proxy/
 # Le modèle de configuration seulement : data/ est un VOLUME, le proxy y
 # écrit config.toml au premier démarrage s'il est absent, puis stats.db.
 COPY data/config.example.toml data/

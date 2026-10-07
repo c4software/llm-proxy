@@ -22,11 +22,18 @@ import shutil
 import sys
 import tomllib
 
-# Le paquet vit un cran sous la racine du projet.
+# Où est data/ ? À côté du paquet dans l'image (/app/llm_proxy et
+# /app/data, voir proxy/Dockerfile) ; un cran plus haut dans le dépôt, où
+# le paquet vit dans proxy/ et data/ à la racine. Le premier des deux qui
+# existe : le dossier du déploiement est le même d'où qu'on lance le
+# proxy (`cd proxy && uvicorn main:app` comme depuis la racine).
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(ROOT, "data")
+if not os.path.isdir(DATA_DIR):
+    DATA_DIR = os.path.join(os.path.dirname(ROOT), "data")
 CONFIG_PATH = os.environ.get("CONFIG_PATH") or os.path.join(
-    ROOT, "data", "config.toml")
-EXAMPLE_PATH = os.path.join(ROOT, "data", "config.example.toml")
+    DATA_DIR, "config.toml")
+EXAMPLE_PATH = os.path.join(DATA_DIR, "config.example.toml")
 
 # «${VAR}» dans n'importe quelle chaîne du TOML.
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
