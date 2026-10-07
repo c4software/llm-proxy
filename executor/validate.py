@@ -18,9 +18,11 @@ leurs propres uid (UID_BASE + 1000…) : ils ne pèsent pas sur ceux d'une
 conversation en cours.
 
 Trois verdicts : OK ; ÉCHEC (l'isolation ou la logique ne tient pas : ne
-pas activer l'outil) ; NON BORNÉ (une limite de ressources que podman ne
-tient pas ici faute de cgroups — attendu, et alors seul le plafond du
-conteneur exécuteur protège : voir le README).
+pas activer l'outil) ; NON BORNÉ (une limite que rien ne tient par bac :
+mémoire, CPU ou processus si le cgroup du conteneur n'est pas délégué —
+`writable-cgroups=true` manque — et alors seul le plafond du conteneur
+exécuteur protège ; ou un processus laissé en arrière-plan, attendu : voir
+le README).
 
     --podman CMD   la commande podman (défaut : podman)
     --light        sans les cas qui chargent la machine ou veulent un vrai

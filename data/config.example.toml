@@ -540,8 +540,9 @@ cache_entries = 64
 
 # Exécution de code : le modèle écrit un programme, il tourne dans un BAC
 # À SABLE et le modèle en lit le code de sortie et la sortie. Le proxy
-# n'exécute rien lui-même : il appelle le service `executor` du
-# docker-compose (executor/ dans le dépôt), seul à avoir un moteur de
+# n'exécute rien lui-même : il appelle le service `executor` (executor/
+# dans le dépôt ; mis en route par docker-compose.override.yml, copié de
+# docker-compose.override.example.yml), seul à avoir un moteur de
 # conteneurs (podman sans root), sur un réseau interne sans sortie.
 # Langages : python (numpy, pandas, scipy, sympy, scikit-learn, networkx,
 # matplotlib, seaborn, pillow, openpyxl, python-docx, pypdf, reportlab),
@@ -567,13 +568,16 @@ cache_entries = 64
 #
 # À SAVOIR avant d'activer : du code écrit par un modèle — donc, par
 # injection de prompt, par n'importe quelle page web lue — tourne sur
-# cette machine. Le bac partage le NOYAU de l'hôte ; l'exécuteur tourne
-# sans profil seccomp ; les limites de mémoire et de CPU par bac ne sont
-# tenues que si podman peut écrire des cgroups dans son conteneur (il le
-# dit : journal de l'exécuteur au démarrage). Voir « Exécution de code »
-# dans le README, et dérouler `docker compose exec executor python -m
-# executor.validate` avant d'activer : rien de cela n'a encore tourné sur
-# un vrai moteur de conteneurs.
+# cette machine. Le bac partage le NOYAU de l'hôte ; le conteneur
+# exécuteur tourne sans profil seccomp, sans AppArmor, sans masquage de
+# /proc ni no-new-privileges ; les limites de mémoire, de CPU et de
+# processus par bac ne sont tenues que si le cgroup de ce conteneur est
+# délégué (`writable-cgroups=true` dans l'override, Docker 28 et plus) —
+# sinon podman les accepte sans rien borner. L'exécuteur le vérifie et le
+# dit : son journal au démarrage. Voir « Exécution de code » dans le
+# README. Validé le 07/10/2026 sur une machine (Docker 29.7, noyau 6.1,
+# cgroup v2) ; sur une autre, dérouler `docker compose exec executor
+# python -m executor.validate` avant d'activer.
 [tools.code_execution]
 enabled = false
 # Base de l'exécuteur ; le proxy appelle <url>/v1/execute. «http://
@@ -601,7 +605,7 @@ max_output_chars = 12000
 # Les autres bornes — mémoire, CPU, processus, taille de /work et de /tmp,
 # nombre et taille des fichiers rendus, nombre de bacs — sont celles de
 # l'exécuteur : variables SANDBOX_* du service `executor`, dans
-# docker-compose.yml.
+# docker-compose.override.yml.
 
 
 # ── Fichiers rendus par les outils ──────────────────────────────────────

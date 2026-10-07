@@ -40,8 +40,8 @@ ENV PIP_NO_CACHE_DIR=1 \
 #     appelle sans y penser ; quelques Mo ;
 #   * des COMPILATEURS (décision du 07/10/2026) : gcc et g++ avec la libc
 #     de développement et make, Go (golang-go) et Rust (rustc, cargo),
-#     ceux de Debian 13. Lourds — de l'ordre de 1 à 1,5 Go de plus, pas
-#     mesuré — et bornés à leur BIBLIOTHÈQUE STANDARD : le bac n'a pas de
+#     ceux de Debian 13. Lourds — l'image entière, bac compris, pèse
+#     2,09 Go — et bornés à leur BIBLIOTHÈQUE STANDARD : le bac n'a pas de
 #     réseau, donc ni module Go, ni crate, ni paquet à chercher. cargo et
 #     `go build` marchent hors ligne pour un projet sans dépendance.
 # Ni Java, ni curl, ni git, ni pip utile : pas de réseau.

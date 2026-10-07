@@ -438,9 +438,11 @@ outil qui peut ne plus l'être au tour suivant.
 
 `llm_proxy/tools/code_execution.py`, `[tools.code_execution]` (désactivé
 par défaut) — le modèle écrit un programme, le service `executor` du
-compose (`executor/`) le fait tourner dans un bac à sable. Jamais validé
-sur un vrai moteur de conteneurs à ce jour : voir le README, « Exécution
-de code ».
+compose (`executor/`, mis en route par `docker-compose.override.yml`) le
+fait tourner dans un bac à sable. L'exécuteur a été validé sur le
+déploiement le 07/10/2026 (`python -m executor.validate`, 0 échec) ;
+l'outil y a été appelé le même jour par le proxy et par un modèle, sur
+deux tours d'une conversation : voir le README, « Exécution de code ».
 
 | | `code_execution` |
 |---|---|

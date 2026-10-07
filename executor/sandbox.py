@@ -12,7 +12,8 @@ standard, les fichiers produits sortent par un `tar` lu sur la sortie
 standard. Aucun volume, aucun montage de l'extérieur.
 
 Ce qui borne un bac, du plus sûr au moins sûr ICI (podman imbriqué dans
-un conteneur Docker, sans systemd, donc souvent sans cgroups délégués) :
+un conteneur Docker, sans systemd : le cgroup n'y est délégué que si le
+point d'entrée a pu le faire, `writable-cgroups=true`) :
   * toujours : pas de réseau (--network none), racine en lecture seule,
     aucune capacité, no-new-privileges, un uid sans droit PROPRE au bac,
     /work et /tmp en tmpfs de taille fixe, RLIMIT_NPROC et RLIMIT_NOFILE,
@@ -20,10 +21,11 @@ un conteneur Docker, sans systemd, donc souvent sans cgroups délégués) :
     garde ici qui détruit le bac), la durée de vie du conteneur
     (--timeout, tenu par podman même si ce processus meurt), la taille de
     la sortie, le nombre et la taille des fichiers rendus ;
-  * si les cgroups le permettent — `probe` l'ESSAIE au démarrage, drapeau
-    par drapeau, plutôt que de le déduire : mémoire (--memory), CPU
-    (--cpus), processus (--pids-limit). Un drapeau que podman refuse
-    n'est plus posé, et l'état le dit (`Sandboxes.cgroup`) : le plafond
+  * si le cgroup est délégué — `probe` le VÉRIFIE au démarrage plutôt
+    que de le déduire : mémoire (--memory), CPU (--cpus), processus
+    (--pids-limit). Une borne n'est dite tenue que si le bac la lit dans
+    son propre cgroup ; une borne non tenue n'est plus posée, et l'état
+    le dit (`Sandboxes.cgroup`) : le plafond
     du conteneur exécuteur lui-même (docker-compose : mem_limit, cpus,
     pids_limit) est alors le seul filet pour cette ressource.
 
@@ -180,7 +182,7 @@ class Sandboxes:
         # (le serveur, et validate.py à côté de lui) ne partagent pas
         # d'uid, donc pas de compte RLIMIT_NPROC.
         self.uid_base = uid_base
-        # Les bornes de cgroups que podman accepte ici : posées par
+        # Les bornes de cgroups que podman TIENT ici : vérifiées par
         # probe(). Vide tant qu'il n'a pas tourné — aucune n'est demandée.
         self.cgroup: frozenset[str] = frozenset()
         # (client, session) → bac. Le client fait partie de la CLÉ : un

@@ -102,8 +102,9 @@ et un tableau de bord.
   fichier audio donné par son URL, par le modèle de transcription d'un
   backend ; si `[tools.code_execution].enabled`, l'outil `code_execution`
   fait tourner un programme du modèle dans un bac à sable, par un service
-  à part (`executor`) — **jamais validé sur un vrai moteur de conteneurs
-  à ce jour**, voir [Exécution de code](#exécution-de-code).
+  à part (`executor`), facultatif — son isolation a été validée sur le
+  déploiement le 07/10/2026, où un modèle l'a appelé sur deux tours :
+  voir [Exécution de code](#exécution-de-code).
 - **Serveurs MCP** — les outils des serveurs MCP listés dans
   `[tools.mcp.<serveur>]` (HTTP seulement, liste fermée, en-têtes
   statiques) deviennent des outils hébergés : `<serveur>_<outil>`,
@@ -159,6 +160,8 @@ et un tableau de bord.
 | `llm_proxy/tools/code_execution.py` | L'outil `code_execution` : client HTTP de l'exécuteur, texte rendu au modèle, fichiers produits |
 | `llm_proxy/files.py` | Le magasin des fichiers rendus par les outils : en mémoire, borné, servi par `GET /v1/files/<jeton>/<nom>` hors clé du proxy |
 | `executor/` | Le service exécuteur de code (hors du proxy, son image à lui) : podman sans root, un bac par conversation, son API, le contenu d'un bac (`sandbox/`), `validate.py` |
+| `docker-compose.yml` | La pile de base, versionnée : le proxy et SearXNG |
+| `docker-compose.override.example.yml` | Le modèle de `docker-compose.override.yml` (non versionné, fusionné par Docker Compose) : l'exécuteur de code et son réseau interne, les adaptations à la machine — voir [Le compose de base et son override](#le-compose-de-base-et-son-override) |
 | `docs/outils.md` | Le contrat des outils hébergés, membre par membre, et comment en écrire un |
 | `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
@@ -784,8 +787,10 @@ main, mêmes modèles, ffmpeg 9.0.2 de la machine :
 | `always_except = ["bigchuck/QWEN3.8-flash*"]`, même requête | sans `tools` : relais brut, 46 tokens de prompt, le modèle répond n'avoir aucun outil ; avec `{"type": "mcp:deepwiki"}` déclaré : l'outil est présenté et appelé |
 | `[tools.code_execution] enabled = true`, exécuteur injoignable | le proxy démarre et le dit ; tout ce qui précède a été joué dans cet état ; `POST /v1/tools/code_execution` rend `unavailable` (« the sandbox service is unreachable »), un langage inconnu `invalid_input` |
 
-Pas joué : l'exécution de code elle-même (pas de moteur de conteneurs —
-voir [Exécution de code](#exécution-de-code)), l'image Docker du proxy
+Pas joué dans cette série : l'exécution de code elle-même (pas de moteur
+de conteneurs sur la machine d'essai ; l'exécuteur a été validé le même
+jour sur le déploiement, hors du proxy — voir
+[Exécution de code](#exécution-de-code)), l'image Docker du proxy
 avec ffmpeg, un format audio autre que le FLAC contre le backend, les
 bancs `envTest/pi` et `envTest/omp` sous leur nouvelle forme, Open WebUI.
 
@@ -1399,14 +1404,36 @@ dépôt), non exposé, est le seul à avoir un moteur de conteneurs.
                 │   réseau interne        │
                 └─ liens /v1/files ◀──────┘ code de sortie, sortie, fichiers
 
-**État au 07/10/2026 : écrit, testé contre des doublures, JAMAIS exécuté
-sur un vrai moteur de conteneurs.** Ni l'image de l'exécuteur n'a été
-construite, ni podman lancé dans son conteneur, ni l'isolation d'un bac
-éprouvée, ni Go ni Rust compilés. L'outil est **désactivé par défaut**,
-le service `executor` est sous profil dans le `docker-compose.yml`, et le
-proxy démarre et sert sans lui. Avant de l'activer : la
-[procédure de validation](#valider-lexécuteur-sur-le-déploiement), en
-entier.
+**État au 07/10/2026 : l'exécuteur a été construit, lancé et validé sur
+le déploiement** — Docker 29.7.1, Compose 5.4.0, noyau 6.1, cgroup v2 à
+pilote systemd, hôte Debian sans AppArmor actif. `python -m
+executor.validate` y rend 0 échec : bac à froid et fichiers rendus, état
+gardé, sortie bornée, délai, réseau absent, bombe de processus arrêtée,
+mémoire bornée, racine en lecture seule sans capacité, cloisonnement par
+client, expiration, contenu du bac, compilation C, C++, Rust et Go. Un
+seul point « non borné », attendu : un processus laissé en arrière-plan
+vit jusqu'à la fin de son bac.
+
+Le même jour, à travers le proxy déployé (`bigchuck/qwen3.8-flash-next`) :
+`POST /v1/tools/code_execution` en Python (un graphique et un fichier
+texte rendus), en bash et en Go ; les liens `/v1/files` lus sans clé —
+l'image servie en ligne, le reste en pièce jointe sous `nosniff` et CSP
+`sandbox`, un jeton inconnu en 404 ; un programme qui cherche le proxy
+depuis son bac ne résout aucun nom ; et un modèle, sur deux tours d'une
+même conversation `/v1/chat/completions` — il écrit `primes.txt` au
+premier, le lien s'ajoute à sa réponse, et au second il relit le fichier
+dans le MÊME bac. Depuis l'exécuteur lui-même, ni l'extérieur ni SearXNG
+ne se joignent.
+
+**Pas encore joué** : les liens ouverts dans un navigateur, Open WebUI,
+une machine arm64, le durcissement par `cap_drop`, les redémarrages
+(étape 8). Et une validation vaut pour la machine où elle a tourné.
+
+L'outil est **désactivé par défaut**, le service `executor` n'est pas
+dans le `docker-compose.yml` du dépôt mais dans un
+[override à copier](#le-compose-de-base-et-son-override), et le proxy
+démarre et sert sans lui. Avant de l'activer sur une machine : la
+[procédure de validation](#valider-lexécuteur-sur-le-déploiement).
 
 - **Un bac par conversation.** Les fichiers de `/work` (et de `/tmp`)
   restent d'un appel au suivant ; les variables non, chaque appel est un
@@ -1433,8 +1460,10 @@ entier.
   reconstruire l'image de l'exécuteur.
 - **Délai** : `[tools.code_execution].timeout`, 30 s par programme,
   **compilation comprise**. Une première compilation Go dans un bac paie
-  le cache de sa bibliothèque standard (durée et place dans `/tmp` non
-  mesurées : `validate.py` les relève).
+  le cache de sa bibliothèque standard : 8,6 s mesurées sur le
+  déploiement, 0,6 s ensuite, et 46 Mo des 128 de `/tmp` une fois C, C++,
+  Rust et Go compilés. `validate.py` relève ces chiffres sur une autre
+  machine.
 - **Les fichiers produits** dans `/work` sont remis au client par un lien
   que le proxy ajoute à la fin de la réponse (une image s'affiche, le
   reste se télécharge). Il faut `[files].public_url`, l'adresse sous
@@ -1456,8 +1485,9 @@ entier.
 Activer `code_execution`, c'est laisser tourner sur cette machine du code
 que personne n'a relu : écrit par un modèle, donc dicté au besoin par une
 page web qu'il vient de lire. Ce qui le contient, et ce qui ne le
-contient pas — **tel que c'est écrit ; l'effet d'aucun de ces réglages
-n'a été constaté** :
+contient pas — l'isolation d'un bac et ses bornes ont été **constatées**
+sur le déploiement le 07/10/2026 (`validate.py`, 0 échec) ; les réserves
+qui suivent restent entières :
 
 - **Le noyau est partagé.** Un bac est un conteneur, pas une machine
   virtuelle : une faille du noyau Linux exploitable sans privilège donne
@@ -1466,30 +1496,41 @@ n'a été constaté** :
 - **Deux enceintes, la seconde desserrée.** Le programme tourne dans un
   bac podman sans root : pas de réseau, racine en lecture seule, aucune
   capacité, `no-new-privileges`, le profil seccomp de podman, un uid sans
-  droit. Ce bac tourne dans le conteneur `executor`, qui pour faire
-  marcher podman a dû renoncer à son profil seccomp, à AppArmor, au
-  masquage de `/proc` et à `no-new-privileges`. Qui s'évade d'un bac se
-  trouve dans un conteneur Docker **moins** étanche qu'un conteneur
-  ordinaire — sans capacité d'administration, sans volume, sans secret
-  hormis le jeton de l'exécuteur, sans route vers l'extérieur, sans autre
-  binaire setuid que `newuidmap` et `newgidmap`.
-- **Les limites de ressources par bac sont incertaines.** Mémoire et CPU
-  par bac demandent des cgroups que podman, dans un conteneur, ne peut en
-  général pas écrire (hôte en cgroup v2 : `/sys/fs/cgroup` y est en
-  lecture seule). L'exécuteur l'essaie au démarrage et le dit (journal,
-  `GET /v1/status`, `validate.py` : « NON BORNÉ »). Sont demandés dans
-  tous les cas : la durée d'un programme, le nombre de processus par bac,
-  la taille de ses disques en mémoire. Le reste repose sur le **plafond
-  du conteneur `executor`** (`mem_limit`, `cpus`, `pids_limit`) : un
-  programme peut épuiser ce plafond et faire tuer les autres bacs, voire
-  redémarrer l'exécuteur — pas l'hôte.
+  droit — vu dans un bac : seule interface `lo`, « Network is
+  unreachable », `CapEff: 0`, `NoNewPrivs: 1`, `Seccomp: 2`. Ce bac
+  tourne dans le conteneur `executor`, qui pour faire marcher podman a dû
+  renoncer à son profil seccomp, à AppArmor, au masquage de `/proc` et à
+  `no-new-privileges`, et qui a son cgroup en écriture. Qui s'évade d'un
+  bac se trouve dans un conteneur Docker **moins** étanche qu'un
+  conteneur ordinaire — sans capacité d'administration, sans volume, sans
+  secret hormis le jeton de l'exécuteur, sans route vers l'extérieur,
+  sans aucun binaire setuid (`newuidmap` et `newgidmap` y tirent leur
+  droit de capacités de fichier ; le binaire setuid de Debian échouait
+  dans ce conteneur).
+- **Les bornes par bac tiennent si le cgroup est délégué, et seulement
+  alors.** Sans délégation, podman **accepte** `--memory`, `--cpus` et
+  `--pids-limit` et ne borne rien : 1 Go alloué dans un bac à 512 Mo,
+  observé. Avec `security_opt: writable-cgroups=true` (Docker 28 et
+  plus, posé dans l'override), le point d'entrée — qui démarre en root,
+  délègue le cgroup du conteneur à l'utilisateur `executor`, puis lui
+  cède la place — rend les trois bornes effectives : la même allocation
+  est tuée (code 137), la bombe de processus arrêtée à 124. La sonde de
+  démarrage vérifie l'effet, pas l'acceptation, et le dit (journal,
+  `GET /v1/status`, `validate.py` : « NON BORNÉ »). Tiennent dans tous
+  les cas : la durée d'un programme, le nombre de processus par bac
+  (`RLIMIT_NPROC`), la taille de ses disques en mémoire. Sans délégation,
+  le reste repose sur le **plafond du conteneur `executor`**
+  (`mem_limit`, `cpus`, `pids_limit`) : un programme peut épuiser ce
+  plafond et faire tuer les autres bacs, voire redémarrer l'exécuteur —
+  pas l'hôte. Ce plafond reste à régler sur la machine. Un bac tué par
+  sa borne mémoire peut être recréé à l'appel suivant : il repart vide.
 - **Un programme peut laisser un processus derrière lui.** Détaché
   (`setsid`), il échappe au délai de l'appel et tourne jusqu'à la fin de
   son bac (30 min sans appel, 4 h au plus), dans les bornes du bac ; les
   appels suivants de la même conversation le côtoient. Il ne sort pas du
   bac.
 - **Le réseau interne joint le proxy.** Depuis le conteneur `executor`
-  (pas depuis un bac, qui n'a aucune interface), le proxy est joignable.
+  (pas depuis un bac, qui n'a que `lo`), le proxy est joignable.
   Sur un proxy SANS `proxy.api_keys`, un programme évadé pourrait appeler
   `/v1/tools/web_fetch` et sortir par là. Poser des clés.
 - **Les fichiers sont un canal de sortie.** Un bac n'a pas de réseau,
@@ -1513,80 +1554,95 @@ n'a été constaté** :
 d'office (`[chat].always`) à des clients qui lisent le web sans l'avoir
 pesé : le réglage vaut pour toutes les clés.
 
-#### Dans une pile qui étend une base `no-new-privileges`
+#### Le compose de base et son override
 
-Le `docker-compose.yml` du dépôt porte le service `executor` (sous le
-profil `code-execution`) et le réseau interne `sandbox`. Dans une pile
-dont chaque service étend une base commune —
+La pile tient en deux fichiers, comme celle de dev-box :
 
-    extends: {file: ../bases-configuration/base.yml, service: base}
-    # base : security_opt: ["no-new-privileges=true"], restart: unless-stopped,
-    #        logging: json-file, max-size 5m, max-file 1
+- `docker-compose.yml`, versionné : le proxy et SearXNG, rien d'autre.
+  Un déploiement n'a pas à le modifier, un `git pull` le remplace sans
+  conflit.
+- `docker-compose.override.yml`, **non versionné** (`.gitignore`) : ce
+  qui est facultatif ou propre à la machine. Docker Compose le lit tout
+  seul à côté du premier et **fusionne** les deux — rien à passer à
+  `docker compose`. Le dépôt en livre le modèle, commenté ligne à ligne :
 
-— le service `executor` ne doit **pas** l'étendre : `newuidmap` et
-`newgidmap` sont setuid, `no-new-privileges` les neutralise, et podman
-sans root ne peut plus écrire la table d'uid de ses bacs (« newuidmap:
-write to uid_map failed: Operation not permitted »). `extends` ajoute les
-`security_opt` du service à ceux de la base, il n'en retire pas
-(documentation de Compose, pas essayé) : ce que la base apporte d'autre
-est donc recopié à la main.
+      cp docker-compose.override.example.yml docker-compose.override.yml
 
-    services:
-      albert-proxy:
-        extends: {file: ../bases-configuration/base.yml, service: base}
-        # … ce que le service a déjà, plus :
-        environment:
-          EXECUTOR_TOKEN: "${EXECUTOR_TOKEN:-}"
-        networks:
-          - default       # ou les réseaux qu'il a déjà : ne rien retirer
-          - sandbox
+  puis n'y garder que les blocs voulus.
 
-      executor:
-        # PAS d'extends (no-new-privileges) : restart et logging recopiés.
-        build: <chemin du dépôt>/executor
-        restart: unless-stopped
-        logging:
-          driver: "json-file"
-          options: {max-size: "5m", max-file: "1"}
-        networks: [sandbox]
-        environment:
-          EXECUTOR_TOKEN: "${EXECUTOR_TOKEN:-}"
-        security_opt:
-          - seccomp=unconfined
-          - systempaths=unconfined
-          - apparmor=unconfined
-        tmpfs:
-          - /run/user/10001:mode=700,uid=10001,gid=10001
-        mem_limit: 4g
-        memswap_limit: 4g
-        cpus: 2
-        pids_limit: 2048
+**Bloc 1, l'exécution de code** — trois morceaux qui vont ensemble : le
+proxy rejoint le réseau `sandbox` (en gardant `default`), le service
+`executor`, et le réseau `sandbox`, `internal`. Copier ce bloc, c'est
+mettre le service en route : il n'y a ni profil compose ni drapeau à
+passer. Il faut en plus `EXECUTOR_TOKEN` dans `.env`, puis
+`[tools.code_execution]` et `[files]` dans `data/config.toml`.
 
-    networks:
-      sandbox:
-        internal: true
+**Bloc 2, l'adaptation à la machine** — des exemples commentés, à
+décommenter : `container_name`, `ports: !reset []` derrière un reverse
+proxy du même hôte, `extra_hosts` pour un backend que le DNS du conteneur
+ne connaît pas, `extends` d'une base commune à tous les services de
+l'hôte (redémarrage, journaux, `no-new-privileges`). Une clé posée dans
+l'override remplace celle du fichier de base pour une valeur simple et
+s'y ajoute pour une liste ; `!reset` vide une liste héritée, `!override`
+la remplace (Docker Compose 2.24 et plus).
 
-Les commentaires de chaque ligne sont dans le `docker-compose.yml` du
-dépôt. Le proxy, lui, garde la base : rien de ce qu'il fait ne demande un
-privilège (ffmpeg compris).
+**La règle : `executor` n'étend PAS une base `no-new-privileges`.**
+`newuidmap` et `newgidmap` tirent leur droit de capacités de fichier, que
+cette option neutralise : podman n'écrirait plus la table d'uid de ses
+bacs (« newuidmap: write to uid_map failed: Operation not permitted »).
+Et `extends` ajoute les `security_opt` du service à ceux de la base, il
+n'en retire pas (documentation de Compose, pas essayé). Le service
+recopie donc à la main ce qu'il veut de la base (`restart`, `logging`).
+Le proxy et SearXNG, eux, peuvent l'étendre : rien de ce que fait le
+proxy ne demande un privilège (ffmpeg compris).
+
+Dans une pile à `include` (un compose racine qui réunit plusieurs
+dossiers), Compose ne cherche pas l'override tout seul : nommer les deux
+fichiers.
+
+    include:
+      - path:
+          - ./llm-proxy/docker-compose.yml
+          - ./llm-proxy/docker-compose.override.yml
+
+Dans tous les cas, `docker compose config` montre le résultat de la
+fusion.
 
 #### Valider l'exécuteur sur le déploiement
 
+La procédure a été déroulée le 07/10/2026 jusqu'à l'étape 3 comprise, sur
+le déploiement (Docker 29.7.1, Compose 5.4.0, noyau 6.1, cgroup v2 à
+pilote systemd, hôte Debian sans AppArmor actif) : les « relevé ce
+jour-là » plus bas en viennent. La suite n'a **pas** de relevé à ce jour :
+ni l'outil appelé par le proxy (étape 5) ou par un modèle (6), ni Open
+WebUI (7), ni les durcissements (9). Sur une autre machine — autre Docker, autre noyau, AppArmor
+actif, arm64 — tout est à refaire, et l'outil ne s'active que sur un
+verdict « activable ».
+
 Tout se fait par `docker compose`, depuis le dossier de la pile ; `$PROXY`
-est l'URL du proxy, `$CLE` une clé de `proxy.api_keys`. Noter le résultat
-de chaque étape : c'est lui qui fait passer une ligne de « non vérifié »
-à « vérifié ». Hôte visé : Docker 29, cgroup v2.
+est l'URL du proxy, `$CLE` une clé de `proxy.api_keys`.
 
-**0. Préparer.** Récupérer la branche. Dans `.env` :
-`EXECUTOR_TOKEN=$(openssl rand -hex 32)`. Dans le `data/config.toml` du
-déploiement — il n'est **pas** régénéré depuis l'exemple — copier les
-tables `[tools.code_execution]` et `[files]` de
-`data/config.example.toml`, en laissant `enabled = false`.
+**0. Préparer.** Récupérer la branche, puis :
 
-    docker compose config executor | grep -B2 -A6 security_opt
+    cp docker-compose.override.example.yml docker-compose.override.yml
 
-Attendu : les trois `unconfined`, et **pas** `no-new-privileges`. S'il y
-est, le service étend encore la base.
+et y garder le bloc 1 (plus ce qu'il faut du bloc 2 : voir
+[Le compose de base et son override](#le-compose-de-base-et-son-override)).
+Dans `.env` : `EXECUTOR_TOKEN=` suivi du résultat de `openssl rand -hex
+32`. Dans le `data/config.toml` du déploiement — il n'est **pas**
+régénéré depuis l'exemple — copier les tables `[tools.code_execution]` et
+`[files]` de `data/config.example.toml`, en laissant `enabled = false`.
+
+    docker compose config | less
+    docker compose config executor | grep -A6 security_opt
+
+Attendu, dans la pile fusionnée : le service `executor` ; `albert-proxy`
+sur les réseaux `default` **et** `sandbox` ; le réseau `sandbox` en
+`internal: true` ; pour `executor`, les trois `unconfined` et
+`writable-cgroups=true`, et **pas** `no-new-privileges` (s'il y est, le
+service étend une base qui le pose). Si `executor` n'apparaît pas,
+l'override n'est pas lu : mauvais nom de fichier, ou pile à `include` qui
+ne le nomme pas.
 
 **1. Construire.**
 
@@ -1598,26 +1654,32 @@ Attendu : « bac à sable complet : Python 3.13.x, 15 modules, 24
 commandes, 4 langages compilés (c …s, cpp …s, go …s, rust …s … cache de
 Go : … Mo) », puis `podman version 5.x`. Si le contrôle échoue il nomme
 ce qui manque (version de bibliothèque introuvable, paquet absent,
-compilateur qui veut le réseau). Image de plusieurs Go ; premier build :
-plusieurs minutes. **Relever les temps de compilation et la taille du
-cache de Go** : au-delà de ~100 Mo, monter `SANDBOX_TMP_SIZE` ; au-delà
-de ~20 s pour Go, monter `[tools.code_execution].timeout`.
+compilateur qui veut le réseau). Relevé ce jour-là : une image de
+**2,09 Go**, bac compris ; premier build : plusieurs minutes. Au-delà de
+~100 Mo de cache de Go, monter `SANDBOX_TMP_SIZE` ; au-delà de ~20 s pour
+Go, monter `[tools.code_execution].timeout`.
 
 **2. Démarrer et lire le journal.**
 
-    docker compose up -d executor albert-proxy
+    docker compose up -d
     sleep 30; docker compose ps; docker compose logs executor | tail -20
 
 Attendu : `executor` « healthy », et la ligne « podman prêt : 0
-orphelin(s) détruit(s) ; bornes de cgroups tenues : … ». Sur un hôte en
-cgroup v2 je m'attends à « AUCUNE », suivi de l'avertissement « bornes
-NON tenues par bac » : ce n'est pas un échec, c'est le cas prévu (plafond
-du conteneur seul). Si à la place : « exécuteur HORS SERVICE : podman ne
-démarre aucun conteneur : <message> », le message de podman dit quoi :
+orphelin(s) détruit(s) ; bornes de cgroups tenues : cpu, memory, pids ».
+La sonde ne se fie pas à ce que podman accepte : elle compare ce qu'un
+bac lit dans son propre cgroup avec et sans la borne. Si la ligne dit
+« AUCUNE », suivie de l'avertissement « bornes NON tenues par bac
+(cgroups non délégués) », le cgroup du conteneur n'a pas été délégué :
+`writable-cgroups=true` manque à `security_opt`, ou Docker est antérieur
+à la version 28. Le service marche, mais podman accepte alors
+`--memory`, `--cpus` et `--pids-limit` sans rien borner (1 Go alloué dans
+un bac à 512 Mo, observé) et seul le plafond du conteneur retient les
+bacs. Si à la place : « exécuteur HORS SERVICE : podman ne démarre aucun
+conteneur : <message> », le message de podman dit quoi :
 
 | Message | Cause probable |
 |---|---|
-| `newuidmap: write to uid_map failed: Operation not permitted` | `no-new-privileges` est posé (extends de la base), ou l'hôte n'offre pas les uid 100000–165535 (Docker sans root, userns-remap) |
+| `newuidmap: write to uid_map failed: Operation not permitted` | `no-new-privileges` est posé (extends d'une base) et neutralise les capacités de fichier de `newuidmap` ; ou une image d'avant le 07/10, où `newuidmap` était encore le binaire setuid de Debian (il échoue ainsi dans ce conteneur) : reconstruire ; ou l'hôte n'offre pas les uid 100000–165535 (Docker sans root, userns-remap) |
 | `cannot clone: Operation not permitted` | `seccomp=unconfined` manque |
 | `mount proc … Operation not permitted` | `systempaths=unconfined` manque |
 | `… apparmor … denied`, `mount … permission denied` | `apparmor=unconfined` manque |
@@ -1630,9 +1692,12 @@ Le proxy, lui, doit être « healthy » quoi que fasse l'exécuteur.
 
     docker compose exec executor python -m executor.validate | tee /tmp/validate.log
 
-Le script n'a besoin ni du jeton ni du proxy. Il juge chaque cas `OK`,
-`ÉCHEC` ou `NON BORNÉ` et finit par une ligne `VERDICT`. Code de sortie
-0 = aucun ÉCHEC.
+`docker compose exec` entre en root (le point d'entrée démarre en root
+pour déléguer le cgroup) : le script repart seul sous l'utilisateur
+`executor`. Il n'a besoin ni du jeton ni du proxy. Il juge chaque cas
+`OK`, `ÉCHEC` ou `NON BORNÉ` et finit par une ligne `VERDICT`. Code de
+sortie 0 = aucun ÉCHEC. Le 07/10/2026 : **0 échec**, et un seul `NON
+BORNÉ`, le cas 14, attendu.
 
 | Cas | Attendu |
 |---|---|
@@ -1641,9 +1706,9 @@ Le script n'a besoin ni du jeton ni du proxy. Il juge chaque cas `OK`,
 | 3. sortie trop longue | `OK` : coupée |
 | 4. délai dépassé | `OK` en ~3 s, `début` gardé |
 | 5. le bac survit au délai | `OK` |
-| 6. réseau | `OK` : « pas de réseau », interfaces `['lo']`. **ÉCHEC = ne pas activer** |
-| 7. bombe de processus | `OK` : fork refusé avant 128. ÉCHEC = `RLIMIT_NPROC` ne tient pas par bac |
-| 8. mémoire | `OK` si les cgroups sont tenus ; sinon **`NON BORNÉ`** (attendu) : 1 Go alloué pour de vrai, pris sur `mem_limit` |
+| 6. réseau | `OK` : « Network is unreachable », seule interface `lo` (demandée au noyau : `/sys/class/net` ne le dit pas, voir plus bas). **ÉCHEC = ne pas activer** |
+| 7. bombe de processus | `OK` : fork refusé avant 128 (arrêtée à 124 ce jour-là). ÉCHEC = ni `RLIMIT_NPROC` ni `--pids-limit` ne tiennent par bac |
+| 8. mémoire | `OK` : l'allocation de 1 Go est tuée (code 137) dans un bac à 512 Mo. **`NON BORNÉ`** si le cgroup n'est pas délégué : 1 Go alloué pour de vrai, pris sur `mem_limit` |
 | 8bis. CPU | n'apparaît (`NON BORNÉ`) que si `--cpus` n'est pas tenu |
 | 9. lecture seule, capacités | `OK` : 4 × `Read-only file system`, `CapEff: 0`, `NoNewPrivs: 1`, `Seccomp: 2`, `/work` plein avant 300 Mo. **ÉCHEC = ne pas activer** |
 | 10. autre client, même session | `OK` : bac vide |
@@ -1652,13 +1717,32 @@ Le script n'a besoin ni du jeton ni du proxy. Il juge chaque cas `OK`,
 | 13. c, cpp, rust, go, go | `OK` chacun en moins de 30 s ; le second `go` est celui d'un cache chaud |
 | 14. processus en arrière-plan | **`NON BORNÉ`** attendu : un processus détaché survit à l'appel, jusqu'à la fin du bac |
 
-À relever : la ligne `VERDICT`, les deux lignes `MESURES` (à froid, à
-chaud, 5 × `print(1)`, pandas + matplotlib ; `/tmp` après les
-compilations) et les temps du cas 13. Si « à chaud » dépasse 1 s, le coût
-est dans `podman exec` lui-même. Pendant le cas 8, dans un autre
-terminal : `docker stats --no-stream` (l'exécuteur doit rester sous
-`mem_limit` ; s'il redémarre, le plafond a joué son rôle mais il est trop
-juste pour `SANDBOX_MAX_SESSIONS`).
+À relever : la ligne `VERDICT`, les deux lignes `MESURES` et les temps du
+cas 13. Relevé ce jour-là :
+
+| Mesure | 07/10/2026 |
+|---|---|
+| bac à froid (création comprise) | 0,6 s |
+| appel à chaud | 0,2 à 0,5 s |
+| `import pandas` + `matplotlib` et un tracé | 1,4 s |
+| première compilation Go dans un bac | 8,6 s (0,6 s ensuite) |
+| `/tmp` après les compilations | 46 Mo sur 128 |
+
+Si « à chaud » dépasse 1 s, le coût est dans `podman exec` lui-même.
+Pendant le cas 8, dans un autre terminal : `docker stats --no-stream`
+(l'exécuteur doit rester sous `mem_limit` ; s'il redémarre, le plafond a
+joué son rôle mais il est trop juste pour `SANDBOX_MAX_SESSIONS`).
+
+Deux choses vues ce jour-là, qui ne sont pas des échecs. Le
+`/sys/class/net` d'un bac montre les interfaces de l'**exécuteur** — le
+sysfs d'un bac imbriqué est repris de son hôte, le conteneur exécuteur —
+alors que le bac n'a que `lo` : c'est au noyau qu'il faut demander, ce
+que fait le cas 6. Et un bac tué par sa borne mémoire peut être recréé à
+l'appel suivant : la conversation repart alors d'un bac vide, et le
+modèle en est prévenu.
+
+Les étapes 4 à 6 ont été jouées le même jour sur ce déploiement (voir
+plus haut) ; les suivantes n'ont pas de relevé à ce jour.
 
 **4. Le réseau interne.**
 
@@ -1733,9 +1817,12 @@ mémoire), et la conversation repart d'un bac neuf.
 
 **9. Durcissements, à essayer en dernier**, `validate.py` rejoué après
 chacun : `cap_drop: [ALL]` avec `cap_add: [SETUID, SETGID]` sur
-`executor` (newuidmap n'a besoin que de ces deux capacités — devrait
-marcher, pas essayé) ; puis régler `mem_limit`, `cpus`, `pids_limit` et
-`SANDBOX_MAX_SESSIONS` sur la machine.
+`executor`, dans l'override (newuidmap et newgidmap n'ont besoin que de
+ces deux capacités ; le point d'entrée, lui, fait un `chown` sur le
+cgroup, qui pourrait demander `CHOWN` en plus — pas essayé, et la ligne
+« bornes de cgroups tenues » du journal le dira) ; puis régler
+`mem_limit`, `cpus`, `pids_limit` et `SANDBOX_MAX_SESSIONS` sur la
+machine.
 
 ### Cache web
 
@@ -1841,10 +1928,24 @@ l'activer là où l'agent travaille sans surveillance.
 `searxng`, le métamoteur des [outils hébergés](#outils-hébergés) : sans
 elle `docker compose` avertit et démarre quand même.
 
-Le service `executor` (l'[exécution de code](#exécution-de-code)) est
-sous profil : cette commande ne le construit ni ne le lance. Le mettre
-en route, après avoir lu ce qu'il vaut : `EXECUTOR_TOKEN` dans `.env`,
-puis `docker compose --profile code-execution up -d --build`.
+Le `docker-compose.yml` du dépôt ne porte que le proxy et SearXNG. Ce
+qui est facultatif ou propre à la machine — l'exécuteur de code, un
+`container_name`, un port à ne pas publier, une base commune à étendre —
+se met dans un `docker-compose.override.yml`, non versionné, que Docker
+Compose fusionne tout seul avec le premier :
+
+    cp docker-compose.override.example.yml docker-compose.override.yml
+    # n'y garder que les blocs voulus, puis :
+    docker compose config       # la pile fusionnée
+    docker compose up -d --build
+
+Le service `executor` (l'[exécution de code](#exécution-de-code)) vit
+dans cet override : sans lui, il n'est ni construit ni lancé. Le mettre
+en route, après avoir lu [ce qu'il vaut](#ce-que-le-bac-à-sable-vaut) :
+copier le bloc 1 de l'exemple, poser `EXECUTOR_TOKEN` dans `.env`, puis
+suivre la [procédure de validation](#valider-lexécuteur-sur-le-déploiement).
+Le détail des deux fichiers :
+[Le compose de base et son override](#le-compose-de-base-et-son-override).
 
 `./data` est monté comme volume : il porte la configuration
 (`config.toml`, créée au premier démarrage depuis l'exemple) **et** la
@@ -2071,7 +2172,7 @@ dans `data/config.example.toml` et
 
 Les bornes d'un bac (mémoire, CPU, processus, `/work`, `/tmp`, fichiers
 rendus, nombre de bacs, durées) sont celles de l'exécuteur : variables
-`SANDBOX_*` de son service, dans `docker-compose.yml`.
+`SANDBOX_*` de son service, dans `docker-compose.override.yml`.
 
 ### `[files]`
 
@@ -2267,11 +2368,16 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   leur modèle (`[chat].always_except`), et aux
   modèles de conversation qui ne savent pas appeler d'outils — voir
   [Open WebUI](#open-webui--présenter-les-outils-doffice).
-- **Exécution de code** (`[tools.code_execution]`) : jamais exécutée sur
-  un vrai moteur de conteneurs — image non construite, isolation non
-  éprouvée, Go et Rust jamais compilés ; testée contre des doublures
-  seulement. Limites de mémoire et de CPU par bac probablement non tenues
-  sous Docker (plafond du conteneur exécuteur seul). Un programme peut
+- **Exécution de code** (`[tools.code_execution]`) : l'exécuteur est
+  validé sur une seule machine (Docker 29.7.1, noyau 6.1, cgroup v2,
+  sans AppArmor actif), où l'outil a été appelé par le proxy et par
+  un modèle ; pas encore joués : les liens `/v1/files` dans un
+  navigateur, Open WebUI, arm64, le durcissement par `cap_drop`.
+  Mémoire, CPU et processus ne sont bornés par bac que si le cgroup du
+  conteneur est délégué (`writable-cgroups=true`, Docker 28 et plus) ;
+  sinon, plafond du conteneur exécuteur seul. Le conteneur exécuteur
+  tourne sans seccomp, ni AppArmor, ni masquage de `/proc`, ni
+  `no-new-privileges`. Un programme peut
   laisser un processus tourner jusqu'à la fin de son bac. Pas sur
   `/v1/responses` ni `/v1/messages`. La conversation n'est reconnue que
   par la mémoire des échanges cachés : historique modifié ou proxy
