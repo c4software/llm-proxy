@@ -107,6 +107,10 @@ async def lifespan(app: FastAPI):
     log.info("configuration : %s", config.CONFIG_PATH)
     stats.init()
     await open_clients()
+    # Serveurs MCP ([tools.mcp.<serveur>]) : découverte de leurs outils,
+    # attendue quelques secondes au plus — un serveur éteint ne retient
+    # pas le démarrage, ses outils s'enregistrent quand il répond.
+    await tools.mcp.start()
 
     for name, b in BACKENDS.items():
         log.info(
@@ -158,8 +162,9 @@ async def lifespan(app: FastAPI):
         )
     else:
         log.info("aucun outil hébergé ([tools.<nom>].enabled absent ou "
-                 "false) : `web_search` d'un client Responses ou Anthropic "
-                 "est ignoré")
+                 "false%s) : `web_search` d'un client Responses ou Anthropic "
+                 "est ignoré", ", aucun serveur MCP joint"
+                 if tools.mcp.SERVERS else "")
     log.info(
         "outils hébergés sur /v1/chat/completions : %s",
         "ACTIFS — une requête qui déclare `{\"type\": \"web_search\"}` "
@@ -235,6 +240,7 @@ async def lifespan(app: FastAPI):
     yield
     for task in refresh_tasks:
         task.cancel()
+    await tools.mcp.stop()
     await close_clients()
     stats.close()
 
@@ -657,6 +663,9 @@ async def healthz():
                           "hits": tools.webcache.CACHE.hits,
                           "misses": tools.webcache.CACHE.misses},
             # Cache des transcriptions (le texte, jamais l'audio).
+            # Serveurs MCP de la configuration : joints ou non, leur
+            # protocole, leurs outils — jamais leurs en-têtes.
+            "mcp": tools.mcp.status(),
             "transcribe_cache": {"ttl": tools.transcribe.CACHE.ttl,
                                  "entries": len(tools.transcribe.CACHE),
                                  "hits": tools.transcribe.CACHE.hits,

@@ -206,7 +206,7 @@
        de page), sur la même période. Absente tant
        qu'aucun n'a servi dans la fenêtre. Des mesures seulement : ce qui
        a été cherché ou lu n'est pas dans les statistiques. -->
-  <div class="panel tools" v-if="tools.length || (webCache && webCache.asked)">
+  <div class="panel tools" v-if="tools.length || (webCache && webCache.asked) || mcpServers.length">
     <div class="panel-head">
       <h2>Outils</h2>
       <span class="meta">{{ num(toolCalls) }} exécution{{ toolCalls > 1 ? "s" : "" }}
@@ -263,6 +263,17 @@
       </template>
       <template v-else><b>Cache web</b> désactivé
         (<code>[tools] web_cache_ttl = 0</code>)</template>
+    </p>
+    <!-- Serveurs MCP : l'état de la dernière découverte, à l'instant. -->
+    <p class="note webcache" v-if="mcpServers.length">
+      <b>Serveurs MCP</b> —
+      <template v-for="(s, i) in mcpServers" :key="s.name">
+        <template v-if="i"> · </template>
+        <span :title="s.url + (s.error ? ' — ' + s.error : '')">{{ s.name }} :
+          <template v-if="s.up">{{ s.tools.length }} outil{{ s.tools.length > 1 ? "s" : "" }}</template>
+          <template v-else-if="s.up === false">injoignable</template>
+          <template v-else>pas encore joint</template></span>
+      </template>
     </p>
   </div>
 

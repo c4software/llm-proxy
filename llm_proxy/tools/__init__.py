@@ -33,6 +33,9 @@ le décrit membre par membre, avec un exemple complet) :
 
 Ajouter un outil : une classe, `register(...)`, une table [tools.<nom>]
 dans config.example.toml — voir docs/outils.md, « Écrire un outil ».
+mcp.py, lui, est un FOURNISSEUR : il apporte au registre, après l'import
+(au démarrage de l'application, puis à chaque découverte), les outils des
+serveurs MCP de la configuration.
 
 Ce module porte ce qui est commun : le REGISTRE (register, enabled),
 l'exécution bornée (Hosted.run : nombre d'appels, délai, taille du
@@ -70,8 +73,8 @@ from collections import OrderedDict
 
 from .. import config, stats
 from ..settings import log
-from . import (net, ocr, transcribe, web_fetch, web_search,  # noqa: F401
-               webcache)
+from . import (mcp, net, ocr, transcribe, web_fetch,  # noqa: F401
+               web_search, webcache)
 # Le contrat, tel que le reste du proxy et un outil l'importent d'ici.
 from .contract import (ERRORS, Anthropic, Artifact, Call,  # noqa: F401
                        Responses, Result, Source, Tool, ToolError, failure)
@@ -118,8 +121,10 @@ def enabled() -> list[Tool]:
 
 def kinds() -> frozenset:
     """Tous les types d'outil que le registre sait héberger, actifs ou
-    non : ce qu'une requête chat/completions peut déclarer dans `tools`."""
-    return frozenset(k for t in REGISTRY for k in t.kinds)
+    non : ce qu'une requête chat/completions peut déclarer dans `tools`.
+    Plus ceux des serveurs MCP de la configuration, dont les outils
+    n'entrent au registre qu'une fois découverts (mcp.kinds)."""
+    return frozenset(k for t in REGISTRY for k in t.kinds) | mcp.kinds()
 
 
 # Sel du condensé des clés clientes : tiré à chaque démarrage, jamais

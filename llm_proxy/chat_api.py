@@ -273,7 +273,8 @@ def prepare(payload: dict, hosted, kinds, always=()) -> Context:
         if not found:
             raise Refused(
                 f"outil hébergé «{kind}» déclaré mais désactivé sur ce "
-                f"proxy ([tools.<nom>].enabled dans config.toml)")
+                f"proxy ([tools.<nom>].enabled dans config.toml ; pour un "
+                f"serveur MCP : désactivé, ou pas encore joint)")
         for tool in found:
             if tool.name in taken:
                 continue

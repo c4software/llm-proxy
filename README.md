@@ -101,6 +101,12 @@ et un tableau de bord.
   `[tools.transcribe].enabled`, l'outil `transcribe` rend le texte d'un
   fichier audio donné par son URL, par le modèle de transcription d'un
   backend.
+- **Serveurs MCP** — les outils des serveurs MCP listés dans
+  `[tools.mcp.<serveur>]` (HTTP seulement, liste fermée, en-têtes
+  statiques) deviennent des outils hébergés : `<serveur>_<outil>`,
+  déclarables sur `/v1/chat/completions` (`{"type": "mcp"}`) et
+  exécutables par `POST /v1/tools/<nom>`. Voir
+  [docs/outils.md](docs/outils.md#serveurs-mcp).
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
@@ -144,6 +150,7 @@ et un tableau de bord.
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
 | `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en sources pour les annotations et les blocs d'un client Anthropic ; filtre par domaines |
 | `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page (ou du texte d'un PDF) par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
+| `llm_proxy/tools/mcp.py` | Client MCP (Streamable HTTP, sans SDK) : découverte des outils des serveurs de la configuration, chacun enregistré comme outil hébergé ; révision 2026-07-28 sans état et révisions à `initialize`/session ; résultats ramenés à du texte |
 | `llm_proxy/tools/ocr.py` | L'outil `ocr` : texte d'une image ou d'un PDF scanné (images embarquées dans ses pages) par son URL, téléchargée sous le garde-fou, lue par un modèle de vision d'un backend — limiteur de quotas et statistiques compris |
 | `llm_proxy/tools/transcribe.py` | L'outil `transcribe` : téléchargement d'un fichier audio par son URL sous le garde-fou, transcription par le modèle d'un backend (`/v1/audio/transcriptions`), texte découpé et gardé en cache |
 | `docs/outils.md` | Le contrat des outils hébergés, membre par membre, et comment en écrire un |
@@ -1532,6 +1539,28 @@ Ce que l'outil a le droit de joindre : `[tools.net]`.
 | `cache_ttl`, `cache_entries` | `3600`, `64` | Cache des transcriptions (le texte, jamais l'audio), par URL et langue ; `cache_ttl = 0` = pas de cache |
 
 Ce que l'outil a le droit de joindre : `[tools.net]`.
+
+### `[tools.mcp]` et `[tools.mcp.<serveur>]`
+
+Une sous-table par serveur MCP ; les valeurs simples de `[tools.mcp]`
+sont les réglages communs. Tout est décrit, avec les mises en garde,
+dans `data/config.example.toml` et
+[docs/outils.md](docs/outils.md#serveurs-mcp).
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `timeout` | `30` | Secondes pour un appel d'outil et pour une découverte ; remplace `[tools].run_timeout` pour ces outils. Commun ou par serveur |
+| `refresh` | `300` | Secondes entre deux découvertes (`tools/list`) ; `0` = au démarrage seulement. Commun ou par serveur |
+| `startup_wait` | `5` | Ce que le démarrage du proxy attend au plus de la première découverte |
+| `max_tools` | `64` | Outils exposés par serveur. Commun ou par serveur |
+| `description_chars`, `schema_chars` | `1024`, `8000` | Description coupée au-delà ; outil écarté si son schéma est plus gros |
+| `max_bytes` | `4000000` | Octets lus au plus sur une réponse d'un serveur |
+| `<serveur>.url` | — | Le point d'accès MCP (requis). Adresse de configuration : peut être privée |
+| `<serveur>.enabled` | `true` | `false` : le serveur n'est pas joint |
+| `<serveur>.headers` | `{}` | En-têtes statiques (secrets par `${VAR}`) |
+| `<serveur>.tools`, `<serveur>.exclude` | `[]` | Outils exposés / jamais exposés, par leur nom chez le serveur (jokers) |
+| `<serveur>.prefix` | le nom de la table | Préfixe des noms de fonction ; `""` = aucun |
+| `<serveur>.verify_ssl` | `true` | `false` : certificat TLS non vérifié |
 
 ### `[tools.net]`
 

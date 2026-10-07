@@ -98,6 +98,10 @@ createApp({
     // Outils que le proxy exécute lui-même (recherche web, lecture de page…).
     const hostedTools = computed(() =>
       ((health.value || {}).tools || {}).enabled || []);
+    // Serveurs MCP de la configuration (/healthz) : joints ou non, et
+    // combien d'outils chacun apporte.
+    const mcpServers = computed(() =>
+      (((health.value || {}).tools || {}).mcp || []).filter((s) => s.enabled));
     // Cache web des outils (tools/webcache.py), lu dans /healthz : des
     // compteurs en mémoire vive, DEPUIS LE DÉMARRAGE du proxy — pas sur la
     // période choisie, au contraire du tableau des exécutions.
@@ -554,6 +558,7 @@ pi --model albert/${model}`,
     return { windows, current, metrics, metric, metricUnit, metricLabel,
              models, totals, bars, axis, peak, since, now, tools, toolCalls,
              loaded, entering, anthropic, responses, hostedTools, webCache,
+             mcpServers,
              authRequired, exampleModel,
              snippets, origin, note, shortcuts, bucketLabel, successRate,
              backendSummary, num, ms, ago, dur, moment, tickLabel, select,

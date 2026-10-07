@@ -10,9 +10,10 @@ décrit l'autre côté : **ce qu'est un outil pour le code du proxy**, et
 comment en écrire un.
 
 Le dépôt en porte quatre, `web_search`, `web_fetch`, `ocr` et
-`transcribe` (`llm_proxy/tools/`). Le contrat est écrit pour ceux qui
-suivront — les outils d'un serveur MCP découverts au démarrage, une
-exécution de code — sans les construire : voir
+`transcribe` (`llm_proxy/tools/`), plus un **fournisseur**, `mcp.py`, qui
+y ajoute les outils des [serveurs MCP](#serveurs-mcp) de la
+configuration. Le contrat est écrit aussi pour ce qui suivra — une
+exécution de code — sans le construire : voir
 [Prévu, pas construit](#prévu-pas-construit).
 
 Tout tient dans `llm_proxy/tools/contract.py`, réexporté par le paquet :
@@ -303,8 +304,10 @@ Pour un outil du dépôt :
    et sa section dans le README.
 4. Une liaison, si un protocole a un nom pour lui.
 
-Un fournisseur qui apporte plusieurs outils (un serveur MCP) appelle
-`register` une fois par outil découvert, au démarrage.
+Un fournisseur qui apporte plusieurs outils (`mcp.py`) appelle
+`register` une fois par outil découvert, au démarrage puis à chaque
+découverte. Le registre ne sait pas retirer : un outil disparu reste
+enregistré, et c'est son `enabled` qui le dit.
 
 Ce qu'il faut tenir :
 
@@ -454,6 +457,92 @@ Ce qu'il montre du contrat :
   octets de ce qui n'est pas de l'audio.
 - **Garder le travail, pas l'entrée** : le texte est en cache (par URL et
   langue), l'audio ne l'est jamais.
+
+## Serveurs MCP
+
+`llm_proxy/tools/mcp.py` est un **client MCP** : le proxy se connecte aux
+serveurs listés dans `[tools.mcp.<serveur>]`, leur demande leurs outils
+(`tools/list`), et chacun devient un outil hébergé — un `Tool` du contrat
+comme les autres, sans liaison de protocole : présentable sur
+`/v1/chat/completions`, exécutable par `POST /v1/tools/<nom>`. Les
+surfaces Responses et Anthropic ne les présentent pas : leurs formes MCP
+(`{"type": "mcp", "server_url": …}`, `mcp_servers`) portent une URL de
+serveur fournie par le client, ce qui est exclu ici.
+
+**Ce qui est permis.** HTTP seulement (transport « Streamable HTTP ») ;
+une liste fermée de serveurs, dans la configuration ; des en-têtes
+statiques pour l'authentification (secrets par `${VAR}`). Pas de stdio,
+pas d'URL fournie par un client ou par le modèle, pas d'OAuth.
+
+**Nommage.** La fonction présentée au modèle s'appelle
+`<préfixe>_<outil>` — le préfixe est le nom de la table (ou `prefix`).
+Caractères hors `[A-Za-z0-9_-]` remplacés par `_`, 64 caractères au plus
+(au-delà : coupé, fini par un condensé). Deux serveurs qui ont chacun un
+`search` donnent `docs_search` et `wiki_search`. Un nom déjà pris écarte
+l'outil arrivé en second (journal).
+
+**Déclaration sur `/v1/chat/completions`.** `{"type": "mcp"}` déclare tous
+les outils MCP, `{"type": "mcp:<serveur>"}` ceux d'un serveur,
+`{"type": "<serveur>_<outil>"}` un seul. `mcp` et `mcp:<serveur>` sont
+connus du proxy dès qu'un serveur est **configuré** (`mcp.kinds()`),
+avant toute découverte : déclarés alors qu'aucun outil n'est encore là,
+ils valent un `400` qui le dit, pas l'erreur d'un backend. `[chat].always`
+présente un outil MCP d'office par son nom, `<serveur>_<outil>` — il n'y a
+pas de forme pour « tous ceux d'un serveur » dans cette liste.
+
+**Ce que le modèle reçoit.** La description du serveur (ou son `title`),
+bornée à `description_chars` ; son `inputSchema` tel quel (sans
+`$schema`), s'il tient en `schema_chars`. Le proxy ne valide pas les
+arguments : le serveur le fait, et son refus revient au modèle.
+
+**Résultat.**
+
+| Ce que le serveur rend | `Result` |
+| --- | --- |
+| contenus `text` | `text`, joints par une ligne vide |
+| `isError: true` | `text` = `Error: <texte de l'outil>`, `error` = `failed` : l'outil a tourné et dit avoir échoué |
+| `image`, `audio`, ressource binaire | une ligne `[image content omitted: image/png, 300 bytes — this proxy returns text only]` ; `meta.omitted` liste les types |
+| ressource textuelle | `[resource <uri>]` puis son texte |
+| `resource_link` | une ligne `[resource link: nom — uri (type)] description` ; une `Source` si l'URI est http(s) |
+| `structuredContent` | en JSON dans `text` s'il n'y a aucun texte ; toujours dans `meta.structured` |
+| erreur JSON-RPC `-32602` | `invalid_input` |
+| autre erreur JSON-RPC, HTTP 4xx/5xx, serveur injoignable | `unavailable` |
+| HTTP 429 | `too_many_requests` |
+| délai dépassé (`timeout` du serveur ; c'est aussi, à 5 s près, le `Tool.timeout` de ses outils, à la place de `run_timeout`) | `timeout` |
+| l'outil demande une saisie (`input_required` : élicitation, sampling) | `unsupported` |
+
+`meta` porte aussi `server` et `tool` (le nom chez le serveur).
+
+**Protocole.** Les deux ères de MCP sont parlées, celle du serveur étant
+sondée une fois (`server/discover`) : la révision 2026-07-28, sans état
+(version et capacités dans `_meta` de chaque requête, en-têtes
+`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Mcp-Param-…`), et les
+révisions 2025-03-26 à 2025-11-25 (`initialize`,
+`notifications/initialized`, `Mcp-Session-Id`, session rouverte une fois
+sur 404). Réponses en JSON ou en flux SSE. Non pris en charge : l'ancien
+transport HTTP+SSE (2024-11-05), la reprise d'un flux coupé
+(`Last-Event-ID`), les flux d'écoute (`GET`, `subscriptions/listen`),
+l'élicitation et le sampling, les ressources et les prompts.
+
+**Découverte.** Au démarrage de l'application (`mcp.start()` dans le
+`lifespan` d'`app.py`, attendu `startup_wait` secondes au plus ;
+`mcp.stop()` à l'arrêt), puis toutes les `refresh` secondes, et sans attendre
+quand le serveur signale un changement dans un flux de réponse ou refuse
+un appel pour outil ou paramètres inconnus. Un serveur éteint ne bloque
+pas le démarrage. Un outil que le serveur retire est désactivé ; pendant
+une coupure, les outils déjà connus restent présentés (leur appel rend
+`unavailable`).
+
+**Sécurité.** Un outil exposé l'est à tous les clients du proxy, avec le
+compte des en-têtes configurés, et personne ne confirme un appel : le
+choix des serveurs et de leurs outils (`tools`, `exclude`) est le seul
+garde-fou. Descriptions, schémas et résultats sont du texte tiers qui
+entre dans le prompt du modèle.
+
+**État.** `/healthz` → `tools.mcp` : par serveur de la configuration,
+`name`, `url` (sans sa requête), `enabled`, `up` (`null` = pas encore
+sondé), `error`, `era`, `protocol`, `tools` — jamais les en-têtes. Le
+tableau de bord en fait une ligne du panneau « Outils ».
 
 ## Prévu, pas construit
 

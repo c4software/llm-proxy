@@ -424,6 +424,81 @@ language = ""
 cache_ttl = 3600
 cache_entries = 64
 
+# Serveurs MCP (Model Context Protocol) : le proxy s'y connecte, découvre
+# leurs outils, et chacun devient un outil hébergé — présenté au modèle
+# sous le nom `<serveur>_<outil>`, exécutable par POST /v1/tools/<nom>.
+# Sur /v1/chat/completions ([chat].hosted_tools), un client les déclare
+# dans `tools` : `{"type": "mcp"}` (tous), `{"type": "mcp:<serveur>"}`
+# (ceux d'un serveur) ou `{"type": "<serveur>_<outil>"}` (un seul) ;
+# [chat].always les présente d'office, chacun par son nom
+# `<serveur>_<outil>`. Pas de liaison à l'API Responses ni à l'API
+# Messages : ces deux surfaces ne les présentent pas.
+# HTTP seulement (transport « Streamable HTTP ») : le proxy ne lance aucun
+# processus, pas de serveur stdio. La liste est FERMÉE : seuls les
+# serveurs de ce fichier sont joints, jamais une URL venue d'un client ou
+# du modèle.
+#
+# À SAVOIR avant d'activer :
+#   * un outil exposé l'est à TOUS les clients du proxy, avec le compte
+#     que portent les en-têtes ci-dessous. Personne ne confirme un appel :
+#     n'exposez pas un outil qui écrit ou supprime sans l'avoir voulu
+#     (`tools`, `exclude`) ;
+#   * le nom, la description et le schéma de chaque outil, puis ses
+#     résultats, sont du texte TIERS qui entre dans le prompt du modèle
+#     (injection de prompt) : ne listez que des serveurs de confiance ;
+#   * pas d'OAuth : en-têtes statiques seulement.
+#
+# Réglages communs à tous les serveurs (une sous-table = un serveur ; ces
+# sept noms ne peuvent donc pas être des noms de serveur) :
+# [tools.mcp]
+# Délai (s) d'un appel d'outil, tout compris, et d'une découverte. Il
+# remplace [tools].run_timeout pour ces outils.
+# timeout = 30
+# Période (s) entre deux découvertes (`tools/list`) d'un serveur : sa
+# liste d'outils peut changer. Jamais plus souvent que la fraîcheur que
+# le serveur annonce (`ttlMs`) ; après un échec, nouvel essai à 10 s,
+# 20 s, 40 s… jusqu'à cette période. 0 = au démarrage seulement.
+# refresh = 300
+# Ce que le démarrage du proxy attend, au plus, de la première
+# découverte. Un serveur éteint ne bloque pas : ses outils apparaissent
+# quand il répond.
+# startup_wait = 5
+# Outils exposés par serveur, au plus : chacun pèse dans le prompt de
+# toute requête qui les déclare.
+# max_tools = 64
+# Bornes de ce qu'un serveur fait entrer dans le prompt : description
+# coupée au-delà, outil écarté si son schéma est plus gros.
+# description_chars = 1024
+# schema_chars = 8000
+# Octets lus au plus sur une réponse du serveur.
+# max_bytes = 4000000
+#
+# Un serveur : le nom de la table (lettres, chiffres, «_», «-») est son
+# nom dans le journal et, sauf `prefix`, le préfixe de ses fonctions.
+# [tools.mcp.docs]
+# enabled = true
+# L'adresse du point d'accès MCP. Une adresse de CONFIGURATION, qui peut
+# être privée : le garde-fou des adresses publiques de [tools.net] ne
+# s'y applique pas. Les redirections ne sont pas suivies.
+# url = "http://mcp-docs:8000/mcp"
+# En-têtes envoyés à chaque requête ; secrets par ${VAR}. Une variable
+# absente : l'en-tête n'est pas envoyé, et le démarrage le signale.
+# headers = { Authorization = "Bearer ${MCP_DOCS_TOKEN}" }
+# Outils exposés, par leur nom CHEZ LE SERVEUR (jokers `*`, `?`) : `tools`
+# non vide = seuls ceux-là ; `exclude` = jamais ceux-là.
+# tools = ["search", "get_*"]
+# exclude = ["delete_*"]
+# Préfixe des noms de fonction (défaut : le nom de la table ; "" = aucun,
+# à réserver à un serveur unique). Un nom de fonction est limité à 64
+# caractères parmi [A-Za-z0-9_-] : tout autre caractère du nom MCP devient
+# «_», un nom trop long est coupé et fini par un condensé.
+# prefix = "docs"
+# Propres à ce serveur, à la place des réglages communs :
+# timeout = 30
+# refresh = 300
+# max_tools = 64
+# Certificat TLS non vérifié (serveur interne auto-signé) :
+# verify_ssl = true
 
 
 # ── Statistiques ────────────────────────────────────────────────────────
