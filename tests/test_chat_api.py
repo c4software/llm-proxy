@@ -617,6 +617,10 @@ def test_always_leaves_these_requests_untouched(chat, monkeypatch):
         ("modèle qui n'est pas de conversation", {},
          lambda: monkeypatch.setattr(backend, "model_types",
                                      {"qwen": "text-to-image"})),
+        # Le modèle de tâches d'une interface : motif sur le nom préfixé.
+        ("modèle de [chat].always_except", {},
+         lambda: monkeypatch.setattr(C, "ALWAYS_EXCEPT",
+                                     ["autre/*", "essai/qw*"])),
         ("outils inactifs", {},
          lambda: setattr(chat, "hosted", type(chat.hosted)(tools=[]))),
         ("[chat].hosted_tools = false", {},
@@ -634,6 +638,7 @@ def test_always_leaves_these_requests_untouched(chat, monkeypatch):
         chat.hosted = hosted
         monkeypatch.setattr(C, "ENABLED", True)
         monkeypatch.setattr(backend, "model_types", {})
+        monkeypatch.setattr(C, "ALWAYS_EXCEPT", [])
     # Un modèle que le catalogue dit de conversation, ou qu'il ne connaît
     # pas, les reçoit.
     for types in ({"qwen": "image-text-to-text"}, {"autre": "text-to-image"}):
@@ -641,3 +646,14 @@ def test_always_leaves_these_requests_untouched(chat, monkeypatch):
         chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
         bare(chat)
         assert len(chat.sent[-1]["tools"]) == 2
+    # Un modèle excepté ne reçoit rien D'OFFICE ; ce que le client lui
+    # déclare reste honoré. Un motif qui ne couvre pas son nom ne l'exclut
+    # pas.
+    monkeypatch.setattr(C, "ALWAYS_EXCEPT", ["essai/qwen"])
+    chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
+    bare(chat, tools=[WEB])
+    assert len(chat.sent[-1]["tools"]) == 2
+    monkeypatch.setattr(C, "ALWAYS_EXCEPT", ["qwen", "essai/qwen-*"])
+    chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
+    bare(chat)
+    assert len(chat.sent[-1]["tools"]) == 2

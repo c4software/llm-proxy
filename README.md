@@ -1179,14 +1179,25 @@ envoie ses messages, parfois ses propres fonctions, et c'est tout.
     always = ["web_search", "web_fetch"]
 
 Tout outil hébergé s'y nomme : `ocr`, `transcribe`, et les outils d'un
-serveur MCP, chacun par son nom `<serveur>_<outil>` (il n'y a pas de forme
-pour « tous ceux d'un serveur » dans cette liste).
+serveur MCP — un par un, par leur nom `<serveur>_<outil>`, ou tous ceux
+d'un serveur par `mcp:<serveur>`, ceux qu'il annoncera plus tard compris :
+
+    always = ["web_search", "web_fetch", "mcp:deepwiki"]
+    # Le modèle de tâches de l'interface (titres, tags) n'en reçoit pas.
+    always_except = ["bigchuck/qwen3.8-nano*"]
+
+Il n'y a pas de `mcp` nu pour « tous les serveurs » : ce qui entre
+d'office dans toutes les conversations se nomme, serveur par serveur.
+`always_except` liste des **modèles** — motifs à jokers sur le nom
+préfixé `<backend>/<modèle>`, casse ignorée, la syntaxe des
+`model_types` d'un backend — à qui rien n'est jamais présenté d'office.
+Ce qu'un client leur déclare lui-même reste honoré.
 
 Une requête qui les reçoit est traitée comme si elle les avait déclarés :
 même boucle, **une** réponse ordinaire, annotations `url_citation`,
 [mémoire des échanges cachés](#client-chatcompletions--déclarer-loutil).
-Le réglage est global à la route : ni par clé, ni par modèle. Vide (le
-défaut), rien ne change.
+Le réglage est global à la route : pas par clé, et par modèle seulement
+pour en excepter (`always_except`). Vide (le défaut), rien ne change.
 
 | Requête | Ce qui est présenté d'office |
 |---|---|
@@ -1198,12 +1209,16 @@ défaut), rien ne change.
 | `tool_choice` forçant une fonction du client, ou `required` | les outils sont présentés, le `tool_choice` part tel quel (ramené à `auto` après un tour d'outils hébergés, comme pour une déclaration) |
 | `n` > 1 | rien : relais brut (une déclaration y serait refusée, mais ce client n'a rien demandé) |
 | modèle que le catalogue du backend ne dit pas de conversation (image, voix, embeddings — `type` de `/v1/models`, `model_types`) | rien : relais brut. Catalogue pas encore lu ou modèle inconnu : présentés |
+| modèle couvert par un motif de `always_except` | rien d'office : relais brut, sauf ce que la requête déclare elle-même |
 
 Un nom de la liste qui n'est celui d'aucun outil, ou celui d'un outil
-désactivé, est **ignoré** — un avertissement au démarrage, pas de `400`.
-La liste est relue à chaque requête : un outil enregistré après le
-démarrage est présenté dès qu'il existe. Le journal de démarrage dit ce
-qui est présenté d'office, `/healthz` aussi (`chat.always`).
+désactivé, est **ignoré** — un avertissement au démarrage, pas de `400` ;
+de même un `mcp:<serveur>` qui ne désigne aucun serveur de
+`[tools.mcp]`. La liste est relue à chaque requête : un outil enregistré
+après le démarrage est présenté dès qu'il existe, et les outils d'un
+serveur MCP éteint au démarrage dès qu'il répond. Le journal de
+démarrage dit ce qui est présenté d'office, `/healthz` aussi
+(`chat.always` : les noms, serveurs développés ; `chat.always_except`).
 
 Brancher Open WebUI :
 
@@ -1211,13 +1226,33 @@ Brancher Open WebUI :
   `http://<proxy>:8000/v1`, clé = une clé de `[proxy].api_keys`
   (n'importe quelle valeur si le proxy est ouvert). Les modèles
   apparaissent préfixés (`bigchuck/qwen3.8-flash-next`).
-- **Un seul côté cherche.** Open WebUI a sa propre recherche web (il
-  cherche lui-même et joint les résultats au message) et, en mode
-  d'appel de fonctions natif, ses propres outils, envoyés dans `tools`
-  sous **leurs** noms : le modèle aurait alors deux outils de recherche.
-  La règle d'homonymie ne joue que pour une fonction nommée exactement
-  `web_search` ou `web_fetch`. Désactiver la recherche web et les outils
-  de recherche d'Open WebUI, ou retirer l'outil de `always`.
+- **Tout côté proxy.** C'est le parti de ce dépôt : les outils sont ceux
+  du proxy, pour tous les clients, et Open WebUI n'apporte pas les siens.
+  Sinon le modèle reçoit deux jeux d'outils — ceux d'Open WebUI partent
+  dans `tools` sous **leurs** noms, et la règle d'homonymie ne joue que
+  pour une fonction nommée exactement comme un outil hébergé. Dans les
+  réglages d'administration d'Open WebUI, désactiver donc :
+  - sa **recherche web** (`ENABLE_WEB_SEARCH`, faux par défaut) ;
+  - son **exécution de code** et son interpréteur de code
+    (`ENABLE_CODE_EXECUTION`, `ENABLE_CODE_INTERPRETER`, vrais par
+    défaut) ;
+  - ses **outils et serveurs d'outils** propres, MCP compris : aucune
+    connexion de serveur d'outils (`TOOL_SERVER_CONNECTIONS`, vide par
+    défaut), aucun outil attaché aux modèles.
+
+  Ces noms sont les variables d'environnement de sa documentation
+  (*Environment Variable Configuration*, lue le 07/10/2026) ; la plupart
+  sont des réglages persistants, qu'une valeur déjà enregistrée dans
+  l'interface d'administration remplace — c'est donc là qu'il faut
+  vérifier. Les intitulés de ses menus changent d'une version à l'autre :
+  ils ne sont pas repris ici.
+- **Un modèle de tâches à part.** Open WebUI sait confier ses requêtes
+  de service (titre, tags, suggestions, requêtes de recherche) à un
+  modèle distinct de celui de la conversation : son « modèle de tâches »
+  (`TASK_MODEL_EXTERNAL` pour une connexion compatible OpenAI). Lui
+  donner un modèle du proxy — petit, de préférence — et lister ce modèle
+  dans `[chat].always_except` : ces requêtes ne reçoivent alors plus les
+  outils. Si ce modèle sert aussi à converser, il n'en aura pas non plus.
 - Open WebUI lit les annotations `url_citation` du flux et les affiche
   en sources.
 
@@ -1230,8 +1265,10 @@ Limites :
   `stream: false` ; la tâche n'est pas transmise au backend. Le proxy
   **ne les reconnaît pas** : elles reçoivent les outils aussi (des
   tokens de prompt en plus, et un modèle peut chercher sur le web pour
-  écrire un titre). Parade côté Open WebUI seulement : désactiver ces
-  générations dans ses réglages d'interface.
+  écrire un titre). Deux parades : un modèle de tâches distinct, listé
+  dans `always_except` (ci-dessus) ; ou désactiver ces générations côté
+  Open WebUI (`ENABLE_TITLE_GENERATION`, `ENABLE_TAGS_GENERATION`,
+  `ENABLE_FOLLOW_UP_GENERATION`, `ENABLE_AUTOCOMPLETE_GENERATION`).
 - **Modèle sans appel d'outils.** Le catalogue dit le type d'un modèle,
   pas s'il sait appeler des outils. Un modèle de conversation qui ne le
   sait pas reçoit `tools` quand même : selon le backend il les ignore, ou
@@ -1493,7 +1530,8 @@ url = "http://bigchuck:8009"
 | Clé | Défaut | Rôle |
 |---|---|---|
 | `hosted_tools` | `false` | Sur `/v1/chat/completions`, une requête qui déclare `{"type": "web_search"}` dans `tools` (ou `web_search_options`) est bouclée par le proxy. Table absente = inactif : relais brut, la déclaration part au backend. Voir [Client chat/completions](#client-chatcompletions--déclarer-loutil) |
-| `always` | `[]` | Noms des outils hébergés présentés d'office à toute requête `/v1/chat/completions`, sans déclaration (`["web_search", "web_fetch"]`). Sans effet si `hosted_tools` est faux ; un nom inconnu ou d'un outil désactivé est ignoré, avec un avertissement au démarrage. Voir [Open WebUI](#open-webui--présenter-les-outils-doffice) |
+| `always` | `[]` | Noms des outils hébergés présentés d'office à toute requête `/v1/chat/completions`, sans déclaration (`["web_search", "web_fetch"]`). Sans effet si `hosted_tools` est faux ; `mcp:<serveur>` vaut tous les outils de ce serveur MCP ; un nom inconnu ou d'un outil désactivé est ignoré, avec un avertissement au démarrage. Voir [Open WebUI](#open-webui--présenter-les-outils-doffice) |
+| `always_except` | `[]` | Modèles à qui rien n'est présenté d'office : motifs à jokers sur le nom préfixé `<backend>/<modèle>`, casse ignorée (`["bigchuck/qwen3.8-nano*"]`). Pour le modèle de tâches d'une interface ; une déclaration du client reste honorée |
 | `annotations` | `true` | Annotations `url_citation` en fin de réponse, pour les URL rendues par un outil et écrites par le modèle |
 | `memory` | `true` | Garde l'échange caché de chaque réponse (appels hébergés et résultats) et le réinsère dans l'historique à la requête suivante. `false` = rien n'est gardé : le modèle ne retrouve que sa réponse. Nombre d'entrées et durée : `[tools].cache_entries` et `cache_ttl`. Voir [Mémoire des résultats](#mémoire-des-résultats) |
 | `memory_chars` | `8000000` | Caractères gardés par cette mémoire, toutes entrées confondues (de l'ordre de 8 à 32 Mo de RAM selon le texte) ; au-delà, les échanges les moins récemment relus sortent |
@@ -1772,7 +1810,8 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   premier tour. `n` > 1 refusé. Pas joué contre un client réel. Voir
   [Client chat/completions](#client-chatcompletions--déclarer-loutil).
   Avec `[chat].always`, les outils vont aussi aux requêtes de service
-  d'une interface de chat (titre, tags), que rien ne distingue, et aux
+  d'une interface de chat (titre, tags), que rien ne distingue sinon
+  leur modèle (`[chat].always_except`), et aux
   modèles de conversation qui ne savent pas appeler d'outils — voir
   [Open WebUI](#open-webui--présenter-les-outils-doffice).
 - **Outils hébergés, autres surfaces.** Sur `/v1/messages`, la

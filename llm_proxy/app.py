@@ -172,9 +172,19 @@ async def lifespan(app: FastAPI):
         else "inactifs ([chat].hosted_tools absent ou false) : relais brut")
     if chat_api.ALWAYS:
         known = {t.name for t in tools.REGISTRY}
+        servers = {f"{chat_api.SERVER}{s.name}" for s in tools.mcp.SERVERS}
         shown = always_shown()
         for name in chat_api.ALWAYS:
-            if name not in shown:
+            if name in servers:
+                # Un serveur éteint ou sans outil pour l'instant : ses
+                # outils seront présentés dès leur découverte.
+                continue
+            if name.startswith(chat_api.SERVER) or name == "mcp":
+                log.warning(
+                    "[chat].always : «%s» ne désigne aucun serveur de "
+                    "[tools.mcp.<serveur>] (forme admise : «mcp:<serveur>», "
+                    "serveur par serveur) — ignoré", name)
+            elif name not in shown:
                 log.warning(
                     "[chat].always : outil «%s» %s — ignoré tant qu'il "
                     "l'est", name,
@@ -183,8 +193,10 @@ async def lifespan(app: FastAPI):
         if chat_api.ENABLED:
             log.info(
                 "présentés D'OFFICE à toute requête /v1/chat/completions, "
-                "sans déclaration ([chat].always) : %s",
-                ", ".join(shown) or "aucun pour l'instant")
+                "sans déclaration ([chat].always) : %s%s",
+                ", ".join(shown) or "aucun pour l'instant",
+                f" — sauf aux modèles {', '.join(chat_api.ALWAYS_EXCEPT)} "
+                f"([chat].always_except)" if chat_api.ALWAYS_EXCEPT else "")
         else:
             log.warning("[chat].always sans effet : [chat].hosted_tools "
                         "absent ou false")
@@ -663,6 +675,7 @@ async def healthz():
                  # Présentés d'office EN CE MOMENT : les noms de
                  # [chat].always qui sont ceux d'un outil actif.
                  "always": always_shown() if chat_api.ENABLED else [],
+                 "always_except": chat_api.ALWAYS_EXCEPT,
                  "memory": chat_api.MEMORY_ENABLED,
                  "memory_entries": len(chat_api.MEMORY),
                  "memory_chars": chat_api.MEMORY.size},
@@ -758,8 +771,15 @@ def always_shown() -> list[str]:
     """Les outils de [chat].always présentables à l'instant : ceux du
     registre, actifs. Relu à chaque appel — le registre peut grandir
     après le démarrage."""
-    active = {t.name for t in tools.enabled()}
-    return [name for name in chat_api.ALWAYS if name in active]
+    return chat_api.offered(tools.enabled())
+
+
+def _spares(b: Backend, model: str) -> bool:
+    """Ce modèle est-il de ceux à qui rien n'est présenté d'office
+    ([chat].always_except) ? Jugé sur son nom PRÉFIXÉ, que le client l'ait
+    écrit ainsi ou non (backend de repli)."""
+    plain = model.lower().removeprefix(b.name + "/")
+    return chat_api.excepted(f"{b.name}/{plain}")
 
 
 def _converses(b: Backend, model: str) -> bool:
@@ -926,13 +946,15 @@ async def chat_completions(request: Request):
     declared = always = False
     if chat_api.ENABLED and isinstance(payload, dict):
         declared = chat_api.declares(payload, tools.kinds())
-        always = chat_api.unasked(payload) and _converses(
-            backend, str(payload.get("model") or ""))
+        model = str(payload.get("model") or "")
+        always = chat_api.unasked(payload) and _converses(backend, model) \
+            and not _spares(backend, model)
     if declared or always:
         hosted = tools.Hosted()
         try:
-            ctx = chat_api.prepare(payload, hosted, tools.kinds(),
-                                   chat_api.ALWAYS if always else ())
+            ctx = chat_api.prepare(
+                payload, hosted, tools.kinds(),
+                chat_api.offered(hosted.tools) if always else ())
         except chat_api.Refused as exc:
             return error_response("openai", 400, "invalid_request_error",
                                   str(exc))

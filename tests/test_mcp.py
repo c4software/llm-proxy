@@ -738,6 +738,12 @@ def test_declaration_connue_des_qu_un_serveur_est_configure(monkeypatch):
             ctx = chat_api.prepare(payload, h, tools.kinds(),
                                    ("docs_search", "docs_absent"))
             assert list(ctx.hosted) == ["docs_search"]
+            # … ou tous ceux d'un serveur, `mcp:<serveur>` ; `mcp` nu
+            # n'est pas une forme de cette liste.
+            for always, noms in ((["mcp:docs", "docs_search"], ["docs_search"]),
+                                 (["mcp:autre", "mcp"], [])):
+                monkeypatch.setattr(chat_api, "ALWAYS", always)
+                assert chat_api.offered(h.tools) == noms, always
             # Sans liaison : ni Responses, ni Anthropic.
             assert h.for_responses("mcp") == [] and h.for_server("mcp_1") is None
             ctx = responses_api.to_chat({"model": "m", "input": "x", "tools": [

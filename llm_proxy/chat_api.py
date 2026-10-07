@@ -41,6 +41,11 @@ même boucle, même réponse, même mémoire. Vide par défaut : rien ne change.
     outils du client. Un outil que la requête déclare aussi n'est
     présenté qu'une fois, à la place de sa déclaration ; une fonction du
     client garde son nom, comme pour une déclaration.
+  * `mcp:<serveur>` vaut TOUS les outils de ce serveur MCP, ceux qu'il
+    annoncera plus tard compris (`offered`) : la liste d'un serveur n'est
+    pas connue de qui écrit la configuration. Pas de `mcp` nu pour « tous
+    les serveurs » : ce qui entre d'office dans toutes les conversations
+    se nomme, serveur par serveur.
   * Un nom inconnu du registre ou d'un outil désactivé est ignoré, pas
     refusé : le client n'a rien demandé. La liste est relue à chaque
     requête contre les outils actifs à ce moment-là — un outil
@@ -58,7 +63,11 @@ même boucle, même réponse, même mémoire. Vide par défaut : rien ne change.
     premier tour, `auto` ensuite (app.hosted_loop).
   * Le proxy ne sait PAS d'une requête qu'elle est de service (titre,
     tags, suggestions qu'une interface demande après chaque réponse) :
-    rien dans son corps ne le dit. Elle reçoit les outils aussi.
+    rien dans son corps ne le dit. Elle reçoit les outils aussi — sauf
+    si son MODÈLE est listé dans [chat].always_except (`excepted`) : des
+    motifs sur le nom préfixé, pour le « modèle de tâches » qu'une
+    interface sait réserver à ces requêtes. Ce modèle-là ne reçoit jamais
+    rien d'office ; ce qu'un client lui DÉCLARE reste honoré.
 
 Ce que le client reçoit : UNE réponse chat/completions ordinaire, quel
 que soit le nombre de tours upstream (voir `Translator`). Les appels
@@ -137,6 +146,7 @@ anthropic_api.Translator : c'est app.hosted_loop qui mène la boucle.
 Ce module ne connaît ni FastAPI ni httpx.
 """
 
+import fnmatch
 import hashlib
 import json
 import re
@@ -161,6 +171,12 @@ MEMORY_ENABLED = config.flag("chat.memory", True)
 # Des NOMS seulement : ce qu'ils désignent se lit dans l'annuaire de
 # chaque requête, pas ici — le registre peut encore grandir.
 ALWAYS = list(dict.fromkeys(config.strings("chat.always")))
+# Ce qui, dans ALWAYS, désigne les outils d'un serveur MCP : «mcp:<serveur>».
+SERVER = "mcp:"
+# Les modèles à qui RIEN n'est présenté d'office : motifs à jokers shell
+# sur le nom préfixé «<backend>/<modèle>», casse ignorée — la syntaxe des
+# [backends.<nom>.model_types].
+ALWAYS_EXCEPT = [p.lower() for p in config.strings("chat.always_except")]
 # Ses bornes en entrées et en durée sont celles de la mémoire des
 # résultats ([tools], lues ici sans importer le paquet) ; celle-ci a en
 # plus une borne en CARACTÈRES, toutes entrées confondues : une entrée de
@@ -223,12 +239,35 @@ def unasked(payload: dict) -> bool:
         and not (isinstance(n, int) and n > 1)
 
 
+def offered(active) -> list[str]:
+    """Les NOMS des outils que [chat].always présente à l'instant, parmi
+    `active` (les outils actifs du registre), dans l'ordre de la liste :
+    une entrée est un nom d'outil, ou `mcp:<serveur>` — tous les outils
+    dont c'est un type de déclaration (Tool.kinds), c'est-à-dire ceux de
+    ce serveur. Relu à chaque requête : un outil découvert après le
+    démarrage y entre dès qu'il existe."""
+    names: dict[str, None] = {}
+    for entry in ALWAYS:
+        for tool in active:
+            if (entry in tool.kinds) if entry.startswith(SERVER) \
+                    else tool.name == entry:
+                names[tool.name] = None
+    return list(names)
+
+
+def excepted(model: str) -> bool:
+    """Ce modèle (nom préfixé `<backend>/<modèle>`) est-il de ceux à qui
+    rien n'est présenté d'office ([chat].always_except) ?"""
+    model = model.lower()
+    return any(fnmatch.fnmatchcase(model, p) for p in ALWAYS_EXCEPT)
+
+
 def prepare(payload: dict, hosted, kinds, always=()) -> Context:
     """Remplace, DANS `payload`, chaque déclaration d'outil hébergé par
     les fonctions du paquet tools/ et rend le contexte de la réponse.
     `hosted` : l'annuaire tools.Hosted (vide si aucun outil n'est actif).
     `always` : les noms des outils à présenter d'office à cette requête
-    (tête de module), à la suite de ceux du client ; ceux que l'annuaire
+    (offered), à la suite de ceux du client ; ceux que l'annuaire
     n'a pas, ou dont le nom est pris, sont passés. Une requête à qui rien
     n'est ajouté ni remplacé n'est pas touchée.
 

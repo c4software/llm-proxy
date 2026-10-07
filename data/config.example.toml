@@ -147,6 +147,10 @@ hosted_tools = true
 # est ensuite traitée comme si elle les avait déclarés (boucle, réponse
 # unique, annotations, mémoire). Vide ou absent = rien d'office (le
 # défaut). Sans effet si hosted_tools est faux.
+# «mcp:<serveur>» y vaut TOUS les outils du serveur [tools.mcp.<serveur>],
+# ceux qu'il annoncera plus tard compris — always = ["web_search",
+# "mcp:deepwiki"] ; un outil MCP seul s'y nomme «<serveur>_<outil>». Pas
+# de «mcp» nu pour tous les serveurs.
 # Un nom inconnu, ou d'un outil désactivé plus bas, est ignoré avec un
 # avertissement au démarrage (pas de 400 : le client n'a rien demandé).
 # Rien n'est présenté d'office : à une requête qui dit `tool_choice:
@@ -154,14 +158,21 @@ hosted_tools = true
 # dit pas de conversation (image, voix, embeddings) ; pour un outil dont
 # une fonction du client porte déjà le nom.
 # À SAVOIR : le réglage vaut pour TOUS les clients de cette route et tous
-# ses modèles. Un modèle de conversation qui ne sait pas appeler d'outils
-# les reçoit quand même (le catalogue ne le dit pas), et les requêtes de
-# service d'une interface (titre, tags, suggestions) aussi : rien ne les
-# distingue. Un backend dont le `tool_choice` par défaut est `none`
+# ses modèles, sauf ceux d'always_except. Un modèle de conversation qui
+# ne sait pas appeler d'outils les reçoit quand même (le catalogue ne le
+# dit pas), et les requêtes de service d'une interface (titre, tags,
+# suggestions) aussi : rien ne les distingue, sinon leur modèle. Un backend dont le `tool_choice` par défaut est `none`
 # (Albert) n'appellera rien sans son force_tool_choice. Et le texte des
 # pages web entre alors dans TOUTES les conversations, sans que le client
 # l'ait demandé : voir l'avertissement d'injection de prompt de [tools].
 always = []
+# Modèles à qui RIEN n'est présenté d'office : motifs à jokers shell sur
+# le nom préfixé «<backend>/<modèle>», casse ignorée (la syntaxe des
+# model_types d'un backend). Pour le « modèle de tâches » qu'une interface
+# (Open WebUI) réserve à ses titres, tags et suggestions. Une déclaration
+# explicite du client reste honorée.
+# always_except = ["bigchuck/qwen3.8-nano*"]
+always_except = []
 # Annotations `url_citation` (forme OpenAI) en fin de réponse : les URL
 # rendues par un outil ET écrites par le modèle. false = aucune.
 annotations = true

@@ -194,7 +194,8 @@ rien pour rendre compte de l'appel.
    `spec(present)` de chaque outil retenu, à la place de la déclaration.
    Sur `/v1/chat/completions`, les outils nommés par `[chat].always` sont
    présentés **sans déclaration**, à la suite de ceux du client
-   (`Hosted.by_name`, même règle d'homonymie) ; la liste est relue à
+   (`Hosted.by_name`, même règle d'homonymie), sauf à un modèle de
+   `[chat].always_except` ; la liste est relue à
    chaque requête contre les outils actifs, un outil enregistré après le
    démarrage y entre donc dès qu'il existe.
 2. **Exécution bornée.** Quand le modèle appelle la fonction, l'appel
@@ -521,8 +522,10 @@ les outils MCP, `{"type": "mcp:<serveur>"}` ceux d'un serveur,
 connus du proxy dès qu'un serveur est **configuré** (`mcp.kinds()`),
 avant toute découverte : déclarés alors qu'aucun outil n'est encore là,
 ils valent un `400` qui le dit, pas l'erreur d'un backend. `[chat].always`
-présente un outil MCP d'office par son nom, `<serveur>_<outil>` — il n'y a
-pas de forme pour « tous ceux d'un serveur » dans cette liste.
+présente d'office un outil MCP par son nom, `<serveur>_<outil>`, ou tous
+ceux d'un serveur par `mcp:<serveur>` (`chat_api.offered` : les outils
+dont c'est un `kinds`, relus à chaque requête — un outil annoncé plus
+tard y entre). `mcp` nu n'y est pas admis.
 
 **Ce que le modèle reçoit.** La description du serveur (ou son `title`),
 bornée à `description_chars` ; son `inputSchema` tel quel (sans
