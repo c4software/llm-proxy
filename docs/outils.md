@@ -9,8 +9,9 @@ client, les garde-fous, la mise en route : voir
 décrit l'autre côté : **ce qu'est un outil pour le code du proxy**, et
 comment en écrire un.
 
-Le dépôt en porte cinq, `web_search`, `web_fetch`, `ocr`, `transcribe`
-et `code_execution` (`proxy/llm_proxy/tools/`), plus un **fournisseur**,
+Le dépôt en porte six, `web_search`, `web_fetch`, `ocr`, `transcribe`,
+`code_execution` et `image_generation` (`proxy/llm_proxy/tools/`), plus
+un **fournisseur**,
 `mcp.py`, qui y ajoute les outils des [serveurs MCP](#serveurs-mcp) de la
 configuration. Ce que le contrat porte et qu'aucune surface ne fait
 encore : voir [Prévu, pas construit](#prévu-pas-construit).
@@ -446,14 +447,14 @@ deux tours d'une conversation : voir le README, « Exécution de code ».
 
 | | `code_execution` |
 |---|---|
-| Arguments | `language` (`python`, `bash`, `javascript`, `c`, `cpp`, `go`, `rust` ; `sh`, `shell`, `js`, `node`, `c++`, `golang`, `rs`… acceptés), `code` (le programme entier) |
+| Arguments | `language` (`python`, `bash`, `javascript`, `c`, `cpp`, `go`, `rust` ; `sh`, `shell`, `js`, `node`, `c++`, `golang`, `rs`… acceptés), `code` (le programme entier), `files` (facultatif : des `{"url", "name"?}` — une URL nue est acceptée — à déposer dans le dossier de travail avant le programme ; absent de la fonction si `max_files = 0`) |
 | `summary` | `{"type": "code_execution", "language"}` |
-| `text` | L'issue (`Exit code: N`, ou `Timed out…`), l'état du bac s'il est neuf, détruit ou d'un seul appel, les fichiers remis et ceux qui ne le sont pas (avec la raison), puis la sortie — en dernier, c'est elle qu'une coupe emporte. Jamais d'URL |
+| `text` | L'issue (`Exit code: N`, ou `Timed out…`), l'état du bac s'il est neuf, détruit ou d'un seul appel, les fichiers d'entrée déposés (nom dans le bac, taille, URL d'origine) et ceux qui ne l'ont pas été (URL, raison), les fichiers remis et ceux qui ne le sont pas (avec la raison), puis la sortie — en dernier, c'est elle qu'une coupe emporte. Jamais d'URL du proxy : les seules sont celles que le modèle a données dans `files` |
 | `files` | Les fichiers créés ou modifiés dans `/work` par CET appel, que le magasin accepte : nom sans chemin, type lu dans les octets pour une image |
-| `meta` | `exit_code`, `timed_out`, `fresh`, `files` (les chemins) |
-| `call` lus | `client` et `session` : la clé du bac |
-| `timeout`, `max_calls` | `[tools.code_execution].timeout` + 120 s ; `max_calls`, compté à part |
-| Codes rendus | `invalid_input` (langage, code), `too_many_requests` (tous les bacs exécutent), `unavailable` (non configuré, exécuteur injoignable, en panne, réponse illisible). **Un programme sorti en erreur, ou tué par son délai, est un SUCCÈS de l'outil** : `error = None`, le code de sortie dans le texte, les fichiers rendus — ni `failed`, ni `timeout` |
+| `meta` | `exit_code`, `timed_out`, `fresh`, `files` (les chemins) ; `inputs` (les noms déposés) si `files` était demandé |
+| `call` lus | `client` et `session` : la clé du bac ; `settings` (`allowed_domains`, `blocked_domains`) pour le téléchargement des fichiers d'entrée |
+| `timeout`, `max_calls` | `[tools.code_execution].timeout` + 120 s, plus `download_timeout` + 45 s (télécharger et déposer les fichiers d'entrée) ; `max_calls`, compté à part |
+| Codes rendus | `invalid_input` (langage, code, `files` mal formé ou trop nombreux), `too_many_requests` (tous les bacs exécutent), `unavailable` (non configuré, exécuteur injoignable, en panne, réponse illisible). Quand **aucun** des fichiers d'entrée n'a pu entrer, rien n'est exécuté et le code est celui de leur refus s'il est unique — `not_allowed` (domaine, adresse privée), `not_accessible` (injoignable, HTTP ≥ 400, trop lent), `unsupported` (trop gros, vide), `invalid_input` (URL) —, `not_accessible` s'ils diffèrent ; `unsupported` aussi quand l'exécuteur refuse le lot (HTTP 413). **Un programme sorti en erreur, ou tué par son délai, est un SUCCÈS de l'outil** : `error = None`, le code de sortie dans le texte, les fichiers rendus — ni `failed`, ni `timeout`. De même un appel dont une PARTIE des fichiers d'entrée manque : le programme tourne, le texte dit lesquels |
 
 Ce qu'il montre du contrat :
 
@@ -475,6 +476,45 @@ Ce qu'il montre du contrat :
   fichiers produits) et l'exécute dans le délai de l'appel. La
   description dit ce que l'absence de réseau interdit — ni module Go, ni
   crate — parce que le modèle, sinon, l'essaie.
+
+- **Les fichiers d'entrée sont téléchargés par le proxy, pas par le
+  bac** — qui n'a pas de réseau, et doit le rester. `files` passe par
+  `net.download` comme toute cible choisie par le modèle (`[tools.net]`,
+  listes du client, chaque redirection), 4 de front, sous des bornes
+  propres à l'outil (nombre, taille par fichier, taille totale, durée
+  totale) ; un fichier au-delà est **refusé, jamais coupé**. Puis ils
+  partent à l'exécuteur dans la même requête que le programme (`inputs`,
+  en base64), qui rejuge noms et tailles et les déplie dans `/work` par
+  l'entrée standard de `podman exec`.
+- **Le nom d'un fichier d'entrée doit être prévisible** : le modèle écrit
+  son programme dans le MÊME appel. Dans l'ordre : le `name` qu'il donne ;
+  le dernier élément du chemin de l'URL qu'il a écrite, s'il porte une
+  extension ; le nom de `Content-Disposition` ; sinon ce dernier élément
+  (ou `file`) avec l'extension du type annoncé. Toujours assaini
+  (`files.safe_name`), sans point ni tiret en tête, et dédoublonné
+  (`data-2.csv`). Le texte du résultat donne le nom retenu.
+- **Un échec partiel n'arrête pas l'appel.** Les fichiers entrés restent
+  dans le bac de la conversation : le modèle lit ce qui manque, corrige,
+  et n'a pas à les redemander. Si **aucun** n'entre, le programme — écrit
+  pour eux — n'est pas lancé : il ne ferait qu'échouer, en consommant un
+  des appels de la réponse, et l'erreur de l'outil est plus claire qu'un
+  `FileNotFoundError`.
+- **Un fichier d'entrée n'est pas un fichier produit** : déposé avant le
+  repère de la récolte, il ne repart pas chez l'utilisateur — sauf si le
+  programme l'a modifié (un tableur complété en place est bien ce que
+  l'utilisateur attend).
+- **Le contenu d'un fichier d'entrée est un texte du web.** Il ne s'exécute
+  pas (c'est le programme du modèle qui le lit, dans un bac qui isole déjà
+  ce programme), mais ce que le programme en imprime revient au modèle :
+  une injection de prompt peut s'y trouver, comme dans une page de
+  `web_fetch`. Rien à isoler de plus ; à savoir.
+- **Compatibilité proxy ↔ exécuteur.** Sans `files`, la requête est celle
+  d'avant, au champ près. Un exécuteur **plus ancien** ignore `inputs` et
+  lance le programme sans les fichiers : le proxy le voit à l'absence de
+  `inputs` dans la réponse et l'écrit au modèle (« the sandbox service is
+  too old to receive files ») — au-delà de 2 Mo de corps, cet exécuteur-là
+  répond 400 et l'outil rend `unavailable`. Un proxy **plus ancien**
+  n'envoie pas le champ et ignore `inputs` et `rejected` de la réponse.
 
 L'API de l'exécuteur : en tête de `services/executor/executor/server.py`.
 
@@ -546,6 +586,59 @@ Tout ce qui n'est pas du WAV vaut un **HTTP 500** dont le corps dit
 `invalid_request_error` (« input must be a RIFF WAV ») : l'outil lit ce
 type dans le corps, quel que soit le statut, et rend `unsupported` (le
 fichier est en cause) plutôt qu'`unavailable` (le backend le serait).
+
+### `image_generation` : un fichier pour seul résultat, par un backend
+
+`proxy/llm_proxy/tools/image_generation.py`, `[tools.image_generation]`
+(désactivé par défaut) — le modèle décrit une image, le modèle d'images
+d'un backend la génère (`POST /v1/images/generations`), le proxy la
+remet au client. Présenté sur `/v1/chat/completions` (déclaré
+`{"type": "image_generation"}`, ou d'office par `[chat].always`) et
+exécutable par `POST /v1/tools/image_generation`. Pas de liaison : l'API
+Responses a bien un outil de ce nom, mais son élément
+`image_generation_call` porte l'image en base64, et cette surface ne
+rend pas de fichiers (voir [Prévu, pas construit](#prévu-pas-construit)).
+
+| | `image_generation` |
+|---|---|
+| Arguments | `prompt` (obligatoire, 4 000 caractères au plus), `size` (une de `sizes` ; défaut `size`), et `image_url` seulement si `edits` |
+| `text` | Une phrase : `Image generated: image-eecf50.png (image/png, 512x512, 515 kB). It is shown to the user with your answer; do not write a link or a markdown image yourself. You cannot see it: …` — `Image edited: …` pour une retouche. Jamais de base64, jamais d'URL |
+| `files` | L'image, une seule : `image-<condensé>.<ext>` (un nom par image, que le modèle distingue dans une conversation), type lu dans les octets |
+| `meta` | `model`, `file`, `media_type`, `size` (les dimensions réelles si elles se lisent, sinon la taille demandée), `bytes` |
+| `summary` | le défaut, `{"type": "image_generation"}` |
+| `timeout`, `max_calls` | `timeout` + 2 × `download_timeout` de sa table (360 s par défaut) ; `max_calls` (2), compté à part |
+| Codes rendus | `invalid_input` (prompt, taille hors liste, `image_url` sans `edits`, requête refusée par le backend en 400/413/415/422), `too_many_requests` (429 ou quota du modèle d'images), `unsupported` (image trop grosse pour être remise ; image à retoucher qui n'en est pas une, ou trop grosse), `not_allowed` / `not_accessible` (l'image à retoucher), `unavailable` (non configuré, pas de `[files].public_url`, backend éteint ou en erreur, réponse sans image lisible, `url` du backend illisible) |
+
+Ce qu'il montre du contrat :
+
+- **Le résultat peut n'être qu'un fichier.** Le texte ne fait que le
+  nommer et dire au modèle ce qu'il n'a pas à faire : la surface écrit
+  le lien. C'est ce qui manquait à l'outil du même nom retiré le
+  05/10/2026, qui rendait un base64 à un seul protocole.
+- **Vérifier avant de dépenser.** `files.refusal(0)` est demandé avant
+  la requête : sans adresse publique, l'image ne serait remise à
+  personne, et la générer coûterait quand même.
+- **Une adresse rendue par un backend n'est pas une adresse de
+  configuration.** Le backend peut rendre l'image par `url`. De son
+  origine (ou relative), elle est lue par le client du backend, avec sa
+  clé, sans garde-fou : c'est l'adresse qu'on joint déjà. De toute autre
+  origine, elle passe par `net.download` comme une cible du modèle —
+  adresses publiques seulement — et son refus n'est pas rendu au modèle
+  tel quel : le texte du garde-fou nommerait une adresse du backend.
+- **Ne rien demander qu'un backend puisse refuser sans raison.** Ni
+  `n`, ni `response_format` : les deux formes de réponse sont lues.
+- **Un compte d'appels bas, dit dans la description** : le modèle sait
+  qu'il a deux images par réponse, avant d'en demander une troisième.
+- **La même fonction, un paramètre de plus.** La retouche (`edits`) est
+  `image_url` sur le même outil : un téléchargement gardé, borné aux
+  premiers octets d'une image, puis `POST /v1/images/edits` en
+  multipart. Le paramètre n'est annoncé que si elle est active.
+
+Ce qu'un vrai backend rend (gufo, `Qwen-Image-2.1-heretic`, relevé le
+07/10/2026) : `{"created", "data": [{"b64_json"}]}` pour
+`{model, prompt, size}`, un PNG aux dimensions demandées, sans `usage`
+— d'où des zéros dans la ligne de statistiques de la requête. La
+retouche n'y a pas été jouée.
 
 ## Serveurs MCP
 
@@ -638,14 +731,16 @@ tableau de bord en fait une ligne du panneau « Outils ».
 ## Prévu, pas construit
 
 Le contrat porte de quoi écrire un outil à fichiers, à état, lent ou
-compté à part ; `code_execution` s'en sert sur `/v1/chat/completions` et
-`/v1/tools`. Ce qui n'est **pas** construit derrière :
+compté à part ; `code_execution` et `image_generation` s'en servent sur
+`/v1/chat/completions` et `/v1/tools`. Ce qui n'est **pas** construit
+derrière :
 
 - **Fichiers et session sur les surfaces Responses et Anthropic.**
   `Result.files` n'y est rendu à personne et `Call.session` y vaut `""` :
   aucun outil lié à ces protocoles n'en produit, et il resterait à dire
-  ce que chacun en fait (un élément `code_interpreter_call`, un bloc
-  `code_execution_tool_result`) et de quoi dériver une conversation.
+  ce que chacun en fait (un élément `code_interpreter_call` ou
+  `image_generation_call`, un bloc `code_execution_tool_result`) et de
+  quoi dériver une conversation.
 - **Un outil à `max_calls` sous un `max_uses` du client** : la limite du
   client abaisse la sienne comme elle abaisse la commune ; aucun outil
   lié à l'API Messages n'a encore de compte propre pour l'éprouver.

@@ -138,6 +138,10 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
   à part (`executor`), facultatif — son isolation a été validée sur le
   déploiement le 07/10/2026, où un modèle l'a appelé sur deux tours :
   voir [Exécution de code](#exécution-de-code).
+  Si `[tools.image_generation].enabled`, l'outil `image_generation` fait
+  générer une image par le modèle d'images d'un backend et la remet au
+  client, par un lien que le proxy écrit à la fin de la réponse : voir
+  [Génération d'images](#génération-dimages).
 - **Serveurs MCP** — les outils des serveurs MCP listés dans
   `[tools.mcp.<serveur>]` (HTTP seulement, liste fermée, en-têtes
   statiques) deviennent des outils hébergés : `<serveur>_<outil>`,
@@ -193,6 +197,7 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/tools/ocr.py` | L'outil `ocr` : texte d'une image ou d'un PDF scanné (images embarquées dans ses pages) par son URL, téléchargée sous le garde-fou, lue par un modèle de vision d'un backend — limiteur de quotas et statistiques compris |
 | `proxy/llm_proxy/tools/transcribe.py` | L'outil `transcribe` : téléchargement d'un fichier audio par son URL sous le garde-fou, transcription par le modèle d'un backend (`/v1/audio/transcriptions`), texte découpé et gardé en cache |
 | `proxy/llm_proxy/tools/code_execution.py` | L'outil `code_execution` : client HTTP de l'exécuteur, texte rendu au modèle, fichiers produits |
+| `proxy/llm_proxy/tools/image_generation.py` | L'outil `image_generation` : requête au modèle d'images d'un backend (`/v1/images/generations`, `/v1/images/edits` pour la retouche), image lue en `b64_json` ou par `url`, rendue en fichier — limiteur de quotas et statistiques compris |
 | `proxy/llm_proxy/files.py` | Le magasin des fichiers rendus par les outils : en mémoire, borné, servi par `GET /v1/files/<jeton>/<nom>` hors clé du proxy |
 | `services/executor/` | Le service exécuteur de code (hors du proxy, son image à lui) : `Dockerfile`, `entrypoint.sh`, `containers/` (réglages de podman sans root), le paquet `executor/` (`sandbox.py` : un bac par conversation ; `server.py` : son API ; `validate.py`), le contenu d'un bac (`sandbox/`), ses tests (`tests/`, sur un faux podman) |
 | `docker-compose.yml` | La pile de base, versionnée : le proxy et SearXNG |
@@ -742,7 +747,8 @@ s'appellent par [`/v1/tools`](#appel-direct--v1tools) :
 |---|---|---|
 | `ocr` (`url`, `pages`) | Lit le texte d'une image (PNG, JPEG, GIF, WebP) ou d'un PDF scanné — les images embarquées dans ses pages, 4 pages par appel ; le recours de `web_fetch`, dont la description y renvoie le modèle | Téléchargement par le proxy sous le garde-fou réseau, puis une requête chat/completions par page au modèle de vision de `[tools.ocr].model` |
 | `transcribe` (`url`, `language`, `offset`) | Transcrit un fichier audio (mp3, wav, flac, ogg, m4a, aac, webm, amr, mp4 — ce que le modèle de transcription ne lit pas tel quel, `formats`, est converti en WAV par ffmpeg, ou refusé sans lui ; 25 Mo au plus) et rend le texte, sans horodatage, avec la langue et la durée si le backend les donne ; reconnu à ses premiers octets ou à son type, refusé sinon | Téléchargement par le proxy sous le garde-fou réseau, puis `POST /v1/audio/transcriptions` au modèle de `[tools.transcribe].model` |
-| `code_execution` (`language`, `code`) | Exécute un programme (Python, bash, JavaScript, ou C, C++, Go, Rust compilés puis exécutés) dans un bac à sable sans réseau ; rend le code de sortie, la sortie, et remet au client les fichiers produits. Les fichiers du bac sont gardés d'un appel au suivant dans une conversation. Voir [Exécution de code](#exécution-de-code) | `POST /v1/execute` au service `executor` du compose (podman sans root) |
+| `code_execution` (`language`, `code`, `files`) | Exécute un programme (Python, bash, JavaScript, ou C, C++, Go, Rust compilés puis exécutés) dans un bac à sable sans réseau ; rend le code de sortie, la sortie, et remet au client les fichiers produits. `files` : des URL que le proxy télécharge (garde-fou `[tools.net]`) et dépose dans le bac avant le programme. Les fichiers du bac sont gardés d'un appel au suivant dans une conversation. Voir [Exécution de code](#exécution-de-code) | `POST /v1/execute` au service `executor` du compose (podman sans root) |
+| `image_generation` (`prompt`, `size`) | Génère une image depuis une description et la remet au client (une image en markdown, ajoutée par le proxy à la fin de la réponse) ; le modèle n'en reçoit que le nom, le type et les dimensions. 2 images par réponse au plus. Avec `edits`, retouche aussi une image donnée par `image_url`. Voir [Génération d'images](#génération-dimages) | `POST /v1/images/generations` au modèle de `[tools.image_generation].model` |
 
 Ce qu'est un outil pour le code du proxy — son contrat, ses codes
 d'erreur et leur traduction par surface, ses liaisons aux protocoles — et
@@ -1508,6 +1514,60 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
   le modèle le sait. Bornes : 8 fichiers, 5 Mo chacun, 10 Mo par appel
   côté exécuteur ; 10 Mo par fichier, 128 Mo en tout et 4 h côté proxy,
   en mémoire vive (un redémarrage du proxy casse les liens).
+- **Les fichiers d'entrée** (`files`) : le bac n'a pas de réseau, c'est
+  donc le **proxy** qui va chercher ce que le modèle veut traiter — un
+  CSV, un tableur, un PDF, une image à une URL — et l'exécuteur qui le
+  dépose dans `/work` avant de lancer le programme.
+
+      {"language": "python", "code": "import pandas as pd\nprint(pd.read_csv('iris.csv').describe())",
+       "files": [{"url": "https://exemple.org/donnees/iris.csv"}]}
+
+  - *Téléchargement* : par `net.download`, comme `web_fetch` — adresses
+    publiques seulement, listes de `[tools.net]` et du client, à chaque
+    redirection ; 4 de front. Bornes de `[tools.code_execution]` : 8
+    fichiers par appel (`max_files` ; `0` retire le paramètre), 20 Mo
+    chacun (`max_file_bytes`), 40 Mo en tout (`max_files_bytes`), 60 s
+    pour tous (`download_timeout`). Un fichier au-delà est refusé, jamais
+    coupé.
+  - *Nom dans le bac* : le `name` que le modèle donne, sinon le dernier
+    élément de l'URL (`…/iris.csv` → `iris.csv`), sinon celui de
+    `Content-Disposition`, sinon `file` et l'extension du type annoncé ;
+    assaini (ni chemin, ni espace, ni point ou tiret en tête),
+    dédoublonné (`iris-2.csv`). Le modèle peut le choisir parce qu'il
+    écrit son programme dans le même appel : il doit savoir quoi ouvrir.
+    Un fichier du même nom déjà dans le bac est remplacé.
+  - *Dépôt* : dans la requête d'exécution (`inputs`, en base64), puis par
+    une archive `tar` construite en mémoire et dépliée par l'entrée
+    standard de `podman exec` — aucun chemin de l'hôte, sous l'uid du
+    bac. L'exécuteur rejuge noms et tailles avec SES bornes
+    (`SANDBOX_MAX_INPUTS`, `SANDBOX_MAX_INPUT_BYTES`,
+    `SANDBOX_MAX_INPUT_TOTAL_BYTES`, mêmes défauts : les monter ensemble),
+    retire ce qui porte déjà le nom — un lien symbolique laissé là par un
+    programme précédent est **remplacé, pas suivi** —, puis relit ce qui
+    est réellement écrit : un fichier coupé par un `/work` plein (256 Mo)
+    est retiré et dit.
+  - *Échec partiel* : le programme tourne avec ce qui est entré, et le
+    texte dit au modèle ce qui manque et pourquoi ; les fichiers entrés
+    restent dans le bac de la conversation, il n'a pas à les redemander.
+    Si **aucun** n'entre, rien n'est exécuté et l'outil rend l'erreur du
+    refus (`not_allowed`, `not_accessible`, `unsupported`…) : le
+    programme, écrit pour eux, n'aurait fait qu'échouer.
+  - *Pas des fichiers produits* : un fichier d'entrée ne repart pas chez
+    l'utilisateur — sauf si le programme l'a **modifié**, auquel cas
+    c'est un fichier produit comme un autre.
+  - *Pour seulement lire* une page ou un document, `web_fetch` et `ocr`
+    restent les bons outils, et la description de l'outil le dit au
+    modèle quand ils lui sont présentés.
+  - *Versions dépareillées* : un exécuteur d'avant ce paramètre ignore
+    les fichiers et lance le programme sans eux — le proxy le reconnaît
+    et l'écrit au modèle ; il suffit de reconstruire son image. Un proxy
+    d'avant ne change rien pour un exécuteur à jour.
+
+  **Vérifié le 07/10/2026 par les tests seulement** (faux exécuteur côté
+  proxy, doublure de podman côté exécuteur — où le `tar` est bien celui
+  de la machine, GNU tar 1.35). **Pas encore joué sur un vrai podman** :
+  le cas 15 de `validate.py` et l'étape 5bis de la procédure sont là pour
+  cela.
 - **Un programme en erreur est un résultat**, pas une erreur de l'outil :
   le modèle lit `Exit code: 1` et la trace, et corrige. L'outil n'est en
   erreur que s'il n'a pas pu exécuter (`unavailable` : non configuré,
@@ -1577,6 +1637,18 @@ qui suivent restent entières :
   bac, donc de la conversation. Seules les images matricielles
   s'affichent ; le reste se télécharge — et reste un fichier écrit par un
   programme non relu.
+- **Un fichier d'entrée est un contenu du web.** `files` fait entrer
+  dans le bac des octets que personne n'a choisis : ils ne s'y exécutent
+  pas d'eux-mêmes — c'est le programme du modèle qui les lit, dans le bac
+  qui contient déjà ce programme — et rien de plus n'est à isoler. Mais
+  ce que le programme en imprime revient au modèle : une cellule de CSV
+  ou un texte de PDF peut porter une injection de prompt, exactement
+  comme une page lue par `web_fetch` — avec ici un outil d'exécution à
+  portée de main, et les fichiers produits pour canal de sortie (point
+  précédent). Un programme qui « décompresse et exécute » ce qu'il a reçu
+  reste dans le bac. Le téléchargement, lui, part du proxy : seul
+  `[tools.net]` (adresses publiques, `allowed_domains`,
+  `blocked_domains`) dit ce qu'il peut joindre.
 - **Entre clients.** Les bacs sont cloisonnés par clé du proxy. Sur un
   proxy ouvert tous les clients sont un seul client : seul l'identifiant
   de conversation, interne au proxy, sépare leurs bacs, et qui rejoue à
@@ -1753,6 +1825,8 @@ BORNÉ`, le cas 14, attendu.
 | 12. contenu du bac | `OK` : « bac à sable complet », compilateurs compris, **hors ligne** |
 | 13. c, cpp, rust, go, go | `OK` chacun en moins de 30 s ; le second `go` est celui d'un cache chaud |
 | 14. processus en arrière-plan | **`NON BORNÉ`** attendu : un processus détaché survit à l'appel, jusqu'à la fin du bac |
+| 15. fichiers d'entrée | `OK` : `data.csv` et `notes.txt` déposés sous l'uid du bac (`True`, `0o644`) à la place de deux liens symboliques piégés — ni `piege.txt` ni `/tmp/sbx-piege.txt` n'existent —, `../evade.txt` et `.cache` refusés (`invalid name`), rien à la récolte. **ÉCHEC = poser `SANDBOX_MAX_INPUTS: "0"`** (plus aucun dépôt) et le signaler. **Pas encore joué sur un vrai podman** (ajouté après la validation du 07/10/2026) |
+| 15bis. fichier d'entrée modifié | `OK` : `data.csv`, complété par le programme, revient comme fichier produit ; `notes.txt`, seulement lu, non |
 
 À relever : la ligne `VERDICT`, les deux lignes `MESURES` et les temps du
 cas 13. Relevé ce jour-là :
@@ -1826,6 +1900,38 @@ n'est pas la bonne. À provoquer aussi :
     docker compose stop executor      # puis un appel : error: unavailable, « unreachable », en ~5 s
     docker compose start executor
 
+**5bis. Un fichier d'entrée** (`files`) — pas encore joué sur un
+déploiement. L'image de l'exécuteur doit être celle du dépôt à jour
+(`docker compose build executor && docker compose up -d executor`),
+sinon le résultat dit « the sandbox service is too old to receive
+files ». Un CSV public et stable (150 lignes, environ 4 ko) :
+
+    CSV=https://raw.githubusercontent.com/mwaskom/seaborn-data/master/iris.csv
+    curl -s $PROXY/v1/tools/code_execution -H "Authorization: Bearer $CLE" -H 'Content-Type: application/json' -d '{
+      "language": "python",
+      "code": "import pandas as pd\ndf = pd.read_csv(\"iris.csv\")\nprint(df.shape)\nprint(df.groupby(\"species\").sepal_length.mean().round(3).to_dict())",
+      "files": [{"url": "'$CSV'"}]}' | jq
+
+Attendu : `is_error: false`, aucun lien dans `files` (un fichier d'entrée
+n'est pas un fichier produit), et `result` =
+
+    Exit code: 0
+    Sandbox: single-use — nothing is kept after this call.
+    Files copied into the working directory before the run:
+    - iris.csv (… kB), from https://raw.githubusercontent.com/mwaskom/seaborn-data/master/iris.csv
+    Output:
+    (150, 5)
+    {'setosa': 5.006, 'versicolor': 5.936, 'virginica': 6.588}
+
+Dans le journal de l'exécuteur : « …, 1 déposé(s), 0 refusé(s) [bac
+neuf] ». À provoquer aussi :
+
+    … "files": [{"url": "'$CSV'", "name": "fleurs.csv"}]            # déposé sous fleurs.csv : adapter read_csv
+    … "files": [{"url": "'$CSV'"}, {"url": "https://example.org/absent.csv"}]   # is_error: false ; « Files NOT copied — the program ran without them: … returned HTTP 404. »
+    … "files": [{"url": "http://executor:8080/healthz"}]            # is_error: true, error: not_allowed (adresse privée) ; rien n'est exécuté
+    … "files": [{"url": "http://169.254.169.254/latest/meta-data"}] # idem
+    … "code": "open(\"iris.csv\", \"a\").write(\"x\\n\")", "files": [{"url": "'$CSV'"}]   # modifié : iris.csv revient en lien dans `files`
+
 **6. Par un modèle**, `[chat].hosted_tools = true`, un modèle qui sait
 appeler des outils :
 
@@ -1840,6 +1946,22 @@ et un message user « Ajoute cos(x) au même graphique, à partir de
 /tmp/points.csv ». Dans le journal du proxy : « 1 échange(s) d'outils
 hébergés réinséré(s) » ; dans celui de l'exécuteur : la seconde
 exécution **sans** « [bac neuf] ».
+
+Et un fichier d'entrée, par le modèle (pas encore joué) :
+
+    curl -s $PROXY/v1/chat/completions -H "Authorization: Bearer $CLE" -H 'Content-Type: application/json' -d '{
+      "model": "<backend>/<modèle>", "tools": [{"type": "code_execution"}],
+      "messages": [{"role": "user", "content": "Voici un jeu de données : https://raw.githubusercontent.com/mwaskom/seaborn-data/master/iris.csv — combien de lignes, et quelle est la longueur moyenne des sépales par espèce ? Calcule-le, ne devine pas."}]}' | tee /tmp/csv1.json | jq -r '.choices[0].message.content'
+
+Attendu : 150 lignes ; setosa 5,006, versicolor 5,936, virginica 6,588 ;
+aucun lien ajouté. Dans le journal de l'exécuteur, « 1 déposé(s) » : le
+modèle a passé l'URL dans `files` (s'il a tenté `urllib` ou `curl` dans
+son programme, il a lu « Network is unreachable » et doit s'être
+corrigé). Puis la suite de la conversation, message assistant renvoyé
+tel quel : « Trace maintenant un nuage de points longueur × largeur des
+pétales, coloré par espèce » — attendu : une image en lien, la seconde
+exécution **sans** « [bac neuf] » et avec « 0 déposé(s) » (le fichier est
+resté dans le bac, le modèle ne l'a pas redemandé).
 
 **7. Open WebUI**, `always = ["code_execution"]` : l'image s'affiche-t-elle
 dans la réponse, et la conversation retrouve-t-elle son bac au tour
@@ -1860,6 +1982,79 @@ cgroup, qui pourrait demander `CHOWN` en plus — pas essayé, et la ligne
 « bornes de cgroups tenues » du journal le dira) ; puis régler
 `mem_limit`, `cpus`, `pids_limit` et `SANDBOX_MAX_SESSIONS` sur la
 machine.
+
+### Génération d'images
+
+`image_generation` fait générer une image par le modèle d'images d'un
+backend et la **remet à l'utilisateur** : le modèle de la conversation
+écrit le prompt, le proxy appelle `POST /v1/images/generations` du
+backend de `[tools.image_generation].model`, range l'image dans le
+magasin des fichiers (`[files]`) et ajoute lui-même, à la fin de la
+réponse, l'image en markdown. Le modèle ne reçoit qu'une phrase —
+
+    Image generated: image-eecf50.png (image/png, 512x512, 515 kB). It is
+    shown to the user with your answer; do not write a link or a markdown
+    image yourself. You cannot see it: do not describe details the prompt
+    does not state.
+
+— ni base64 (il remplirait le contexte, puis la mémoire), ni URL (il la
+recopierait de travers). Un outil du même nom a existé, lié à l'API
+Responses, puis a été retiré faute de client ; celui-ci n'en reprend que
+l'appel au backend : il vit sur `/v1/chat/completions` et `/v1/tools`,
+là où les fichiers sont rendus.
+
+- **Mettre en route** : `[tools.image_generation] enabled = true`,
+  `model = "<backend>/<modèle d'images>"`, et `[files].public_url` —
+  sans elle l'outil répond, avant de rien générer, que l'image ne
+  pourrait pas être remise. Puis `{"type": "image_generation"}` dans
+  `tools`, ou `always = ["image_generation"]` pour une interface de chat.
+- **Ce qui part au backend** : `model` (préfixe retiré), `prompt`,
+  `size` — ni `n`, ni `response_format`. Une image par appel.
+- **Ce qui en revient** : `data[0].b64_json`, ou `data[0].url`. Une
+  `url` de l'origine du backend (ou relative) est lue par son client,
+  avec sa clé : c'est l'adresse de configuration, souvent privée. Une
+  `url` d'une **autre** origine passe par le garde-fou `[tools.net]`,
+  adresses publiques seulement : un backend ne fait pas lire au proxy un
+  autre service du réseau local. Le type et les dimensions se lisent
+  dans les octets ; ce qui n'est pas un PNG, un JPEG, un GIF ou un WebP
+  n'est pas remis.
+- **Bornes** : `sizes` (les tailles que le modèle peut demander),
+  `max_calls` (2 images par réponse, comptées à part), `max_bytes`
+  (10 Mo, et `[files].max_file_bytes`), `timeout` (300 s pour la
+  requête ; le délai de l'outil est `timeout` + 2 × `download_timeout`).
+- **Erreurs** : `invalid_input` (prompt, taille hors liste, requête que
+  le backend refuse en 400/413/415/422), `too_many_requests` (429,
+  quota), `unsupported` (image trop grosse pour être remise),
+  `unavailable` (non configuré, pas d'adresse publique, backend éteint
+  ou en erreur, réponse sans image). Le corps d'une erreur du backend va
+  au journal, jamais au modèle.
+- **Coût** : une ligne de statistiques « requête » du modèle d'images,
+  endpoint `/v1/tools/image_generation`, en plus de celle de l'outil ; un
+  backend à quotas la compte pour une requête. Sur un backend qui ne
+  tient qu'un modèle en mémoire, générer décharge le modèle de la
+  conversation, que le tour suivant recharge : le client attend les
+  deux bascules.
+- **Retouche** (`edits = true`, inactive par défaut) : la fonction prend
+  alors `image_url` ; l'image est téléchargée sous le garde-fou
+  `[tools.net]` puis envoyée avec le prompt à `POST /v1/images/edits`
+  (multipart : `model`, `prompt`, `image`, `size` si demandée). Écrite
+  et testée contre un faux backend, **jamais jouée contre un vrai**.
+  L'image n'arrive que par URL publique : celle que le proxy vient de
+  remettre ne se retouche que si `[files].public_url` n'est pas une
+  adresse privée vue du proxy.
+
+**Essais du 07/10/2026**, proxy lancé à la main vers gufo
+(`bigchuck/Qwen-Image-2.1-heretic`, `bigchuck/qwen3.8-flash-next`),
+trois générations en tout :
+
+| Essai | Résultat |
+|---|---|
+| `POST /v1/images/generations` au backend, `{model, prompt, size: "512x512"}` | `{"created", "data": [{"b64_json"}]}`, un PNG 512×512 de 312 ko, 25 s (modèle d'images déchargé au départ) ; pas d'`usage` |
+| `POST /v1/tools/image_generation` | 17 s ; le texte ci-dessus, `files` : un lien `/v1/files/<jeton>/image-eecf50.png`, relu sans clé : `image/png`, 515 ko, 512×512 ; deux lignes de statistiques (requête, outil) |
+| `POST /v1/chat/completions`, `tools: [{"type": "image_generation"}]`, sans flux | le modèle appelle l'outil une fois (prompt développé par lui, 22 s), répond en une phrase sans écrire de lien, et le proxy ajoute `![image-99d53c.png](…/v1/files/…)` à la fin ; 98 s en tout : 38 s et 37 s pour les deux tours du modèle de conversation (à recharger, semble-t-il, après chaque génération), 22 s pour l'image |
+
+Pas joués : `always`, le flux, Open WebUI, une taille autre que 512×512,
+un backend qui rend une `url`, un backend à quotas, la retouche.
 
 ### Cache web
 
@@ -2207,13 +2402,38 @@ dans `data/config.example.toml` et
 | `enabled` | `false` | Active l'outil `code_execution` (`/v1/chat/completions` et `/v1/tools`). Activé sans exécuteur joignable, l'outil rend `unavailable` au modèle ; rien d'autre ne change |
 | `url` | `""` (`"http://executor:8080"` dans l'exemple) | Base du service exécuteur ; vide → « non configuré ». Adresse de configuration, privée : `[tools.net]` ne s'y applique pas |
 | `token` | `""` (`"${EXECUTOR_TOKEN}"` dans l'exemple) | Le jeton partagé avec l'exécuteur ; vide → « non configuré » |
-| `timeout` | `30` | Secondes pour un programme, compilation comprise ; dit au modèle. Le délai de l'outil est `timeout` + 120 s, à la place de `[tools].run_timeout` |
+| `timeout` | `30` | Secondes pour un programme, compilation comprise ; dit au modèle. Le délai de l'outil est `timeout` + 120 s + `download_timeout` + 45 s, à la place de `[tools].run_timeout` |
 | `max_calls` | `8` | Appels par réponse, comptés à part de `[tools].max_calls` |
 | `max_output_chars` | `12000` | Caractères de sortie rendus par appel ; au-delà, le début et la fin |
+| `max_files` | `8` | Fichiers d'entrée (`files`) par appel ; `0` : le paramètre n'est ni présenté ni accepté |
+| `max_file_bytes` | `20000000` | Taille au plus d'un fichier d'entrée ; au-delà il est refusé, jamais coupé |
+| `max_files_bytes` | `40000000` | Taille au plus de tous les fichiers d'entrée d'un appel |
+| `download_timeout` | `60` | Secondes pour tous les téléchargements d'un appel |
 
 Les bornes d'un bac (mémoire, CPU, processus, `/work`, `/tmp`, fichiers
 rendus, nombre de bacs, durées) sont celles de l'exécuteur : variables
-`SANDBOX_*` de son service, dans `docker-compose.override.yml`.
+`SANDBOX_*` de son service, dans `docker-compose.override.yml`. Il a
+aussi les siennes pour les fichiers d'entrée (`SANDBOX_MAX_INPUTS`,
+`SANDBOX_MAX_INPUT_BYTES`, `SANDBOX_MAX_INPUT_TOTAL_BYTES`, mêmes
+défauts), qu'il applique sans croire le proxy : à monter avec celles-ci.
+
+### `[tools.image_generation]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Active l'outil `image_generation` (`/v1/chat/completions` et `/v1/tools`). Il lui faut `[files].public_url` : sans elle, rien n'est généré et le modèle est prévenu |
+| `model` | `""` | Le modèle d'images, préfixé : `"<backend>/<modèle>"`. Vide ou préfixe inconnu → le modèle reçoit « génération d'images non configurée ». Adresse de configuration : `[tools.net]` ne s'y applique pas |
+| `sizes` | `["512x512", "768x768", "1024x1024"]` | Les tailles que le modèle peut demander (`LxH`) ; une autre est refusée sans appeler le backend |
+| `size` | `"512x512"` | La taille d'un appel qui n'en demande pas ; doit figurer dans `sizes` |
+| `timeout` | `300` | Secondes pour la requête au backend, chargement du modèle compris |
+| `download_timeout` | `30` | Secondes pour un téléchargement (l'image rendue par `url`, l'image à retoucher). `timeout` + 2 × `download_timeout` est le délai de l'outil, à la place de `[tools].run_timeout` |
+| `max_calls` | `2` | Images par réponse (une par appel), comptées à part de `[tools].max_calls` |
+| `max_bytes` | `10000000` | Taille au plus de l'image remise ; `[files].max_file_bytes` vaut aussi |
+| `edits` | `false` | Retouche d'une image donnée par `image_url`, envoyée à `POST /v1/images/edits`. Pas jouée contre un vrai backend |
+| `max_input_bytes` | `10000000` | Taille au plus de l'image à retoucher ; plus grosse, elle est refusée |
+
+Ce que l'outil a le droit de joindre (l'image à retoucher, une `url`
+rendue hors de l'origine du backend) : `[tools.net]`.
 
 ### `[files]`
 
@@ -2431,6 +2651,15 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   par la mémoire des échanges cachés : historique modifié ou proxy
   redémarré, bac neuf. Fichiers rendus gardés en mémoire vive. Voir
   [Exécution de code](#exécution-de-code).
+- **Génération d'images** (`[tools.image_generation]`) : jouée contre
+  un seul backend (gufo, Qwen-Image, 512×512, `b64_json`), par
+  `/v1/tools` et par un modèle sur `/v1/chat/completions` sans flux. Pas
+  joués : une `url` rendue par le backend, un backend à quotas, la
+  retouche (`edits`), Open WebUI. Une image par appel, pas de
+  `quality`, `n`, `background`… ; le modèle ne voit pas l'image qu'il a
+  fait faire. Pas sur `/v1/responses` ni `/v1/messages`. Image gardée en
+  mémoire vive, comme tout fichier rendu. Voir
+  [Génération d'images](#génération-dimages).
 - **Outils hébergés, autres surfaces.** Sur `/v1/messages`, la
   recherche et la lecture de page sont branchées, chacune pour le
   client qui déclare son outil serveur ;

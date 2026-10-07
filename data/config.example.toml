@@ -558,6 +558,10 @@ cache_entries = 64
 # appel, 4 h au plus, ou place à faire) — le modèle est alors prévenu que
 # le bac est neuf. La conversation est reconnue par la mémoire des
 # échanges cachés ([chat].memory) : sans elle, un bac par requête.
+# Des fichiers peuvent ENTRER dans le bac : le modèle en liste les URL
+# (`files`), le PROXY les télécharge — sous le garde-fou de [tools.net],
+# comme web_fetch — et l'exécuteur les dépose dans le dossier de travail
+# avant le programme. Ils y restent pour la conversation.
 # Sans liaison à l'API Responses ni à l'API Messages : l'outil se déclare
 # par {"type": "code_execution"} sur /v1/chat/completions
 # ([chat].hosted_tools), se présente d'office par [chat].always, et
@@ -603,10 +607,94 @@ max_calls = 8
 # Caractères de sortie rendus au modèle par appel ; au-delà, le début et
 # la fin sont gardés (une trace d'erreur est à la fin).
 max_output_chars = 12000
+# Fichiers d'ENTRÉE (`files`), par appel : leur nombre, la taille de
+# chacun, leur taille à eux tous (octets). Un fichier au-delà est refusé —
+# jamais coupé — et le modèle le sait ; le programme tourne avec les
+# autres, sauf si aucun n'entre. Ils passent par la mémoire du proxy puis
+# de l'exécuteur, et /work est un tmpfs de 256 Mo. max_files = 0 : le
+# paramètre n'est ni présenté au modèle ni accepté.
+# L'exécuteur revérifie avec SES bornes (SANDBOX_MAX_INPUTS,
+# SANDBOX_MAX_INPUT_BYTES, SANDBOX_MAX_INPUT_TOTAL_BYTES, mêmes défauts) :
+# monter celles-ci sans monter les siennes ne sert à rien.
+max_files = 8
+max_file_bytes = 20000000
+max_files_bytes = 40000000
+# Secondes données à TOUS les téléchargements d'un appel (4 de front).
+# Elles s'ajoutent au délai de l'outil, avec 45 s pour le dépôt.
+download_timeout = 60
 # Les autres bornes — mémoire, CPU, processus, taille de /work et de /tmp,
 # nombre et taille des fichiers rendus, nombre de bacs — sont celles de
 # l'exécuteur : variables SANDBOX_* du service `executor`, dans
 # docker-compose.override.yml.
+
+# L'outil `image_generation` : le modèle décrit une image, le proxy la
+# fait générer par le modèle d'images d'un backend (API OpenAI
+# POST /v1/images/generations) et la REMET à l'utilisateur comme fichier :
+# rangée au magasin ([files], plus bas), affichée par un lien que le proxy
+# écrit lui-même à la fin de la réponse. Le modèle ne reçoit qu'une phrase
+# (nom du fichier, type, dimensions) : ni base64, ni URL. Il faut donc
+# [files].public_url : sans elle l'outil répond, AVANT de rien générer,
+# que l'image ne pourrait pas être remise.
+# Sans liaison à l'API Responses ni à l'API Messages : l'outil se présente
+# sur /v1/chat/completions — déclaré par {"type": "image_generation"}
+# ([chat].hosted_tools) ou d'office ([chat].always) — et s'appelle par
+# POST /v1/tools/image_generation. (La route relayée
+# /v1/images/generations, elle, ne change pas.)
+[tools.image_generation]
+enabled = false
+# Le modèle d'images, PRÉFIXÉ comme tout modèle du proxy :
+# "<backend>/<modèle>". Vide, sans préfixe ou backend inconnu → l'outil
+# répond au modèle que la génération d'images n'est pas configurée.
+# C'est une adresse de CONFIGURATION : le garde-fou des adresses publiques
+# ne s'y applique pas. Chaque génération laisse, en plus de la ligne
+# d'usage de l'outil, une ligne de requête de ce modèle, endpoint
+# «/v1/tools/image_generation» ; un backend à quotas la compte pour une
+# requête.
+# Le corps envoyé : `model`, `prompt`, `size` — rien d'autre (ni `n`, ni
+# `response_format`, que plus d'un modèle refuse). Le backend rend
+# `b64_json` (gufo, vu le 07/10/2026 : un PNG) ou une `url` : les deux
+# sont lus. Une `url` de l'origine du backend (ou relative) est lue par
+# son client, avec sa clé ; une `url` d'une AUTRE origine (un CDN) passe
+# par le garde-fou [tools.net] — adresses publiques seulement — comme une
+# cible choisie par le modèle. Le type se lit dans les octets : ce qui
+# n'est pas un PNG, un JPEG, un GIF ou un WebP n'est pas remis.
+model = ""
+# model = "bigchuck/Qwen-Image-2.1-heretic"
+# Les tailles que le modèle peut demander («LxH», l'`enum` de la
+# fonction), et celle d'un appel qui n'en demande pas (elle doit figurer
+# dans la liste). À régler sur ce que le modèle d'images sait faire, et
+# sur ce qu'il coûte : le temps croît avec la surface. Vu le 07/10/2026,
+# Qwen-Image sous gufo : un PNG 512x512 en 17 à 25 s, bascule de modèle
+# comprise.
+sizes = ["512x512", "768x768", "1024x1024"]
+size = "512x512"
+# Délai (s) de la requête au backend, chargement du modèle compris. Avec
+# deux fois `download_timeout` (s, un téléchargement : l'image qu'un
+# backend rend par `url`, l'image à retoucher), c'est le délai de
+# l'outil : il remplace [tools].run_timeout pour lui. Le client attend
+# pendant ce temps — et, sur un backend qui ne tient qu'un modèle en
+# mémoire, le temps que celui de la conversation soit rechargé ensuite.
+timeout = 300
+download_timeout = 30
+# Images générées au plus pour UNE réponse (une par appel), comptées À
+# PART de [tools].max_calls. Bas : une image coûte cher, et un modèle qui
+# « améliore » la sienne n'en finit pas.
+max_calls = 2
+# Octets de l'image remise, au plus ; au-delà elle ne l'est pas, et le
+# modèle le sait. [files].max_file_bytes vaut aussi.
+max_bytes = 10000000
+# RETOUCHE d'une image existante : la fonction prend alors `image_url`,
+# l'image est téléchargée sous le garde-fou [tools.net] (PNG, JPEG, GIF,
+# WebP reconnus à leurs octets, `max_input_bytes` au plus, refusée
+# au-delà) et envoyée avec le prompt à POST /v1/images/edits (multipart,
+# champs `model`, `prompt`, `image`, et `size` si le modèle en demande
+# une). Inactive par défaut : à n'ouvrir que si le modèle d'images sert
+# cette route — elle n'a PAS été jouée contre un vrai backend. L'image
+# n'arrive que par URL PUBLIQUE : une image que le proxy vient de remettre
+# ne se retouche que si [files].public_url n'est pas une adresse privée
+# vue du proxy.
+edits = false
+max_input_bytes = 10000000
 
 
 # ── Fichiers rendus par les outils ──────────────────────────────────────
