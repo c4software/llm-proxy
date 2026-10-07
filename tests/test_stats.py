@@ -96,13 +96,6 @@ def flushed():
                          "result_chars FROM tool_calls ORDER BY id").fetchall()
 
 
-def outil(name, run):
-    import types
-    return types.SimpleNamespace(
-        NAME=name, KINDS=("web_search",), ITEM_TYPE="web_search_call",
-        ENABLED=True, action=lambda args: {"type": "search"}, run=run)
-
-
 def test_tool_run_recorded_from_each_of_the_three_paths(proxy, db):
     """Une exécution par /v1/responses, /v1/messages et /v1/tools : une
     ligne chacune, avec SA route et le modèle préfixé de la conversation
@@ -143,32 +136,37 @@ def test_tool_run_recorded_from_each_of_the_three_paths(proxy, db):
 
 
 def test_tool_run_outcome_ok_error_limit(db):
-    """Succès, échec (le résultat commence par «Error:», quelle qu'en soit
-    la cause) et refus par limite d'appels sont trois issues distinctes ;
+    """Succès, échec (le résultat porte un code d'erreur, quelle qu'en
+    soit la cause — et pas son texte : un succès peut commencer par
+    «Error:») et refus par limite d'appels sont trois issues distinctes ;
     un refus n'a pas de durée. Un nom
     inconnu ne laisse pas de ligne : ce n'est pas un outil."""
     import asyncio
+    from fakes import outil
     from llm_proxy import tools
 
     async def run(args):
         if args.get("casse"):
             raise RuntimeError("secret")
+        if args.get("refuse"):
+            raise tools.ToolError("unavailable", "moteur éteint.")
         return args.get("rend", "ok")
 
     h = tools.Hosted([outil("echo", run)], tools.Memory(4, 60))
     go = lambda *a, **kw: asyncio.run(h.run(*a, endpoint="/v1/tools", **kw))
     go("echo", "{}", 0)
-    go("echo", '{"rend": "Error: moteur éteint."}', 0)
+    go("echo", '{"refuse": true}', 0)
     go("echo", '{"casse": true}', 0)
     go("echo", "pas du json", 0)
     go("echo", "{}", tools.MAX_CALLS)
     go("echo", "{}", 1, limit=1)
     go("rm_rf", "{}", 0)
+    go("echo", '{"rend": "Error: une page qui commence ainsi"}', 0)
     rows = flushed()
     assert [(row[0], row[3]) for row in rows] == [
         ("echo", "ok"), ("echo", "error"), ("echo", "error"), ("echo", "error"),
-        ("echo", "limit"), ("echo", "limit")]
-    assert [row[4] for row in rows[4:]] == [0.0] * 2
+        ("echo", "limit"), ("echo", "limit"), ("echo", "ok")]
+    assert [row[4] for row in rows[4:6]] == [0.0] * 2
     assert rows[0][5] == 2 and rows[1][5] == len("Error: moteur éteint.")
 
 
@@ -176,6 +174,7 @@ def test_tool_run_never_raises_when_stats_fail(db, monkeypatch):
     """Une panne des statistiques ne casse ni l'outil ni la réponse ; et
     sans écrivain (stats.init() jamais appelé) rien n'est mis en file."""
     import asyncio
+    from fakes import outil
     from llm_proxy import tools
 
     async def run(args):
@@ -187,9 +186,9 @@ def test_tool_run_never_raises_when_stats_fail(db, monkeypatch):
         raise RuntimeError("disque plein")
     with monkeypatch.context() as m:
         m.setattr(stats, "record_tool", panne)
-        assert asyncio.run(h.run("echo", "{}", 0)) == "résultat"
+        assert asyncio.run(h.run("echo", "{}", 0)).text == "résultat"
     stats.close()
-    assert asyncio.run(h.run("echo", "{}", 0)) == "résultat"
+    assert asyncio.run(h.run("echo", "{}", 0)).text == "résultat"
     assert stats._pending.empty()
     stats.init()
     assert flushed() == []

@@ -17,7 +17,12 @@ from urllib.parse import urlsplit
 
 
 class Blocked(Exception):
-    """Cible refusée ; le message est rendu tel quel au modèle."""
+    """Cible refusée ; le message est rendu tel quel au modèle. `code` :
+    le code d'erreur du contrat (contract.ERRORS) que l'outil rendra."""
+
+    def __init__(self, message: str, code: str = "not_allowed"):
+        super().__init__(message)
+        self.code = code
 
 
 # Préfixes IPv6 qui ne font qu'EMBALLER une adresse IPv4 dans leurs 32
@@ -55,19 +60,19 @@ async def public_target(url: str, allow_private: bool = False) -> tuple[str, str
         parts = urlsplit(url)
         port = parts.port
     except ValueError:
-        raise Blocked("URL invalide")
+        raise Blocked("URL invalide", "invalid_input")
     if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise Blocked("seules les URL http(s) sont lues")
+        raise Blocked("seules les URL http(s) sont lues", "invalid_input")
     port = port or (443 if parts.scheme == "https" else 80)
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(
             parts.hostname, port, type=socket.SOCK_STREAM)
     # ValueError : octet nul dans le nom (UnicodeError en est une).
     except (socket.gaierror, ValueError):
-        raise Blocked(f"hôte introuvable : {parts.hostname}")
+        raise Blocked(f"hôte introuvable : {parts.hostname}", "not_accessible")
     ips = [info[4][0] for info in infos]
     if not ips:
-        raise Blocked(f"hôte introuvable : {parts.hostname}")
+        raise Blocked(f"hôte introuvable : {parts.hostname}", "not_accessible")
     if not allow_private and not all(is_public(ip) for ip in ips):
         raise Blocked(
             f"{parts.hostname} désigne une adresse privée ou locale : refusé")

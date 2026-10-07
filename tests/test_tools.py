@@ -10,16 +10,18 @@ parcourues dans le test, une entrée par classe (plus celles qui ont déjà
 révélé un défaut), et l'assertion nomme l'entrée fautive."""
 
 import asyncio
+import inspect
 import io
-import json
+import os
 import socket
 import threading
-import types
 
+import conftest
 import httpx
 import pytest
 
-from fakes import FOUND, RESULTS
+from fakes import (FOUND, RESULTS, SEARCHED, Echo, FakeUpstream, chat_doc,
+                   outil)
 from llm_proxy import tools
 from llm_proxy.tools import html_text, net, web_fetch, web_search, webcache
 
@@ -94,6 +96,15 @@ def reglages(monkeypatch):
     monkeypatch.setattr(tools, "MAX_RESULT_CHARS", 24_000)
 
 
+def rendu(coro) -> tools.Result:
+    """Ce que l'exécuteur (tools.Hosted) fait d'un `run` appelé à la
+    main : son Result, ou celui de l'échec prévu (ToolError)."""
+    try:
+        return go(coro)
+    except tools.ToolError as exc:
+        return tools.failure(exc.code, exc.message)
+
+
 def blocked(url, **kw):
     """Le message du refus ; échoue en nommant l'URL si elle est acceptée."""
     try:
@@ -119,8 +130,11 @@ class Web:
         return page(request) if callable(page) else page
 
     def fetch(self, url, **args) -> str:
-        return go(web_fetch.run({"url": url, **args},
-                                transport=httpx.MockTransport(self.handler)))
+        """Le texte rendu au modèle ; le résultat entier reste dans `last`."""
+        self.last = rendu(web_fetch.TOOL.run(
+            {"url": url, **args}, tools.Call(),
+            transport=httpx.MockTransport(self.handler)))
+        return self.last.text
 
 
 def page(text="bonjour", ct="text/plain", status=200, **headers):
@@ -183,8 +197,9 @@ def search(args, reponse=None):
             return reponse
         return httpx.Response(200, json=reponse or {"results": []})
 
-    out = go(web_search.run(args, transport=httpx.MockTransport(handler)))
-    return out, requests
+    out = rendu(web_search.TOOL.run(args, tools.Call(),
+                                    transport=httpx.MockTransport(handler)))
+    return out.text, requests
 
 
 def res(n, **kw):
@@ -192,17 +207,13 @@ def res(n, **kw):
             "content": f"extrait {n}", **kw}
 
 
-def outil(name="echo", run=None, kinds=("web_search",)):
-    async def defaut(args):
-        return "reçu " + json.dumps(args, sort_keys=True)
-
-    return types.SimpleNamespace(
-        NAME=name, KINDS=kinds, ITEM_TYPE="web_search_call", ENABLED=True,
-        action=lambda args: {"type": "search"}, run=run or defaut)
+def hosted(*outils):
+    return tools.Hosted(list(outils), tools.Memory(4, 60))
 
 
-def hosted(*modules):
-    return tools.Hosted(list(modules), tools.Memory(4, 60))
+def texte(h, *a, **kw) -> str:
+    """Le texte que rend Hosted.run."""
+    return go(h.run(*a, **kw)).text
 
 
 # ── net ─────────────────────────────────────────────────────────────────
@@ -572,11 +583,11 @@ def test_fetch_pdf_texte_extrait_decoupe_et_garde_en_cache(monkeypatch):
     debut = web.fetch(u)
     assert debut.endswith("Characters: 0-12 of 30 (truncated: pass offset=12 to "
                           "continue)\n\n---\nPage un\n\nPag")
+    assert web_fetch.TOOL.summary({"url": u}, web.last)["url"] == u + " [0, 12]"
     assert web.fetch(u, offset=12).endswith("\n---\ne deux\n\nPage")
     assert web.fetch(u, offset=24).endswith("Characters: 24-30 of 30\n\n---\n trois")
     assert len(web.requests) == n + 1 and len(fils) == 1
     assert fils[0] is not threading.main_thread()
-    assert web_fetch.action({"url": u}, debut)["url"] == u + " [0, 12]"
     # Au-delà de PDF_MAX_PAGES : le début, et un mot qui le dit.
     monkeypatch.setattr(web_fetch, "PDF_MAX_PAGES", 2)
     monkeypatch.setattr(web_fetch, "MAX_CHARS", 20_000)
@@ -903,9 +914,9 @@ def test_memory_expiration(monkeypatch):
 
 def test_hosted_run_passe_les_arguments_du_modele():
     h = hosted(outil())
-    assert go(h.run("echo", '{"b": 2, "a": "é"}', 0)) == 'reçu {"a": "\\u00e9", "b": 2}'
+    assert texte(h, "echo", '{"b": 2, "a": "é"}', 0) == 'reçu {"a": "\\u00e9", "b": 2}'
     # Sans arguments («», None) : objet vide, pas une exception.
-    assert go(h.run("echo", "", 0)) == go(h.run("echo", None, 0)) == "reçu {}"
+    assert texte(h, "echo", "", 0) == texte(h, "echo", None, 0) == "reçu {}"
 
 
 def test_hosted_appel_invalide_refuse_sans_executer():
@@ -917,10 +928,10 @@ def test_hosted_appel_invalide_refuse_sans_executer():
 
     h = hosted(outil(run=run))
     # Inconnu, même hors limite : c'est « inconnu » qui est dit.
-    assert go(h.run("rm_rf", "{}", 99)) == "Error: unknown tool rm_rf."
+    assert texte(h, "rm_rf", "{}", 99) == "Error: unknown tool rm_rf."
     for arguments in ["pas du json", "{", "[1, 2]", '"chaîne"', "null", "{'a': 1}",
                       '{"a": 1} trop', {"query": "déjà un dict"}, 12]:
-        assert go(h.run("echo", arguments, 0)) == (
+        assert texte(h, "echo", arguments, 0) == (
             "Error: the tool arguments are not a JSON object."), arguments
     assert appels == []
 
@@ -934,13 +945,13 @@ def test_hosted_limite_d_appels_par_reponse(monkeypatch):
         return "ok"
 
     h = hosted(outil(run=run))
-    assert [go(h.run("echo", "{}", n)) for n in (0, 1, 2)] == ["ok"] * 3
+    assert [texte(h, "echo", "{}", n) for n in (0, 1, 2)] == ["ok"] * 3
     for n in (3, 100):
-        assert go(h.run("echo", "{}", n)).startswith(
+        assert texte(h, "echo", "{}", n).startswith(
             "Error: the limit of 3 web tool calls"), n
     # La limite du client (`max_uses`) ne peut que l'abaisser.
-    assert go(h.run("echo", "{}", 1, limit=1)).startswith("Error: the limit of 1 ")
-    assert go(h.run("echo", "{}", 3, limit=50)).startswith("Error: the limit of 3 ")
+    assert texte(h, "echo", "{}", 1, limit=1).startswith("Error: the limit of 1 ")
+    assert texte(h, "echo", "{}", 3, limit=50).startswith("Error: the limit of 3 ")
     assert len(appels) == 3
 
 
@@ -950,7 +961,7 @@ def test_hosted_echec_de_l_outil_rendu_en_texte(monkeypatch):
         async def casse(args):
             raise exc
 
-        assert go(hosted(outil("casse", run=casse)).run("casse", "{}", 0)) == (
+        assert texte(hosted(outil("casse", run=casse)), "casse", "{}", 0) == (
             f"Error: casse failed ({type(exc).__name__}).")
     # Délai dépassé : la coroutine est annulée, pas abandonnée.
     monkeypatch.setattr(tools, "RUN_TIMEOUT", 0.05)
@@ -962,7 +973,7 @@ def test_hosted_echec_de_l_outil_rendu_en_texte(monkeypatch):
         finally:
             fini.append("annulé")
 
-    assert go(hosted(outil("lent", run=lent)).run("lent", "{}", 0)) == (
+    assert texte(hosted(outil("lent", run=lent)), "lent", "{}", 0) == (
         "Error: lent timed out after 0 s.")
     assert fini == ["annulé"]
 
@@ -974,27 +985,33 @@ def test_hosted_resultat_tronque(monkeypatch):
         return "x" * args["n"]
 
     h = hosted(outil("bavard", run=bavard))
-    assert go(h.run("bavard", '{"n": 10}', 0)) == "x" * 10
-    assert go(h.run("bavard", '{"n": 11}', 0)) == "x" * 10 + "\n[truncated]"
+    assert texte(h, "bavard", '{"n": 10}', 0) == "x" * 10
+    assert texte(h, "bavard", '{"n": 11}', 0) == "x" * 10 + "\n[truncated]"
 
 
-def test_hosted_retrouve_les_modules_par_type_d_outil_et_par_element():
-    h = hosted(web_search, web_fetch)
+def test_hosted_retrouve_les_outils_par_type_d_outil_et_par_element():
+    search, fetch = web_search.TOOL, web_fetch.TOOL
+    h = hosted(search, fetch)
     for kind in ("web_search", "web_search_preview", "web_search_2025_08_26"):
-        assert h.for_kind(kind) == [web_search, web_fetch]
+        assert h.for_kind(kind) == h.for_responses(kind) == [search, fetch]
     # Type inconnu, ou correspondance partielle : rien.
     assert h.for_kind("function") == [] and h.for_kind("web") == []
+    # L'outil serveur Anthropic, toutes versions datées — et elles seules.
+    assert h.for_server("web_search_20250305") is search
+    assert h.for_server("web_fetch_20260318") is fetch
+    for kind in ("web_search", "web_search_", "web_search_v2", "fetch_20250910"):
+        assert h.for_server(kind) is None, kind
     # L'élément rejoué est attribué d'après son action.
-    for module, args in [(web_search, {"query": "x"}), (web_fetch, {"url": "u"})]:
-        item = {"type": "web_search_call", "action": module.action(args)}
-        assert h.for_item(item) is module, item
+    for tool, args in [(search, {"query": "x"}), (fetch, {"url": "u"})]:
+        item = {"type": "web_search_call", "action": tool.summary(args)}
+        assert h.for_item(item) is tool, item
         assert args.items() <= item["action"].items()
     for item in [{"type": "web_search_call", "action": {"type": "find_in_page"}},
                  {"type": "web_search_call", "action": "search"},
                  {"type": "function_call", "action": {"type": "search"}}, {}]:
         assert h.for_item(item) is None, item
     # Sans l'outil de lecture, son élément n'est attribué à personne.
-    assert hosted(web_search).for_item(
+    assert hosted(search).for_item(
         {"type": "web_search_call", "action": {"type": "open_page"}}) is None
 
 
@@ -1002,47 +1019,52 @@ def test_hosted_par_defaut_les_outils_actives(monkeypatch):
     monkeypatch.setattr(web_search, "ENABLED", True)
     monkeypatch.setattr(web_fetch, "ENABLED", False)
     h = tools.Hosted()
-    assert h.modules == [web_search] and h.memory is tools.MEMORY and bool(h)
+    assert h.tools == [web_search.TOOL] and h.memory is tools.MEMORY and bool(h)
     monkeypatch.setattr(web_search, "ENABLED", False)
     assert not tools.Hosted()           # aucun outil : app.py n'en présente pas
 
 
-# ── web_search : le texte du modèle et sa forme structurée ──────────────
-# (la surface Anthropic tire ses blocs `web_search_result` de ce texte)
+# ── web_search : le texte du modèle et ses sources ──────────────────────
+# (la surface Anthropic fait ses blocs `web_search_result` des sources, et
+# son client les rejoue : le texte doit s'en refaire à l'identique)
 
-def test_search_text_and_structure_say_the_same_thing():
-    """`parse` est l'inverse de `render` : c'est ce qui permet de tirer
-    les blocs du client du texte du modèle, et l'inverse au rejeu."""
-    assert web_search.parse(FOUND) == RESULTS
-    assert web_search.render("q", web_search.parse(FOUND)) == FOUND
+def test_search_text_and_sources_say_the_same_thing():
+    """Le résultat porte le texte ET les sources, qui disent la même
+    chose : `render` refait l'un des autres, à l'octet près — c'est ce
+    qui permet au client de rejouer ses blocs sans mémoire côté proxy."""
+    sources = lambda *dicts: tuple(tools.Source(**d) for d in dicts)
+    assert SEARCHED.sources == sources(*RESULTS) and SEARCHED.error is None
+    assert web_search.TOOL.render(
+        {"query": " llama.cpp latest release "}, SEARCHED.sources) == FOUND
     assert FOUND.split("\n") == [
         "[1] Releases · ggml-org/llama.cpp (2026-10-03)",
         "    https://github.com/ggml-org/llama.cpp/releases",
         "    LLM inference in C/C++ — b6789, «latest»…",
         "[2] llama.cpp (blog)",
         "    https://example.org/blog/llama"]
-    # Ni une erreur, ni «aucun résultat», ni la marque de troncature ne
-    # sont des résultats ; une entrée coupée avant son URL est écartée.
-    assert web_search.parse("Error: search engine returned HTTP 500.") == []
-    assert web_search.parse(web_search.render("q", [])) == []
-    assert web_search.parse(FOUND + "\n[3] coupé\n[truncated]") == RESULTS
-    # Un titre qui finit de lui-même par une date est lu comme daté, une
-    # date d'une autre forme reste dans le titre : dans les deux cas le
-    # texte, lui, revient à l'identique.
-    for title, date in (("Notes (2024-05-01)", ""), ("Notes", "Jan 5, 202")):
-        odd = web_search.render("q", [{"title": title, "date": date,
-                                       "url": "https://x.test", "snippet": "s"}])
-        assert web_search.render("q", web_search.parse(odd)) == odd
-    assert web_search.parse(odd)[0]["title"] == "Notes (Jan 5, 202)"
-    # La même liste que format_results tire des résultats bruts de SearXNG.
+    # «Aucun résultat» : un texte, aucune source — pas une erreur.
+    assert web_search.found("q", []) == tools.Result("No results for «q».")
+    # Les sources tirées des résultats bruts de SearXNG.
     raw = [{"title": " Un  titre ", "url": "https://a.test/x",
             "publishedDate": "2026-01-02T03:04:05", "content": " du\ntexte "},
            {"title": "sans url"}]
-    assert web_search.entries(raw, 5) == [{
+    assert web_search.entries(raw, 5) == sources({
         "title": "Un titre", "url": "https://a.test/x", "date": "2026-01-02",
-        "snippet": "du texte"}]
-    assert web_search.format_results("q", raw, 5) == web_search.render(
-        "q", web_search.entries(raw, 5))
+        "snippet": "du texte"})
+    # La date est collée au titre dans le texte : il n'y en a qu'UNE
+    # lecture. Un titre qui finit de lui-même par une date est daté, une
+    # date d'une autre forme reste dans le titre — et le texte, lui, est
+    # celui qu'on attend dans les deux cas.
+    for title, date, attendu, ligne in (
+            ("Notes (2024-05-01)", "", ("Notes", "2024-05-01"),
+             "[1] Notes (2024-05-01)"),
+            ("Notes", "Jan 5, 2025", ("Notes (Jan 5, 202)", ""),
+             "[1] Notes (Jan 5, 202)")):
+        (odd,) = web_search.entries(
+            [{"title": title, "publishedDate": date, "url": "https://x.test",
+              "content": "s"}], 5)
+        assert (odd.title, odd.date) == attendu
+        assert web_search.render("q", [odd]).split("\n")[0] == ligne
 
 
 def test_search_domain_filters(monkeypatch):
@@ -1053,7 +1075,7 @@ def test_search_domain_filters(monkeypatch):
         "https://example.org/blog/post-1",
         "https://example.org/shop",
     ])]
-    urls = lambda **kw: [e["url"] for e in web_search.entries(raw, 20, **kw)]
+    urls = lambda **kw: [e.url for e in web_search.entries(raw, 20, **kw)]
     # Sous-domaines couverts, pas les homonymes ; un sous-domaine précis ne
     # couvre pas son parent ; un chemin restreint à ce qui le prolonge.
     assert urls(allowed=["github.com"]) == [raw[0]["url"], raw[1]["url"]]
@@ -1063,15 +1085,16 @@ def test_search_domain_filters(monkeypatch):
     assert urls(blocked=["github.com", "example.org/shop"]) == [
         raw[2]["url"], raw[3]["url"]]
     # Le filtre passe AVANT la limite.
-    assert [e["url"] for e in web_search.entries(
+    assert [e.url for e in web_search.entries(
         raw, 1, allowed=["example.org"])] == [raw[3]["url"]]
 
     def handler(request):
         assert request.url.params["q"] == "x"   # la requête n'est pas réécrite
         return httpx.Response(200, json={"results": raw})
 
-    go = lambda **kw: asyncio.run(web_search.run(
-        {"query": "x"}, transport=httpx.MockTransport(handler), **kw))
+    go = lambda **kw: asyncio.run(web_search.TOOL.run(
+        {"query": "x"}, tools.Call(settings=kw),
+        transport=httpx.MockTransport(handler))).text
     monkeypatch.setattr(web_search, "SEARXNG_URL", "http://searxng.test")
     assert go(allowed_domains=["example.org"], blocked_domains=[
         "example.org/shop"]) == "[1] 3\n    https://example.org/blog/post-1"
@@ -1093,11 +1116,13 @@ def routes(monkeypatch):
     monkeypatch.setattr(web_fetch, "ENABLED", False)
     seen = []
 
-    async def run(args, transport=None):
+    async def run(self, args, call):
         seen.append(args)
-        return "Error: moteur éteint." if args.get("query") == "panne" \
-            else "[1] Titre\n    https://e.org\n    extrait"
-    monkeypatch.setattr(web_search, "run", run)
+        if args.get("query") == "panne":
+            raise tools.ToolError("unavailable", "moteur éteint.")
+        return web_search.found("é", [tools.Source(
+            "https://e.org", "Titre", snippet="extrait")])
+    monkeypatch.setattr(web_search.WebSearch, "run", run)
     return TestClient(A.app), seen
 
 
@@ -1108,12 +1133,19 @@ def test_route_tools_liste_les_outils_actifs_et_les_execute(routes):
     assert actif["parameters"]["required"] == ["query"]
     r = client.post("/v1/tools/web_search", json={"query": "é", "limit": 3})
     assert r.status_code == 200
+    # L'enveloppe : `name`, `result`, `is_error` (ce que lisent les
+    # extensions des clients), puis le code d'erreur, les sources, `meta`.
     assert r.json() == {"name": "web_search", "is_error": False,
-                        "result": "[1] Titre\n    https://e.org\n    extrait"}
+                        "result": "[1] Titre\n    https://e.org\n    extrait",
+                        "error": None, "meta": {}, "sources": [{
+                            "url": "https://e.org", "title": "Titre",
+                            "date": "", "snippet": "extrait"}]}
     assert seen == [{"query": "é", "limit": 3}]
     # Échec de l'outil : 200 quand même, c'est un texte pour le modèle.
     r = client.post("/v1/tools/web_search", json={"query": "panne"})
-    assert r.status_code == 200 and r.json()["is_error"] is True
+    assert r.status_code == 200 and r.json() == {
+        "name": "web_search", "result": "Error: moteur éteint.",
+        "is_error": True, "error": "unavailable", "sources": [], "meta": {}}
 
 
 def test_route_tools_run_refuse_outil_inactif_et_corps_non_objet(routes):
@@ -1182,20 +1214,20 @@ def test_fetch_action_distingue_les_morceaux_d_une_page_longue(monkeypatch):
     la suit pour une page lue par morceaux, une page courte garde son URL
     nue. La plage est celle du résultat réel, pas un calcul sur l'offset."""
     monkeypatch.setattr(web_fetch, "MAX_CHARS", 20)
-    u = "http://site.test/doc"
+    u, summary = "http://site.test/doc", web_fetch.TOOL.summary
     web = Web(default=page("x" * 50))
     for args, plage in [({}, " [0, 20]"), ({"offset": 20}, " [20, 40]"),
                         ({"offset": 40}, " [40, 50]")]:
-        result = web.fetch(u, **args)
-        assert web_fetch.item({"url": u, **args}, result) == {
-            "status": "completed",
-            "action": {"type": "open_page", "url": u + plage}}, args
-    court = Web(default=page("bonjour")).fetch(u)
-    assert web_fetch.action({"url": u}, court) == {"type": "open_page", "url": u}
-    # Sans résultat (élément en cours, module interrogé à vide) ou en erreur.
-    assert web_fetch.action({"url": u, "offset": 20}) == {"type": "open_page", "url": u}
-    assert web_fetch.action({"url": u}, "Error: x")["url"] == u
-    assert web_fetch.action({}) == {"type": "open_page", "url": ""}
+        web.fetch(u, **args)
+        assert summary({"url": u, **args}, web.last) == {
+            "type": "open_page", "url": u + plage}, args
+    court = Web(default=page("bonjour"))
+    court.fetch(u)
+    assert summary({"url": u}, court.last) == {"type": "open_page", "url": u}
+    # Sans résultat (élément en cours, outil interrogé à vide) ou en erreur.
+    assert summary({"url": u, "offset": 20}) == {"type": "open_page", "url": u}
+    assert summary({"url": u}, tools.failure("unavailable", "x"))["url"] == u
+    assert summary({}) == {"type": "open_page", "url": ""}
 
 
 # ── cache web ───────────────────────────────────────────────────────────
@@ -1273,3 +1305,132 @@ def test_cache_web_recherche_identique_et_bornes(monkeypatch):
     assert c.get("a") is None and c.get("c") == 3 and len(c) == 2 and c.size == 8
     c.put("gros", 0, 11)
     assert c.get("gros") is None and (c.hits, c.misses) == (1, 2)
+
+
+# ── le contrat d'un outil (tools/contract.py, docs/outils.md) ───────────
+
+def test_contrat_outil_minimal_sans_liaison(proxy, monkeypatch):
+    """L'outil minimal de docs/outils.md, enregistré. Sans liaison de
+    protocole il est listé et exécuté par /v1/tools, et présenté sur
+    /v1/chat/completions, où son appel reste caché du client ; les
+    surfaces Responses et Anthropic, qui n'auraient rien pour en rendre
+    compte, l'ignorent."""
+    from llm_proxy import anthropic_api, chat_api, responses_api
+    monkeypatch.setattr(tools, "REGISTRY", [])
+    echo = tools.register(Echo())
+    with pytest.raises(ValueError):             # le nom est la clé
+        tools.register(Echo())
+    assert tools.enabled() == [echo] and tools.kinds() == {"echo"}
+    # L'annuaire que montent les routes : ce que le registre active (la
+    # fixture `proxy` a remplacé tools.Hosted par le sien).
+    proxy.hosted = h = type(proxy.hosted)(tools.enabled(), tools.Memory(4, 60))
+    monkeypatch.setattr(chat_api, "ENABLED", True)
+    monkeypatch.setattr(chat_api, "MEMORY", chat_api.Memory(8, 60, 100_000))
+    spec = echo.spec({"echo"})
+    # L'exemple de la documentation EST cet outil, à la lettre.
+    with open(os.path.join(conftest.ROOT, "docs", "outils.md"),
+              encoding="utf-8") as f:
+        assert inspect.getsource(Echo) in f.read()
+
+    # Appel direct : la déclaration, puis l'enveloppe du résultat.
+    assert proxy.client.get("/v1/tools").json()["data"] == [{
+        "name": "echo", "description": spec["function"]["description"],
+        "parameters": spec["function"]["parameters"]}]
+    r = proxy.client.post("/v1/tools/echo", json={"text": "bonjour"})
+    assert r.json() == {"name": "echo", "result": "bonjour", "is_error": False,
+                        "error": None, "sources": [], "meta": {"chars": 7}}
+    r = proxy.client.post("/v1/tools/echo", json={})
+    assert r.status_code == 200 and r.json() == {
+        "name": "echo", "result": "Error: `text` is required.",
+        "is_error": True, "error": "invalid_input", "sources": [], "meta": {}}
+
+    # chat/completions : déclaré par son nom, présenté en fonction, exécuté
+    # par le proxy — le client ne voit ni l'appel ni son résultat.
+    proxy.replies = [
+        FakeUpstream(chat_doc({"content": None, "tool_calls": [{
+            "id": "c", "function": {"name": "echo",
+                                    "arguments": "{\"text\": \"bonjour\"}"}}]},
+            "tool_calls", 1, 1)),
+        FakeUpstream(chat_doc({"content": "Fait."}, "stop", 1, 1))]
+    r = proxy.client.post("/v1/chat/completions", json={
+        "model": "essai/qwen", "tools": [{"type": "echo"}],
+        "messages": [{"role": "user", "content": "Répète."}]})
+    message = r.json()["choices"][0]["message"]
+    assert r.status_code == 200 and message["content"] == "Fait."
+    assert "tool_calls" not in message and "annotations" not in message
+    one, two = proxy.sent
+    assert one["tools"] == two["tools"] == [spec]
+    assert two["messages"][-1] == {"role": "tool", "tool_call_id": "c",
+                                   "content": "bonjour"}
+
+    # Sans liaison : ni type Responses, ni outil serveur Anthropic.
+    ctx = responses_api.to_chat({"model": "m", "input": "x", "tools": [
+        {"type": "echo"}]}, hosted=h)[1]
+    assert not ctx.hosted and ctx.ignored == ["echo"]
+    assert not anthropic_api.Context({"tools": [
+        {"type": "echo_20260101", "name": "echo"}]}, h).hosted
+
+
+def test_contrat_tout_echec_est_un_result_avec_son_code(monkeypatch):
+    """Ce que l'exécuteur fait de chaque issue de `run` : un Result, dont
+    le CODE (jamais le texte) décide de l'issue des statistiques. Rien ne
+    remonte. Et `run` reçoit dans `call` ce qui ne vient pas du modèle."""
+    monkeypatch.setattr(tools, "RUN_TIMEOUT", 0.05)
+    lines, calls = [], []
+    monkeypatch.setattr(tools.stats, "record_tool", lambda *a: lines.append(a))
+
+    class Cas(Echo):
+        name = "cas"
+
+        async def run(self, args, call):
+            calls.append(call)
+            cas = args.get("cas")
+            if cas == "prévu":
+                raise tools.ToolError("not_accessible", "the target is down.")
+            if cas == "quota":
+                raise tools.ToolError("limit", "quota spent.")
+            if cas == "panne":
+                raise RuntimeError("secret")
+            if cas == "lent":
+                await asyncio.sleep(30)
+            if cas == "hors liste":
+                return tools.failure("mystère", "x.")
+            if cas == "pas un Result":
+                return "du texte"
+            return tools.Result("Error: une page peut commencer ainsi")
+
+    h = hosted(Cas())
+    attendu = [  # (arguments, appels déjà faits, code, texte, issue)
+        ("{}", 0, None, "Error: une page peut commencer ainsi", "ok"),
+        ('{"cas": "prévu"}', 0, "not_accessible",
+         "Error: the target is down.", "error"),
+        ('{"cas": "panne"}', 0, "unavailable",
+         "Error: cas failed (RuntimeError).", "error"),
+        ('{"cas": "lent"}', 0, "timeout",
+         "Error: cas timed out after 0 s.", "error"),
+        ('{"cas": "hors liste"}', 0, "unavailable", "Error: x.", "error"),
+        ('{"cas": "pas un Result"}', 0, "unavailable",
+         "Error: cas failed (TypeError).", "error"),
+        ("[1]", 0, "invalid_input",
+         "Error: the tool arguments are not a JSON object.", "error"),
+        ('{"cas": "quota"}', 0, "limit", "Error: quota spent.", "limit"),
+        ("{}", tools.MAX_CALLS, "limit",
+         f"Error: the limit of {tools.MAX_CALLS} web tool calls for one "
+         "answer is reached. Answer now with what you already have.", "limit"),
+    ]
+    for arguments, used, code, text, _ in attendu:
+        result = go(h.run("cas", arguments, used, endpoint="/v1/x",
+                          model="essai/qwen", client="abc",
+                          options={"cas": {"max_chars": 5}, "autre": {"x": 1}}))
+        assert (result.error, result.text) == (code, text), arguments
+        assert code is None or code in tools.ERRORS
+    assert [line[:4] for line in lines] == [
+        ("cas", "/v1/x", "essai/qwen", issue) for *_, issue in attendu]
+    # Les réglages du client sur CET outil, la route, le modèle, le client.
+    assert len(calls) == 7 and all(c == tools.Call(
+        {"max_chars": 5}, "/v1/x", "essai/qwen", "abc") for c in calls)
+    # Un nom qui n'est celui d'aucun outil : une erreur, sans statistiques.
+    assert go(h.run("rm_rf", "{}", 0)) == tools.failure(
+        "invalid_input", "unknown tool rm_rf.")
+    assert len(lines) == len(attendu)
+

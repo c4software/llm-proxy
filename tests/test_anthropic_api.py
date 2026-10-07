@@ -15,8 +15,8 @@ import httpx
 import pytest
 
 from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, RESULTS, SEARCH_DOC,
-                   SEARCH_TURN, FakeUpstream, chat_doc, chunk, feed,
-                   hosted_tools, sse, stream, tool_call, usage)
+                   SEARCH_TURN, SEARCHED, FakeUpstream, chat_doc, chunk,
+                   failed, feed, hosted_tools, sse, stream, tool_call, usage)
 from fakes import sse_events as events
 from llm_proxy import anthropic_api as A
 from llm_proxy import app
@@ -562,7 +562,7 @@ def test_to_openai_declares_hosted_search_from_claude_code_request():
     # n'est PAS présenté (Claude Code ne déclare que la recherche, il lit
     # les pages chez le client), bien que l'annuaire le porte, comme sur
     # un proxy réel.
-    assert out["tools"] == [web_search.definition(fetch=False)]
+    assert out["tools"] == [web_search.TOOL.spec({"web_search"})]
     assert "web_fetch" not in json.dumps(out)
     assert out["tool_choice"] == "auto" and out["stream"] is True
     assert out["messages"][0]["role"] == "system"
@@ -574,8 +574,8 @@ def test_to_openai_declares_hosted_search_from_claude_code_request():
     assert ctx.limits == {"web_search": 8} and ctx.options == {}
 
     # Sans annuaire, ou annuaire sans recherche : ignoré, comme avant.
-    for h in (None, tools.Hosted(modules=[]),
-              tools.Hosted(modules=hosted.modules[1:])):
+    for h in (None, tools.Hosted(tools=[]),
+              tools.Hosted(tools=hosted.tools[1:])):
         out = A.to_openai(request, hosted=h)
         assert "tools" not in out and "tool_choice" not in out
         assert not A.Context(request, h).hosted
@@ -653,7 +653,7 @@ def test_stream_hosted_search_blocks():
         (use["id"], "web_search", QUERY)]
     assert t.client_calls == 0
 
-    done = events(t.resolve(t.pending[0], FOUND))
+    done = events(t.resolve(t.pending[0], SEARCHED))
     assert [e for e, _ in done] == ["content_block_start", "content_block_stop"]
     assert done[0][1] == {"type": "content_block_start", "index": 2,
                           "content_block": {
@@ -705,8 +705,8 @@ def test_stream_two_searches_come_out_as_pairs():
         "{\"query\":\"un\"}", "{\"query\":\"deux\",\"limit\":3}"]
     assert len(blocks_of(ev)) == 1
     first, second = t.pending
-    ev += events(t.resolve(first, FOUND))
-    ev += events(t.resolve(second, "No results for «deux»."))
+    ev += events(t.resolve(first, SEARCHED))
+    ev += events(t.resolve(second, tools.Result("No results for «deux».")))
     t.next_turn()
     ev += turn(t, chunk({"reasoning_content": "Bien."}), *ANSWER_TURN)
     starts = [(d["index"], d["content_block"]["type"]) for e, d in ev
@@ -738,21 +738,29 @@ def test_stream_search_errors_become_error_blocks():
          tool_call(1, "b", "web_search", "{\"q\":\"sans query\"}"),
          tool_call(2, "c", "web_search", "{pas du json"),
          tool_call(3, "d", "web_search", "{\"query\":\"de trop\"}"),
+         tool_call(4, "e", "web_search", "{\"query\":\"lent\"}"),
          chunk(finish="tool_calls"))
     blocks = []
-    for result in ("Error: search engine unreachable (ConnectError).",
-                   "Error: `query` is required.",
-                   "Error: the tool arguments are not a JSON object.",
-                   "Error: the limit of 3 web tool calls for one answer is "
-                   "reached. Answer now with what you already have."):
-        blocks += blocks_of(events(t.resolve(t.pending[0], result)))[:1]
+    # Le code du résultat décide de celui du bloc (A.ERROR_CODES) — pas son
+    # texte, que seul le modèle lit.
+    for code, text in (
+            ("unavailable", "Error: search engine unreachable (ConnectError)."),
+            ("invalid_input", "Error: `query` is required."),
+            ("invalid_input", "Error: the tool arguments are not a JSON object."),
+            ("limit", "Error: the limit of 3 web tool calls for one answer is "
+                      "reached. Answer now with what you already have."),
+            ("timeout", "Error: web_search timed out after 60 s.")):
+        blocks += blocks_of(events(t.resolve(t.pending[0], failed(code, text))))[:1]
         assert blocks[-1]["type"] == "web_search_tool_result"
     assert [b["content"] for b in blocks] == [search_error(code) for code in (
         "unavailable", "invalid_tool_input", "invalid_tool_input",
-        "max_uses_exceeded")]
+        "max_uses_exceeded", "unavailable")]
+    # Chaque code du contrat a sa traduction.
+    assert set(A.ERROR_CODES) == set(tools.ERRORS)
     # Arguments illisibles : un input vide, jamais du JSON cassé au client.
     assert [b["input"] for b in t.content if b["type"] == "server_tool_use"] == [
-        {"query": "un"}, {"q": "sans query"}, {}, {"query": "de trop"}]
+        {"query": "un"}, {"q": "sans query"}, {}, {"query": "de trop"},
+        {"query": "lent"}]
     # Aucune recherche aboutie : pas de `server_tool_use` dans l'usage, et
     # un dernier tour clos sur tool_calls sans outil client = end_turn.
     end = events(t.finalize())
@@ -772,7 +780,7 @@ def test_search_and_client_tool_in_one_turn():
               tool_call(1, "toolu_1", "Read", "{\"p\":\"a\"}"),
               chunk(finish="tool_calls"), usage(10, 2))
     assert t.client_calls == 1 and len(t.pending) == 1
-    ev += events(t.resolve(t.pending[0], FOUND))
+    ev += events(t.resolve(t.pending[0], SEARCHED))
     ev += events(t.finalize())
     assert [b["type"] for b in blocks_of(ev)] == expected
     assert ev[-2][1]["delta"]["stop_reason"] == "tool_use"
@@ -785,7 +793,7 @@ def test_search_and_client_tool_in_one_turn():
         {"id": "toolu_1", "function": {"name": "Read", "arguments": "{}"}}]},
         "tool_calls", 10, 2))
     assert t.finish() == b"" and t.client_calls == 1
-    assert t.resolve(t.pending[0], FOUND) == b""
+    assert t.resolve(t.pending[0], SEARCHED) == b""
     msg = json.loads(t.finalize())
     assert [b["type"] for b in msg["content"]] == expected
     assert msg["stop_reason"] == "tool_use"
@@ -871,7 +879,7 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
     first = A.to_openai(request, hosted=hosted)
     t = translator(request, hosted)
     turn(t, chunk({"reasoning_content": "Hum."}), *SEARCH_TURN)
-    t.resolve(t.pending[0], FOUND)
+    t.resolve(t.pending[0], SEARCHED)
     # Tour 2, comme app.messages le reconstruit.
     rebuilt = lambda: A.to_openai(
         {**request, "messages": request["messages"] + [
@@ -899,7 +907,8 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
     # il n'en reste que le code — seul cas où les deux diffèrent.
     t = translator(request, hosted)
     turn(t, *SEARCH_TURN)
-    t.resolve(t.pending[0], "Error: search engine returned HTTP 502.")
+    t.resolve(t.pending[0], failed(
+        "unavailable", "Error: search engine returned HTTP 502."))
     assert rebuilt()["messages"][3]["content"] == \
         "Error: search engine returned HTTP 502."
     t.results.clear()
@@ -915,7 +924,9 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
 PAGE = "https://example.org/notes"
 HTML = ("<html><head><title>Notes : b6789</title></head><body><p>"
         + "Bonjour à tous. " * 4 + "</p></body></html>").encode()
-READ_TEXT = web_fetch.render(PAGE, "text/html", HTML, "utf-8", 0, 30)
+# Le résultat de l'outil, et le texte que le modèle en lit.
+PAGE_READ = web_fetch.render(PAGE, "text/html", HTML, "utf-8", 0, 30)
+READ_TEXT = PAGE_READ.text
 FETCH_ARGS = "{\"url\": \"https://example.org/notes\"}"
 SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search"}
 
@@ -950,23 +961,25 @@ def test_to_openai_declares_hosted_fetch():
     hosted = hosted_tools()
     defs = lambda *tools, h=hosted: A.to_openai(
         fetch_request(*tools), hosted=h).get("tools")
+    both = {"web_search", "web_fetch"}
+    alone = web_fetch.TOOL.spec({"web_fetch"})
     assert READ_TEXT.startswith(
         f"URL: {PAGE}\nTitle: Notes : b6789\nContent-Type: text/html\n"
         "Characters: 0-30 of 63 (truncated: pass offset=30 to continue)\n\n---\n")
     # Seul déclaré : seul présenté, et sa description ne renvoie pas à une
     # recherche que le modèle n'a pas. Toute version datée de l'outil.
     for kind in ("web_fetch_20250910", "web_fetch_20260318"):
-        assert defs(fetch_tool(type=kind)) == [web_fetch.DEFINITION_ALONE]
-    assert "web_search" not in json.dumps(web_fetch.DEFINITION_ALONE)
-    assert set(web_fetch.DEFINITION_ALONE["function"]["parameters"][
-        "properties"]) == {"url", "offset"}
+        assert defs(fetch_tool(type=kind)) == [alone]
+    assert "web_search" not in json.dumps(alone)
+    assert set(alone["function"]["parameters"]["properties"]) == {
+        "url", "offset"}
     # Les deux déclarés : chacun à sa place, une fois, et chaque
     # description renvoie à l'autre — les fonctions de la surface Responses.
     assert defs(fetch_tool(), READ, SEARCH_TOOL, fetch_tool())[::2] == [
-        web_fetch.DEFINITION, web_search.definition()]
+        web_fetch.TOOL.spec(both), web_search.TOOL.spec(both)]
     # Lecture non hébergée : ignorée, la recherche reste sans renvoi.
     assert defs(SEARCH_TOOL, fetch_tool(), h=tools.Hosted(
-        modules=hosted.modules[:1])) == [web_search.definition(fetch=False)]
+        tools=hosted.tools[:1])) == [web_search.TOOL.spec({"web_search"})]
     # Une fonction du client nommée web_fetch garde son nom.
     mine = {"name": "web_fetch", "description": "la mienne", "input_schema": {}}
     assert [t["function"]["description"]
@@ -1005,19 +1018,18 @@ def test_stream_hosted_fetch_blocks():
         {"type": "input_json_delta", "partial_json": FETCH_ARGS}]
     assert ev[-1][0] == "content_block_stop" and len(t.pending) == 1
 
-    done = events(t.resolve(t.pending[0], READ_TEXT))
+    done = events(t.resolve(t.pending[0], PAGE_READ))
     assert [e for e, _ in done] == ["content_block_start", "content_block_stop"]
     block = done[0][1]["content_block"]
     # Le document porte le texte ENTIER rendu au modèle ; l'URL et le
-    # titre en sont tirés.
+    # titre sont ceux de `meta` du résultat.
     assert done[0][1]["index"] == 2 and block["tool_use_id"] == use["id"]
     assert fetched(block)
-    # Un texte sans en-tête lisible : l'URL demandée, pas de titre.
-    assert A._fetch_content(hosted.by_name["web_fetch"], {
-        "arguments": FETCH_ARGS}, "du texte")["url"] == PAGE
+    # Un résultat qui ne dit rien de la page : l'URL demandée, pas de titre.
+    bare = tools.Result("du texte")
+    assert A._fetch_content({"arguments": FETCH_ARGS}, bare)["url"] == PAGE
     assert fetched({"type": "web_fetch_tool_result", "content": A._fetch_content(
-        hosted.by_name["web_fetch"], {"arguments": "{"}, "du texte")},
-        "du texte", "", None)
+        {"arguments": "{"}, bare)}, "du texte", "", None)
 
     t.next_turn()
     end = turn(t, *ANSWER_TURN)
@@ -1031,8 +1043,9 @@ def test_stream_hosted_fetch_blocks():
 
 
 def test_fetch_errors_become_error_codes(monkeypatch):
-    """Les textes d'erreur du VRAI module (aucun réseau : la résolution
-    et le transport sont factices) → les codes de l'outil d'Anthropic."""
+    """Les erreurs du VRAI outil, par l'exécuteur (aucun réseau : la
+    résolution et le transport sont factices) → leur code du contrat →
+    les codes de l'outil d'Anthropic."""
     async def public(url, allow_private=False):
         return "https", "93.184.216.34", 443
 
@@ -1052,8 +1065,14 @@ def test_fetch_errors_become_error_codes(monkeypatch):
     for name in ("ALLOWED_DOMAINS", "BLOCKED_DOMAINS"):
         monkeypatch.setattr(web_fetch, name, [])
     monkeypatch.setattr(web_fetch, "ALLOW_PRIVATE", False)
-    run = lambda url, **options: asyncio.run(web_fetch.run(
-        {"url": url}, transport=httpx.MockTransport(site), **options))
+    class Offline(web_fetch.WebFetch):
+        async def run(self, args, call):
+            return await super().run(args, call, httpx.MockTransport(site))
+
+    real = tools.Hosted([Offline()], tools.Memory(1, 60))
+    run = lambda url, **options: asyncio.run(real.run(
+        "web_fetch", json.dumps({"url": url}), 0,
+        options={"web_fetch": options}))
     # Refusés avant toute requête, par le vrai contrôle d'adresse.
     results = [(run("ftp://example.org/a"), "invalid_tool_input"),
                (run("http://127.0.0.1/admin"), "url_not_allowed")]
@@ -1069,24 +1088,29 @@ def test_fetch_errors_become_error_codes(monkeypatch):
                                    # Les listes du CLIENT, à chaque saut.
                                    ("ailleurs", "url_not_allowed"))]
     results += [(run("https://github.com/", **theirs), "url_not_allowed"),
-                ("Error: web_fetch timed out after 60 s.", "unavailable")]
-    assert all(text.startswith("Error:") for text, _ in results)
-    # Sans `url`, arguments illisibles, et au-delà du `max_uses` de l'outil.
-    extra = [("{\"uri\": \"x\"}", "Error: `url` is required.",
-              "invalid_tool_input"),
-             ("{pas du json", "Error: the tool arguments are not a JSON object.",
-              "invalid_tool_input"),
-             (FETCH_ARGS, "Error: the limit of 13 web tool calls for one "
-                          "answer is reached. Answer now with what you "
-                          "already have.", "max_uses_exceeded")]
-    calls = [(FETCH_ARGS, *r) for r in results] + extra
+                (failed("timeout", "Error: web_fetch timed out after 60 s."),
+                 "unavailable")]
+    assert all(r.text.startswith("Error:") and r.error for r, _ in results)
+    # Sans `url`, arguments illisibles, et au-delà du `max_uses` de l'outil :
+    # toujours par l'exécuteur, qui refuse sans exécuter.
     monkeypatch.setattr(tools, "MAX_CALLS", 50)
+    go = lambda *a: asyncio.run(real.run("web_fetch", *a))
+    extra = [("{\"uri\": \"x\"}", go("{\"uri\": \"x\"}", 0),
+              "invalid_tool_input"),
+             ("{pas du json", go("{pas du json", 0), "invalid_tool_input"),
+             (FETCH_ARGS, go(FETCH_ARGS, 13, 13), "max_uses_exceeded")]
+    assert [r.text for _, r, _ in extra] == [
+        "Error: `url` is required.",
+        "Error: the tool arguments are not a JSON object.",
+        "Error: the limit of 13 web tool calls for one answer is reached. "
+        "Answer now with what you already have."]
+    calls = [(FETCH_ARGS, *r) for r in results] + extra
     t = translator(fetch_request(fetch_tool(max_uses=len(calls) - 1)))
     turn(t, *(tool_call(i, f"c{i}", "web_fetch", args)
               for i, (args, _, _) in enumerate(calls)),
          chunk(finish="tool_calls"))
-    blocks = [blocks_of(events(t.resolve(t.pending[0], text)))[0]
-              for _, text, _ in calls]
+    blocks = [blocks_of(events(t.resolve(t.pending[0], result)))[0]
+              for _, result, _ in calls]
     assert [(b["type"], b["content"]) for b in blocks] == [
         ("web_fetch_tool_result", fetch_error(code)) for _, _, code in calls]
     end = events(t.finalize())
@@ -1094,7 +1118,7 @@ def test_fetch_errors_become_error_codes(monkeypatch):
     # `max_content_tokens` ne fait que BAISSER la taille d'un morceau.
     monkeypatch.setattr(web_fetch, "MAX_CHARS", 20)
     assert "Characters: 0-20 of 63 " in web_fetch.render(
-        PAGE, "text/html", HTML, "utf-8", 0, 10 ** 6)
+        PAGE, "text/html", HTML, "utf-8", 0, 10 ** 6).text
 
 
 def test_fetch_loop_turn_and_client_replay_send_the_same_bytes():
@@ -1104,16 +1128,18 @@ def test_fetch_loop_turn_and_client_replay_send_the_same_bytes():
     porte le texte lu, tronqué ou non, rien n'est reconstruit."""
     hosted = hosted_tools()
     request = fetch_request()
-    rest = web_fetch.render(PAGE, "text/html", HTML, "utf-8", 30) + "\n[truncated]"
+    rest = web_fetch.render(PAGE, "text/html", HTML, "utf-8", 30)
+    rest = tools.Result(rest.text + "\n[truncated]", meta=rest.meta)
     t = translator(request, hosted)
     turn(t, *SEARCH_TURN)
-    t.resolve(t.pending[0], FOUND)
+    t.resolve(t.pending[0], SEARCHED)
     t.next_turn()
     turn(t, tool_call(0, "a", "web_fetch", FETCH_ARGS),
          tool_call(1, "b", "web_fetch", FETCH_ARGS[:-1] + ", \"offset\": 30}"),
          chunk(finish="tool_calls"), usage(10, 2))
-    t.resolve(t.pending[0], READ_TEXT)
+    t.resolve(t.pending[0], PAGE_READ)
     t.resolve(t.pending[0], rest)
+    rest = rest.text
     rebuilt = lambda results: A.to_openai(
         {**request, "messages": request["messages"] + [
             {"role": "assistant", "content": t.content}]},
@@ -1187,10 +1213,11 @@ def test_app_runs_the_search_claude_code_asks_for(proxy):
     blocs qu'elle attend, et le backend relancé avec l'appel et le texte
     du résultat. Une recherche en échec est un bloc d'erreur, pas une
     erreur HTTP — le modèle, lui, lit pourquoi."""
-    failed = "Error: search engine unreachable (ConnectError)."
+    down = failed("unavailable",
+                  "Error: search engine unreachable (ConnectError).")
     for result, content, counted in (
-            (FOUND, BLOCKS, {"web_search_requests": 1}),
-            (failed, search_error("unavailable"), None)):
+            (SEARCHED, BLOCKS, {"web_search_requests": 1}),
+            (down, search_error("unavailable"), None)):
         proxy.hosted.result = result
         proxy.sent.clear()
         searching(proxy)
@@ -1210,7 +1237,8 @@ def test_app_runs_the_search_claude_code_asks_for(proxy):
             {"role": "assistant", "content": "Je cherche.", "tool_calls": [
                 {"id": blocks[1]["id"], "type": "function", "function": {
                     "name": "web_search", "arguments": QUERY}}]},
-            {"role": "tool", "tool_call_id": blocks[1]["id"], "content": result}]
+            {"role": "tool", "tool_call_id": blocks[1]["id"],
+             "content": result.text}]
     assert proxy.hosted.runs == [
         ("web_search", {"query": "llama.cpp latest release"}, {})] * 2
     assert [line[3:5] for line in proxy.lines] == [("/v1/messages", 200)] * 2
@@ -1274,9 +1302,9 @@ def test_app_search_then_fetch_each_under_its_own_max_uses(proxy, monkeypatch):
     appels de trop sont rendus en `max_uses_exceeded` sans être exécutés."""
     seen, lines = [], []
 
-    async def read(args, **options):
-        seen.append((args, options))
-        return READ_TEXT
+    async def read(args, call):
+        seen.append((args, dict(call.settings)))
+        return PAGE_READ
 
     proxy.hosted.by_name["web_fetch"].run = read
     monkeypatch.setattr(app.stats, "record_tool", lambda *a: lines.append(a))
@@ -1357,9 +1385,9 @@ def test_app_failure_takes_the_anthropic_error_form(proxy):
 def test_app_pings_while_the_search_runs(proxy, monkeypatch):
     """En flux, des `ping` tiennent la connexion pendant l'exécution
     (Claude Code coupe un flux muet) ; aucun en JSON."""
-    async def slow(args, **options):
+    async def slow(args, call):
         await asyncio.sleep(0.08)
-        return FOUND
+        return SEARCHED
 
     proxy.hosted.by_name["web_search"].run = slow
     monkeypatch.setattr(app.anthropic_api, "PING_INTERVAL", 0.02)

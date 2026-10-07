@@ -12,6 +12,7 @@ from fakes import (
 )
 from llm_proxy import app as A
 from llm_proxy import chat_api as C
+from llm_proxy import tools
 from llm_proxy.tools import web_search
 
 WEB = {"type": "web_search"}
@@ -323,7 +324,7 @@ def test_declared_but_disabled_tool_is_refused(chat):
     """Ni retiré en silence (le client croirait à une recherche), ni
     laissé au backend (son erreur ne dirait pas pourquoi) : un 400 qui
     nomme le réglage. Rien ne part."""
-    chat.hosted = type(chat.hosted)(modules=[])  # aucun outil actif
+    chat.hosted = type(chat.hosted)(tools=[])  # aucun outil actif
     for extra in ({}, {"tools": [], "web_search_options": {}}):
         r = post(chat, **extra)
         assert r.status_code == 400
@@ -459,9 +460,8 @@ def test_one_annotation_per_written_occurrence_of_a_source(chat):
     celle que le modèle a écrite : deux annotations au même endroit."""
     repo = URL.removesuffix("/releases")
     archive = "https://web.archive.org/web/2026/" + URL
-    found = lambda *urls: web_search.render("q", [
-        {"title": f"T{i}", "date": "", "url": u, "snippet": ""}
-        for i, u in enumerate(urls)])
+    found = lambda *urls: web_search.found("q", [
+        tools.Source(u, f"T{i}") for i, u in enumerate(urls)])
     search = {"id": "c1", "function": {"name": "web_search", "arguments": QUERY}}
     fetch = {"id": "c2", "function": {"name": "web_fetch",
                                       "arguments": json.dumps({"url": URL})}}
@@ -509,7 +509,7 @@ def test_responses_shaped_tool_choice_names_the_hosted_function(chat):
     ):
         r = post(chat, **{"tool_choice": WEB, **extra})
         assert r.status_code == 400 and reason in r.json()["error"]["message"]
-    chat.hosted = type(chat.hosted)(modules=[])  # aucun outil actif
+    chat.hosted = type(chat.hosted)(tools=[])  # aucun outil actif
     r = post(chat, tool_choice=WEB, tools=[fn("ls")])
     assert r.status_code == 400 and "désactivé" in r.json()["error"]["message"]
     assert len(chat.sent) == sent

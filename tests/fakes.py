@@ -5,7 +5,6 @@ faux outils hébergés. Aucun réseau. Des fonctions simples ; la fixture
 `proxy`, qui monte l'application dessus, est dans conftest.py."""
 
 import json
-import types
 
 import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
 
@@ -103,31 +102,80 @@ RESULTS = [
     {"title": "llama.cpp (blog)", "date": "",
      "url": "https://example.org/blog/llama", "snippet": ""},
 ]
-# Le texte que le modèle lit pour ces deux résultats.
-FOUND = web_search.render("llama.cpp latest release", RESULTS)
+# Le résultat de l'outil pour ces deux-là, et le texte que le modèle en lit.
+SEARCHED = web_search.found(
+    "llama.cpp latest release", [tools.Source(**r) for r in RESULTS])
+FOUND = SEARCHED.text
 
 
-def hosted_tools(result: str = FOUND, memory=None):
-    """L'annuaire tools.Hosted, sans réseau : les deux modules du paquet,
-    dont seul `run` est remplacé (leurs fonctions de texte sont les
-    vraies). Chaque exécution est notée dans `runs` — (nom, arguments,
-    options du client) — et rend `result`. Mémoire propre à chaque
-    annuaire : rien ne dépend de ce que la configuration d'exemple active."""
+def failed(code: str, text: str) -> tools.Result:
+    """Un résultat en erreur, par son texte entier («Error: …») tel que
+    les tests l'écrivent, et son code."""
+    assert text.startswith("Error: ")
+    return tools.failure(code, text[len("Error: "):])
+
+
+class Echo(tools.Tool):
+    """L'outil MINIMAL du contrat — celui de docs/outils.md, « Écrire un
+    outil » : un nom, une fonction présentée au modèle, une exécution.
+    Sans liaison de protocole."""
+    name = "echo"
+
+    def spec(self, present):
+        return {"type": "function", "function": {
+            "name": self.name,
+            "description": "Return the given text, unchanged.",
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"type": "string",
+                                        "description": "The text to return."}},
+                "required": ["text"]}}}
+
+    async def run(self, args, call):
+        text = args.get("text")
+        if not isinstance(text, str) or not text:
+            raise tools.ToolError("invalid_input", "`text` is required.")
+        return tools.Result(text, meta={"chars": len(text)})
+
+
+def outil(name="echo", run=None, responses=None):
+    """Un outil de test autour d'une fonction `run(args)` qui rend le
+    TEXTE du résultat (ou lève). Par défaut il rend ses arguments."""
+    async def defaut(args):
+        return "reçu " + json.dumps(args, sort_keys=True)
+
+    class Outil(tools.Tool):
+        def spec(self, present):
+            return {"type": "function", "function": {"name": self.name}}
+
+        async def run(self, args, call):
+            return tools.Result(await (run or defaut)(args))
+
+    Outil.name, Outil.responses = name, responses
+    return Outil()
+
+
+def hosted_tools(result=SEARCHED, memory=None):
+    """L'annuaire tools.Hosted, sans réseau : les deux outils du paquet,
+    dont seul `run` est remplacé (spec, summary, render et liaisons sont
+    les vrais). Chaque exécution est notée dans `runs` — (nom, arguments,
+    réglages du client) — et rend `result`, un tools.Result. Mémoire
+    propre à chaque annuaire : rien ne dépend de ce que la configuration
+    d'exemple active."""
     runs = []
 
-    def fake(module):
-        async def run(args, **options):
-            runs.append((module.NAME, args, options))
-            return hosted.result
+    def fake(tool):
+        class Fake(type(tool)):
+            enabled = True
 
-        kept = ("NAME", "KINDS", "ITEM_TYPE", "DEFINITION", "definition",
-                "DEFINITION_ALONE", "action", "parse", "render", "page",
-                "error_code")
-        return types.SimpleNamespace(ENABLED=True, run=run, **{
-            k: getattr(module, k) for k in kept if hasattr(module, k)})
+            async def run(self, args, call):
+                runs.append((self.name, args, dict(call.settings)))
+                return hosted.result
+
+        return Fake()
 
     hosted = tools.Hosted(
-        modules=[fake(web_search), fake(web_fetch)],
+        tools=[fake(web_search.TOOL), fake(web_fetch.TOOL)],
         memory=tools.Memory(8, 60) if memory is None else memory)
     hosted.runs, hosted.result = runs, result
     return hosted

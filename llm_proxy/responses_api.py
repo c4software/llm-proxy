@@ -118,7 +118,7 @@ class Context:
         self.model = str(request.get("model", "") or "")
         self.namespaces: dict[str, str] = {}
         self.ignored: list[str] = []
-        # Fonctions exécutées par le proxy : nom → module de tools/.
+        # Fonctions exécutées par le proxy : nom → outil de tools/.
         self.hosted: dict = {}
         self.memory = None
         # Le client, pour la mémoire des résultats : tools.owner() de la
@@ -243,8 +243,9 @@ def _tools(tools, ctx: Context, hosted=None) -> list[dict]:
     """Outils Responses → outils chat/completions, à plat. Remplit
     ctx.namespaces (nom de fonction → namespace), ctx.hosted (fonctions
     que le proxy exécute) et ctx.ignored."""
-    out: list[dict] = []
+    out: list = []
     seen: set[str] = set()
+    slots: list[int] = []       # places des outils hébergés dans `out`
     # Une fonction du client garde son nom : l'outil hébergé homonyme
     # n'est alors pas présenté.
     client = _client_names(tools)
@@ -313,23 +314,25 @@ def _tools(tools, ctx: Context, hosted=None) -> list[dict]:
                         f"ou `custom` peuvent y être groupés")
                 add(sub, ns)
         else:
-            modules = [m for m in (hosted.for_kind(kind) if hosted else [])
-                       if m.NAME not in client and m.NAME not in seen]
-            if modules:
-                # Outil que le proxy héberge : ses fonctions à la place.
-                # web_search renvoie à web_fetch dans sa description : sans
-                # lui (désactivé, ou nom pris par le client), la variante
-                # qui n'en parle pas.
-                fetch = any(x.NAME == "web_fetch" for x in modules)
-                for m in modules:
-                    seen.add(m.NAME)
-                    ctx.hosted[m.NAME] = m
-                    out.append(m.definition(fetch=fetch) if hasattr(
-                        m, "definition") else m.DEFINITION)
+            found = [t for t in (hosted.for_responses(kind) if hosted else [])
+                     if t.name not in client and t.name not in seen]
+            if found:
+                # Outil que le proxy héberge : ses fonctions à la place —
+                # une place réservée, remplie une fois tous connus.
+                for t in found:
+                    seen.add(t.name)
+                    ctx.hosted[t.name] = t
+                    slots.append(len(out))
+                    out.append(t)
                 continue
             # Outil hébergé par OpenAI seul (file_search, code_interpreter,
             # mcp…) : rien à traduire.
             ctx.ignored.append(str(kind))
+    # Chaque outil sait avec qui il est présenté : une description ne
+    # renvoie pas à un outil absent (désactivé, ou nom pris par le client).
+    present = frozenset(ctx.hosted)
+    for at in slots:
+        out[at] = out[at].spec(present)
     return out
 
 
@@ -430,11 +433,11 @@ def _replayed_call(it: dict, hosted, client: str = "") -> tuple[str, str, str] |
     entry = hosted.memory.recall(str(it.get("id") or ""), client)
     if entry is not None:
         return entry["name"], entry["arguments"], entry["result"]
-    module = hosted.for_item(it)
-    if module is None:
+    tool = hosted.for_item(it)
+    if tool is None:
         return None
     args = {k: v for k, v in it["action"].items() if k != "type"}
-    return module.NAME, json.dumps(args, ensure_ascii=False), hosted.expired
+    return tool.name, json.dumps(args, ensure_ascii=False), hosted.expired
 
 
 def _custom_arguments(text) -> str:
@@ -825,25 +828,22 @@ def _final_status(finish: str | None) -> str:
     return "incomplete" if finish in INCOMPLETE_REASONS else "completed"
 
 
-def _hosted_item(item_id: str, module, arguments: str | None = None,
-                 result: str = "") -> dict:
+def _hosted_item(item_id: str, tool, arguments: str | None = None,
+                 result=None) -> dict:
     """Élément qui rend compte d'un appel exécuté par le proxy
-    (`web_search_call`). `arguments` None = appel en cours : ni action ni
-    résultat. Terminé, le client n'en voit que l'action — ou, pour un
-    module à `item`, ce que celui-ci tire du résultat (la plage lue d'une
-    page)."""
-    item = {"id": item_id, "type": module.ITEM_TYPE,
+    (`web_search_call` : la liaison Responses de l'outil). `arguments`
+    None = appel en cours : ni action ni résultat. Terminé, le client
+    n'en voit que l'action — le `summary` de l'outil, qui peut y mettre
+    ce qu'il tire du résultat (la plage lue d'une page)."""
+    item = {"id": item_id, "type": tool.responses.item,
             "status": "in_progress" if arguments is None else "completed"}
     if arguments is not None:
         try:
             args = json.loads(arguments or "{}")
         except ValueError:
             args = None
-        args = args if isinstance(args, dict) else {}
-        if hasattr(module, "item"):
-            item.update(module.item(args, result))
-        else:
-            item["action"] = module.action(args)
+        item["action"] = tool.summary(args if isinstance(args, dict) else {},
+                                      result)
     return item
 
 
@@ -1030,22 +1030,22 @@ class Translator:
         (to_chat les relit comme il relira ceux que le client rejouera)."""
         return list(self._output)
 
-    def resolve(self, call: dict, result: str) -> bytes:
-        """Le résultat d'un appel de `pending`, exécuté par l'appelant :
-        rangé en mémoire sous l'id de l'élément (le client le rejouera
-        sans son résultat), et l'élément est clos — le client n'en voit
-        que l'action, ou ce que le module tire du résultat."""
-        module = self.ctx.hosted[call["name"]]
+    def resolve(self, call: dict, result) -> bytes:
+        """Le résultat (tools.Result) d'un appel de `pending`, exécuté par
+        l'appelant : son TEXTE est rangé en mémoire sous l'id de l'élément
+        (le client le rejouera sans son résultat), et l'élément est clos —
+        le client n'en voit que l'action."""
+        tool = self.ctx.hosted[call["name"]]
         self.ctx.memory.store(call["item_id"], call["name"],
-                              call["arguments"], result,
+                              call["arguments"], result.text,
                               self.ctx.client)
-        item = _hosted_item(call["item_id"], module, call["arguments"], result)
+        item = _hosted_item(call["item_id"], tool, call["arguments"], result)
         self._output[call["index"]] = item
         self.pending = [c for c in self.pending if c is not call]
         if not self.sse:
             return b""
         at = {"output_index": call["index"], "item_id": call["item_id"]}
-        return (self._event(f"response.{module.ITEM_TYPE}.completed", at)
+        return (self._event(f"response.{tool.responses.item}.completed", at)
                 + self._event("response.output_item.done", {
                     "output_index": call["index"], "item": item}))
 
@@ -1174,15 +1174,15 @@ class Translator:
             # `output` (son index est réservé) mais reste en cours — il
             # sera clos par resolve(), une fois le résultat connu.
             _, name = self._call
-            module = self.ctx.hosted[name]
+            tool = self.ctx.hosted[name]
             self.pending.append(_pending(self._item_id, name, text or "{}",
                                          len(self._output)))
-            self._output.append(_hosted_item(self._item_id, module))
+            self._output.append(_hosted_item(self._item_id, tool))
             if self._tool_index is not None:
                 self._closed_tools.add(self._tool_index)
             self._tool_index = None
             self._open = None
-            return self._event(f"response.{module.ITEM_TYPE}.searching", at)
+            return self._event(f"response.{tool.responses.item}.searching", at)
         if self._open == "text":
             item = _message_item(self._item_id, text, "completed")
             out += self._event("response.output_text.done", {
@@ -1295,11 +1295,11 @@ class Translator:
                     if name in self.ctx.hosted:
                         # Outil hébergé : le client voit un élément
                         # `web_search_call` s'ouvrir, jamais ses arguments.
-                        module = self.ctx.hosted[name]
+                        tool = self.ctx.hosted[name]
                         out += self._open_item(
-                            "hosted", _hosted_item(_id("ws"), module))
+                            "hosted", _hosted_item(_id("ws"), tool))
                         out += self._event(
-                            f"response.{module.ITEM_TYPE}.in_progress",
+                            f"response.{tool.responses.item}.in_progress",
                             self._at())
                     elif self.ctx.form(name) == "custom":
                         item = _client_call(self.ctx, call_id, name, "")

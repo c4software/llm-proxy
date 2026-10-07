@@ -7,8 +7,9 @@ extension, ni boucle. Les deux autres surfaces ont ça par leur API
 chat/completions n'a PAS de forme standard pour le dire.
 
 La déclaration retenue, dans `tools` : la forme de l'API Responses, telle
-quelle — `{"type": "web_search"}` (tous les `KINDS` des modules de
-tools/). Un backend chat/completions ne
+quelle — `{"type": "web_search"}` (tous les types que déclarent les
+outils de tools/ : ceux de leur liaison Responses, ou leur nom pour un
+outil qui n'en a pas). Un backend chat/completions ne
 connaît que `function` dans `tools` et refuse le reste : le proxy peut
 donc la reconnaître sans ambiguïté, et ce qu'il remplace n'aurait de
 toute façon pas marché. Ce qui existe ailleurs, au 05/10/2026 :
@@ -148,7 +149,7 @@ class Context:
     """Ce que la réponse doit savoir de la requête."""
 
     def __init__(self):
-        # Fonctions exécutées par le proxy : nom → module de tools/.
+        # Fonctions exécutées par le proxy : nom → outil de tools/.
         self.hosted: dict = {}
         # Le client a-t-il demandé `stream_options.include_usage` ? Le
         # proxy, lui, le demande toujours au backend (stats exactes).
@@ -216,26 +217,29 @@ def prepare(payload: dict, hosted, kinds) -> Context:
     taken = {t["function"].get("name") for t in tools
              if isinstance(t, dict) and isinstance(t.get("function"), dict)}
     out: list = []
+    slots: list[int] = []       # places des outils hébergés dans `out`
     for t in tools:
         kind = t.get("type") if isinstance(t, dict) else None
         if kind not in kinds:
             out.append(t)
             continue
-        modules = hosted.for_kind(kind) if hosted else []
-        if not modules:
+        found = hosted.for_kind(kind) if hosted else []
+        if not found:
             raise Refused(
                 f"outil hébergé «{kind}» déclaré mais désactivé sur ce "
                 f"proxy ([tools.<nom>].enabled dans config.toml)")
-        modules = [m for m in modules if m.NAME not in taken]
-        # web_search renvoie à web_fetch dans sa description : sans lui
-        # (désactivé, ou nom pris par le client), la variante qui n'en
-        # parle pas.
-        fetch = any(m.NAME == "web_fetch" for m in modules)
-        for m in modules:
-            taken.add(m.NAME)
-            ctx.hosted[m.NAME] = m
-            out.append(m.definition(fetch=fetch) if hasattr(m, "definition")
-                       else m.DEFINITION)
+        for tool in found:
+            if tool.name in taken:
+                continue
+            taken.add(tool.name)
+            ctx.hosted[tool.name] = tool
+            slots.append(len(out))
+            out.append(tool)
+    # Chaque outil sait avec qui il est présenté : une description ne
+    # renvoie pas à un outil absent (désactivé, ou nom pris par le client).
+    present = frozenset(ctx.hosted)
+    for at in slots:
+        out[at] = out[at].spec(present)
     if out:
         payload["tools"] = out
     else:
@@ -243,12 +247,12 @@ def prepare(payload: dict, hosted, kinds) -> Context:
     choice = payload.get("tool_choice")
     kind = choice.get("type") if isinstance(choice, dict) else None
     if kind in kinds:
-        modules = hosted.for_kind(kind) if hosted else []
-        if not modules:
+        found = hosted.for_kind(kind) if hosted else []
+        if not found:
             raise Refused(
                 f"`tool_choice` vise l'outil hébergé «{kind}», désactivé sur "
                 f"ce proxy ([tools.<nom>].enabled dans config.toml)")
-        name = next((m.NAME for m in modules if m.NAME in ctx.hosted), None)
+        name = next((t.name for t in found if t.name in ctx.hosted), None)
         if name is None:
             raise Refused(
                 f"`tool_choice` vise l'outil hébergé «{kind}», que `tools` "
@@ -586,24 +590,15 @@ class Translator:
         return out + [{"role": "tool", "tool_call_id": call["id"],
                        "content": result} for call, result in self._done]
 
-    def resolve(self, call: dict, result: str) -> bytes:
-        """Le résultat d'un appel de `pending`, exécuté par la boucle :
-        gardé pour le tour suivant, ses URL notées pour les annotations.
-        Le client n'en voit rien."""
+    def resolve(self, call: dict, result) -> bytes:
+        """Le résultat (tools.Result) d'un appel de `pending`, exécuté par
+        la boucle : son TEXTE est gardé pour le tour suivant, ses sources
+        notées pour les annotations. Le client n'en voit rien."""
         self.pending = [c for c in self.pending if c is not call]
-        self._done.append((call, result))
-        module = self.ctx.hosted[call["name"]]
-        if hasattr(module, "parse"):
-            for entry in module.parse(result):
-                self._sources.setdefault(entry["url"], entry["title"])
-        elif hasattr(module, "action") and not result.startswith("Error:"):
-            try:
-                args = json.loads(call["arguments"] or "{}")
-            except ValueError:
-                args = None
-            url = module.action(args if isinstance(args, dict) else {}).get("url")
-            if url:
-                self._sources.setdefault(url, url)
+        self._done.append((call, result.text))
+        for source in result.sources:
+            if source.url:
+                self._sources.setdefault(source.url, source.title)
         return b""
 
     def next_turn(self) -> None:

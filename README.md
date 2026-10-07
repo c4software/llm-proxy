@@ -130,12 +130,14 @@ et un tableau de bord.
 | `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` ; outils serveur `web_search_…` et `web_fetch_…` remplacés par la recherche et la lecture hébergées, rendues et rejouées en blocs `server_tool_use` / `web_search_tool_result` / `web_fetch_tool_result` |
 | `llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés par le proxy présentés au modèle et rejoués, les autres ignorés, `namespace` aplatis |
 | `llm_proxy/chat_api.py` | Les outils hébergés sur `/v1/chat/completions` : déclaration dans `tools` remplacée par les fonctions du proxy, robinet qui rend une seule réponse chat/completions pour plusieurs tours upstream |
-| `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre, exécution bornée (délai, taille du résultat, nombre d'appels par réponse), ligne de statistiques de chaque exécution, **mémoire des résultats** |
+| `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre (`register`), exécution bornée (délai, taille du résultat, nombre d'appels par réponse) qui rend toujours un `Result`, ligne de statistiques de chaque exécution, **mémoire des résultats** |
+| `llm_proxy/tools/contract.py` | Le **contrat** d'un outil hébergé : `Tool`, `Result` (texte, code d'erreur, sources, `meta`), `Call`, `ToolError`, la liste fermée des codes d'erreur, les liaisons aux protocoles — décrit dans [`docs/outils.md`](docs/outils.md) |
 | `llm_proxy/tools/net.py` | Garde-fou réseau : résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée |
 | `llm_proxy/tools/webcache.py` | Cache web : pages lues et recherches gardées quelques minutes, borné, en mémoire vive |
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
-| `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en liste structurée pour les blocs d'un client Anthropic ; filtre par domaines |
+| `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en sources pour les annotations et les blocs d'un client Anthropic ; filtre par domaines |
 | `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page (ou du texte d'un PDF) par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
+| `docs/outils.md` | Le contrat des outils hébergés, membre par membre, et comment en écrire un |
 | `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
 | `tests/` | Tests des traducteurs et des stats (`pytest`, `requirements-dev.txt`) — sur des octets et une base temporaire, sans réseau |
@@ -259,7 +261,7 @@ Trois issues :
 | Issue | Sens |
 |---|---|
 | `ok` | l'outil a rendu son résultat |
-| `error` | le résultat rendu au modèle commence par `Error:` — moteur injoignable, page en 404, délai dépassé, adresse refusée, arguments illisibles (`num_errors`) |
+| `error` | l'outil a rendu un code d'erreur, et au modèle un texte `Error: …` — moteur injoignable, page en 404, délai dépassé, adresse refusée, arguments illisibles (`num_errors`) |
 | `limit` | refus par limite d'appels (`max_calls`, `max_uses` du client, limite propre à l'outil) : **rien n'a été exécuté**, durée nulle (`num_limited`) |
 
 Lecture :
@@ -669,6 +671,10 @@ et [L'outil serveur `web_fetch`](#loutil-serveur-web_fetch).
 
 Le schéma de `web_search` et la forme de sa sortie sont repris de l'outil
 `web_search` d'[oh-my-pi](https://github.com/can1357/oh-my-pi).
+
+Ce qu'est un outil pour le code du proxy — son contrat, ses codes
+d'erreur et leur traduction par surface, ses liaisons aux protocoles — et
+comment en ajouter un : [`docs/outils.md`](docs/outils.md).
 
 État de la validation au 05/10/2026, sur un déploiement réel (image
 SearXNG et `settings.yml` du dépôt), vers gufo 0.8.0
@@ -1116,13 +1122,18 @@ et avec les mêmes garde-fous :
 
     GET  /v1/tools            → les outils actifs (nom, description, schéma)
     POST /v1/tools/<nom>      → corps : les arguments, en objet JSON
-                                réponse : {"name", "result", "is_error"}
+                                réponse : {"name", "result", "is_error",
+                                           "error", "sources", "meta"}
 
 Le client déclare alors l'outil à son modèle comme n'importe quel outil
 à lui, et exécute l'appel par cette route : le proxy n'a ni boucle ni
 mémoire à tenir. Un échec de l'outil est un `200` avec un texte
 `Error: …` et `is_error: true` (c'est un texte pour le modèle) ; un outil
-inconnu ou désactivé, un `404` `unknown_tool`.
+inconnu ou désactivé, un `404` `unknown_tool`. `error` porte le code de
+l'échec (`null` pour un succès), `sources` les pages citées, `meta` ce
+que l'outil dit en plus pour l'affichage (URL réellement lue, titre,
+plage de caractères) : voir
+[`docs/outils.md`](docs/outils.md#v1tools--lenveloppe).
 
 Un appel direct n'écrit **pas** de ligne de requête (aucun modèle,
 aucun token) : il n'apparaît que dans

@@ -13,7 +13,7 @@ import json
 import pytest
 
 from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
-                   SEARCH_TURN, FakeUpstream, chat_doc, chunk, feed,
+                   SEARCH_TURN, SEARCHED, FakeUpstream, chat_doc, chunk, feed,
                    hosted_tools, sse, sse_events, stream, tool_call, usage)
 from llm_proxy import app as A
 from llm_proxy import responses_api as R
@@ -648,17 +648,19 @@ def test_to_chat_declares_hosted_functions():
     names = [t["function"]["name"] for t in out["tools"]]
     assert names == ["exec_command", "spawn_agent", "wait_agent",
                      "web_search", "web_fetch"]
-    assert out["tools"][3:] == [web_search.DEFINITION, web_fetch.DEFINITION]
+    both = {"web_search", "web_fetch"}
+    assert out["tools"][3:] == [web_search.TOOL.spec(both),
+                                web_fetch.TOOL.spec(both)]
     assert list(ctx.hosted) == ["web_search", "web_fetch"] and ctx.ignored == []
     # Le client voit revenir SES outils, pas les fonctions du proxy.
     assert ctx.echo["tools"][-1] == {"type": "web_search",
                                      "external_web_access": True}
     # Sans web_fetch, la recherche ne renvoie pas à lui.
-    alone = tools.Hosted(modules=hosted.modules[:1])
+    alone = tools.Hosted(tools=hosted.tools[:1])
     assert R.to_chat(codex_request(), hosted=alone)[0]["tools"][3:] == [
-        web_search.definition(fetch=False)]
+        web_search.TOOL.spec({"web_search"})]
     # Un annuaire vide ne change rien : l'outil est ignoré, comme sans lui.
-    out, ctx = R.to_chat(codex_request(), hosted=tools.Hosted(modules=[]))
+    out, ctx = R.to_chat(codex_request(), hosted=tools.Hosted(tools=[]))
     assert not ctx.hosted and ctx.ignored == ["web_search"]
 
 
@@ -709,7 +711,7 @@ def test_stream_hosted_calls_span_upstream_turns():
     assert t.client_calls == 0 and memory.recall(item["id"]) is None
     assert t.tokens(0) == (100, 10, True) and t.cached() == 40
 
-    done = events(t.resolve(t.pending[0], FOUND))
+    done = events(t.resolve(t.pending[0], SEARCHED))
     assert [e["type"] for e in done] == [
         "response.web_search_call.completed", "response.output_item.done"]
     assert done[0]["output_index"] == 1 and done[0]["item_id"] == item["id"]
@@ -726,7 +728,7 @@ def test_stream_hosted_calls_span_upstream_turns():
         tool_call(0, "call_y", "web_fetch", "{\"url\":\"https://gufo.org\"}"),
         chunk(finish="tool_calls"), usage(150, 5, cached=100, reasoning=1))
     assert [(c["name"], c["index"]) for c in t.pending] == [("web_fetch", 3)]
-    ev += events(t.resolve(t.pending[0], "Gufo, le hibou."))
+    ev += events(t.resolve(t.pending[0], tools.Result("Gufo, le hibou.")))
     t.next_turn()
     ev += turn(t, chunk({"content": "Voilà."}), chunk(finish="stop"),
                usage(200, 7, cached=150))
@@ -811,7 +813,7 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
     first, ctx = R.to_chat(request, hosted=hosted)
     t = R.Translator(200, "text/event-stream", ctx)
     turn(t, chunk({"reasoning_content": "Hum."}), *SEARCH_TURN)
-    t.resolve(t.pending[0], FOUND)
+    t.resolve(t.pending[0], SEARCHED)
     # Tour 2, comme app.hosted_stream le reconstruit.
     looped, _ = R.to_chat({**request, "input": request["input"] + t.output},
                           hosted=hosted)
@@ -843,7 +845,7 @@ def test_to_chat_replay_is_scoped_to_the_client():
     _, ctx = R.to_chat(request, hosted=hosted, client=alice)
     t = R.Translator(200, "text/event-stream", ctx)
     turn(t, *SEARCH_TURN)
-    t.resolve(t.pending[0], FOUND)
+    t.resolve(t.pending[0], SEARCHED)
     item = t.output[1]
     assert hosted.memory.recall(item["id"], alice)["result"] == FOUND
     assert hosted.memory.recall(item["id"], bob) is None
@@ -1027,7 +1029,7 @@ def test_app_loop_client_gone_closes_everything(proxy, monkeypatch):
     avec ce qui a été consommé."""
     started, cancelled = [], []
 
-    async def endless(args, **options):
+    async def endless(args, call):
         started.append(args)
         try:
             await asyncio.sleep(60)

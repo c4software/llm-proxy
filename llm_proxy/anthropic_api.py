@@ -64,6 +64,7 @@ import time
 import uuid
 
 from . import config
+from .tools.contract import Source
 
 # Noms de modèles Anthropic → noms préfixés du proxy. «default» attrape
 # tout nom sans préfixe backend qui n'est pas dans la table.
@@ -104,20 +105,28 @@ STOP_REASONS = {
     "content_filter": "refusal",
 }
 
-# Les outils serveur d'Anthropic que le proxy exécute, toutes versions
-# datées (`web_search_20250305`, `web_search_20260209`,
-# `web_fetch_20250910`…), et la fonction du paquet tools/ qui remplace
-# chacun — elle porte le même nom que lui.
-SEARCH = "web_search"
-FETCH = "web_fetch"
-_SERVER = {SEARCH: re.compile(r"^web_search_\d+$"),
-           FETCH: re.compile(r"^web_fetch_\d+$")}
-# Par fonction : le bloc qui rend son résultat au client (son erreur est
-# un objet `<bloc>_error`), l'argument sans lequel l'appel est un
-# `invalid_tool_input`, son compteur dans `usage.server_tool_use`.
-_RESULT = {SEARCH: "web_search_tool_result", FETCH: "web_fetch_tool_result"}
-_REQUIRED = {SEARCH: "query", FETCH: "url"}
-_COUNTER = {SEARCH: "web_search_requests", FETCH: "web_fetch_requests"}
+# Les outils serveur d'Anthropic que le proxy exécute sont ceux des outils
+# de tools/ qui portent une liaison `anthropic` (tools.Anthropic) : le
+# préfixe du type de l'outil serveur, toutes versions datées
+# (`web_search_20250305`, `web_search_20260209`, `web_fetch_20250910`…),
+# et le bloc qui rend le résultat au client — son erreur est un objet
+# `<bloc>_error`, son compteur dans `usage.server_tool_use` est
+# `<préfixe>_requests`. Ce module-ci ne connaît que le FORMAT de ces
+# blocs, que le protocole nomme (voir _CONTENT et _REPLAY, plus bas).
+
+# Codes d'erreur du contrat des outils (tools.ERRORS) → `error_code` des
+# outils serveur d'Anthropic. Le modèle lit le texte de l'erreur ; le
+# client Anthropic n'en reçoit que ce code.
+ERROR_CODES = {
+    "invalid_input": "invalid_tool_input",
+    "not_allowed": "url_not_allowed",
+    "not_accessible": "url_not_accessible",
+    "unsupported": "unsupported_content_type",
+    "too_many_requests": "too_many_requests",
+    "limit": "max_uses_exceeded",
+    "timeout": "unavailable",
+    "unavailable": "unavailable",
+}
 
 # Types d'erreur de l'API Anthropic par statut HTTP.
 ERROR_TYPES = {
@@ -352,7 +361,7 @@ class Context:
     aucun des deux outils serveur : tout se passe alors comme avant, ils
     sont ignorés.
 
-    `hosted` : nom de fonction → module de tools/, pour chaque outil
+    `hosted` : nom de fonction → outil de tools/, pour chaque outil
                serveur déclaré ET hébergé (`web_search`, `web_fetch`) ;
     `limits` : par fonction, appels exécutés au plus pour cette réponse —
                le `max_uses` que le client a posé sur CET outil, borné
@@ -361,9 +370,12 @@ class Context:
                (tools.MAX_CALLS) ;
     `options`: par nom de fonction, ce que le client a réglé sur son outil
                et que l'exécution doit respecter (`allowed_domains`,
-               `blocked_domains` ; pour `web_fetch`, `max_chars`, tiré de
-               `max_content_tokens`). Anthropic refuse les deux listes à
-               la fois (400) ; ici elles s'appliquent toutes les deux."""
+               `blocked_domains` ; `max_chars`, tiré du
+               `max_content_tokens` d'un outil de lecture). Anthropic
+               refuse les deux listes à la fois (400) ; ici elles
+               s'appliquent toutes les deux ;
+    `order`  : les fonctions hébergées dans l'ordre du registre — celui
+               des compteurs de `usage.server_tool_use`."""
 
     def __init__(self, request: dict, hosted=None):
         self.hosted: dict = {}
@@ -377,70 +389,74 @@ class Context:
         taken = [t.get("name") for t in tools
                  if isinstance(t, dict) and "input_schema" in t]
         for t in tools:
-            name = server_tool(t)
-            module = hosted.by_name.get(name) if hosted and name else None
+            tool = server_tool(t, hosted)
+            name = tool.name if tool else None
             # Déclaré deux fois : le premier fait foi.
-            if module is None or name in taken or name in self.hosted:
+            if tool is None or name in taken or name in self.hosted:
                 continue
-            self.hosted[name] = module
+            self.hosted[name] = tool
             self.limits[name] = hosted.cap(t.get("max_uses"))
             options: dict = {k: [str(d) for d in t[k]]
                              for k in ("allowed_domains", "blocked_domains")
                              if isinstance(t.get(k), list) and t[k]}
-            # `max_content_tokens` : la taille du contenu rendu, que
-            # web_fetch compte en caractères — même approximation que
-            # partout ici, et l'outil d'Anthropic dit lui-même sa limite
-            # approximative. Il ne fait que BAISSER la borne du proxy.
+            # `max_content_tokens` (outil serveur web fetch) : la taille
+            # du contenu rendu, que l'outil compte en caractères — même
+            # approximation que partout ici, et l'outil d'Anthropic dit
+            # lui-même sa limite approximative. Il ne fait que BAISSER la
+            # borne du proxy ; un outil qui ne rend pas un contenu
+            # l'ignore.
             size = t.get("max_content_tokens")
-            if name == FETCH and isinstance(size, int) \
-                    and not isinstance(size, bool) and size > 0:
+            if isinstance(size, int) and not isinstance(size, bool) \
+                    and size > 0:
                 options["max_chars"] = size * CHARS_PER_TOKEN
             if options:
                 self.options[name] = options
+        self.order: list[str] = [t.name for t in hosted.tools
+                                 if t.name in self.hosted] if hosted else []
 
 
-def server_tool(tool) -> str | None:
-    """La fonction hébergée que remplace cet outil du client (SEARCH,
-    FETCH), ou None : une fonction du client (`input_schema`), un autre
-    outil serveur."""
-    if not isinstance(tool, dict) or "input_schema" in tool:
+def server_tool(tool, hosted=None):
+    """L'outil hébergé que remplace cet outil du client, ou None : une
+    fonction du client (`input_schema`), un outil serveur que le proxy
+    n'héberge pas — ou dont ce module ne sait pas écrire le bloc."""
+    if not hosted or not isinstance(tool, dict) or "input_schema" in tool:
         return None
-    kind = str(tool.get("type") or "")
-    return next((name for name, dated in _SERVER.items()
-                 if dated.match(kind)), None)
+    found = hosted.for_server(str(tool.get("type") or ""))
+    return found if found and found.anthropic.block in _CONTENT else None
 
 
-# Texte rendu au modèle pour un résultat en erreur REJOUÉ par le client :
-# le bloc n'en garde que le code.
-_REPLAYED_ERROR = {SEARCH: "Error: the web search failed ({code}).",
-                   FETCH: "Error: the web fetch failed ({code})."}
+def _replayed_error(tool, code) -> str:
+    """Texte rendu au modèle pour un résultat en erreur REJOUÉ par le
+    client : le bloc n'en garde que le code (`the web search failed`,
+    `the web fetch failed` — le nom de la fonction, en mots)."""
+    return (f"Error: the {tool.name.replace('_', ' ')} failed "
+            f"({code or 'unavailable'}).")
 
 
-def _search_entries(content) -> list[dict]:
-    """Contenu d'un bloc `web_search_tool_result` → la liste structurée
-    de tools/web_search (l'inverse de _search_content)."""
-    return [{"title": str(r.get("title") or ""), "url": str(r.get("url") or ""),
-             "date": str(r.get("page_age") or ""),
-             "snippet": str(r.get("encrypted_content") or "")}
-            for r in content
-            if isinstance(r, dict) and r.get("type") == "web_search_result"]
+def _search_sources(content) -> tuple:
+    """Contenu d'un bloc `web_search_tool_result` → les sources du
+    résultat (l'inverse de _search_content)."""
+    return tuple(Source(str(r.get("url") or ""), str(r.get("title") or ""),
+                        str(r.get("page_age") or ""),
+                        str(r.get("encrypted_content") or ""))
+                 for r in content
+                 if isinstance(r, dict) and r.get("type") == "web_search_result")
 
 
-def _search_text(module, use: dict, result: dict) -> str:
+def _search_text(tool, use: dict, result: dict) -> str:
     """Le texte qu'avait lu le modèle, reconstruit depuis les deux blocs
     que le client rejoue — sans mémoire : le bloc de résultat porte tout
     (titre, URL, date dans `page_age`, extrait dans `encrypted_content`),
-    et tools/web_search sait le remettre en texte, à l'octet près."""
+    et l'outil sait le remettre en texte, à l'octet près (Tool.render)."""
     content = result.get("content")
     if not isinstance(content, list):
         code = content.get("error_code") if isinstance(content, dict) else None
-        return _REPLAYED_ERROR[SEARCH].format(code=code or "unavailable")
-    query = (use.get("input") or {}).get("query") \
-        if isinstance(use.get("input"), dict) else ""
-    return module.render(str(query or "").strip(), _search_entries(content))
+        return _replayed_error(tool, code)
+    args = use.get("input") if isinstance(use.get("input"), dict) else {}
+    return tool.render(args, _search_sources(content))
 
 
-def _fetch_text(result: dict) -> str:
+def _fetch_text(tool, use: dict, result: dict) -> str:
     """Le texte qu'avait lu le modèle, relu du bloc `web_fetch_tool_result`
     que le client rejoue : c'est la `data` du document, où _fetch_content
     l'a mis ENTIER — rien à reconstruire, donc rien qui puisse différer.
@@ -454,8 +470,13 @@ def _fetch_text(result: dict) -> str:
             and source.get("type") == "text" \
             and isinstance(source.get("data"), str):
         return source["data"]
-    return _REPLAYED_ERROR[FETCH].format(
-        code=content.get("error_code") or "unavailable")
+    return _replayed_error(tool, content.get("error_code"))
+
+
+# Bloc de résultat → comment relire, d'un bloc rejoué par le client, le
+# texte qu'avait lu le modèle : (outil, bloc de l'appel, bloc du résultat).
+_REPLAY = {"web_search_tool_result": _search_text,
+           "web_fetch_tool_result": _fetch_text}
 
 
 def _assistant_messages(content, hosted=None, results=None) -> list[dict]:
@@ -464,7 +485,7 @@ def _assistant_messages(content, hosted=None, results=None) -> list[dict]:
 
     Un message assistant Anthropic donne UN message OpenAI — sauf s'il
     porte des appels que le proxy a exécutés (`hosted` : nom de fonction →
-    module de tools/, pour les outils serveur que la requête déclare).
+    outil de tools/, pour les outils serveur que la requête déclare).
     Chaque paire `server_tool_use` + `web_search_tool_result` (ou
     `web_fetch_tool_result`) redevient alors un appel suivi de son
     message `tool`, et ce qui vient APRÈS un résultat ouvre
@@ -486,7 +507,7 @@ def _assistant_messages(content, hosted=None, results=None) -> list[dict]:
     blocks = [b for b in content if isinstance(b, dict)] \
         if isinstance(content, list) else []
     hosted = hosted or {}
-    kinds = [_RESULT[name] for name in hosted]
+    kinds = [t.anthropic.block for t in hosted.values()]
     answers = {str(b.get("tool_use_id")): b for b in blocks
                if b.get("type") in kinds}
     out: list[dict] = []
@@ -507,7 +528,7 @@ def _assistant_messages(content, hosted=None, results=None) -> list[dict]:
         name = b.get("name")
         ours = t == "server_tool_use" and isinstance(name, str) \
             and name in hosted and answers.get(
-                str(b.get("id")), {}).get("type") == _RESULT[name]
+                str(b.get("id")), {}).get("type") == hosted[name].anthropic.block
         if tools and (ours or t in ("text", "tool_use")):
             flush()
         if t == "text":
@@ -526,8 +547,9 @@ def _assistant_messages(content, hosted=None, results=None) -> list[dict]:
             if ours:
                 known = (results or {}).get(call_id)
                 if not isinstance(known, str):
-                    known = _fetch_text(answers[call_id]) if name == FETCH \
-                        else _search_text(hosted[name], b, answers[call_id])
+                    tool = hosted[name]
+                    known = _REPLAY[tool.anthropic.block](
+                        tool, b, answers[call_id])
                 tools.append({"role": "tool", "tool_call_id": call_id,
                               "content": known})
     if text or calls or not out:
@@ -629,7 +651,8 @@ def to_openai(p: dict, images: bool = False, hosted=None,
         out["user"] = str(meta["user_id"])
 
     tools = []
-    present = dict(ctx.hosted)      # fonctions hébergées restant à présenter
+    present = frozenset(ctx.hosted)
+    left = dict(ctx.hosted)         # fonctions hébergées restant à présenter
     for t in p.get("tools") or []:
         if not isinstance(t, dict):
             continue
@@ -640,18 +663,13 @@ def to_openai(p: dict, images: bool = False, hosted=None,
                 "parameters": t.get("input_schema")
                 or {"type": "object", "properties": {}},
             }})
-        elif (name := server_tool(t)) in present:
+        elif (tool := server_tool(t, hosted)) and tool.name in left:
             # L'outil que le proxy exécute : sa fonction à la place de
             # l'outil serveur, à la même position, une seule fois. Chaque
-            # description ne renvoie à l'autre fonction que si le client
-            # l'a déclarée aussi : le modèle n'appelle pas ce qui ne lui
-            # est pas présenté.
-            module = present.pop(name)
-            if name == SEARCH:
-                tools.append(module.definition(fetch=FETCH in ctx.hosted))
-            else:
-                tools.append(module.DEFINITION if SEARCH in ctx.hosted
-                             else module.DEFINITION_ALONE)
+            # description ne renvoie à une autre fonction que si le client
+            # l'a déclarée aussi (`present`) : le modèle n'appelle pas ce
+            # qui ne lui est pas présenté.
+            tools.append(left.pop(tool.name).spec(present))
         # Les autres outils serveur Anthropic (code_execution, bash,
         # text_editor…) ont un `type` et pas d'input_schema : rien à
         # traduire.
@@ -785,39 +803,45 @@ def _pending(name: str, arguments: str) -> dict:
             "arguments": arguments or "{}", "announced": False}
 
 
-def _search_content(module, result: str) -> list[dict]:
-    """Texte rendu au modèle → contenu du bloc `web_search_tool_result` :
-    un `web_search_result` par résultat.
+def _search_content(call: dict, result) -> list[dict]:
+    """Résultat d'une recherche → contenu du bloc `web_search_tool_result` :
+    un `web_search_result` par source.
     `encrypted_content` : chez Anthropic, un blob chiffré que le client
     doit renvoyer tel quel pour que l'API retrouve le résultat au tour
     suivant. Ici rien n'est à cacher et le rôle est le même : on y met
     l'EXTRAIT, en clair — avec lui le bloc porte tout ce que le modèle a
     lu, et son rejeu n'a besoin d'aucune mémoire côté proxy.
     `page_age` : la date du résultat (AAAA-MM-JJ), ou null."""
-    return [{"type": "web_search_result", "title": e["title"],
-             "url": e["url"], "encrypted_content": e["snippet"],
-             "page_age": e["date"] or None}
-            for e in module.parse(result)]
+    return [{"type": "web_search_result", "title": s.title,
+             "url": s.url, "encrypted_content": s.snippet,
+             "page_age": s.date or None}
+            for s in result.sources]
 
 
-def _fetch_content(module, call: dict, result: str) -> dict:
-    """Texte rendu au modèle → contenu du bloc `web_fetch_tool_result` :
+def _fetch_content(call: dict, result) -> dict:
+    """Résultat d'une lecture → contenu du bloc `web_fetch_tool_result` :
     un `web_fetch_result`, dont le document est du texte brut.
     `data` : le texte ENTIER que le modèle a lu, en-tête compris (URL
     finale, type, plage de caractères lue et `offset` de la suite) — pas
     le seul corps de la page. C'est ce qui rend le rejeu exact sans
     mémoire : _fetch_text n'a qu'à le relire, quoi que l'en-tête porte.
-    `url` (celle réellement lue, après redirections) et `title` en sont
-    tirés par tools/web_fetch ; `citations` n'est pas rendu (ignoré)."""
-    page = module.page(result)
+    `url` (celle réellement lue, après redirections) et `title` sont
+    ceux de `meta` du résultat ; `citations` n'est pas rendu (ignoré)."""
     return {"type": "web_fetch_result",
-            "url": page["url"]
+            "url": str(result.meta.get("url") or "")
             or str(_parse_args(call["arguments"]).get("url") or ""),
             "content": {"type": "document",
                         "source": {"type": "text", "media_type": "text/plain",
-                                   "data": result},
-                        "title": page["title"] or None},
+                                   "data": result.text},
+                        "title": result.meta.get("title") or None},
             "retrieved_at": _iso(time.time())}
+
+
+# Bloc de résultat → comment en écrire le contenu, pour un appel abouti :
+# (appel, résultat). Les blocs que ce module sait rendre : un outil lié à
+# un autre bloc n'est pas présenté (server_tool).
+_CONTENT = {"web_search_tool_result": _search_content,
+            "web_fetch_tool_result": _fetch_content}
 
 
 def from_openai_error(doc, status: int) -> dict:
@@ -911,9 +935,7 @@ class Translator:
         # réponse, par id d'appel : le tour suivant le reprend tel quel
         # (to_openai, `results`), erreurs et troncature comprises.
         self.results: dict[str, str] = {}
-        # Par fonction : appels hébergés rendus, erreurs comprises ; et
-        # ceux qui ont abouti (usage).
-        self._resolved: dict[str, int] = {}
+        # Par fonction : appels hébergés qui ont abouti (usage).
         self._done: dict[str, int] = {}
         # État du flux.
         self._started = False
@@ -1029,50 +1051,32 @@ class Translator:
         return self._whole({**block, "input": {}},
                            {"type": "input_json_delta", "partial_json": args})
 
-    def resolve(self, call: dict, result: str) -> bytes:
-        """Le résultat d'un appel de `pending`, exécuté par l'appelant :
-        le bloc `web_search_tool_result` (ou `web_fetch_tool_result`) suit
-        celui de l'appel. `result` est le texte rendu au modèle ; un texte
-        «Error: …» donne l'objet d'erreur d'Anthropic à la place du
-        contenu (voir _error_code). Rien n'est rangé en mémoire."""
+    def resolve(self, call: dict, result) -> bytes:
+        """Le résultat (tools.Result) d'un appel de `pending`, exécuté par
+        l'appelant : le bloc de la liaison de l'outil
+        (`web_search_tool_result`, `web_fetch_tool_result`) suit celui de
+        l'appel. Un résultat en erreur donne l'objet d'erreur d'Anthropic
+        à la place du contenu : le client n'en reçoit que le code
+        (ERROR_CODES — `max_uses_exceeded` au-delà de la limite de la
+        requête, `invalid_tool_input` pour des arguments inutilisables,
+        `unavailable` pour une panne…), le modèle, lui, lit le texte.
+        Rien n'est rangé en mémoire : seul le texte est gardé, pour le
+        tour suivant de CETTE réponse."""
         name = call["name"]
-        self.results[call["id"]] = result
-        if not result.startswith("Error:"):
+        kind = self.hosted[name].anthropic.block
+        self.results[call["id"]] = result.text
+        if result.error is None:
             self._done[name] = self._done.get(name, 0) + 1
-            content = _search_content(self.hosted[name], result) \
-                if name == SEARCH \
-                else _fetch_content(self.hosted[name], call, result)
+            content = _CONTENT[kind](call, result)
         else:
-            content = {"type": _RESULT[name] + "_error",
-                       "error_code": self._error_code(call, result)}
-        self._resolved[name] = self._resolved.get(name, 0) + 1
-        block = {"type": _RESULT[name], "tool_use_id": call["id"],
-                 "content": content}
+            content = {"type": kind + "_error",
+                       "error_code": ERROR_CODES.get(result.error,
+                                                     "unavailable")}
+        block = {"type": kind, "tool_use_id": call["id"], "content": content}
         self._content.append(block)
         self.pending = [c for c in self.pending if c is not call]
         out = self._whole(block) if self.sse else b""
         return out + self._announce()
-
-    def _error_code(self, call: dict, result: str) -> str:
-        """Le `error_code` d'un appel en échec — le client n'en reçoit
-        rien d'autre, le modèle, lui, lit le texte. `max_uses_exceeded`
-        au-delà de la limite de la requête (celle de l'outil, ou celle
-        du proxy toutes fonctions confondues : le même compte que la
-        boucle d'app.py, qui refuse alors sans exécuter),
-        `invalid_tool_input` pour des arguments sans `query` / `url`.
-        Pour le reste : `unavailable` pour une recherche (moteur
-        injoignable, délai…) ; pour une lecture, ce que tools/web_fetch
-        dit de son propre texte (`url_not_allowed`, `url_not_accessible`,
-        `unsupported_content_type`…)."""
-        name = call["name"]
-        if sum(self._resolved.values()) >= self.ctx.cap \
-                or self._resolved.get(name, 0) >= self.ctx.limits[name]:
-            return "max_uses_exceeded"
-        value = _parse_args(call["arguments"]).get(_REQUIRED[name])
-        if not isinstance(value, str) or not value.strip():
-            return "invalid_tool_input"
-        return self.hosted[name].error_code(result) if name == FETCH \
-            else "unavailable"
 
     def next_turn(self) -> None:
         """Avant de recevoir le flux upstream suivant : l'état propre au
@@ -1143,8 +1147,9 @@ class Translator:
         usage = _usage(self._total())
         if self._done:
             usage["server_tool_use"] = {
-                _COUNTER[name]: self._done[name]
-                for name in _COUNTER if name in self._done}
+                self.hosted[name].anthropic.prefix + "_requests":
+                    self._done[name]
+                for name in self.ctx.order if name in self._done}
         return usage
 
     def _stop(self) -> str:

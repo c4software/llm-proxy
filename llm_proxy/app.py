@@ -62,6 +62,7 @@ association routeurs ↔ modèles) vit dans albert.py.
 """
 
 import asyncio
+import dataclasses
 import fnmatch
 import hashlib
 import hmac
@@ -149,9 +150,9 @@ async def lifespan(app: FastAPI):
                  "ou false) : /v1/responses → 404")
     if tools.enabled():
         log.info(
-            "outils hébergés ACTIFS (/v1/responses ; /v1/messages : "
-            "web_search seul) : %s | %d appels au plus par réponse",
-            ", ".join(m.NAME for m in tools.enabled()), tools.MAX_CALLS,
+            "outils hébergés ACTIFS (/v1/responses, /v1/messages, "
+            "/v1/tools) : %s | %d appels au plus par réponse",
+            ", ".join(t.name for t in tools.enabled()), tools.MAX_CALLS,
         )
     else:
         log.info("aucun outil hébergé ([tools.<nom>].enabled absent ou "
@@ -607,7 +608,7 @@ async def healthz():
                  "memory_entries": len(chat_api.MEMORY),
                  "memory_chars": chat_api.MEMORY.size},
         "tools": {
-            "enabled": [m.NAME for m in tools.enabled()],
+            "enabled": [t.name for t in tools.enabled()],
             "max_calls": tools.MAX_CALLS,
             "memory_entries": len(tools.MEMORY),
             # Cache web (tools/webcache.py) : pages et recherches gardées
@@ -833,10 +834,10 @@ async def chat_completions(request: Request):
     # (qui compte les outils). Toute autre requête ne coûte que ce test.
     ctx = hosted = None
     if chat_api.ENABLED and isinstance(payload, dict) \
-            and chat_api.declares(payload, HOSTED_KINDS):
+            and chat_api.declares(payload, tools.kinds()):
         hosted = tools.Hosted()
         try:
-            ctx = chat_api.prepare(payload, hosted, HOSTED_KINDS)
+            ctx = chat_api.prepare(payload, hosted, tools.kinds())
         except chat_api.Refused as exc:
             return error_response("openai", 400, "invalid_request_error",
                                   str(exc))
@@ -878,11 +879,6 @@ async def chat_completions(request: Request):
     if ctx is None or not ctx.hosted:
         return await forward(call, request, "v1/chat/completions", raw)
     return await chat_hosted(call, request, payload, ctx, hosted, raw)
-
-
-# Tous les types d'outil que le paquet tools/ sait héberger, actifs ou
-# non : ce qu'une requête chat/completions peut déclarer dans `tools`.
-HOSTED_KINDS = frozenset(k for m in tools.MODULES for k in m.KINDS)
 
 
 async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
@@ -1348,7 +1344,7 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
     Ce que la boucle demande à un robinet, et que responses_api.Translator
     et anthropic_api.Translator offrent tous deux : feed / finish,
     `pending` (appels à exécuter : `name`, `arguments`), `client_calls`,
-    resolve(appel, résultat), next_turn(), finalize(), fail(message,
+    resolve(appel, résultat — un tools.Result), next_turn(), finalize(), fail(message,
     statut), `turns`, tokens / cached / sse. Ce qui diffère d'une surface
     à l'autre lui est passé :
       * `rebuild(robinet)` : le corps chat/completions du tour suivant,
@@ -1379,6 +1375,8 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
         else min(HOSTED_HARD_LIMIT, budget + HOSTED_EXTRA_CALLS)
     used = 0
     spent: dict[str, int] = {}        # appels exécutés, par fonction
+    # Le client, pour l'outil (tools.Call) : le condensé de sa clé.
+    client = tools.owner(client_token(request)) if PROXY_API_KEYS else ""
     # L'attente en cours (exécution d'un outil, ou porte de quota + envoi
     # du tour suivant) : une tâche, pour pouvoir émettre des pings pendant
     # qu'elle dure, et l'annuler si le client raccroche.
@@ -1409,7 +1407,8 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                         else (spent.get(name, 0), limits.get(name))
                 task = asyncio.ensure_future(hosted.run(
                     name, pending["arguments"], count, cap,
-                    options, endpoint=call.endpoint, model=call.model_key))
+                    options, endpoint=call.endpoint, model=call.model_key,
+                    client=client))
                 while not await _settled(task, ping):
                     yield ping
                 result, task = task.result(), None
@@ -1642,12 +1641,11 @@ async def tools_list():
     """Les outils hébergés actifs, à la forme d'une déclaration de
     fonction : de quoi les présenter tels quels à un modèle."""
     active = tools.enabled()
-    fetch = any(m.NAME == "web_fetch" for m in active)
+    present = frozenset(t.name for t in active)
     return {"object": "list", "data": [
-        {"name": m.NAME, **{k: v for k, v in (
-            m.definition(fetch=fetch) if hasattr(m, "definition")
-            else m.DEFINITION)["function"].items() if k != "name"}}
-        for m in active]}
+        {"name": t.name, **{k: v for k, v in t.spec(present)[
+            "function"].items() if k != "name"}}
+        for t in active]}
 
 
 @app.post("/v1/tools/{name}")
@@ -1655,7 +1653,10 @@ async def tools_run(name: str, request: Request):
     """Exécute un outil hébergé. Corps : ses arguments (objet JSON).
     Toujours 200 quand l'outil existe : un échec de l'outil est un texte
     «Error: …» que le modèle doit lire, pas une erreur HTTP — `is_error`
-    le signale au client."""
+    le signale au client, `error` en donne le code (tools.ERRORS, null
+    pour un succès). `sources` et `meta` : ce que le résultat dit en plus
+    de son texte (pages citées ; URL lue, titre, plage de caractères…),
+    pour l'affichage — voir docs/outils.md."""
     hosted = tools.Hosted()
     if name not in hosted.by_name:
         return error_response(
@@ -1667,10 +1668,13 @@ async def tools_run(name: str, request: Request):
         return error_response("openai", 400, "invalid_request_error",
                               "corps attendu : les arguments de l'outil, "
                               "en objet JSON")
-    result = await hosted.run(name, json.dumps(args, ensure_ascii=False), 0,
-                              endpoint="/v1/tools")
-    return {"name": name, "result": result,
-            "is_error": result.startswith("Error:")}
+    result = await hosted.run(
+        name, json.dumps(args, ensure_ascii=False), 0, endpoint="/v1/tools",
+        client=tools.owner(client_token(request)) if PROXY_API_KEYS else "")
+    return {"name": name, "result": result.text,
+            "is_error": result.error is not None, "error": result.error,
+            "sources": [dataclasses.asdict(s) for s in result.sources],
+            "meta": dict(result.meta)}
 
 
 @app.get("/v1/audio/voices")

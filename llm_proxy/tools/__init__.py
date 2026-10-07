@@ -7,71 +7,89 @@ Même chose pour un client de l'API Messages (Claude Code) et son outil
 serveur `{"type": "web_search_20250305"}`, qu'Anthropic exécuterait — ou
 `{"type": "web_fetch_20250910"}`, pour un client du SDK.
 
-Un outil = un module de ce dossier, qui expose :
-  NAME        le nom de la fonction présentée au modèle
-  KINDS       les types d'outil Responses qui l'activent
-  ITEM_TYPE   l'élément Responses qui rend compte de l'appel au client
-  DEFINITION  la fonction, à la forme chat/completions
-  ENABLED     lu dans [tools.<nom>] de config.toml
-  action(args) → dict      ce que l'élément dit de l'appel (requête, URL)
-  async run(args) → str    l'exécution ; ne lève pas : une erreur est un
-                           texte «Error: …» rendu au modèle, qui s'adapte
+Un outil = un OBJET qui tient le contrat de contract.py (docs/outils.md
+le décrit membre par membre, avec un exemple complet) :
+  name                    le nom de la fonction présentée au modèle
+  enabled                 actif ? ([tools.<nom>].enabled pour ceux d'ici)
+  spec(present) → dict    la fonction, à la forme chat/completions ;
+                          `present` : les outils présentés avec lui
+  async run(args, call) → Result
+                          l'exécution. `call` (Call) porte ce qui ne
+                          vient pas du modèle : réglages du client, route,
+                          modèle. Rend un Result — `text` pour le modèle,
+                          `error` (un code d'ERRORS, None = succès),
+                          `sources`, `meta` — ou lève ToolError(code,
+                          message). Une erreur est un texte «Error: …»
+                          que le modèle lit, et s'adapte
+  summary(args, result) → dict
+                          ce que le client affiche de l'appel
+  responses, anthropic    ses LIAISONS aux protocoles, en données : quels
+                          types d'outil l'activent, quel élément ou quel
+                          bloc rend compte de l'appel. Sans liaison,
+                          l'outil reste exécutable par /v1/tools et
+                          présentable sur /v1/chat/completions
 
-Et, FACULTATIF, pour un outil dont l'élément terminé dépend du résultat
-(`web_fetch` : la plage de caractères lue, à côté de l'URL) :
-  item(args, résultat) → dict   les champs de l'élément terminé, à la
-                           place d'`action` — `status` compris
+Ajouter un outil : une classe, `register(...)`, une table [tools.<nom>]
+dans config.example.toml — voir docs/outils.md, « Écrire un outil ».
 
-Ajouter un outil : un module, une ligne dans MODULES, une table
-[tools.<nom>] dans config.example.toml.
-
-La surface Anthropic ne présente que les outils serveur que son client
-déclare — l'un, l'autre ou les deux — et demande en plus :
-  * à `web_search` : `definition(fetch=False)` (la fonction sans renvoi
-    à `web_fetch`, quand il n'est pas présenté), `parse` et `render`
-    (texte ↔ liste structurée, pour les blocs `web_search_result`) ;
-  * à `web_fetch` : DEFINITION_ALONE (la fonction sans renvoi à
-    `web_search`), `page` (l'URL lue et le titre, tirés du texte rendu,
-    pour le bloc `web_fetch_result`) et `error_code` (texte d'erreur →
-    code d'erreur d'Anthropic) ;
-  * aux deux : que `run` accepte les réglages du client — listes de
-    domaines, et pour `web_fetch` la taille d'un morceau (`max_chars`).
-
-Ce module porte ce qui est commun : le registre, l'exécution bornée
-(délai, taille du résultat), la ligne de STATISTIQUES de chaque exécution
-(stats.record_tool, depuis Hosted.run : des mesures, jamais le contenu)
-et la MÉMOIRE des résultats. Cette mémoire
-est, avec celle des échanges cachés de chat_api (même logique, pour un
-client /v1/chat/completions), tout ce que le proxy conserve entre deux
-requêtes : le client
-renvoie au tour suivant l'élément `web_search_call` SANS son résultat
-(OpenAI le garde côté serveur), et il faut le rendre au modèle à
-l'identique — sinon il perd ce qu'il a lu, et le préfixe change sous un
-backend à cache. Bornée (entrées, durée), en mémoire : un redémarrage du
-proxy l'oublie, le modèle reçoit alors un mot qui le dit. CLOISONNÉE par
-client : une entrée ne se relit qu'avec le condensé de la clé qui l'a
-rangée (`owner`), l'identifiant de l'élément ne suffit pas. La surface
-Anthropic n'y range RIEN : son client renvoie le résultat avec l'appel
-(blocs `web_search_tool_result` et `web_fetch_tool_result`), le texte se
+Ce module porte ce qui est commun : le REGISTRE (register, enabled),
+l'exécution bornée (Hosted.run : nombre d'appels, délai, taille du
+résultat — rien n'en remonte, tout échec est un Result), la ligne de
+STATISTIQUES de chaque exécution (stats.record_tool, depuis Hosted.run :
+des mesures, jamais le contenu) et la MÉMOIRE des résultats. Cette
+mémoire est, avec celle des échanges cachés de chat_api (même logique,
+pour un client /v1/chat/completions), tout ce que le proxy conserve entre
+deux requêtes — et elle ne garde que du TEXTE : le client renvoie au tour
+suivant l'élément `web_search_call` SANS son résultat (OpenAI le garde
+côté serveur), et il faut le rendre au modèle à l'identique — sinon il
+perd ce qu'il a lu, et le préfixe change sous un backend à cache. Bornée
+(entrées, durée), en mémoire : un redémarrage du proxy l'oublie, le
+modèle reçoit alors un mot qui le dit. CLOISONNÉE par client : une entrée
+ne se relit qu'avec le condensé de la clé qui l'a rangée (`owner`),
+l'identifiant de l'élément ne suffit pas. La surface Anthropic n'y range
+RIEN : son client renvoie le résultat avec l'appel (blocs
+`web_search_tool_result` et `web_fetch_tool_result`), le texte se
 reconstruit de là.
 
 La boucle qui relance le backend après un appel vit dans app.py ; la
-traduction des éléments, dans responses_api.py et anthropic_api.py — qui
-ne connaissent de ce paquet que l'objet `Hosted` qu'on leur passe.
+traduction des éléments, dans responses_api.py, anthropic_api.py et
+chat_api.py — qui ne connaissent de ce paquet que l'objet `Hosted` qu'on
+leur passe, et le contrat.
 """
 
 import asyncio
 import hashlib
 import json
 import os
+import re
 import time
 from collections import OrderedDict
 
 from .. import config, stats
 from ..settings import log
 from . import web_fetch, web_search, webcache
+# Le contrat, tel que le reste du proxy et un outil l'importent d'ici.
+from .contract import (ERRORS, Anthropic, Call, Responses, Result,  # noqa: F401
+                       Source, Tool, ToolError, failure)
 
-MODULES = (web_search, web_fetch)
+# Le registre : tous les outils que le proxy SAIT héberger, actifs ou non,
+# dans l'ordre où ils sont présentés au modèle.
+REGISTRY: list[Tool] = []
+
+
+def register(tool: Tool) -> Tool:
+    """Ajoute un outil au registre. Un fournisseur qui en apporte
+    plusieurs (découverts au démarrage) les enregistre un à un. Le nom
+    est la clé : deux outils ne le partagent pas."""
+    if not tool.name or any(t.name == tool.name for t in REGISTRY):
+        raise ValueError(f"outil hébergé sans nom, ou nom déjà pris : "
+                         f"{tool.name!r}")
+    REGISTRY.append(tool)
+    return tool
+
+
+register(web_search.TOOL)
+register(web_fetch.TOOL)
 
 # Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
 # reçoit une erreur qui lui demande de conclure.
@@ -88,8 +106,14 @@ EXPIRED = ("[result no longer available: the proxy was restarted or the "
            "entry expired; run the tool again if you still need it]")
 
 
-def enabled() -> list:
-    return [m for m in MODULES if m.ENABLED]
+def enabled() -> list[Tool]:
+    return [t for t in REGISTRY if t.enabled]
+
+
+def kinds() -> frozenset:
+    """Tous les types d'outil que le registre sait héberger, actifs ou
+    non : ce qu'une requête chat/completions peut déclarer dans `tools`."""
+    return frozenset(k for t in REGISTRY for k in t.kinds)
 
 
 # Sel du condensé des clés clientes : tiré à chaque démarrage, jamais
@@ -152,32 +176,47 @@ MEMORY = Memory(CACHE_ENTRIES, CACHE_TTL)
 
 
 class Hosted:
-    """Ce que responses_api et anthropic_api reçoivent de ce paquet :
-    quelles fonctions présenter au modèle pour un type d'outil du client,
-    comment rendre compte d'un appel, et la mémoire des résultats."""
+    """Ce que les trois surfaces reçoivent de ce paquet : quels outils
+    présenter au modèle pour ce que le client déclare, l'exécution bornée
+    d'un appel, et la mémoire des résultats."""
 
-    def __init__(self, modules=None, memory: Memory | None = None):
-        self.modules = list(enabled() if modules is None else modules)
+    def __init__(self, tools=None, memory: Memory | None = None):
+        self.tools = list(enabled() if tools is None else tools)
         self.memory = MEMORY if memory is None else memory
-        self.by_name = {m.NAME: m for m in self.modules}
+        self.by_name = {t.name: t for t in self.tools}
         # Résultat rendu au modèle pour un appel rejoué que la mémoire a perdu.
         self.expired = EXPIRED
 
     def __bool__(self) -> bool:
-        return bool(self.modules)
+        return bool(self.tools)
 
     def for_kind(self, kind: str) -> list:
-        return [m for m in self.modules if kind in m.KINDS]
+        """Les outils que ce type DÉCLARE dans `tools` d'une requête
+        chat/completions (Tool.kinds)."""
+        return [t for t in self.tools if kind in t.kinds]
+
+    def for_responses(self, kind: str) -> list:
+        """Les outils que ce type d'outil Responses active : ceux qui ont
+        la liaison (sans élément, rien à rendre au client)."""
+        return [t for t in self.tools
+                if t.responses and kind in t.responses.kinds]
 
     def for_item(self, item: dict):
-        """Le module qui a produit cet élément rejoué (web_search_call…),
-        d'après son action — pour le reconstruire si la mémoire l'a perdu."""
-        for m in self.modules:
-            if m.ITEM_TYPE == item.get("type") and isinstance(
-                    item.get("action"), dict) \
-                    and m.action({}).get("type") == item["action"].get("type"):
-                return m
+        """L'outil qui a produit cet élément Responses rejoué
+        (web_search_call…), d'après son action — pour le reconstruire si
+        la mémoire l'a perdu."""
+        for t in self.tools:
+            if t.responses and t.responses.item == item.get("type") \
+                    and isinstance(item.get("action"), dict) \
+                    and t.summary({}).get("type") == item["action"].get("type"):
+                return t
         return None
+
+    def for_server(self, kind: str):
+        """L'outil que remplace ce type d'outil serveur Anthropic, toutes
+        versions datées (`web_search_20250305` → préfixe `web_search`)."""
+        return next((t for t in self.tools if t.anthropic and re.fullmatch(
+            re.escape(t.anthropic.prefix) + r"_\d+", kind)), None)
 
     def cap(self, limit=None) -> int:
         """Appels exécutés au plus pour une réponse : MAX_CALLS, ou la
@@ -189,73 +228,95 @@ class Hosted:
 
     async def run(self, name: str, arguments: str, used: int,
                   limit: int | None = None, options: dict | None = None,
-                  endpoint: str = "", model: str = "") -> str:
+                  endpoint: str = "", model: str = "",
+                  client: str = "") -> Result:
         """Exécute la fonction `name`. `used` : appels déjà exécutés pour
         cette réponse ; `limit` : voir cap(). `options` : ce que le CLIENT
         a réglé sur son outil, par nom de fonction (les listes de domaines
-        et la taille de contenu des outils serveur Anthropic) — passé au
-        module en plus des
-        arguments du modèle, qui ne peut donc pas s'en affranchir.
-        `endpoint` / `model` : la route par où l'appel arrive et le modèle
-        PRÉFIXÉ de la conversation (aucun pour l'appel direct) — ils ne
-        servent qu'à la ligne de statistiques.
-        Ne lève jamais : tout échec est un texte.
+        et la taille de contenu des outils serveur Anthropic) — l'outil
+        les reçoit dans `call.settings`, à côté des arguments du modèle,
+        qui ne peut donc pas s'en affranchir. `endpoint` / `model` /
+        `client` : la route par où l'appel arrive, le modèle PRÉFIXÉ de
+        la conversation (aucun pour l'appel direct) et le condensé de la
+        clé du client — le reste de `call`.
+        Ne lève jamais : tout échec est un Result, avec son code.
 
-        C'est LE point par où passent les trois chemins (boucles de
-        /v1/responses et /v1/messages, appel direct /v1/tools) : la ligne
-        de statistiques de l'exécution s'écrit donc ici, une fois. Elle
-        ne retient que des mesures — nom, route, modèle, issue, durée,
-        taille du résultat — jamais les arguments ni le résultat."""
-        module = self.by_name.get(name)
-        if module is None:
+        C'est LE point par où passent tous les chemins (boucles de
+        /v1/responses, /v1/messages et /v1/chat/completions, appel direct
+        /v1/tools) : la ligne de statistiques de l'exécution s'écrit donc
+        ici, une fois. Elle ne retient que des mesures — nom, route,
+        modèle, issue, durée, taille du résultat — jamais les arguments
+        ni le résultat."""
+        tool = self.by_name.get(name)
+        if tool is None:
             # Pas de ligne de statistiques : ce nom n'est celui d'aucun
             # outil, c'est un texte venu du modèle ou du client.
-            return f"Error: unknown tool {name}."
+            return failure("invalid_input", f"unknown tool {name}.")
         started = time.monotonic()
         result = self._refusal(used, limit)
-        outcome = "limit"
         if result is None:
-            result = await self._execute(module, arguments, options)
-            outcome = "error" if result.startswith("Error:") else "ok"
+            result = await self._execute(tool, arguments, Call(
+                (options or {}).get(name, {}), endpoint, model, client))
+        # L'issue des statistiques : le code, pas le texte. `limit` : le
+        # refus d'ici, ou celui que l'outil prononce lui-même — sans durée.
+        outcome = "ok" if result.error is None \
+            else "limit" if result.error == "limit" else "error"
         try:
             stats.record_tool(name, endpoint, model, outcome,
                               time.monotonic() - started if outcome != "limit"
-                              else 0.0, len(result))
+                              else 0.0, len(result.text))
         except Exception:  # les statistiques ne cassent jamais un outil
             log.exception("stats : exécution de %s non enregistrée", name)
         return result
 
-    def _refusal(self, used: int, limit) -> str | None:
+    def _refusal(self, used: int, limit) -> Result | None:
         """Le refus par limite d'appels (cap()), ou None s'il reste de la
         marge."""
         cap = self.cap(limit)
         if used >= cap:
-            return (f"Error: the limit of {cap} web tool calls for one "
-                    f"answer is reached. Answer now with what you already have.")
+            return failure("limit", (
+                f"the limit of {cap} web tool calls for one "
+                f"answer is reached. Answer now with what you already have."))
         return None
 
-    async def _execute(self, module, arguments: str, options) -> str:
-        name = module.NAME
+    async def _execute(self, tool: Tool, arguments: str, call: Call) -> Result:
+        name = tool.name
         try:
             args = json.loads(arguments or "{}")
         except (ValueError, TypeError):  # TypeError : pas une chaîne
             args = None
         if not isinstance(args, dict):
-            return "Error: the tool arguments are not a JSON object."
+            return failure("invalid_input",
+                           "the tool arguments are not a JSON object.")
         started = time.monotonic()
         try:
-            result = await asyncio.wait_for(
-                module.run(args, **(options or {}).get(name, {})), RUN_TIMEOUT)
+            result = await asyncio.wait_for(tool.run(args, call), RUN_TIMEOUT)
+            if not isinstance(result, Result):
+                raise TypeError(f"{name}.run n'a pas rendu un Result")
+        except ToolError as exc:  # l'échec prévu : son code, son message
+            result = failure(exc.code, exc.message)
         except asyncio.TimeoutError:
-            result = f"Error: {name} timed out after {int(RUN_TIMEOUT)} s."
+            result = failure(
+                "timeout", f"{name} timed out after {int(RUN_TIMEOUT)} s.")
         except Exception as exc:  # un outil ne doit jamais casser la réponse
             log.exception("outil hébergé %s en échec", name)
-            result = f"Error: {name} failed ({type(exc).__name__})."
-        if len(result) > MAX_RESULT_CHARS:
-            result = result[:MAX_RESULT_CHARS] + "\n[truncated]"
+            result = failure("unavailable",
+                             f"{name} failed ({type(exc).__name__}).")
+        if result.error is not None and result.error not in ERRORS:
+            log.warning("outil hébergé %s : code d'erreur %r hors contrat, "
+                        "rendu `unavailable`", name, result.error)
+            result = Result(result.text, "unavailable", result.sources,
+                            result.meta)
+        if len(result.text) > MAX_RESULT_CHARS:
+            # Seul le texte est borné : `sources` et `meta` disent ce que
+            # l'outil a trouvé, coupé ou non.
+            result = Result(result.text[:MAX_RESULT_CHARS] + "\n[truncated]",
+                            result.error, result.sources, result.meta)
         # Le texte d'une erreur est journalisé : sur la surface Anthropic
         # le client n'en reçoit qu'un code, seul le modèle lit le détail.
         log.info("outil hébergé %s(%s) → %d car. en %.1fs%s", name,
-                 str(arguments)[:160], len(result), time.monotonic() - started,
-                 f" — {result[:200]}" if result.startswith("Error:") else "")
+                 str(arguments)[:160], len(result.text),
+                 time.monotonic() - started,
+                 f" — {result.error} : {result.text[:200]}"
+                 if result.error else "")
         return result
