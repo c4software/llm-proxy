@@ -405,15 +405,23 @@ class CodeExecution(Tool):
                 "only. C, C++ (gcc, g++), Go and Rust programs are given as "
                 "one source file, compiled, then run, all within the time "
                 "limit — with their standard library only: no Go module, no "
-                "Rust crate, no other package. There is NO network and "
-                "nothing can be installed. "
+                "Rust crate, no other package. There is NO network: a "
+                "program cannot download anything (requests, urllib, curl "
+                "and wget all fail) and nothing can be installed. "
                 + ((
+                    # Dit en ordre, pas en possibilité : joué le 07/10/2026,
+                    # un modèle à qui l'on disait seulement « list it in
+                    # `files` » a d'abord téléchargé depuis le bac (échec),
+                    # puis lu le fichier par web_fetch pour le recopier dans
+                    # son programme.
                     "To work on a file that is at a URL (a CSV, a "
-                    "spreadsheet, a PDF, an image, an archive), list it in "
-                    "`files`: it is downloaded for you and is in the working "
-                    "directory when the program starts. It stays there for "
-                    "the later calls of the conversation: do not list it "
-                    "again. "
+                    "spreadsheet, a PDF, an image, an archive), you MUST "
+                    "list its URL in `files`: it is downloaded for you and "
+                    "is in the working directory, under its file name, when "
+                    "the program starts. Never download it in the program, "
+                    "and never paste its content into the code. It stays "
+                    "there for the later calls of the conversation: do not "
+                    "list it again. "
                     + (f"To only READ a page or a document, use "
                        f"{' or '.join(readers)} instead. " if readers else "")
                 ) if MAX_FILES > 0 else "") +
@@ -438,12 +446,14 @@ class CodeExecution(Tool):
                                        "whole source file, with its main."},
                     "code": {
                         "type": "string",
-                        "description": "The complete program to run."},
+                        "description": "The complete program to run. It "
+                                       "has no network access."},
                     **({"files": {
                         "type": "array",
                         "description": (
-                            f"Optional. Files to download into the working "
-                            f"directory before the program runs: up to "
+                            f"The files the program needs, by URL: they "
+                            f"are downloaded into the working directory "
+                            f"before the program runs. Up to "
                             f"{MAX_FILES}, {_size(MAX_FILE_BYTES)} each."),
                         "items": {
                             "type": "object",

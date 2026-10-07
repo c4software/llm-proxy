@@ -142,7 +142,7 @@ def test_contrat_des_fichiers_d_entree(monkeypatch):
     entry = fn["parameters"]["properties"]["files"]["items"]
     assert entry["required"] == ["url"] and set(entry["properties"]) == {
         "url", "name"}
-    assert "list it in `files`" in fn["description"]
+    assert "list its URL in `files`" in fn["description"]
     assert "do not list it again" in fn["description"]
     # Ce qui n'est qu'à LIRE a ses outils — nommés s'ils sont présentés.
     assert "web_fetch" not in fn["description"]
