@@ -33,6 +33,33 @@ Ce module ne s'applique qu'à une requête qui DÉCLARE, sur un proxy où
 [chat].hosted_tools est vrai. Toute autre requête ne passe pas par lui :
 relais brut des octets, comme avant (app.chat_completions).
 
+PRÉSENTATION D'OFFICE ([chat].always, `ALWAYS`, `unasked`). Une interface
+de chat (Open WebUI) ne déclarera jamais rien : la liste nomme des outils
+du registre présentés à TOUTE requête, comme si elle les avait déclarés —
+même boucle, même réponse, même mémoire. Vide par défaut : rien ne change.
+  * Par NOM d'outil (`web_fetch` n'a pas de type à lui), à la suite des
+    outils du client. Un outil que la requête déclare aussi n'est
+    présenté qu'une fois, à la place de sa déclaration ; une fonction du
+    client garde son nom, comme pour une déclaration.
+  * Un nom inconnu du registre ou d'un outil désactivé est ignoré, pas
+    refusé : le client n'a rien demandé. La liste est relue à chaque
+    requête contre les outils actifs à ce moment-là — un outil
+    enregistré après le démarrage est présenté dès qu'il existe.
+  * Rien n'est présenté d'office à une requête qui dit `tool_choice:
+    "none"` (le client ne veut pas d'appel), ni à `n` > 1 (une
+    déclaration y est refusée : ici le client n'a rien déclaré, il garde
+    ses `n` réponses), ni à un modèle que le catalogue de son backend ne
+    dit pas de conversation (app._converses). Une telle requête, et celle
+    à qui il ne reste rien à présenter, repart en relais brut.
+  * Les autres `tool_choice` sont ceux du client, intacts : une fonction
+    forcée est appelée (les outils d'office sont présentés quand même —
+    la liste d'outils, donc le préfixe, ne change pas d'une requête à
+    l'autre) ; `required` sans outil du client force un outil hébergé au
+    premier tour, `auto` ensuite (app.hosted_loop).
+  * Le proxy ne sait PAS d'une requête qu'elle est de service (titre,
+    tags, suggestions qu'une interface demande après chaque réponse) :
+    rien dans son corps ne le dit. Elle reçoit les outils aussi.
+
 Ce que le client reçoit : UNE réponse chat/completions ordinaire, quel
 que soit le nombre de tours upstream (voir `Translator`). Les appels
 hébergés ne lui arrivent JAMAIS en `tool_calls` — il tenterait de les
@@ -80,7 +107,8 @@ répondu — puis la suite.
     bornée en entrées, en durée ET en caractères — un échange porte
     jusqu'à 8 résultats de 24 000 caractères. Rien n'en est journalisé
     que des comptes.
-  * Seule une requête qui DÉCLARE un outil hébergé est relue ainsi. Un
+  * Seule une requête à qui un outil hébergé est PRÉSENTÉ — déclaré, ou
+    d'office — est relue ainsi. Un
     client qui cesse de déclarer en cours de conversation repasse au
     relais brut : rien n'est réinséré (le modèle n'a plus que ses
     réponses), rien n'est perdu non plus — les entrées restent, et
@@ -129,6 +157,10 @@ ANNOTATIONS = config.flag("chat.annotations", True)
 # La mémoire des échanges cachés (tête de module). false = le comportement
 # d'avant : rien n'est gardé, rien n'est réinséré.
 MEMORY_ENABLED = config.flag("chat.memory", True)
+# Les outils présentés D'OFFICE, par nom, sans doublon (tête de module).
+# Des NOMS seulement : ce qu'ils désignent se lit dans l'annuaire de
+# chaque requête, pas ici — le registre peut encore grandir.
+ALWAYS = list(dict.fromkeys(config.strings("chat.always")))
 # Ses bornes en entrées et en durée sont celles de la mémoire des
 # résultats ([tools], lues ici sans importer le paquet) ; celle-ci a en
 # plus une borne en CARACTÈRES, toutes entrées confondues : une entrée de
@@ -181,10 +213,24 @@ def declares(payload: dict, kinds) -> bool:
         isinstance(t, dict) and t.get("type") in kinds for t in tools)
 
 
-def prepare(payload: dict, hosted, kinds) -> Context:
+def unasked(payload: dict) -> bool:
+    """Présenter à cette requête les outils de [chat].always, qu'elle
+    n'a pas demandés ? Non si `tool_choice` vaut `none` ou si `n` > 1
+    (tête de module). Ce que le proxy sait du MODÈLE est l'affaire de la
+    route."""
+    n = payload.get("n")
+    return bool(ALWAYS) and payload.get("tool_choice") != "none" \
+        and not (isinstance(n, int) and n > 1)
+
+
+def prepare(payload: dict, hosted, kinds, always=()) -> Context:
     """Remplace, DANS `payload`, chaque déclaration d'outil hébergé par
     les fonctions du paquet tools/ et rend le contexte de la réponse.
     `hosted` : l'annuaire tools.Hosted (vide si aucun outil n'est actif).
+    `always` : les noms des outils à présenter d'office à cette requête
+    (tête de module), à la suite de ceux du client ; ceux que l'annuaire
+    n'a pas, ou dont le nom est pris, sont passés. Une requête à qui rien
+    n'est ajouté ni remplacé n'est pas touchée.
 
     Un outil déclaré que le proxy connaît mais n'a pas activé est REFUSÉ
     (400) : le retirer en silence ferait répondre le modèle sans
@@ -235,12 +281,22 @@ def prepare(payload: dict, hosted, kinds) -> Context:
             ctx.hosted[tool.name] = tool
             slots.append(len(out))
             out.append(tool)
+    for name in always:
+        tool = hosted.by_name.get(name) if hosted else None
+        if tool is None or name in taken:
+            continue
+        taken.add(name)
+        ctx.hosted[name] = tool
+        slots.append(len(out))
+        out.append(tool)
     # Chaque outil sait avec qui il est présenté : une description ne
     # renvoie pas à un outil absent (désactivé, ou nom pris par le client).
     present = frozenset(ctx.hosted)
     for at in slots:
         out[at] = out[at].spec(present)
-    if out:
+    if not slots and len(out) == len(tools):
+        pass        # rien de remplacé, rien d'ajouté : `tools` reste le sien
+    elif out:
         payload["tools"] = out
     else:
         payload.pop("tools", None)

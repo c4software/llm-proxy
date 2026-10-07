@@ -513,3 +513,131 @@ def test_responses_shaped_tool_choice_names_the_hosted_function(chat):
     r = post(chat, tool_choice=WEB, tools=[fn("ls")])
     assert r.status_code == 400 and "désactivé" in r.json()["error"]["message"]
     assert len(chat.sent) == sent
+
+
+# ── présentation d'office ([chat].always) ───────────────────────────────
+
+def bare(chat, **extra):
+    """Une requête qui ne déclare RIEN : celle d'une interface de chat.
+    Rend la réponse et les octets envoyés par le client."""
+    body = json.dumps({"model": "essai/qwen", "stream": True,
+                       "messages": [Q1], **extra}, ensure_ascii=False).encode()
+    return chat.client.post("/v1/chat/completions", content=body), body
+
+
+def test_always_presents_the_hosted_tools_to_a_request_that_declares_nothing(
+        chat, monkeypatch):
+    """[chat].always : mêmes fonctions, même boucle, mêmes annotations et
+    même mémoire qu'une requête qui déclare. Un nom que le registre n'a
+    pas (encore) est passé."""
+    monkeypatch.setattr(C, "ALWAYS", ["web_search", "ocr", "web_fetch"])
+    names = lambda sent: [t["function"]["name"] for t in sent["tools"]]
+    forced = {"type": "function", "function": {"name": "ls"}}
+    for extra, expected in (
+        ({}, ["web_search", "web_fetch"]),
+        # À la suite des outils du client.
+        ({"tools": [fn("ls")]}, ["ls", "web_search", "web_fetch"]),
+        # Déclaré aussi : une fois, à la place de la déclaration.
+        ({"tools": [WEB, fn("ls")]}, ["web_search", "web_fetch", "ls"]),
+        ({"tools": [fn("ls")], "web_search_options": {}},
+         ["ls", "web_search", "web_fetch"]),
+        # Une fonction du client garde son nom : l'autre outil seul.
+        ({"tools": [fn("web_search")]}, ["web_search", "web_fetch"]),
+        # Le `tool_choice` du client est le sien.
+        ({"tools": [fn("ls")], "tool_choice": forced},
+         ["ls", "web_search", "web_fetch"]),
+        ({"tool_choice": "required"}, ["web_search", "web_fetch"]),
+        ({"tool_choice": WEB}, ["web_search", "web_fetch"]),
+    ):
+        chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
+        assert bare(chat, **extra)[0].status_code == 200
+        sent = chat.sent[-1]
+        assert names(sent) == expected, extra
+        assert sent["stream_options"] == {"include_usage": True}
+        choice = extra.get("tool_choice")
+        assert sent.get("tool_choice") == (
+            {"type": "function", "function": {"name": "web_search"}}
+            if choice == WEB else choice)
+    # La fonction homonyme du client part telle quelle, et reste la sienne.
+    chat.replies = [FakeUpstream(stream(*SEARCH_TURN))]
+    r, _ = bare(chat, tools=[fn("web_search")])
+    assert chat.sent[-1]["tools"][0] == fn("web_search")
+    assert "web_search" not in chat.sent[-1]["tools"][1]["function"]["description"]
+    assert [tc["id"] for d in deltas(blocks(r.content))
+            for tc in d.get("tool_calls", []) if "id" in tc] == ["call_x"]
+    assert not chat.hosted.runs
+
+    # La boucle, en flux : appel caché, exécuté, compté ; puis la mémoire.
+    chat.lines.clear()
+    chat.replies = [FakeUpstream(stream(*SEARCH_TURN)),
+                    FakeUpstream(stream(*ANSWER_TURN))]
+    docs = blocks(bare(chat)[0].content)
+    assert not any("tool_calls" in d for d in deltas(docs))
+    assert "".join(d.get("content") or "" for d in deltas(docs)) == A1["content"]
+    assert not any("usage" in d for d in docs)
+    assert chat.hosted.runs == [
+        ("web_search", {"query": "llama.cpp latest release"}, {})]
+    assert len(chat.lines) == 1 and chat.lines[0][6:] == (250, 15, True, True, 140)
+    assert [line[:4] for line in chat.tool_lines] == [
+        ("web_search", "/v1/chat/completions", "essai/qwen", "ok")]
+    chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
+    bare(chat, messages=[Q1, A1, Q2])
+    assert roles(chat.sent[-1]["messages"]) == "user assistant tool assistant user"
+
+    # En JSON, avec les annotations.
+    text = f"Voir {URL}."
+    chat.replies = [FakeUpstream(SEARCH_DOC),
+                    FakeUpstream(chat_doc({"content": text}, "stop", 150, 5))]
+    message = bare(chat, stream=False)[0].json()["choices"][0]["message"]
+    assert message["content"] == "Je cherche.\n\n" + text
+    assert [a["url_citation"]["url"] for a in message["annotations"]] == [URL]
+    assert "tool_calls" not in message and "stream_options" not in chat.sent[-1]
+
+    # /healthz dit ce qui est présenté à l'instant : les outils ACTIFS.
+    monkeypatch.setattr(A.tools, "enabled", lambda: [web_search.TOOL])
+    assert chat.client.get("/healthz").json()["chat"]["always"] == ["web_search"]
+
+
+def test_always_leaves_these_requests_untouched(chat, monkeypatch):
+    """Ce à quoi rien n'est présenté d'office repart en relais brut : les
+    octets du client (au préfixe du modèle près), ceux du backend, et un
+    appel `web_search` du modèle est celui du client."""
+    upstream = stream(*SEARCH_TURN)
+    always = ["web_search", "web_fetch"]
+    backend = A.BACKENDS["essai"]
+    for case, extra, setup in (
+        ("[chat].always vide (le défaut)", {},
+         lambda: monkeypatch.setattr(C, "ALWAYS", [])),
+        ("tool_choice none", {"tools": [fn("ls")], "tool_choice": "none"}, None),
+        # Une déclaration y est refusée ; ici le client n'a rien déclaré.
+        ("n > 1", {"n": 2}, None),
+        # Un client qui apporte ses propres `web_search` / `web_fetch`.
+        ("noms pris par le client",
+         {"tools": [fn("web_search"), fn("web_fetch")]}, None),
+        ("modèle qui n'est pas de conversation", {},
+         lambda: monkeypatch.setattr(backend, "model_types",
+                                     {"qwen": "text-to-image"})),
+        ("outils inactifs", {},
+         lambda: setattr(chat, "hosted", type(chat.hosted)(tools=[]))),
+        ("[chat].hosted_tools = false", {},
+         lambda: monkeypatch.setattr(C, "ENABLED", False)),
+    ):
+        hosted = chat.hosted
+        monkeypatch.setattr(C, "ALWAYS", always)
+        if setup:
+            setup()
+        chat.replies = [FakeUpstream(upstream)]
+        r, body = bare(chat, **extra)
+        assert r.status_code == 200 and r.content == upstream, case
+        assert chat.raws[-1] == body.replace(b"essai/qwen", b"qwen"), case
+        assert not hosted.runs and not chat.replies, case
+        chat.hosted = hosted
+        monkeypatch.setattr(C, "ENABLED", True)
+        monkeypatch.setattr(backend, "model_types", {})
+    # Un modèle que le catalogue dit de conversation, ou qu'il ne connaît
+    # pas, les reçoit.
+    for types in ({"qwen": "image-text-to-text"}, {"autre": "text-to-image"}):
+        monkeypatch.setattr(backend, "model_types", types)
+        chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
+        bare(chat)
+        assert len(chat.sent[-1]["tools"]) == 2

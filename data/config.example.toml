@@ -136,9 +136,32 @@ reasoning_as_summary = true
 # recherche.
 # Table absente ou hosted_tools = false → comme avant : relais brut, la
 # déclaration part telle quelle au backend (qui la refuse, ou en a SA
-# lecture — Zhipu). Une requête qui ne déclare rien n'est jamais touchée.
+# lecture — Zhipu). Une requête qui ne déclare rien n'est jamais touchée
+# — sauf par `always`, ci-dessous.
 [chat]
 hosted_tools = true
+# Outils présentés D'OFFICE à TOUTE requête /v1/chat/completions, sans
+# déclaration : pour une interface de chat (Open WebUI), qui n'en fera
+# jamais. Des NOMS d'outils hébergés — always = ["web_search",
+# "web_fetch"] — présentés à la suite des outils du client ; la requête
+# est ensuite traitée comme si elle les avait déclarés (boucle, réponse
+# unique, annotations, mémoire). Vide ou absent = rien d'office (le
+# défaut). Sans effet si hosted_tools est faux.
+# Un nom inconnu, ou d'un outil désactivé plus bas, est ignoré avec un
+# avertissement au démarrage (pas de 400 : le client n'a rien demandé).
+# Rien n'est présenté d'office : à une requête qui dit `tool_choice:
+# "none"` ou `n` > 1 ; à un modèle que le catalogue de son backend ne
+# dit pas de conversation (image, voix, embeddings) ; pour un outil dont
+# une fonction du client porte déjà le nom.
+# À SAVOIR : le réglage vaut pour TOUS les clients de cette route et tous
+# ses modèles. Un modèle de conversation qui ne sait pas appeler d'outils
+# les reçoit quand même (le catalogue ne le dit pas), et les requêtes de
+# service d'une interface (titre, tags, suggestions) aussi : rien ne les
+# distingue. Un backend dont le `tool_choice` par défaut est `none`
+# (Albert) n'appellera rien sans son force_tool_choice. Et le texte des
+# pages web entre alors dans TOUTES les conversations, sans que le client
+# l'ait demandé : voir l'avertissement d'injection de prompt de [tools].
+always = []
 # Annotations `url_citation` (forme OpenAI) en fin de réponse : les URL
 # rendues par un outil ET écrites par le modèle. false = aucune.
 annotations = true
@@ -177,7 +200,8 @@ memory_chars = 8000000
 # `server_tool_use` puis `web_fetch_tool_result` (`max_content_tokens`
 # respecté aussi, `citations` ignoré).
 # /v1/chat/completions en profite si [chat].hosted_tools ; rien n'est
-# ajouté à une requête qui ne DÉCLARE pas l'outil.
+# ajouté à une requête qui ne DÉCLARE pas l'outil — sauf sur cette route,
+# pour les outils nommés par [chat].always.
 # Tables absentes ou enabled = false → comme avant : `web_search` est
 # ignoré, le modèle ne le voit pas.
 #

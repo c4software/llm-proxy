@@ -41,7 +41,8 @@ Rôles :
      si [chat].hosted_tools : une requête qui DÉCLARE `{"type":
      "web_search"}` dans `tools` passe par la même boucle et reçoit une
      réponse chat/completions ordinaire ; toute autre est relayée brute.
-     Les appels hébergés, que le client ne voit pas, sont réinsérés dans
+     [chat].always nomme des outils présentés D'OFFICE, sans déclaration
+     (une interface de chat n'en fait pas). Les appels hébergés, que le client ne voit pas, sont réinsérés dans
      son historique à la requête suivante ([chat].memory) ;
   5. auth optionnelle du proxy lui-même : proxy.api_keys (liste vide par
      défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
@@ -163,6 +164,24 @@ async def lifespan(app: FastAPI):
         "ACTIFS — une requête qui déclare `{\"type\": \"web_search\"}` "
         "dans `tools` est bouclée par le proxy" if chat_api.ENABLED
         else "inactifs ([chat].hosted_tools absent ou false) : relais brut")
+    if chat_api.ALWAYS:
+        known = {t.name for t in tools.REGISTRY}
+        shown = always_shown()
+        for name in chat_api.ALWAYS:
+            if name not in shown:
+                log.warning(
+                    "[chat].always : outil «%s» %s — ignoré tant qu'il "
+                    "l'est", name,
+                    f"désactivé ([tools.{name}].enabled)" if name in known
+                    else "inconnu du registre")
+        if chat_api.ENABLED:
+            log.info(
+                "présentés D'OFFICE à toute requête /v1/chat/completions, "
+                "sans déclaration ([chat].always) : %s",
+                ", ".join(shown) or "aucun pour l'instant")
+        else:
+            log.warning("[chat].always sans effet : [chat].hosted_tools "
+                        "absent ou false")
     if albert.ROUTER_MODELS:
         log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 
@@ -604,6 +623,9 @@ async def healthz():
         },
         "responses": {"enabled": responses_api.ENABLED},
         "chat": {"hosted_tools": chat_api.ENABLED,
+                 # Présentés d'office EN CE MOMENT : les noms de
+                 # [chat].always qui sont ceux d'un outil actif.
+                 "always": always_shown() if chat_api.ENABLED else [],
                  "memory": chat_api.MEMORY_ENABLED,
                  "memory_entries": len(chat_api.MEMORY),
                  "memory_chars": chat_api.MEMORY.size},
@@ -685,6 +707,25 @@ _NAME_TYPES = (
     (("embed", "embedding", "embeddings", "bge", "e5"), "text-embeddings-inference"),
     (("rerank", "reranker"), "text-classification"),
 )
+
+
+def always_shown() -> list[str]:
+    """Les outils de [chat].always présentables à l'instant : ceux du
+    registre, actifs. Relu à chaque appel — le registre peut grandir
+    après le démarrage."""
+    active = {t.name for t in tools.enabled()}
+    return [name for name in chat_api.ALWAYS if name in active]
+
+
+def _converses(b: Backend, model: str) -> bool:
+    """Peut-on présenter D'OFFICE des outils à ce modèle (nom préfixé ou
+    non) ? Non si le catalogue de son backend le dit d'un autre type que
+    de conversation (image, voix, embeddings) : un `tools` qu'il n'attend
+    pas y serait refusé. Catalogue pas encore lu, modèle absent : oui — le
+    backend n'est pas sondé pour ça. Le catalogue ne dit PAS si un modèle
+    de conversation sait appeler des outils."""
+    plain = model.lower().removeprefix(b.name + "/")
+    return b.model_types.get(plain, "text-generation") in CHAT_TYPES
 
 
 def _model_type(m: dict, b: Backend | None = None) -> str:
@@ -832,16 +873,25 @@ async def chat_completions(request: Request):
     # DÉCLARE un quitte le relais brut — sa déclaration est remplacée par
     # les fonctions du paquet tools/, avant l'injection de tool_choice
     # (qui compte les outils). Toute autre requête ne coûte que ce test.
+    # [chat].always en présente D'OFFICE, sans déclaration, à un modèle
+    # de conversation : la requête est alors traitée comme si elle les
+    # avait déclarés ; s'il ne reste rien à présenter (noms pris par le
+    # client, outils inactifs), elle repart en relais brut, intacte.
     ctx = hosted = None
-    if chat_api.ENABLED and isinstance(payload, dict) \
-            and chat_api.declares(payload, tools.kinds()):
+    declared = always = False
+    if chat_api.ENABLED and isinstance(payload, dict):
+        declared = chat_api.declares(payload, tools.kinds())
+        always = chat_api.unasked(payload) and _converses(
+            backend, str(payload.get("model") or ""))
+    if declared or always:
         hosted = tools.Hosted()
         try:
-            ctx = chat_api.prepare(payload, hosted, tools.kinds())
+            ctx = chat_api.prepare(payload, hosted, tools.kinds(),
+                                   chat_api.ALWAYS if always else ())
         except chat_api.Refused as exc:
             return error_response("openai", 400, "invalid_request_error",
                                   str(exc))
-        modified = True
+        modified = declared or bool(ctx.hosted)
         if ctx.hosted:
             # Les échanges cachés des réponses précédentes, que le client
             # n'a pas dans son historique, reprennent leur place (mémoire
@@ -883,7 +933,8 @@ async def chat_completions(request: Request):
 
 async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
                       hosted, raw: bytes) -> Response:
-    """Une requête chat/completions qui déclare un outil hébergé : même
+    """Une requête chat/completions à qui un outil hébergé est présenté
+    (déclaré par elle, ou d'office) : même
     départ que `forward` (statut et en-têtes du PREMIER upstream), puis la
     boucle commune (`hosted_loop`) avec le robinet chat_api.Translator,
     qui rend au client UNE réponse chat/completions.

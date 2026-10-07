@@ -93,7 +93,8 @@ et un tableau de bord.
   `web_fetch_20250910` (blocs `web_fetch_tool_result`). Si `[chat].hosted_tools`, un client
   `/v1/chat/completions` peut déclarer ces mêmes outils dans `tools`
   (`{"type": "web_search"}`) et reçoit une réponse ordinaire, la boucle
-  faite. Voir [Outils hébergés](#outils-hébergés).
+  faite ; `[chat].always` les présente d'office à un client qui ne
+  déclare rien (Open WebUI). Voir [Outils hébergés](#outils-hébergés).
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
@@ -713,7 +714,10 @@ en conteneur (Codex, pi, Claude Code) : 27 scénarios sur 27 au run du
 
 1. Le client déclare `web_search` dans `tools` (les variantes
    `web_search_preview` et `web_search_2025_08_26` comptent aussi). Rien
-   n'est ajouté à une requête qui ne le déclare pas.
+   n'est ajouté à une requête qui ne le déclare pas — à une exception,
+   demandée par configuration : sur `/v1/chat/completions`, les outils
+   nommés par `[chat].always` sont présentés sans déclaration (voir
+   [Open WebUI](#open-webui--présenter-les-outils-doffice)).
 2. Le proxy présente au modèle, à la place, les fonctions `web_search` et
    `web_fetch` — celles qui sont activées. Une fonction du client qui
    porterait déjà l'un de ces noms garde le sien : l'outil hébergé
@@ -1083,7 +1087,8 @@ est reconnue **à son contenu**. La clé d'un échange est un condensé des
 messages que le client avait envoyés (rôle, texte, identifiants d'appels)
 et de la réponse finale. Conditions pour qu'il revienne :
 
-- la requête **déclare** encore un outil hébergé (sinon relais brut, rien
+- la requête **déclare** encore un outil hébergé, ou en reçoit un
+  d'office par `[chat].always` (sinon relais brut, rien
   n'est lu ni réinséré ; la mémoire n'est pas vidée pour autant, elle
   sert de nouveau si le client redéclare) ;
 - le client renvoie la réponse **avec son texte** et les messages qui la
@@ -1111,6 +1116,82 @@ l'[appel direct](#appel-direct--v1tools-pi-omp).
 
 La mémoire des échanges n'a été jouée que par les tests du dépôt
 (`tests/test_chat_api.py`, backend simulé).
+
+### Open WebUI : présenter les outils d'office
+
+Une interface de chat ne déclare pas `{"type": "web_search"}` : elle
+envoie ses messages, parfois ses propres fonctions, et c'est tout.
+`[chat].always` nomme les outils hébergés que le proxy présente à
+**toute** requête `/v1/chat/completions`, sans déclaration :
+
+    [chat]
+    hosted_tools = true
+    always = ["web_search", "web_fetch"]
+
+Une requête qui les reçoit est traitée comme si elle les avait déclarés :
+même boucle, **une** réponse ordinaire, annotations `url_citation`,
+[mémoire des échanges cachés](#client-chatcompletions--déclarer-loutil).
+Le réglage est global à la route : ni par clé, ni par modèle. Vide (le
+défaut), rien ne change.
+
+| Requête | Ce qui est présenté d'office |
+|---|---|
+| sans `tools` | les outils de la liste ; le `tool_choice` par défaut est celui du backend (`force_tool_choice` s'applique, comme à tout `tools`) |
+| avec des fonctions du client | les mêmes, **à la suite** des siennes |
+| qui déclare aussi (`{"type": "web_search"}`, `web_search_options`) | chaque outil une seule fois, à la place de la déclaration ; ceux de la liste qu'elle ne déclare pas, à la suite |
+| avec une fonction nommée `web_search` ou `web_fetch` | pas l'outil homonyme : la fonction du client garde son nom, ses appels lui reviennent. L'autre outil reste présenté |
+| `tool_choice: "none"` | rien : relais brut |
+| `tool_choice` forçant une fonction du client, ou `required` | les outils sont présentés, le `tool_choice` part tel quel (ramené à `auto` après un tour d'outils hébergés, comme pour une déclaration) |
+| `n` > 1 | rien : relais brut (une déclaration y serait refusée, mais ce client n'a rien demandé) |
+| modèle que le catalogue du backend ne dit pas de conversation (image, voix, embeddings — `type` de `/v1/models`, `model_types`) | rien : relais brut. Catalogue pas encore lu ou modèle inconnu : présentés |
+
+Un nom de la liste qui n'est celui d'aucun outil, ou celui d'un outil
+désactivé, est **ignoré** — un avertissement au démarrage, pas de `400`.
+La liste est relue à chaque requête : un outil enregistré après le
+démarrage est présenté dès qu'il existe. Le journal de démarrage dit ce
+qui est présenté d'office, `/healthz` aussi (`chat.always`).
+
+Brancher Open WebUI :
+
+- *Admin Panel → Settings → Connections → OpenAI API* : URL
+  `http://<proxy>:8000/v1`, clé = une clé de `[proxy].api_keys`
+  (n'importe quelle valeur si le proxy est ouvert). Les modèles
+  apparaissent préfixés (`bigchuck/qwen3.8-flash-next`).
+- **Un seul côté cherche.** Open WebUI a sa propre recherche web (il
+  cherche lui-même et joint les résultats au message) et, en mode
+  d'appel de fonctions natif, ses propres outils, envoyés dans `tools`
+  sous **leurs** noms : le modèle aurait alors deux outils de recherche.
+  La règle d'homonymie ne joue que pour une fonction nommée exactement
+  `web_search` ou `web_fetch`. Désactiver la recherche web et les outils
+  de recherche d'Open WebUI, ou retirer l'outil de `always`.
+- Open WebUI lit les annotations `url_citation` du flux et les affiche
+  en sources.
+
+Limites :
+
+- **Requêtes de service.** Après chaque réponse, Open WebUI envoie au
+  même endpoint des requêtes pour le titre, les tags, les suggestions de
+  suite (et d'autres : autocomplétion, requêtes de recherche). Rien dans
+  leur corps ne les distingue d'une conversation — un message `user`,
+  `stream: false` ; la tâche n'est pas transmise au backend. Le proxy
+  **ne les reconnaît pas** : elles reçoivent les outils aussi (des
+  tokens de prompt en plus, et un modèle peut chercher sur le web pour
+  écrire un titre). Parade côté Open WebUI seulement : désactiver ces
+  générations dans ses réglages d'interface.
+- **Modèle sans appel d'outils.** Le catalogue dit le type d'un modèle,
+  pas s'il sait appeler des outils. Un modèle de conversation qui ne le
+  sait pas reçoit `tools` quand même : selon le backend il les ignore, ou
+  refuse la requête — son erreur est relayée telle quelle.
+- **Tous les clients de la route.** pi, omp, Hermes… reçoivent les outils
+  aussi. L'extension `llm-proxy-web.ts` déclare les siens sous
+  `proxy_web_search` / `proxy_web_fetch` : pas d'homonymie, donc deux
+  jeux d'outils web pour ces clients tant que `always` les nomme.
+- **Injection de prompt.** Le texte de pages web entre dans toutes les
+  conversations, sans que le client l'ait demandé : voir
+  [Ce qu'aucun garde-fou n'empêche](#ce-quaucun-garde-fou-nempêche).
+
+Joué par les tests du dépôt seulement (`tests/test_chat_api.py`, backend
+simulé) ; pas encore contre un Open WebUI réel.
 
 ### Appel direct : `/v1/tools` (pi, omp)
 
@@ -1358,6 +1439,7 @@ url = "http://bigchuck:8009"
 | Clé | Défaut | Rôle |
 |---|---|---|
 | `hosted_tools` | `false` | Sur `/v1/chat/completions`, une requête qui déclare `{"type": "web_search"}` dans `tools` (ou `web_search_options`) est bouclée par le proxy. Table absente = inactif : relais brut, la déclaration part au backend. Voir [Client chat/completions](#client-chatcompletions--déclarer-loutil) |
+| `always` | `[]` | Noms des outils hébergés présentés d'office à toute requête `/v1/chat/completions`, sans déclaration (`["web_search", "web_fetch"]`). Sans effet si `hosted_tools` est faux ; un nom inconnu ou d'un outil désactivé est ignoré, avec un avertissement au démarrage. Voir [Open WebUI](#open-webui--présenter-les-outils-doffice) |
 | `annotations` | `true` | Annotations `url_citation` en fin de réponse, pour les URL rendues par un outil et écrites par le modèle |
 | `memory` | `true` | Garde l'échange caché de chaque réponse (appels hébergés et résultats) et le réinsère dans l'historique à la requête suivante. `false` = rien n'est gardé : le modèle ne retrouve que sa réponse. Nombre d'entrées et durée : `[tools].cache_entries` et `cache_ttl`. Voir [Mémoire des résultats](#mémoire-des-résultats) |
 | `memory_chars` | `8000000` | Caractères gardés par cette mémoire, toutes entrées confondues (de l'ordre de 8 à 32 Mo de RAM selon le texte) ; au-delà, les échanges les moins récemment relus sortent |
@@ -1558,6 +1640,10 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   recherche. Pas de `ping` pendant l'attente du quota du
   premier tour. `n` > 1 refusé. Pas joué contre un client réel. Voir
   [Client chat/completions](#client-chatcompletions--déclarer-loutil).
+  Avec `[chat].always`, les outils vont aussi aux requêtes de service
+  d'une interface de chat (titre, tags), que rien ne distingue, et aux
+  modèles de conversation qui ne savent pas appeler d'outils — voir
+  [Open WebUI](#open-webui--présenter-les-outils-doffice).
 - **Outils hébergés, autres surfaces.** Sur `/v1/messages`, la
   recherche et la lecture de page sont branchées, chacune pour le
   client qui déclare son outil serveur ;
@@ -1589,6 +1675,10 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   `{"type": "web_search"}` dans `tools` si `[chat].hosted_tools` — le
   proxy boucle, mais le client ne garde pas ce que le modèle a lu ; voir
   [Client chat/completions](#client-chatcompletions--déclarer-loutil).
+- Open WebUI : une connexion OpenAI sur `http://…:8000/v1`, et
+  `[chat].always` pour que le modèle ait la recherche web sans que
+  l'interface la déclare — voir
+  [Open WebUI](#open-webui--présenter-les-outils-doffice).
 - pi : un provider dans `~/.pi/agent/models.json` — `api:
   "openai-completions"` sur `http://…:8000/v1`, ou `api:
   "anthropic-messages"` sur `http://…:8000` (les deux marchent ; voir

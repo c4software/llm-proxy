@@ -159,7 +159,8 @@ class WebSearch(Tool):
 - présentable sur `/v1/chat/completions` (`[chat].hosted_tools`) : le
   client le déclare par son nom, `{"type": "<nom>"}`, dans `tools`.
   L'appel est caché du client, comme pour les autres ; ses `sources`
-  deviennent des annotations `url_citation` si le modèle les écrit.
+  deviennent des annotations `url_citation` si le modèle les écrit. Son
+  nom dans `[chat].always` le fait présenter d'office, sans déclaration.
 
 Les surfaces Responses et Anthropic, elles, l'ignorent : elles n'auraient
 rien pour rendre compte de l'appel.
@@ -170,6 +171,11 @@ rien pour rendre compte de l'appel.
    (`Hosted.for_responses`, `for_server`, `for_kind`), écarte un outil
    dont une fonction du client porte déjà le nom, puis présente au modèle
    `spec(present)` de chaque outil retenu, à la place de la déclaration.
+   Sur `/v1/chat/completions`, les outils nommés par `[chat].always` sont
+   présentés **sans déclaration**, à la suite de ceux du client
+   (`Hosted.by_name`, même règle d'homonymie) ; la liste est relue à
+   chaque requête contre les outils actifs, un outil enregistré après le
+   démarrage y entre donc dès qu'il existe.
 2. **Exécution bornée.** Quand le modèle appelle la fonction, l'appel
    n'est pas rendu au client : la boucle (`app.hosted_loop`) passe par
    `Hosted.run`, le point unique. Dans l'ordre : nom inconnu →
