@@ -27,9 +27,11 @@ Tout tient dans `proxy/llm_proxy/tools/contract.py`, réexporté par le paquet :
                                   │                    │
                                   └─ texte seul ──▶ mémoire      └─▶ une ligne de statistiques
 
-- Un outil est un **objet** : un nom, une fonction à présenter au modèle
-  (`spec`), une exécution (`run`), de quoi dire l'appel au client
-  (`summary`), et ses **liaisons** aux protocoles, en données.
+- Un outil est un **objet** : un nom, son **prompt** — ce que le modèle
+  lit pour savoir quand et comment l'appeler (`prompt`, `parameters`),
+  que la classe de base assemble en la fonction présentée (`spec`) —,
+  une exécution (`run`), de quoi dire l'appel au client (`summary`), et
+  ses **liaisons** aux protocoles, en données.
 - Il rend un **`Result`** : le texte que lit le modèle, un code d'erreur
   à côté, des sources, des faits pour l'affichage, des fichiers produits.
   C'est le seul format d'échange entre un outil et le reste du proxy.
@@ -86,14 +88,17 @@ une phrase en anglais, ponctuation comprise, sans le préfixe.
 
 ## L'outil : `Tool`
 
-Une classe de base légère ; `name`, `spec` et `run` sont à écrire, le
-reste a un défaut.
+Une classe de base légère ; `name`, `prompt` et `run` sont à écrire —
+`parameters` aussi dès que l'outil prend des arguments —, le reste a un
+défaut.
 
 | Membre | Rôle |
 |---|---|
 | `name` | Le nom de la fonction présentée au modèle, et celui de `POST /v1/tools/<nom>`. Unique dans le registre |
 | `enabled` | Actif ? `True` par défaut ; les outils du dépôt le lisent dans `[tools.<nom>].enabled` |
-| `spec(present) -> dict` | La fonction à la forme chat/completions : `{"type": "function", "function": {name, description, parameters}}`. `present` est l'ensemble des noms des outils hébergés présentés **avec lui** dans cette requête, le sien compris : une description ne renvoie qu'à ce que le modèle peut appeler (`web_search` ne dit « Use web_fetch… » que si `web_fetch` est là, et inversement) |
+| `prompt(present) -> str` | Son **[prompt](#le-prompt-dun-outil)** : le texte que le modèle lit pour savoir quand et comment l'appeler — la `description` de la fonction. En anglais. `present` est l'ensemble des noms des outils hébergés présentés **avec lui** dans cette requête, le sien compris : un prompt ne renvoie qu'à ce que le modèle peut appeler (`web_search` ne dit « Use web_fetch… » que si `web_fetch` est là, et inversement). Sans défaut : un outil qui ne l'écrit pas lève `NotImplementedError` dès qu'on le présente |
+| `parameters(present) -> dict` | Le schéma JSON de ses arguments. Ses `description` **font partie du prompt** : le modèle les lit, elles s'écrivent comme lui. Un schéma neuf à chaque appel, jamais un objet partagé. Défaut : aucun argument, `{"type": "object", "properties": {}}` |
+| `spec(present) -> dict` | La fonction à la forme chat/completions, `{"type": "function", "function": {name, description, parameters}}`, **assemblée** par la classe de base de `name`, `prompt(present)` et `parameters(present)`. C'est la seule fabrique de la définition envoyée au modèle (les trois surfaces) et listée par `GET /v1/tools`. Un outil ne l'écrit pas |
 | `async run(args, call) -> Result` | L'exécution. `args` : les arguments du modèle, un objet JSON déjà lu et **rien de validé**. `call` : voir plus bas. Rend un `Result` ou lève `ToolError` |
 | `summary(args, result=None) -> dict` | Ce que le client affiche de l'appel : un `type`, et ce qui le distingue (`{"type": "search", "query": …}`). C'est l'`action` d'un élément Responses. `result` vaut `None` pour l'appel seul — un élément rejoué dont la mémoire a perdu le résultat. Défaut : `{"type": <name>}` |
 | `timeout` | Délai (s) d'**une** exécution, propre à l'outil ; `None` (le défaut) = `[tools].run_timeout`. Il **remplace** le délai commun — plus long pour une transcription, plus court si l'outil le veut. L'exécuteur l'applique |
@@ -126,6 +131,110 @@ Ce qui ne vient **pas** du modèle — qui ne peut donc pas s'en affranchir.
   a pas : la coroutine est annulée, code `timeout`.
 - Rendre un code hors liste, ou autre chose qu'un `Result` :
   `unavailable`, avec un avertissement dans le journal.
+
+## Le prompt d'un outil
+
+Un modèle ne connaît d'un outil que ce que le proxy lui en fait **lire**.
+Le prompt est ce qu'il lit *avant* d'appeler : c'est lui qui décide si
+l'outil est appelé, quand, et avec quels arguments. C'est un membre du
+contrat, en deux parties que `spec` assemble :
+
+| Membre | Devient | Contenu |
+|---|---|---|
+| `prompt(present)` | la `description` de la fonction | Ce que l'outil fait, quand l'appeler, ce qu'il rend, ses bornes |
+| `parameters(present)` | les `parameters` de la fonction | Le schéma des arguments ; la `description` de chacun dit quoi y mettre |
+
+Un outil n'écrit rien d'autre : ni le nom de la fonction ailleurs que
+dans `name`, ni l'enveloppe `{"type": "function", …}`. Le prompt est
+calculé **à chaque requête** : il peut dépendre de `present` et des
+réglages de l'outil (`image_generation` n'annonce `image_url` que si
+`edits` est actif, `code_execution` n'annonce `files` que si
+`max_files` > 0, `transcribe` cite les formats réellement lus). Celui
+d'un outil MCP est la description et le schéma **du serveur** : un texte
+tiers, que le proxy borne et n'écrit pas.
+
+**Le relire.** `GET /v1/tools` rend, pour chaque outil actif, `name`,
+`description` et `parameters` : c'est le prompt **en vigueur**, sorti de
+la même fabrique (`spec`) que ce qui part au modèle, avec les réglages
+du déploiement. `present` y vaut *tous les outils actifs* : une phrase
+de renvoi (« Use web_fetch… ») y figure, alors qu'un modèle à qui
+`web_fetch` n'est pas présenté ne la lit pas.
+
+### Tout ce que le modèle lit
+
+Le prompt n'est pas le seul texte. La liste est complète — elle est
+aussi en tête de `contract.py` — et tout y est en anglais :
+
+| Texte | Écrit par | Où | Quand le modèle le lit |
+|---|---|---|---|
+| Le prompt (`description`) | l'outil | `Tool.prompt(present)` | À chaque requête où l'outil est présenté |
+| Les descriptions de paramètres | l'outil | `Tool.parameters(present)` | Idem : elles font partie du prompt |
+| Le texte d'un résultat | l'outil | `Result.text` | Après l'appel, et à chaque rejeu de la conversation |
+| Le texte d'une erreur | l'outil | `failure(code, message)`, `ToolError(code, message)` : `Error: <message>` | Idem |
+| Limite d'appels atteinte | l'exécuteur | `Hosted._refusal` (`tools/__init__.py`) : `Error: the limit of 8 web tool calls for one answer is reached. Answer now with what you already have.` | À la place de l'exécution |
+| Délai dépassé | l'exécuteur | `Hosted._execute` : `Error: <nom> timed out after 60 s.` | À la place du résultat |
+| Panne de l'outil | l'exécuteur | `Hosted._execute` : `Error: <nom> failed (<Exception>).` | Idem |
+| Arguments illisibles, outil inconnu | l'exécuteur | `Hosted._execute` : `Error: the tool arguments are not a JSON object.` ; `Hosted.run` : `Error: unknown tool <nom>.` | Idem |
+| Troncature | l'exécuteur | `Hosted._execute` : le texte coupé à `[tools].max_result_chars`, suivi de `[truncated]` | À la fin d'un résultat trop long |
+| Résultat expiré de la mémoire | l'exécuteur | `EXPIRED` (`tools/__init__.py`) : `[result no longer available: the proxy was restarted or the entry expired; run the tool again if you still need it]` | Au rejeu d'un appel dont la mémoire a perdu le résultat |
+
+Les textes de l'exécuteur sont écrits **au nom de l'outil**, pas par lui :
+ils sont les mêmes pour tous, et un outil n'y met que son `name` et sa
+`family`. Le nom de la fonction et les noms des paramètres sont lus
+aussi ; ce sont des identifiants, pas de la prose — les choisir parlants.
+
+### L'écrire
+
+Ces règles sont tirées des prompts du dépôt, et de ce qu'on a vu des
+modèles en faire.
+
+- **En anglais**, comme tout ce que le modèle lit.
+- **Dire ce que l'outil fait et quand l'appeler**, dès la première
+  phrase : « Search the web. », « Read the text of an image […] or of a
+  scanned PDF, given its URL ». Puis ce qu'il **rend** (« Returns a
+  numbered list of results (title, date, URL, snippet) ») et ce qu'il
+  **ne fait pas** (« The text has no timestamps and no speaker names »,
+  « There is NO network »).
+- **Ne renvoyer à un autre outil que s'il est dans `present`.** « Use
+  web_fetch to read a result page » n'est écrit que si `web_fetch` est
+  présenté dans la même requête ; sinon le modèle appelle une fonction
+  qui n'existe pas. Même raison pour laquelle un **texte d'erreur** ne
+  nomme pas d'autre outil : `run` ne sait pas ce qui est présenté, et le
+  texte, mémorisé, sera relu à un tour où l'outil nommé peut ne plus
+  l'être.
+- **Dire ce qui est remis à l'utilisateur sans que le modèle ait à
+  l'écrire.** « The image is delivered to the user automatically, with
+  your answer […] you must not write a link or a markdown image for
+  it » ; « never write a link or a path to a delivered file ». Sans
+  cela le modèle invente un lien, ou recopie un chemin du bac.
+- **Être impératif là où un modèle se trompe.** Une possibilité se lit
+  comme une option. Vécu le 07/10/2026 : `code_execution` disait « list
+  it in `files` » ; un modèle a quand même téléchargé le fichier depuis
+  le bac (échec : pas de réseau), puis l'a lu par `web_fetch` pour le
+  recopier dans son programme. Le prompt dit maintenant « you MUST list
+  its URL in `files` » et « Never download it in the program, and never
+  paste its content into the code ». Les capitales se gardent pour ces
+  endroits-là : partout, elles ne disent plus rien.
+- **Chiffrer les bornes et les délais**, depuis la configuration, pas en
+  dur : « A program is killed after 30 s », « 2 at most in one answer »,
+  « up to 25 MB », « A PDF is read 4 pages at a time », « Up to 8,
+  20.0 MB each ». Un modèle qui les connaît ne les découvre pas par une
+  erreur — qui coûte un des appels de la réponse.
+- **Dire comment continuer** quand le résultat est borné : « pass
+  `offset` to continue from a given character position », « pass `pages`
+  to read the following ones ».
+- **Ne rien annoncer qui ne soit vrai ici** : un paramètre désactivé
+  n'est pas décrit, un format non lu n'est pas cité.
+- **Compter les tokens.** Le prompt part à **chaque** requête où l'outil
+  est présenté, à chaque tour de la boucle, que l'outil serve ou non.
+  Les six outils du déploiement pèsent environ 6 200 caractères de JSON
+  — à peu près 1 400 tokens par requête. Une phrase s'y ajoute quand un
+  modèle s'est trompé sans elle, pas avant. (Le prompt ne change pas
+  d'une requête à l'autre tant que `present` et les réglages sont les
+  mêmes : il reste dans le préfixe que le cache d'un backend garde.)
+- **Le changer, c'est changer un comportement** : les tests de chaque
+  outil tiennent les phrases qui comptent (`"NO network" in …`), et
+  `GET /v1/tools` montre le résultat sur un déploiement.
 
 ## Codes d'erreur
 
@@ -198,7 +307,9 @@ rien pour rendre compte de l'appel.
 1. **Présentation.** La surface reconnaît ce que le client déclare
    (`Hosted.for_responses`, `for_server`, `for_kind`), écarte un outil
    dont une fonction du client porte déjà le nom, puis présente au modèle
-   `spec(present)` de chaque outil retenu, à la place de la déclaration.
+   `spec(present)` de chaque outil retenu, à la place de la déclaration :
+   son nom, son [prompt](#le-prompt-dun-outil) et le schéma de ses
+   arguments, où `present` est l'ensemble des outils retenus.
    Sur `/v1/chat/completions`, les outils nommés par `[chat].always` sont
    présentés **sans déclaration**, à la suite de ceux du client
    (`Hosted.by_name`, même règle d'homonymie), sauf à un modèle de
@@ -237,6 +348,10 @@ rien pour rendre compte de l'appel.
     GET  /v1/tools          → {"object": "list", "data": [{name, description, parameters}]}
     POST /v1/tools/<nom>    → corps : les arguments, en objet JSON
 
+La liste est le [prompt en vigueur](#le-prompt-dun-outil) de chaque outil
+actif : `description` = `prompt(present)`, `parameters` =
+`parameters(present)`, `present` = tous les outils actifs.
+
 ```json
 {
   "name": "web_fetch",
@@ -269,19 +384,19 @@ from llm_proxy import tools
 
 class Echo(tools.Tool):
     """L'outil MINIMAL du contrat — celui de docs/outils.md, « Écrire un
-    outil » : un nom, une fonction présentée au modèle, une exécution.
-    Sans liaison de protocole."""
+    outil » : un nom, un prompt, le schéma de ses arguments, une
+    exécution. Sans liaison de protocole."""
     name = "echo"
 
-    def spec(self, present):
-        return {"type": "function", "function": {
-            "name": self.name,
-            "description": "Return the given text, unchanged.",
-            "parameters": {
-                "type": "object",
-                "properties": {"text": {"type": "string",
-                                        "description": "The text to return."}},
-                "required": ["text"]}}}
+    def prompt(self, present):
+        return "Return the given text, unchanged."
+
+    def parameters(self, present):
+        return {
+            "type": "object",
+            "properties": {"text": {"type": "string",
+                                    "description": "The text to return."}},
+            "required": ["text"]}
 
     async def run(self, args, call):
         text = args.get("text")
@@ -295,7 +410,7 @@ tools.register(Echo())
 
 Une fois enregistré, sans une ligne de plus ailleurs :
 
-    GET  /v1/tools                      → le liste, avec sa description et son schéma
+    GET  /v1/tools                      → le liste, avec son prompt et son schéma
     POST /v1/tools/echo {"text": "é"}   → {"name": "echo", "result": "é", "is_error": false,
                                            "error": null, "sources": [], "meta": {"chars": 1},
                                            "files": []}
@@ -323,6 +438,9 @@ enregistré, et c'est son `enabled` qui le dit.
 
 Ce qu'il faut tenir :
 
+- **Le prompt décide de l'usage.** Un outil juste dont le prompt est
+  vague n'est pas appelé, ou mal : voir
+  [Le prompt d'un outil](#le-prompt-dun-outil), « L'écrire ».
 - **Tout ce que le modèle doit savoir est dans `text`.** `sources` et
   `meta` ne lui parviennent pas et ne sont pas gardés.
 - **`args` vient du modèle** : types faux, champs en trop, URL hostiles.
@@ -428,7 +546,7 @@ dans une image est du contenu non fiable, comme une page web.
 **Présentation.** `POST /v1/tools/ocr` ; sur `/v1/chat/completions`,
 `{"type": "ocr"}` dans `tools` ou `[chat].always`. Pas de liaison
 Responses ni Anthropic. Présenté avec `web_fetch`, chacun renvoie à
-l'autre par `spec(present)` : `ocr` dit « when web_fetch reports an
+l'autre par `prompt(present)` : `ocr` dit « when web_fetch reports an
 image, or a PDF with no extractable text », `web_fetch` dit « For an
 image, or a PDF with no extractable text (a scan), use ocr with the same
 URL ». Les textes d'**erreur** de `web_fetch`, eux, ne nomment pas `ocr` :

@@ -45,7 +45,7 @@ ACCEPT = ("text/html,application/xhtml+xml,application/json,"
 NAME = "web_fetch"
 
 # La description renvoie le modèle à `web_search` : vrai seulement là où
-# `web_search` lui est présenté aussi (`present` de spec) — un client
+# `web_search` lui est présenté aussi (`present` de prompt) — un client
 # Anthropic qui ne déclare que la lecture la reçoit sans cette phrase.
 _SEARCH = "web_search"
 _SEARCH_HINT = f"Use it to read a page found with {_SEARCH}. "
@@ -180,29 +180,28 @@ class WebFetch(Tool):
     def enabled(self) -> bool:
         return ENABLED
 
-    def spec(self, present) -> dict:
-        return {"type": "function", "function": {
-            "name": NAME,
-            "description": (
-                "Fetch a web page by URL and return its content as text (HTML is "
-                "converted to plain text; JSON and text are returned as is; the "
-                "text of a PDF is extracted). "
-                + (_SEARCH_HINT if _SEARCH in present else "")
-                + (_OCR_HINT if _OCR in present else "")
-                + "Long pages are truncated: "
-                "pass `offset` to continue from a given character position."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string",
-                            "description": "The http(s) URL to fetch."},
-                    "offset": {"type": "integer",
-                               "description": "Character position to start from, "
-                                              "to continue a truncated page."},
-                },
-                "required": ["url"],
+    def prompt(self, present) -> str:
+        return (
+            "Fetch a web page by URL and return its content as text (HTML is "
+            "converted to plain text; JSON and text are returned as is; the "
+            "text of a PDF is extracted). "
+            + (_SEARCH_HINT if _SEARCH in present else "")
+            + (_OCR_HINT if _OCR in present else "")
+            + "Long pages are truncated: "
+            "pass `offset` to continue from a given character position.")
+
+    def parameters(self, present) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string",
+                        "description": "The http(s) URL to fetch."},
+                "offset": {"type": "integer",
+                           "description": "Character position to start from, "
+                                          "to continue a truncated page."},
             },
-        }}
+            "required": ["url"],
+        }
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         """Une page longue est lue en plusieurs morceaux (`offset`) : sans

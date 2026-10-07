@@ -44,7 +44,7 @@ SNIPPET_CHARS = 240
 NAME = "web_search"
 
 # La description dit au modèle de lire une page par `web_fetch` : vrai
-# seulement là où `web_fetch` lui est présenté aussi (`present` de spec).
+# seulement là où `web_fetch` lui est présenté aussi (`present` de prompt).
 # Un client Anthropic qui ne déclare que la recherche (Claude Code, qui
 # lit les pages sur le poste du client) reçoit la description sans cette
 # phrase, pour que le modèle n'appelle pas une fonction qui n'existe pas.
@@ -133,30 +133,29 @@ class WebSearch(Tool):
     def enabled(self) -> bool:
         return ENABLED
 
-    def spec(self, present) -> dict:
-        return {"type": "function", "function": {
-            "name": NAME,
-            "description": (
-                "Search the web. Returns a numbered list of results (title, date, "
-                "URL, snippet). The query accepts the usual operators: site:, "
-                "-site:, \"exact phrase\", -term, OR. "
-                + (_FETCH_HINT if _FETCH in present else "")
-                + "Prefer primary sources and cite the URLs you rely on."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "The search query."},
-                    "recency": {"type": "string",
-                                "enum": ["day", "week", "month", "year"],
-                                "description": "Only results from the last day, "
-                                               "week, month or year."},
-                    "limit": {"type": "integer",
-                              "description": f"Maximum number of results "
-                                             f"(default {LIMIT}, at most {MAX_LIMIT})."},
-                },
-                "required": ["query"],
+    def prompt(self, present) -> str:
+        return (
+            "Search the web. Returns a numbered list of results (title, date, "
+            "URL, snippet). The query accepts the usual operators: site:, "
+            "-site:, \"exact phrase\", -term, OR. "
+            + (_FETCH_HINT if _FETCH in present else "")
+            + "Prefer primary sources and cite the URLs you rely on.")
+
+    def parameters(self, present) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The search query."},
+                "recency": {"type": "string",
+                            "enum": ["day", "week", "month", "year"],
+                            "description": "Only results from the last day, "
+                                           "week, month or year."},
+                "limit": {"type": "integer",
+                          "description": f"Maximum number of results "
+                                         f"(default {LIMIT}, at most {MAX_LIMIT})."},
             },
-        }}
+            "required": ["query"],
+        }
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         return {"type": "search", "query": str(args.get("query") or "")}

@@ -11,8 +11,16 @@ Un outil = un OBJET qui tient le contrat de contract.py (docs/outils.md
 le décrit membre par membre, avec un exemple complet) :
   name                    le nom de la fonction présentée au modèle
   enabled                 actif ? ([tools.<nom>].enabled pour ceux d'ici)
-  spec(present) → dict    la fonction, à la forme chat/completions ;
-                          `present` : les outils présentés avec lui
+  prompt(present) → str   son PROMPT : ce que le modèle lit pour savoir
+                          quand et comment l'appeler (la `description`
+                          de la fonction) ; `present` : les outils
+                          présentés avec lui
+  parameters(present) → dict
+                          le schéma JSON de ses arguments, dont les
+                          descriptions font partie du prompt
+  spec(present) → dict    la fonction, à la forme chat/completions :
+                          assemblée des trois par la classe de base,
+                          aucun outil ne l'écrit
   async run(args, call) → Result
                           l'exécution. `call` (Call) porte ce qui ne
                           vient pas du modèle : réglages du client, route,

@@ -5,6 +5,28 @@ surfaces, /v1/tools, les statistiques) ne connaît d'un outil que ce qui
 est écrit ici — décrit membre par membre dans docs/outils.md.
 
 Ce module n'importe rien du paquet : un outil l'importe sans cycle.
+
+CE QU'UN OUTIL FAIT LIRE AU MODÈLE — tout, et rien d'autre. Toujours en
+anglais :
+  le prompt                    `Tool.prompt(present)` : la `description`
+                               de la fonction, lue à CHAQUE requête où
+                               l'outil est présenté ;
+  les descriptions de          dans `Tool.parameters(present)`, le schéma
+  paramètres                   des arguments : elles font partie du
+                               prompt, au même titre ;
+  le texte d'un résultat       `Result.text` ;
+  le texte d'une erreur        `failure(code, message)`, ou ToolError :
+                               «Error: <message>» ;
+  les textes de l'exécuteur    écrits AU NOM de l'outil par tools/
+                               __init__.py, pas par lui : limite d'appels
+                               atteinte (Hosted._refusal), délai dépassé,
+                               panne, arguments illisibles et troncature
+                               «[truncated]» (Hosted._execute), outil
+                               inconnu (Hosted.run), résultat expiré de
+                               la mémoire (EXPIRED).
+Le nom de la fonction (`Tool.name`) et les noms des paramètres sont lus
+aussi : ce sont des identifiants, pas de la prose. Ce qui est EN VIGUEUR
+se relit par GET /v1/tools.
 """
 
 from dataclasses import dataclass, field
@@ -142,8 +164,9 @@ class Anthropic:
 
 
 class Tool:
-    """Un outil hébergé. Une classe de base légère : `name`, `spec` et
-    `run` sont à écrire, le reste a un défaut."""
+    """Un outil hébergé. Une classe de base légère : `name`, `prompt` et
+    `run` sont à écrire — `parameters` aussi dès que l'outil prend des
+    arguments —, le reste a un défaut."""
 
     # Le nom de la fonction présentée au modèle, et celui de /v1/tools.
     name = ""
@@ -168,13 +191,31 @@ class Tool:
         chat/completions : ceux de sa liaison Responses, ou son nom."""
         return self.responses.kinds if self.responses else (self.name,)
 
+    def prompt(self, present) -> str:
+        """Le PROMPT de l'outil : le texte que le modèle lit pour savoir
+        quand et comment l'appeler — la `description` de sa fonction.
+        En anglais. `present` : les noms des outils hébergés présentés
+        AVEC lui dans cette requête, le sien compris — un prompt ne
+        renvoie qu'à ce que le modèle peut appeler."""
+        raise NotImplementedError(
+            f"{type(self).__name__}.prompt : un outil écrit son prompt")
+
+    def parameters(self, present) -> dict:
+        """Le schéma JSON des arguments. Ses `description` font partie du
+        prompt : le modèle les lit, elles s'écrivent comme lui. `present` :
+        comme pour prompt. Rend un schéma à lui, jamais un objet partagé :
+        les surfaces l'envoient tel quel. Défaut : aucun argument."""
+        return {"type": "object", "properties": {}}
+
     def spec(self, present) -> dict:
-        """La fonction présentée au modèle, à la forme chat/completions
-        (`{"type": "function", "function": {name, description,
-        parameters}}`). `present` : les noms des outils hébergés
-        présentés AVEC lui dans cette requête, le sien compris — une
-        description ne renvoie qu'à ce que le modèle peut appeler."""
-        raise NotImplementedError
+        """La fonction présentée au modèle, à la forme chat/completions,
+        ASSEMBLÉE de `name`, `prompt` et `parameters` — la seule fabrique
+        de la définition envoyée au modèle (les trois surfaces) et listée
+        par /v1/tools. Un outil ne la réécrit pas."""
+        return {"type": "function", "function": {
+            "name": self.name,
+            "description": self.prompt(present),
+            "parameters": self.parameters(present)}}
 
     async def run(self, args: dict, call: Call) -> Result:
         """L'exécution. `args` : les arguments du modèle, un objet JSON

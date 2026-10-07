@@ -518,35 +518,34 @@ class Transcribe(Tool):
         a une, puis la transcription."""
         return DOWNLOAD_TIMEOUT + TIMEOUT + (CONVERT_TIMEOUT if FFMPEG else 0)
 
-    def spec(self, present) -> dict:
-        return {"type": "function", "function": {
-            "name": NAME,
-            "description": (
-                "Transcribe the speech of an audio file, given its URL, and "
-                "return the text (" + ", ".join(_offered()) + f"; up to "
-                f"{MAX_BYTES // 1_000_000} MB). The text has no timestamps "
-                "and no speaker names. Long transcripts are truncated: pass "
-                "`offset` to continue from a given character position (the "
-                "audio is not transcribed again)."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string",
-                            "description": "The http(s) URL of the audio "
-                                           "file."},
-                    "language": {"type": "string",
-                                 "description": "Language spoken, as an "
-                                                "ISO 639-1 code (`en`, `fr`). "
-                                                "Omit it to let the model "
-                                                "detect it."},
-                    "offset": {"type": "integer",
-                               "description": "Character position to start "
-                                              "from, to continue a truncated "
-                                              "transcript."},
-                },
-                "required": ["url"],
+    def prompt(self, present) -> str:
+        return (
+            "Transcribe the speech of an audio file, given its URL, and "
+            "return the text (" + ", ".join(_offered()) + f"; up to "
+            f"{MAX_BYTES // 1_000_000} MB). The text has no timestamps "
+            "and no speaker names. Long transcripts are truncated: pass "
+            "`offset` to continue from a given character position (the "
+            "audio is not transcribed again).")
+
+    def parameters(self, present) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string",
+                        "description": "The http(s) URL of the audio "
+                                       "file."},
+                "language": {"type": "string",
+                             "description": "Language spoken, as an "
+                                            "ISO 639-1 code (`en`, `fr`). "
+                                            "Omit it to let the model "
+                                            "detect it."},
+                "offset": {"type": "integer",
+                           "description": "Character position to start "
+                                          "from, to continue a truncated "
+                                          "transcript."},
             },
-        }}
+            "required": ["url"],
+        }
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         """L'URL, suivie de la plage rendue quand la transcription est lue

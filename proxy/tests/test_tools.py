@@ -1331,7 +1331,21 @@ def test_contrat_outil_minimal_sans_liaison(proxy, monkeypatch):
     proxy.hosted = h = type(proxy.hosted)(tools.enabled(), tools.Memory(4, 60))
     monkeypatch.setattr(chat_api, "ENABLED", True)
     monkeypatch.setattr(chat_api, "MEMORY", chat_api.Memory(8, 60, 100_000))
+    # La fonction présentée est l'ASSEMBLAGE du nom, du prompt et du
+    # schéma — par la classe de base, qu'aucun outil du dépôt ne réécrit.
     spec = echo.spec({"echo"})
+    assert spec == {"type": "function", "function": {
+        "name": "echo", "description": echo.prompt({"echo"}),
+        "parameters": echo.parameters({"echo"})}}
+    assert list(spec["function"]) == ["name", "description", "parameters"]
+    assert spec["function"]["description"] == \
+        "Return the given text, unchanged."
+    from llm_proxy.tools import (code_execution, image_generation, mcp, ocr,
+                                 transcribe)
+    for cls in (Echo, web_search.WebSearch, web_fetch.WebFetch, ocr.Ocr,
+                transcribe.Transcribe, code_execution.CodeExecution,
+                image_generation.ImageGeneration, mcp.McpTool):
+        assert cls.spec is tools.Tool.spec and "prompt" in vars(cls), cls
     # L'exemple de la documentation EST cet outil, à la lettre.
     with open(os.path.join(conftest.ROOT, "docs", "outils.md"),
               encoding="utf-8") as f:
@@ -1376,6 +1390,34 @@ def test_contrat_outil_minimal_sans_liaison(proxy, monkeypatch):
     assert not ctx.hosted and ctx.ignored == ["echo"]
     assert not anthropic_api.Context({"tools": [
         {"type": "echo_20260101", "name": "echo"}]}, h).hosted
+
+
+def test_contrat_prompt_membre_de_l_outil():
+    """Le prompt est un membre du contrat : un outil qui ne l'écrit pas
+    ne peut pas être présenté, et l'erreur le nomme. Le schéma des
+    arguments, lui, a un défaut — aucun argument —, rendu neuf à chaque
+    fois : les surfaces l'envoient tel quel."""
+    class Muet(tools.Tool):
+        name = "muet"
+
+    muet = Muet()
+    for presente in (muet.prompt, muet.spec):
+        with pytest.raises(NotImplementedError, match=r"Muet\.prompt"):
+            presente({"muet"})
+    assert muet.parameters({"muet"}) == {"type": "object", "properties": {}}
+    assert muet.parameters(()) is not muet.parameters(())
+
+    class Dit(Muet):
+        def prompt(self, present):
+            return "Say it." + (" Then echo." if "echo" in present else "")
+
+    # `present` va au prompt comme au schéma ; rien d'autre n'entre dans
+    # la fonction.
+    assert Dit().spec({"muet"}) == {"type": "function", "function": {
+        "name": "muet", "description": "Say it.",
+        "parameters": {"type": "object", "properties": {}}}}
+    assert Dit().spec({"muet", "echo"})["function"]["description"] == \
+        "Say it. Then echo."
 
 
 def test_contrat_tout_echec_est_un_result_avec_son_code(monkeypatch):

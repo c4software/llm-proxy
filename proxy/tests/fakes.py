@@ -117,19 +117,19 @@ def failed(code: str, text: str) -> tools.Result:
 
 class Echo(tools.Tool):
     """L'outil MINIMAL du contrat — celui de docs/outils.md, « Écrire un
-    outil » : un nom, une fonction présentée au modèle, une exécution.
-    Sans liaison de protocole."""
+    outil » : un nom, un prompt, le schéma de ses arguments, une
+    exécution. Sans liaison de protocole."""
     name = "echo"
 
-    def spec(self, present):
-        return {"type": "function", "function": {
-            "name": self.name,
-            "description": "Return the given text, unchanged.",
-            "parameters": {
-                "type": "object",
-                "properties": {"text": {"type": "string",
-                                        "description": "The text to return."}},
-                "required": ["text"]}}}
+    def prompt(self, present):
+        return "Return the given text, unchanged."
+
+    def parameters(self, present):
+        return {
+            "type": "object",
+            "properties": {"text": {"type": "string",
+                                    "description": "The text to return."}},
+            "required": ["text"]}
 
     async def run(self, args, call):
         text = args.get("text")
@@ -145,8 +145,8 @@ def outil(name="echo", run=None, responses=None):
         return "reçu " + json.dumps(args, sort_keys=True)
 
     class Outil(tools.Tool):
-        def spec(self, present):
-            return {"type": "function", "function": {"name": self.name}}
+        def prompt(self, present):
+            return ""
 
         async def run(self, args, call):
             return tools.Result(await (run or defaut)(args))

@@ -1804,7 +1804,11 @@ async def root():
 @app.get("/v1/tools")
 async def tools_list():
     """Les outils hébergés actifs, à la forme d'une déclaration de
-    fonction : de quoi les présenter tels quels à un modèle."""
+    fonction : de quoi les présenter tels quels à un modèle. C'est aussi
+    là que se relit le PROMPT en vigueur de chacun (Tool.prompt,
+    Tool.parameters), par la même fabrique que les surfaces (Tool.spec) :
+    ce qu'un modèle lirait si tous les outils actifs lui étaient
+    présentés ensemble."""
     active = tools.enabled()
     present = frozenset(t.name for t in active)
     return {"object": "list", "data": [

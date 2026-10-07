@@ -348,12 +348,15 @@ class McpTool(Tool):
     def define(self, description: str, schema: dict, params: tuple) -> None:
         self.description, self.schema, self.params = description, schema, params
 
-    def spec(self, present) -> dict:
-        return {"type": "function", "function": {
-            "name": self.name,
-            "description": self.description,
-            "parameters": copy.deepcopy(self.schema),
-        }}
+    def prompt(self, present) -> str:
+        """La description du SERVEUR, bornée (`description_chars`) : un
+        texte tiers, que le proxy n'écrit pas."""
+        return self.description
+
+    def parameters(self, present) -> dict:
+        """Le schéma du serveur — une copie : la définition vit autant
+        que le proxy."""
+        return copy.deepcopy(self.schema)
 
     def _headers(self, args: dict) -> dict:
         """Les `Mcp-Param-<nom>` de cet appel : la valeur lue au chemin

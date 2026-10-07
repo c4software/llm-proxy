@@ -110,7 +110,7 @@ MAX_RAW = 64_000_000
 NAME = "ocr"
 
 # La description renvoie le modèle depuis `web_fetch` : vrai seulement là
-# où `web_fetch` lui est présenté aussi (`present` de spec).
+# où `web_fetch` lui est présenté aussi (`present` de prompt).
 _FETCH = "web_fetch"
 _FETCH_HINT = (f"Use it when {_FETCH} reports an image, or a PDF with no "
                f"extractable text (a scan): pass the same URL. ")
@@ -521,31 +521,30 @@ class Ocr(Tool):
         ce qu'il a lu quand il est épuisé, plus de quoi le rendre."""
         return TIMEOUT + GRACE
 
-    def spec(self, present) -> dict:
-        return {"type": "function", "function": {
-            "name": NAME,
-            "description": (
-                "Read the text of an image (PNG, JPEG, GIF, WebP) or of a "
-                "scanned PDF, given its URL, and return it as plain text "
-                "(OCR). "
-                + (_FETCH_HINT if _FETCH in present else "")
-                + f"A PDF is read {MAX_PAGES} pages at a time: pass `pages` "
-                "to read the following ones."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string",
-                            "description": "The http(s) URL of the image or "
-                                           "PDF file."},
-                    "pages": {"type": "string",
-                              "description": "PDF only: the pages to read, "
-                                             "such as \"3\", \"1-3\" or "
-                                             "\"2,5-7\" (default: the first "
-                                             "ones)."},
-                },
-                "required": ["url"],
+    def prompt(self, present) -> str:
+        return (
+            "Read the text of an image (PNG, JPEG, GIF, WebP) or of a "
+            "scanned PDF, given its URL, and return it as plain text "
+            "(OCR). "
+            + (_FETCH_HINT if _FETCH in present else "")
+            + f"A PDF is read {MAX_PAGES} pages at a time: pass `pages` "
+            "to read the following ones.")
+
+    def parameters(self, present) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string",
+                        "description": "The http(s) URL of the image or "
+                                       "PDF file."},
+                "pages": {"type": "string",
+                          "description": "PDF only: the pages to read, "
+                                         "such as \"3\", \"1-3\" or "
+                                         "\"2,5-7\" (default: the first "
+                                         "ones)."},
             },
-        }}
+            "required": ["url"],
+        }
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         """L'URL, suivie des pages réellement lues d'un PDF — « <url>

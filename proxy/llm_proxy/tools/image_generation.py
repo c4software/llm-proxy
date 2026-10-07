@@ -329,7 +329,19 @@ class ImageGeneration(Tool):
     def max_calls(self) -> int:
         return MAX_CALLS
 
-    def spec(self, present) -> dict:
+    def prompt(self, present) -> str:
+        return (
+            "Generate an image from a text description"
+            + (", or edit an existing image given by its URL" if EDITS
+               else "") + ". The image is delivered to the user "
+            "automatically, with your answer: you only get a short "
+            "confirmation, you cannot see the image, and you must not "
+            "write a link or a markdown image for it. Write a complete, "
+            "self-contained prompt. Generation is slow (it can take a "
+            "minute or more): call it once per image the user asked "
+            f"for, {MAX_CALLS} at most in one answer.")
+
+    def parameters(self, present) -> dict:
         properties = {
             "prompt": {
                 "type": "string",
@@ -346,21 +358,8 @@ class ImageGeneration(Tool):
                 "description": "To EDIT an existing image instead of "
                                "creating one: its public http(s) URL. "
                                "`prompt` then describes the change."}
-        return {"type": "function", "function": {
-            "name": NAME,
-            "description": (
-                "Generate an image from a text description"
-                + (", or edit an existing image given by its URL" if EDITS
-                   else "") + ". The image is delivered to the user "
-                "automatically, with your answer: you only get a short "
-                "confirmation, you cannot see the image, and you must not "
-                "write a link or a markdown image for it. Write a complete, "
-                "self-contained prompt. Generation is slow (it can take a "
-                "minute or more): call it once per image the user asked "
-                f"for, {MAX_CALLS} at most in one answer."),
-            "parameters": {"type": "object", "properties": properties,
-                           "required": ["prompt"]},
-        }}
+        return {"type": "object", "properties": properties,
+                "required": ["prompt"]}
 
     async def run(self, args: dict, call: Call, transport=None) -> Result:
         """`transport` : celui des TÉLÉCHARGEMENTS gardés (tests). Les

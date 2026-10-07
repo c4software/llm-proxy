@@ -110,7 +110,7 @@ NAME = "code_execution"
 
 # La description renvoie le modèle à `web_fetch` et à `ocr` pour ce qui
 # n'est qu'à LIRE : vrai seulement là où ils lui sont présentés aussi
-# (`present` de spec).
+# (`present` de prompt).
 _READERS = ("web_fetch", "ocr")
 
 # Ce que le modèle écrit → le langage de l'exécuteur (sandbox.LANGS).
@@ -389,94 +389,93 @@ class CodeExecution(Tool):
     def max_calls(self) -> int:
         return MAX_CALLS
 
-    def spec(self, present) -> dict:
+    def prompt(self, present) -> str:
         readers = [name for name in _READERS if name in present]
-        return {"type": "function", "function": {
-            "name": NAME,
-            "description": (
-                "Run a program in a private sandbox and get back its exit "
-                "code and its output (stdout and stderr). Use it to compute, "
-                "analyse data, or produce a file (a chart, a spreadsheet, a "
-                "document) instead of guessing a result. "
-                "Python 3 comes with numpy, pandas, scipy, sympy, "
-                "scikit-learn, networkx, matplotlib, seaborn, pillow, "
-                "openpyxl, python-docx, pypdf, reportlab; bash has the usual "
-                "tools, jq and sqlite3; Node.js has its standard library "
-                "only. C, C++ (gcc, g++), Go and Rust programs are given as "
-                "one source file, compiled, then run, all within the time "
-                "limit — with their standard library only: no Go module, no "
-                "Rust crate, no other package. There is NO network: a "
-                "program cannot download anything (requests, urllib, curl "
-                "and wget all fail) and nothing can be installed. "
-                + ((
-                    # Dit en ordre, pas en possibilité : joué le 07/10/2026,
-                    # un modèle à qui l'on disait seulement « list it in
-                    # `files` » a d'abord téléchargé depuis le bac (échec),
-                    # puis lu le fichier par web_fetch pour le recopier dans
-                    # son programme.
-                    "To work on a file that is at a URL (a CSV, a "
-                    "spreadsheet, a PDF, an image, an archive), you MUST "
-                    "list its URL in `files`: it is downloaded for you and "
-                    "is in the working directory, under its file name, when "
-                    "the program starts. Never download it in the program, "
-                    "and never paste its content into the code. It stays "
-                    "there for the later calls of the conversation: do not "
-                    "list it again. "
-                    + (f"To only READ a page or a document, use "
-                       f"{' or '.join(readers)} instead. " if readers else "")
-                ) if MAX_FILES > 0 else "") +
-                "Each call is a new process: variables and imports are not "
-                "kept, but the files of the working directory and of /tmp "
-                "are kept between the calls of a conversation. Print what "
-                "you want to read. Every file the program creates or changes "
-                "in the working directory is delivered to the user "
-                "automatically, with your answer: write there only what the "
-                "user should get (save a chart with matplotlib's savefig), "
-                "keep intermediate files in /tmp, and never write a link or "
-                "a path to a delivered file. "
-                f"A program is killed after {int(TIMEOUT)} s."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "language": {
-                        "type": "string",
-                        "enum": list(OFFERED),
-                        "description": "The language of `code`. For a "
-                                       "compiled language, `code` is the "
-                                       "whole source file, with its main."},
-                    "code": {
-                        "type": "string",
-                        "description": "The complete program to run. It "
-                                       "has no network access."},
-                    **({"files": {
-                        "type": "array",
-                        "description": (
-                            f"The files the program needs, by URL: they "
-                            f"are downloaded into the working directory "
-                            f"before the program runs. Up to "
-                            f"{MAX_FILES}, {_size(MAX_FILE_BYTES)} each."),
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "url": {
-                                    "type": "string",
-                                    "description": "The http(s) URL of the "
-                                                   "file."},
-                                "name": {
-                                    "type": "string",
-                                    "description": (
-                                        "The file name to give it, e.g. "
-                                        "data.csv. Default: the last "
-                                        "segment of the URL. Give one when "
-                                        "the URL does not end with a file "
-                                        "name.")},
-                            },
-                            "required": ["url"],
-                        }}} if MAX_FILES > 0 else {}),
-                },
-                "required": ["language", "code"],
+        return (
+            "Run a program in a private sandbox and get back its exit "
+            "code and its output (stdout and stderr). Use it to compute, "
+            "analyse data, or produce a file (a chart, a spreadsheet, a "
+            "document) instead of guessing a result. "
+            "Python 3 comes with numpy, pandas, scipy, sympy, "
+            "scikit-learn, networkx, matplotlib, seaborn, pillow, "
+            "openpyxl, python-docx, pypdf, reportlab; bash has the usual "
+            "tools, jq and sqlite3; Node.js has its standard library "
+            "only. C, C++ (gcc, g++), Go and Rust programs are given as "
+            "one source file, compiled, then run, all within the time "
+            "limit — with their standard library only: no Go module, no "
+            "Rust crate, no other package. There is NO network: a "
+            "program cannot download anything (requests, urllib, curl "
+            "and wget all fail) and nothing can be installed. "
+            + ((
+                # Dit en ordre, pas en possibilité : joué le 07/10/2026,
+                # un modèle à qui l'on disait seulement « list it in
+                # `files` » a d'abord téléchargé depuis le bac (échec),
+                # puis lu le fichier par web_fetch pour le recopier dans
+                # son programme.
+                "To work on a file that is at a URL (a CSV, a "
+                "spreadsheet, a PDF, an image, an archive), you MUST "
+                "list its URL in `files`: it is downloaded for you and "
+                "is in the working directory, under its file name, when "
+                "the program starts. Never download it in the program, "
+                "and never paste its content into the code. It stays "
+                "there for the later calls of the conversation: do not "
+                "list it again. "
+                + (f"To only READ a page or a document, use "
+                   f"{' or '.join(readers)} instead. " if readers else "")
+            ) if MAX_FILES > 0 else "") +
+            "Each call is a new process: variables and imports are not "
+            "kept, but the files of the working directory and of /tmp "
+            "are kept between the calls of a conversation. Print what "
+            "you want to read. Every file the program creates or changes "
+            "in the working directory is delivered to the user "
+            "automatically, with your answer: write there only what the "
+            "user should get (save a chart with matplotlib's savefig), "
+            "keep intermediate files in /tmp, and never write a link or "
+            "a path to a delivered file. "
+            f"A program is killed after {int(TIMEOUT)} s.")
+
+    def parameters(self, present) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "language": {
+                    "type": "string",
+                    "enum": list(OFFERED),
+                    "description": "The language of `code`. For a "
+                                   "compiled language, `code` is the "
+                                   "whole source file, with its main."},
+                "code": {
+                    "type": "string",
+                    "description": "The complete program to run. It "
+                                   "has no network access."},
+                **({"files": {
+                    "type": "array",
+                    "description": (
+                        f"The files the program needs, by URL: they "
+                        f"are downloaded into the working directory "
+                        f"before the program runs. Up to "
+                        f"{MAX_FILES}, {_size(MAX_FILE_BYTES)} each."),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "The http(s) URL of the "
+                                               "file."},
+                            "name": {
+                                "type": "string",
+                                "description": (
+                                    "The file name to give it, e.g. "
+                                    "data.csv. Default: the last "
+                                    "segment of the URL. Give one when "
+                                    "the URL does not end with a file "
+                                    "name.")},
+                        },
+                        "required": ["url"],
+                    }}} if MAX_FILES > 0 else {}),
             },
-        }}
+            "required": ["language", "code"],
+        }
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         return {"type": NAME, "language": str(args.get("language") or "")}

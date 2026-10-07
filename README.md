@@ -187,7 +187,7 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés par le proxy présentés au modèle et rejoués, les autres ignorés, `namespace` aplatis |
 | `proxy/llm_proxy/chat_api.py` | Les outils hébergés sur `/v1/chat/completions` : déclaration dans `tools` remplacée par les fonctions du proxy, robinet qui rend une seule réponse chat/completions pour plusieurs tours upstream |
 | `proxy/llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre (`register`), exécution bornée (délai, taille du résultat, nombre d'appels par réponse) qui rend toujours un `Result`, ligne de statistiques de chaque exécution, **mémoire des résultats** |
-| `proxy/llm_proxy/tools/contract.py` | Le **contrat** d'un outil hébergé : `Tool`, `Result` (texte, code d'erreur, sources, `meta`), `Call`, `ToolError`, la liste fermée des codes d'erreur, les liaisons aux protocoles — décrit dans [`docs/outils.md`](docs/outils.md) |
+| `proxy/llm_proxy/tools/contract.py` | Le **contrat** d'un outil hébergé : `Tool` (dont son **prompt** — `prompt`, `parameters` —, que `spec` assemble en la fonction présentée au modèle), `Result` (texte, code d'erreur, sources, `meta`), `Call`, `ToolError`, la liste fermée des codes d'erreur, les liaisons aux protocoles — décrit dans [`docs/outils.md`](docs/outils.md) |
 | `proxy/llm_proxy/tools/net.py` | Garde-fou réseau, commun à tous les outils qui téléchargent (`[tools.net]`) : listes de domaines, résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée, redirections suivies saut par saut — le téléchargement gardé `net.download` |
 | `proxy/llm_proxy/tools/webcache.py` | Cache web : pages lues et recherches gardées quelques minutes, borné, en mémoire vive |
 | `proxy/llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
@@ -750,7 +750,8 @@ s'appellent par [`/v1/tools`](#appel-direct--v1tools) :
 | `code_execution` (`language`, `code`, `files`) | Exécute un programme (Python, bash, JavaScript, ou C, C++, Go, Rust compilés puis exécutés) dans un bac à sable sans réseau ; rend le code de sortie, la sortie, et remet au client les fichiers produits. `files` : des URL que le proxy télécharge (garde-fou `[tools.net]`) et dépose dans le bac avant le programme. Les fichiers du bac sont gardés d'un appel au suivant dans une conversation. Voir [Exécution de code](#exécution-de-code) | `POST /v1/execute` au service `executor` du compose (podman sans root) |
 | `image_generation` (`prompt`, `size`) | Génère une image depuis une description et la remet au client (une image en markdown, ajoutée par le proxy à la fin de la réponse) ; le modèle n'en reçoit que le nom, le type et les dimensions. 2 images par réponse au plus. Avec `edits`, retouche aussi une image donnée par `image_url`. Voir [Génération d'images](#génération-dimages) | `POST /v1/images/generations` au modèle de `[tools.image_generation].model` |
 
-Ce qu'est un outil pour le code du proxy — son contrat, ses codes
+Ce qu'est un outil pour le code du proxy — son contrat, son prompt (ce
+que le modèle en lit), ses codes
 d'erreur et leur traduction par surface, ses liaisons aux protocoles — et
 comment en ajouter un : [`docs/outils.md`](docs/outils.md).
 
@@ -1411,7 +1412,8 @@ outil hébergé. Pour
 lui, les mêmes outils s'appellent directement, derrière la clé du proxy
 et avec les mêmes garde-fous :
 
-    GET  /v1/tools            → les outils actifs (nom, description, schéma)
+    GET  /v1/tools            → les outils actifs (nom, description, schéma) :
+                                leur prompt en vigueur, tel que le modèle le lit
     POST /v1/tools/<nom>      → corps : les arguments, en objet JSON
                                 réponse : {"name", "result", "is_error",
                                            "error", "sources", "meta"}
