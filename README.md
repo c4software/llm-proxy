@@ -770,6 +770,25 @@ modèle de transcription qui les lit, une image WebP ou GIF, un serveur
 MCP à session ou à en-têtes d'authentification, et la ligne « Serveurs
 MCP » du tableau de bord vue dans un navigateur.
 
+**Seconde série, le 07/10/2026** — non-régression courte après les
+refus en anglais, la conversion par ffmpeg, `mcp:<serveur>` et
+`always_except`, et l'arrivée de `code_execution` ; même proxy lancé à la
+main, mêmes modèles, ffmpeg 9.0.2 de la machine :
+
+| Ce qui a été joué | Résultat |
+|---|---|
+| Non-régression : `web_fetch_20250910` sur `/v1/messages` (JSON, rejeu au tour 2, flux, adresse privée, domaine bloqué par le client) | identique ; le modèle lit et cite le refus en anglais (« 127.0.0.1 is a private or local address, which this proxy does not read ») |
+| Refus du garde-fou par `POST /v1/tools` : `web_fetch`, `ocr`, `transcribe` vers `127.0.0.1`, `10.0.0.1`, `192.168.1.1`, un nom du réseau local ; `ftp://` ; hôte inconnu | `not_allowed`, `invalid_input`, `not_accessible`, textes en anglais |
+| `transcribe` : `jfk.flac`, avec `formats = ["wav"]` | converti en WAV par ffmpeg (1,15 Mo → 352 ko, 0,1 s), transcrit par gufo : texte exact, `Language: english`, `Duration: 0:11`, 2 s en tout |
+| `always = ["web_fetch", "transcribe", "mcp:deepwiki", "mcp:absent"]` | `/healthz` et le journal listent les trois outils de deepwiki ; `mcp:absent` vaut un avertissement ; sans `tools`, le modèle appelle `deepwiki_read_wiki_structure` et répond |
+| `always_except = ["bigchuck/QWEN3.8-flash*"]`, même requête | sans `tools` : relais brut, 46 tokens de prompt, le modèle répond n'avoir aucun outil ; avec `{"type": "mcp:deepwiki"}` déclaré : l'outil est présenté et appelé |
+| `[tools.code_execution] enabled = true`, exécuteur injoignable | le proxy démarre et le dit ; tout ce qui précède a été joué dans cet état ; `POST /v1/tools/code_execution` rend `unavailable` (« the sandbox service is unreachable »), un langage inconnu `invalid_input` |
+
+Pas joué : l'exécution de code elle-même (pas de moteur de conteneurs —
+voir [Exécution de code](#exécution-de-code)), l'image Docker du proxy
+avec ffmpeg, un format audio autre que le FLAC contre le backend, les
+bancs `envTest/pi` et `envTest/omp` sous leur nouvelle forme, Open WebUI.
+
 Les bancs `envTest/` rejouent depuis ce jour une recherche web par client
 en conteneur (Codex, pi, Claude Code) : 27 scénarios sur 27 au run du
 05/10/2026, voir `envTest/README.md`.
