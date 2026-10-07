@@ -273,9 +273,9 @@ def test_public_target_exige_que_toutes_les_adresses_soient_publiques(dns):
     dns["vide.test"] = []
     # UNE adresse privée suffit, que la première soit publique ou non.
     for url in ["http://intern.test/", "http://mixte.test/", "http://mixte6.test/"]:
-        assert "privée ou locale" in blocked(url), url
+        assert "private or local address" in blocked(url), url
     for url in ["http://absent.test/", "http://jamais-vu.test/", "http://vide.test/"]:
-        assert "introuvable" in blocked(url), url
+        assert "host not found" in blocked(url), url
     # Nom tordu : octet nul, espace, étiquette vide, hôte en %XX.
     for url in ["http://a\x00b.test/", "http://exa mple.test/", "http://a..b.test/",
                 "http://%31%32%37.0.0.1/"]:
@@ -402,8 +402,8 @@ def test_fetch_redirection_recontrolee_a_chaque_saut():
 
     for status in (301, 302, 303, 307, 308):
         out, requests = suivi("http://intern.test/admin", status)
-        assert out == ("Error: intern.test désigne une adresse privée ou "
-                       "locale : refusé."), status
+        assert out == ("Error: intern.test is a private or local address, "
+                       "which this proxy does not read."), status
         assert len(requests) == 1, status
     for location in ["http://127.0.0.1:8009/v1/models", "http://[64:ff9b::a00:1]/",
                      "http://2130706433/", "//intern.test/x", "http://mixte.test/",
@@ -1659,9 +1659,10 @@ def test_net_download_bornes_de_l_outil_et_erreurs_du_contrat(monkeypatch):
         ("http://site.test/rien", None, "not_accessible",
          "http://site.test/rien returned HTTP 404."),
         ("http://127.0.0.1/", None, "not_allowed",
-         "127.0.0.1 désigne une adresse privée ou locale : refusé."),
+         "127.0.0.1 is a private or local address, which this proxy does "
+         "not read."),
         ("ftp://site.test/", None, "invalid_input",
-         "seules les URL http(s) sont lues."),
+         "only http(s) URLs are read."),
         # Une redirection ne sort pas des listes : celle de [tools.net]…
         ("http://site.test/sortie", None, "not_allowed",
          "ailleurs.test is not a domain this proxy is allowed to read."),

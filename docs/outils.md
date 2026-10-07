@@ -323,7 +323,11 @@ Ce qu'il faut tenir :
   vers l'adresse vérifiée — à chaque saut de redirection. L'outil lui
   donne **ses** bornes (`timeout`, `limit` : un nombre d'octets ou une
   fonction qui décide aux premiers octets) et ne reçoit que des
-  `ToolError`. Avant de lire un cache, `net.check(url, call.settings)`.
+  `ToolError`, dont le texte est déjà celui du modèle, en anglais
+  (« Error: 10.0.0.1 is a private or local address, which this proxy
+  does not read. », « Error: host not found: … », « Error: only http(s)
+  URLs are read. »). Avant de lire un cache,
+  `net.check(url, call.settings)`.
 - **`run` est annulable** : pas de travail bloquant dans la boucle
   asyncio (`asyncio.to_thread` pour du CPU), et rien à nettoyer ailleurs
   que dans un `finally`.

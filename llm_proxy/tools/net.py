@@ -62,8 +62,10 @@ MAX_REDIRECTS = 5
 
 
 class Blocked(Exception):
-    """Cible refusée ; le message est rendu tel quel au modèle. `code` :
-    le code d'erreur du contrat (contract.ERRORS) que l'outil rendra."""
+    """Cible refusée ; le message est rendu tel quel au modèle — en
+    anglais donc, comme tout texte d'outil, sans point final (download
+    l'ajoute). `code` : le code d'erreur du contrat (contract.ERRORS) que
+    l'outil rendra."""
 
     def __init__(self, message: str, code: str = "not_allowed"):
         super().__init__(message)
@@ -106,22 +108,23 @@ async def public_target(url: str, allow_private: bool = False
         parts = urlsplit(url)
         port = parts.port
     except ValueError:
-        raise Blocked("URL invalide", "invalid_input")
+        raise Blocked("invalid URL", "invalid_input")
     if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise Blocked("seules les URL http(s) sont lues", "invalid_input")
+        raise Blocked("only http(s) URLs are read", "invalid_input")
     port = port or (443 if parts.scheme == "https" else 80)
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(
             parts.hostname, port, type=socket.SOCK_STREAM)
     # ValueError : octet nul dans le nom (UnicodeError en est une).
     except (socket.gaierror, ValueError):
-        raise Blocked(f"hôte introuvable : {parts.hostname}", "not_accessible")
+        raise Blocked(f"host not found: {parts.hostname}", "not_accessible")
     ips = [info[4][0] for info in infos]
     if not ips:
-        raise Blocked(f"hôte introuvable : {parts.hostname}", "not_accessible")
+        raise Blocked(f"host not found: {parts.hostname}", "not_accessible")
     if not allow_private and not all(is_public(ip) for ip in ips):
         raise Blocked(
-            f"{parts.hostname} désigne une adresse privée ou locale : refusé")
+            f"{parts.hostname} is a private or local address, which this "
+            f"proxy does not read")
     return parts.scheme, ips[0], port
 
 
@@ -175,7 +178,7 @@ async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
     try:
         host = host.encode("idna").decode("ascii")
     except UnicodeError:
-        raise Blocked(f"hôte introuvable : {host}", "not_accessible")
+        raise Blocked(f"host not found: {host}", "not_accessible")
     host_header = f"[{host}]" if ":" in host else host
     literal = f"[{ip}]" if ":" in ip else ip
     target = f"{scheme}://{literal}:{port}{parts.path or '/'}"
