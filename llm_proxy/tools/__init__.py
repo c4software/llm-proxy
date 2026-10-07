@@ -73,7 +73,7 @@ from collections import OrderedDict
 
 from .. import config, stats
 from ..settings import log
-from . import (mcp, net, ocr, transcribe, web_fetch,  # noqa: F401
+from . import (code_execution, mcp, net, ocr, transcribe, web_fetch,  # noqa: F401
                web_search, webcache)
 # Le contrat, tel que le reste du proxy et un outil l'importent d'ici.
 from .contract import (ERRORS, Anthropic, Artifact, Call,  # noqa: F401
@@ -99,6 +99,7 @@ register(web_search.TOOL)
 register(web_fetch.TOOL)
 register(ocr.TOOL)
 register(transcribe.TOOL)
+register(code_execution.TOOL)
 
 # Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
 # reçoit une erreur qui lui demande de conclure.

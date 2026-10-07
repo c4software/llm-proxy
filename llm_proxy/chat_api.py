@@ -72,7 +72,10 @@ même boucle, même réponse, même mémoire. Vide par défaut : rien ne change.
 Ce que le client reçoit : UNE réponse chat/completions ordinaire, quel
 que soit le nombre de tours upstream (voir `Translator`). Les appels
 hébergés ne lui arrivent JAMAIS en `tool_calls` — il tenterait de les
-exécuter. Conséquence : son historique ne les contient pas. À la requête
+exécuter. Les FICHIERS qu'un outil produit (tools.Result.files : le graphique
+d'une exécution de code) sont rangés au magasin (files.py) et leurs
+liens ajoutés à la FIN du contenu, par le proxy — le modèle ne les écrit
+pas. Conséquence : son historique ne les contient pas. À la requête
 suivante il renvoie `[…, user, assistant « réponse », user]` : sans rien
 de plus le modèle retrouverait sa réponse, pas ce qu'il avait lu, et le
 début de la conversation ne serait plus celui que le backend a vu pendant
@@ -111,6 +114,16 @@ répondu — puis la suite.
     a eu lieu : pas de réinsertion « au mauvais endroit ».
   * Une réponse que la limite dure a close (le modèle n'a pas conclu) ne
     range rien : ses derniers résultats n'ont jamais été lus.
+  * L'entrée porte aussi la SESSION sous laquelle les outils ont tourné
+    (tools.Call.session : le bac d'une exécution de code). C'est ce qui
+    tient lieu d'identifiant de conversation : tiré à chaque requête,
+    remplacé par celui du dernier échange reconnu dans l'historique. Une
+    conversation garde donc son bac aux conditions exactes où elle
+    retrouve ses échanges ; sinon, ou sans [chat].memory, un bac neuf.
+    L'identifiant ne sort jamais du proxy.
+  * Le condensé porte la réponse telle que le client l'a reçue, liens
+    des fichiers compris ; le texte rejoué au backend, lui, est sans eux
+    (c'est celui qu'il a écrit).
   * Cloisonnée par client comme tools.Memory (le condensé de la clé du
     proxy fait partie de la clé d'entrée), en mémoire vive seulement,
     bornée en entrées, en durée ET en caractères — un échange porte
@@ -154,7 +167,7 @@ import time
 import uuid
 from collections import OrderedDict
 
-from . import config
+from . import config, files
 from .settings import log
 
 # Absente du TOML = inactif : un déploiement existant ne change pas de
@@ -210,6 +223,11 @@ class Context:
         self.memory: Memory | None = None
         self.client = ""
         self.state = None
+        # L'identifiant de la CONVERSATION pour un outil à état
+        # (tools.Call.session : le bac de code_execution). Tiré ici ;
+        # restore() le remplace par celui du dernier échange caché que la
+        # mémoire reconnaît — la conversation continue dans son bac.
+        self.session = uuid.uuid4().hex
 
 
 def declares(payload: dict, kinds) -> bool:
@@ -381,15 +399,16 @@ class Memory:
             OrderedDict()
 
     def store(self, key: str, messages: list[dict], tail: str,
-              owner: str = "") -> None:
+              owner: str = "", session: str = "") -> None:
         """`messages` : l'échange, tel qu'envoyé au backend ; `tail` : le
-        texte du dernier tour, celui que le backend a répondu."""
+        texte du dernier tour, celui que le backend a répondu ; `session` :
+        l'identifiant de conversation sous lequel les outils ont tourné."""
         size = len(tail) + sum(_weight(m) for m in messages)
         self._drop((owner, key))
         if size > self.chars:
             return
         self._data[(owner, key)] = (time.monotonic(), size, {
-            "messages": messages, "tail": tail})
+            "messages": messages, "tail": tail, "session": session})
         self.size += size
         while len(self._data) > self.entries or self.size > self.chars:
             self._drop(next(iter(self._data)))
@@ -482,6 +501,7 @@ def restore(payload: dict, ctx: Context, client: str) -> int:
     state = hashlib.blake2b(digest_size=16)
     out: list = []
     found = 0
+    session = ""
     for msg in messages:
         role = msg.get("role") if isinstance(msg, dict) else None
         sent = msg
@@ -492,6 +512,9 @@ def restore(payload: dict, ctx: Context, client: str) -> int:
             if entry is not None:
                 found += 1
                 out += entry["messages"]
+                # Le DERNIER échange reconnu dit la session : c'est le
+                # plus proche de la suite que le client demande.
+                session = entry.get("session") or session
                 # Le texte du dernier tour, pas celui de tous les tours
                 # que le client a reçu ; ses autres champs sont les siens.
                 sent = {**msg, "content": entry["tail"] or None}
@@ -501,6 +524,8 @@ def restore(payload: dict, ctx: Context, client: str) -> int:
             state.update(b"%d:" % len(block) + block)
     payload["messages"] = out
     ctx.memory, ctx.client, ctx.state = MEMORY, client, state
+    if session:
+        ctx.session = session
     return found
 
 
@@ -601,6 +626,9 @@ class Translator:
         self._history: list[dict] = []    # messages des tours clos
         self._ids: list[str] = []         # id des appels client du tour
         self._sources: dict[str, str] = {}        # URL → titre
+        # Liens des fichiers rendus par les outils (files.py), à écrire
+        # à la fin de la réponse.
+        self._links: list[str] = []
         # JSON : dernier corps upstream, appels client et raisonnement.
         self._doc: dict = {}
         self._client: list[dict] = []
@@ -686,12 +714,22 @@ class Translator:
         return out + [{"role": "tool", "tool_call_id": call["id"],
                        "content": result} for call, result in self._done]
 
+    @property
+    def session(self) -> str:
+        """L'identifiant de conversation que la boucle passe aux outils
+        (tools.Call.session)."""
+        return self.ctx.session
+
     def resolve(self, call: dict, result) -> bytes:
         """Le résultat (tools.Result) d'un appel de `pending`, exécuté par
         la boucle : son TEXTE est gardé pour le tour suivant, ses sources
-        notées pour les annotations. Le client n'en voit rien."""
+        notées pour les annotations, ses FICHIERS rangés au magasin
+        (files.py) — leurs liens partiront à la fin de la réponse. Le
+        client n'en voit rien d'autre."""
         self.pending = [c for c in self.pending if c is not call]
         self._done.append((call, result.text))
+        self._links += [stored.markdown for stored in
+                        files.keep(result.files, self.ctx.client)]
         for source in result.sources:
             if source.url:
                 self._sources.setdefault(source.url, source.title)
@@ -723,12 +761,13 @@ class Translator:
         if self.sse:
             return self._end()
         self._finished = True
+        links = self._attachments()
         self._remember()
         doc = {**self._doc, **(self._head or {})}
         choice = dict(doc["choices"][0])
         msg = choice.get("message")
         msg = dict(msg) if isinstance(msg, dict) else {"role": "assistant"}
-        if self.turns > 1:
+        if self.turns > 1 or links:
             msg["content"] = "".join(self._all) or None
             for key, texts in self._reasoning.items():
                 msg[key] = GAP.join(texts)
@@ -844,6 +883,23 @@ class Translator:
             return "stop"
         return self._finish or "stop"
 
+    def _attachments(self) -> str:
+        """Les liens des fichiers rendus, à ajouter au contenu — une
+        fois, à la clôture. Ils entrent dans `_all`, donc dans le condensé
+        de la mémoire (le client renverra la réponse AVEC eux) ; pas dans
+        `_text` : au rejeu le backend retrouve le texte qu'il a écrit,
+        sans eux (`tail`)."""
+        if not self._links:
+            return ""
+        whole = "".join(self._all)
+        text = ("" if not whole or whole.endswith("\n\n")
+                else "\n" if whole.endswith("\n") else GAP) \
+            + GAP.join(self._links)
+        self._links = []
+        self._all.append(text)
+        self.out_chars += len(text)
+        return text
+
     def _remember(self) -> None:
         """Range l'échange caché de cette réponse (tête de module), à sa
         CONCLUSION : au moins un tour d'outils hébergés, puis un tour sans
@@ -856,7 +912,7 @@ class Translator:
                 or self._done or not (tail or self._ids):
             return
         ctx.memory.store(_key(ctx.state, "".join(self._all), self._ids),
-                         list(self._history), tail, ctx.client)
+                         list(self._history), tail, ctx.client, ctx.session)
 
     def _annotations(self) -> list[dict]:
         """Annotations `url_citation`, la forme d'OpenAI : une par
@@ -954,8 +1010,13 @@ class Translator:
 
     def _end(self) -> bytes:
         self._finished = True
+        # AVANT la mémoire : son condensé porte la réponse telle que le
+        # client la reçoit, liens compris.
+        links = self._attachments()
         self._remember()
         out = bytearray()
+        if links:
+            out += self._block({"content": links})
         annotations = self._annotations()
         if annotations:
             out += self._block({"annotations": annotations})

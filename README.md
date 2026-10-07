@@ -100,7 +100,10 @@ et un tableau de bord.
   PDF scanné par son URL, avec un modèle de vision d'un backend ; si
   `[tools.transcribe].enabled`, l'outil `transcribe` rend le texte d'un
   fichier audio donné par son URL, par le modèle de transcription d'un
-  backend.
+  backend ; si `[tools.code_execution].enabled`, l'outil `code_execution`
+  fait tourner un programme du modèle dans un bac à sable, par un service
+  à part (`executor`) — **jamais validé sur un vrai moteur de conteneurs
+  à ce jour**, voir [Exécution de code](#exécution-de-code).
 - **Serveurs MCP** — les outils des serveurs MCP listés dans
   `[tools.mcp.<serveur>]` (HTTP seulement, liste fermée, en-têtes
   statiques) deviennent des outils hébergés : `<serveur>_<outil>`,
@@ -153,6 +156,9 @@ et un tableau de bord.
 | `llm_proxy/tools/mcp.py` | Client MCP (Streamable HTTP, sans SDK) : découverte des outils des serveurs de la configuration, chacun enregistré comme outil hébergé ; révision 2026-07-28 sans état et révisions à `initialize`/session ; résultats ramenés à du texte |
 | `llm_proxy/tools/ocr.py` | L'outil `ocr` : texte d'une image ou d'un PDF scanné (images embarquées dans ses pages) par son URL, téléchargée sous le garde-fou, lue par un modèle de vision d'un backend — limiteur de quotas et statistiques compris |
 | `llm_proxy/tools/transcribe.py` | L'outil `transcribe` : téléchargement d'un fichier audio par son URL sous le garde-fou, transcription par le modèle d'un backend (`/v1/audio/transcriptions`), texte découpé et gardé en cache |
+| `llm_proxy/tools/code_execution.py` | L'outil `code_execution` : client HTTP de l'exécuteur, texte rendu au modèle, fichiers produits |
+| `llm_proxy/files.py` | Le magasin des fichiers rendus par les outils : en mémoire, borné, servi par `GET /v1/files/<jeton>/<nom>` hors clé du proxy |
+| `executor/` | Le service exécuteur de code (hors du proxy, son image à lui) : podman sans root, un bac par conversation, son API, le contenu d'un bac (`sandbox/`), `validate.py` |
 | `docs/outils.md` | Le contrat des outils hébergés, membre par membre, et comment en écrire un |
 | `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
@@ -698,6 +704,7 @@ s'appellent par [`/v1/tools`](#appel-direct--v1tools) :
 |---|---|---|
 | `ocr` (`url`, `pages`) | Lit le texte d'une image (PNG, JPEG, GIF, WebP) ou d'un PDF scanné — les images embarquées dans ses pages, 4 pages par appel ; le recours de `web_fetch`, dont la description y renvoie le modèle | Téléchargement par le proxy sous le garde-fou réseau, puis une requête chat/completions par page au modèle de vision de `[tools.ocr].model` |
 | `transcribe` (`url`, `language`, `offset`) | Transcrit un fichier audio (mp3, wav, flac, ogg, m4a, aac, webm, amr, mp4 — ce que le modèle de transcription ne lit pas tel quel, `formats`, est converti en WAV par ffmpeg, ou refusé sans lui ; 25 Mo au plus) et rend le texte, sans horodatage, avec la langue et la durée si le backend les donne ; reconnu à ses premiers octets ou à son type, refusé sinon | Téléchargement par le proxy sous le garde-fou réseau, puis `POST /v1/audio/transcriptions` au modèle de `[tools.transcribe].model` |
+| `code_execution` (`language`, `code`) | Exécute un programme (Python, bash, JavaScript, ou C, C++, Go, Rust compilés puis exécutés) dans un bac à sable sans réseau ; rend le code de sortie, la sortie, et remet au client les fichiers produits. Les fichiers du bac sont gardés d'un appel au suivant dans une conversation. Voir [Exécution de code](#exécution-de-code) | `POST /v1/execute` au service `executor` du compose (podman sans root) |
 
 Ce qu'est un outil pour le code du proxy — son contrat, ses codes
 d'erreur et leur traduction par surface, ses liaisons aux protocoles — et
@@ -1362,6 +1369,355 @@ C'était le chemin de l'extension pi / omp `llm-proxy-web.ts`, retirée le
 07/10/2026 (voir [pi et omp](#pi-et-omp--les-outils-doffice)). La route
 reste, pour tout client ou script qui veut exécuter un outil lui-même.
 
+### Exécution de code
+
+`code_execution` fait tourner un programme écrit par le modèle et lui en
+rend le code de sortie, la sortie et les fichiers produits. Le proxy
+n'exécute rien : un service à part, `executor` (`executor/` dans le
+dépôt), non exposé, est le seul à avoir un moteur de conteneurs.
+
+    client ─▶ proxy ──HTTP + jeton──▶ executor ──podman exec──▶ bac (sans réseau)
+                │   réseau interne        │
+                └─ liens /v1/files ◀──────┘ code de sortie, sortie, fichiers
+
+**État au 07/10/2026 : écrit, testé contre des doublures, JAMAIS exécuté
+sur un vrai moteur de conteneurs.** Ni l'image de l'exécuteur n'a été
+construite, ni podman lancé dans son conteneur, ni l'isolation d'un bac
+éprouvée, ni Go ni Rust compilés. L'outil est **désactivé par défaut**,
+le service `executor` est sous profil dans le `docker-compose.yml`, et le
+proxy démarre et sert sans lui. Avant de l'activer : la
+[procédure de validation](#valider-lexécuteur-sur-le-déploiement), en
+entier.
+
+- **Un bac par conversation.** Les fichiers de `/work` (et de `/tmp`)
+  restent d'un appel au suivant ; les variables non, chaque appel est un
+  processus neuf. La conversation est reconnue par la
+  [mémoire des échanges cachés](#client-chatcompletions--déclarer-loutil)
+  (`[chat].memory`) : elle garde son bac tant que le client renvoie ses
+  réponses inchangées ; sinon, ou par `/v1/tools`, un bac neuf. Un bac
+  expire après 30 min sans appel, 4 h au plus, ou quand il faut de la
+  place (8 bacs, 4 par clé) : le modèle est prévenu que le suivant est
+  vide.
+- **Langages** (`language`) : `python` (3.13, avec numpy, pandas, scipy,
+  sympy, scikit-learn, networkx, matplotlib, seaborn, pillow, openpyxl,
+  python-docx, pypdf, reportlab), `bash` (les outils Unix, jq, sqlite3),
+  `javascript` (Node.js), et les compilés `c`, `cpp` (gcc, g++), `go`,
+  `rust`. Un langage compilé a sa propre valeur plutôt que de passer par
+  `bash` : le modèle donne **un fichier source**, l'exécuteur le compile
+  sous `/tmp` puis l'exécute, le tout dans le délai de l'appel — ni le
+  source ni le binaire ne sont pris pour des fichiers produits. `bash`
+  reste là pour un projet à plusieurs fichiers (make, `go build`, cargo).
+- **Pas de réseau, rien ne s'installe** : ni paquet pip, ni module Go, ni
+  crate — la bibliothèque standard seulement pour les compilés, et la
+  description de l'outil le dit au modèle. Ajouter une bibliothèque :
+  `executor/sandbox/requirements.txt` ou `executor/Dockerfile`, puis
+  reconstruire l'image de l'exécuteur.
+- **Délai** : `[tools.code_execution].timeout`, 30 s par programme,
+  **compilation comprise**. Une première compilation Go dans un bac paie
+  le cache de sa bibliothèque standard (durée et place dans `/tmp` non
+  mesurées : `validate.py` les relève).
+- **Les fichiers produits** dans `/work` sont remis au client par un lien
+  que le proxy ajoute à la fin de la réponse (une image s'affiche, le
+  reste se télécharge). Il faut `[files].public_url`, l'adresse sous
+  laquelle le navigateur joint le proxy ; sans elle rien n'est remis, et
+  le modèle le sait. Bornes : 8 fichiers, 5 Mo chacun, 10 Mo par appel
+  côté exécuteur ; 10 Mo par fichier, 128 Mo en tout et 4 h côté proxy,
+  en mémoire vive (un redémarrage du proxy casse les liens).
+- **Un programme en erreur est un résultat**, pas une erreur de l'outil :
+  le modèle lit `Exit code: 1` et la trace, et corrige. L'outil n'est en
+  erreur que s'il n'a pas pu exécuter (`unavailable` : non configuré,
+  exécuteur éteint ; `too_many_requests` : tous les bacs occupés).
+- **Déclarer** : `{"type": "code_execution"}` dans `tools` sur
+  `/v1/chat/completions`, ou `always = ["code_execution"]` ; appel direct
+  par `POST /v1/tools/code_execution` (un bac par appel, les fichiers en
+  liens dans `files`). Pas sur `/v1/responses` ni `/v1/messages`.
+
+#### Ce que le bac à sable vaut
+
+Activer `code_execution`, c'est laisser tourner sur cette machine du code
+que personne n'a relu : écrit par un modèle, donc dicté au besoin par une
+page web qu'il vient de lire. Ce qui le contient, et ce qui ne le
+contient pas — **tel que c'est écrit ; l'effet d'aucun de ces réglages
+n'a été constaté** :
+
+- **Le noyau est partagé.** Un bac est un conteneur, pas une machine
+  virtuelle : une faille du noyau Linux exploitable sans privilège donne
+  l'hôte. Tenir le noyau à jour est la première défense, et il n'y en a
+  pas de seconde de cette nature.
+- **Deux enceintes, la seconde desserrée.** Le programme tourne dans un
+  bac podman sans root : pas de réseau, racine en lecture seule, aucune
+  capacité, `no-new-privileges`, le profil seccomp de podman, un uid sans
+  droit. Ce bac tourne dans le conteneur `executor`, qui pour faire
+  marcher podman a dû renoncer à son profil seccomp, à AppArmor, au
+  masquage de `/proc` et à `no-new-privileges`. Qui s'évade d'un bac se
+  trouve dans un conteneur Docker **moins** étanche qu'un conteneur
+  ordinaire — sans capacité d'administration, sans volume, sans secret
+  hormis le jeton de l'exécuteur, sans route vers l'extérieur, sans autre
+  binaire setuid que `newuidmap` et `newgidmap`.
+- **Les limites de ressources par bac sont incertaines.** Mémoire et CPU
+  par bac demandent des cgroups que podman, dans un conteneur, ne peut en
+  général pas écrire (hôte en cgroup v2 : `/sys/fs/cgroup` y est en
+  lecture seule). L'exécuteur l'essaie au démarrage et le dit (journal,
+  `GET /v1/status`, `validate.py` : « NON BORNÉ »). Sont demandés dans
+  tous les cas : la durée d'un programme, le nombre de processus par bac,
+  la taille de ses disques en mémoire. Le reste repose sur le **plafond
+  du conteneur `executor`** (`mem_limit`, `cpus`, `pids_limit`) : un
+  programme peut épuiser ce plafond et faire tuer les autres bacs, voire
+  redémarrer l'exécuteur — pas l'hôte.
+- **Un programme peut laisser un processus derrière lui.** Détaché
+  (`setsid`), il échappe au délai de l'appel et tourne jusqu'à la fin de
+  son bac (30 min sans appel, 4 h au plus), dans les bornes du bac ; les
+  appels suivants de la même conversation le côtoient. Il ne sort pas du
+  bac.
+- **Le réseau interne joint le proxy.** Depuis le conteneur `executor`
+  (pas depuis un bac, qui n'a aucune interface), le proxy est joignable.
+  Sur un proxy SANS `proxy.api_keys`, un programme évadé pourrait appeler
+  `/v1/tools/web_fetch` et sortir par là. Poser des clés.
+- **Les fichiers sont un canal de sortie.** Un bac n'a pas de réseau,
+  mais ce qu'il écrit dans `/work` est publié par le proxy, depuis son
+  origine, à qui a le lien, sans clé. Un programme dicté par une
+  injection peut y mettre ce qu'il a sous la main : le contenu de son
+  bac, donc de la conversation. Seules les images matricielles
+  s'affichent ; le reste se télécharge — et reste un fichier écrit par un
+  programme non relu.
+- **Entre clients.** Les bacs sont cloisonnés par clé du proxy. Sur un
+  proxy ouvert tous les clients sont un seul client : seul l'identifiant
+  de conversation, interne au proxy, sépare leurs bacs, et qui rejoue à
+  l'identique la conversation d'un autre retrouve son bac. Les 8 bacs et
+  les 128 Mo de fichiers sont communs : un client actif évince les bacs
+  inactifs des autres.
+- **Ce qui n'est pas en jeu** : les secrets du proxy (clés des backends,
+  `data/`) ne sont ni dans l'exécuteur ni à sa portée de fichiers ; aucun
+  socket Docker n'est monté nulle part.
+
+À ne pas activer sur un proxy ouvert à des inconnus, ni présenter
+d'office (`[chat].always`) à des clients qui lisent le web sans l'avoir
+pesé : le réglage vaut pour toutes les clés.
+
+#### Dans une pile qui étend une base `no-new-privileges`
+
+Le `docker-compose.yml` du dépôt porte le service `executor` (sous le
+profil `code-execution`) et le réseau interne `sandbox`. Dans une pile
+dont chaque service étend une base commune —
+
+    extends: {file: ../bases-configuration/base.yml, service: base}
+    # base : security_opt: ["no-new-privileges=true"], restart: unless-stopped,
+    #        logging: json-file, max-size 5m, max-file 1
+
+— le service `executor` ne doit **pas** l'étendre : `newuidmap` et
+`newgidmap` sont setuid, `no-new-privileges` les neutralise, et podman
+sans root ne peut plus écrire la table d'uid de ses bacs (« newuidmap:
+write to uid_map failed: Operation not permitted »). `extends` ajoute les
+`security_opt` du service à ceux de la base, il n'en retire pas
+(documentation de Compose, pas essayé) : ce que la base apporte d'autre
+est donc recopié à la main.
+
+    services:
+      albert-proxy:
+        extends: {file: ../bases-configuration/base.yml, service: base}
+        # … ce que le service a déjà, plus :
+        environment:
+          EXECUTOR_TOKEN: "${EXECUTOR_TOKEN:-}"
+        networks:
+          - default       # ou les réseaux qu'il a déjà : ne rien retirer
+          - sandbox
+
+      executor:
+        # PAS d'extends (no-new-privileges) : restart et logging recopiés.
+        build: <chemin du dépôt>/executor
+        restart: unless-stopped
+        logging:
+          driver: "json-file"
+          options: {max-size: "5m", max-file: "1"}
+        networks: [sandbox]
+        environment:
+          EXECUTOR_TOKEN: "${EXECUTOR_TOKEN:-}"
+        security_opt:
+          - seccomp=unconfined
+          - systempaths=unconfined
+          - apparmor=unconfined
+        tmpfs:
+          - /run/user/10001:mode=700,uid=10001,gid=10001
+        mem_limit: 4g
+        memswap_limit: 4g
+        cpus: 2
+        pids_limit: 2048
+
+    networks:
+      sandbox:
+        internal: true
+
+Les commentaires de chaque ligne sont dans le `docker-compose.yml` du
+dépôt. Le proxy, lui, garde la base : rien de ce qu'il fait ne demande un
+privilège (ffmpeg compris).
+
+#### Valider l'exécuteur sur le déploiement
+
+Tout se fait par `docker compose`, depuis le dossier de la pile ; `$PROXY`
+est l'URL du proxy, `$CLE` une clé de `proxy.api_keys`. Noter le résultat
+de chaque étape : c'est lui qui fait passer une ligne de « non vérifié »
+à « vérifié ». Hôte visé : Docker 29, cgroup v2.
+
+**0. Préparer.** Récupérer la branche. Dans `.env` :
+`EXECUTOR_TOKEN=$(openssl rand -hex 32)`. Dans le `data/config.toml` du
+déploiement — il n'est **pas** régénéré depuis l'exemple — copier les
+tables `[tools.code_execution]` et `[files]` de
+`data/config.example.toml`, en laissant `enabled = false`.
+
+    docker compose config executor | grep -B2 -A6 security_opt
+
+Attendu : les trois `unconfined`, et **pas** `no-new-privileges`. S'il y
+est, le service étend encore la base.
+
+**1. Construire.**
+
+    docker compose build albert-proxy          # il embarque ffmpeg depuis le 07/10
+    docker compose build executor 2>&1 | tee /tmp/build-executor.log
+    grep -E "bac à sable|podman version" /tmp/build-executor.log
+
+Attendu : « bac à sable complet : Python 3.13.x, 15 modules, 24
+commandes, 4 langages compilés (c …s, cpp …s, go …s, rust …s … cache de
+Go : … Mo) », puis `podman version 5.x`. Si le contrôle échoue il nomme
+ce qui manque (version de bibliothèque introuvable, paquet absent,
+compilateur qui veut le réseau). Image de plusieurs Go ; premier build :
+plusieurs minutes. **Relever les temps de compilation et la taille du
+cache de Go** : au-delà de ~100 Mo, monter `SANDBOX_TMP_SIZE` ; au-delà
+de ~20 s pour Go, monter `[tools.code_execution].timeout`.
+
+**2. Démarrer et lire le journal.**
+
+    docker compose up -d executor albert-proxy
+    sleep 30; docker compose ps; docker compose logs executor | tail -20
+
+Attendu : `executor` « healthy », et la ligne « podman prêt : 0
+orphelin(s) détruit(s) ; bornes de cgroups tenues : … ». Sur un hôte en
+cgroup v2 je m'attends à « AUCUNE », suivi de l'avertissement « bornes
+NON tenues par bac » : ce n'est pas un échec, c'est le cas prévu (plafond
+du conteneur seul). Si à la place : « exécuteur HORS SERVICE : podman ne
+démarre aucun conteneur : <message> », le message de podman dit quoi :
+
+| Message | Cause probable |
+|---|---|
+| `newuidmap: write to uid_map failed: Operation not permitted` | `no-new-privileges` est posé (extends de la base), ou l'hôte n'offre pas les uid 100000–165535 (Docker sans root, userns-remap) |
+| `cannot clone: Operation not permitted` | `seccomp=unconfined` manque |
+| `mount proc … Operation not permitted` | `systempaths=unconfined` manque |
+| `… apparmor … denied`, `mount … permission denied` | `apparmor=unconfined` manque |
+| `catatonit … not found`, `executable file not found` | l'init : `executor/containers/containers.conf`, `init_path` |
+| une erreur sur `--rootfs`, `--tmpfs … exec`, `overlay`, `vfs` | noter le message **entier** : c'est un drapeau de `executor/sandbox.py` (`_create`) à corriger |
+
+Le proxy, lui, doit être « healthy » quoi que fasse l'exécuteur.
+
+**3. L'isolation, jugée.**
+
+    docker compose exec executor python -m executor.validate | tee /tmp/validate.log
+
+Le script n'a besoin ni du jeton ni du proxy. Il juge chaque cas `OK`,
+`ÉCHEC` ou `NON BORNÉ` et finit par une ligne `VERDICT`. Code de sortie
+0 = aucun ÉCHEC.
+
+| Cas | Attendu |
+|---|---|
+| 1. Python à froid | `OK` ; `uid 21000 cwd /work` ; `graphique.png` et `notes.txt` rendus, `gros.bin` écarté |
+| 2. shell à chaud | `OK` : retrouve `notes.txt` |
+| 3. sortie trop longue | `OK` : coupée |
+| 4. délai dépassé | `OK` en ~3 s, `début` gardé |
+| 5. le bac survit au délai | `OK` |
+| 6. réseau | `OK` : « pas de réseau », interfaces `['lo']`. **ÉCHEC = ne pas activer** |
+| 7. bombe de processus | `OK` : fork refusé avant 128. ÉCHEC = `RLIMIT_NPROC` ne tient pas par bac |
+| 8. mémoire | `OK` si les cgroups sont tenus ; sinon **`NON BORNÉ`** (attendu) : 1 Go alloué pour de vrai, pris sur `mem_limit` |
+| 8bis. CPU | n'apparaît (`NON BORNÉ`) que si `--cpus` n'est pas tenu |
+| 9. lecture seule, capacités | `OK` : 4 × `Read-only file system`, `CapEff: 0`, `NoNewPrivs: 1`, `Seccomp: 2`, `/work` plein avant 300 Mo. **ÉCHEC = ne pas activer** |
+| 10. autre client, même session | `OK` : bac vide |
+| 11. expiration | `OK` : 2 bacs détruits, bac neuf |
+| 12. contenu du bac | `OK` : « bac à sable complet », compilateurs compris, **hors ligne** |
+| 13. c, cpp, rust, go, go | `OK` chacun en moins de 30 s ; le second `go` est celui d'un cache chaud |
+| 14. processus en arrière-plan | **`NON BORNÉ`** attendu : un processus détaché survit à l'appel, jusqu'à la fin du bac |
+
+À relever : la ligne `VERDICT`, les deux lignes `MESURES` (à froid, à
+chaud, 5 × `print(1)`, pandas + matplotlib ; `/tmp` après les
+compilations) et les temps du cas 13. Si « à chaud » dépasse 1 s, le coût
+est dans `podman exec` lui-même. Pendant le cas 8, dans un autre
+terminal : `docker stats --no-stream` (l'exécuteur doit rester sous
+`mem_limit` ; s'il redémarre, le plafond a joué son rôle mais il est trop
+juste pour `SANDBOX_MAX_SESSIONS`).
+
+**4. Le réseau interne.**
+
+    docker compose exec executor python -c "import urllib.request; urllib.request.urlopen('https://example.org', timeout=5)"   # doit ÉCHOUER
+    docker compose exec executor python -c "import socket; socket.create_connection(('searxng', 8080), 3)"                    # doit ÉCHOUER
+    docker compose exec albert-proxy python -c "import urllib.request; print(urllib.request.urlopen('http://executor:8080/healthz', timeout=5).read())"   # {"status":"ok"}
+
+**5. Activer, et un appel direct.** `data/config.toml` :
+`[tools.code_execution] enabled = true` et `[files] public_url = "$PROXY"`
+(l'adresse que le **navigateur** joint, sans `/` final). `docker compose
+up -d albert-proxy`, puis `docker compose logs albert-proxy | grep
+code_execution` : la ligne « code_execution : exécuteur
+http://executor:8080 … », sans avertissement.
+
+    curl -s $PROXY/v1/tools -H "Authorization: Bearer $CLE" | jq '.data[].name'     # … "code_execution"
+    curl -s $PROXY/v1/tools/code_execution -H "Authorization: Bearer $CLE" -H 'Content-Type: application/json' -d '{
+      "language": "python",
+      "code": "import matplotlib.pyplot as plt\nplt.plot([1,4,9]); plt.savefig(\"courbe.png\")\nopen(\"t.csv\",\"w\").write(\"a,b\\n1,2\\n\")\nprint(\"fait\")"}' | tee /tmp/outil.json | jq
+
+Attendu : `is_error: false`, `result` =
+
+    Exit code: 0
+    Sandbox: single-use — nothing is kept after this call.
+    Files delivered to the user (shown with your answer; do not write links or paths to them):
+    - courbe.png (image/png, … kB)
+    - t.csv (text/csv, 8 bytes)
+    Output:
+    fait
+
+et `files` : deux liens `$PROXY/v1/files/<jeton>/…`. Puis, **sans clé** :
+
+    curl -sI "$(jq -r '.files[0].url' /tmp/outil.json)"    # 200, image/png, inline, nosniff, CSP sandbox
+    curl -sI "$(jq -r '.files[1].url' /tmp/outil.json)"    # 200, application/octet-stream, attachment
+    curl -s -o /dev/null -w '%{http_code}\n' $PROXY/v1/files/jeton-invente/courbe.png   # 404
+    curl -s -o /dev/null -w '%{http_code}\n' $PROXY/v1/tools                             # 401 : le reste est sous clé
+
+Si les deux premiers rendent 401 ou 404 alors que le proxy répond 200 de
+l'intérieur : le reverse proxy ne route pas `/v1/files/`, ou `public_url`
+n'est pas la bonne. À provoquer aussi :
+
+    … -d '{"language":"cobol","code":"x"}'                          # is_error: true, error: invalid_input
+    … -d '{"language":"python","code":"raise SystemExit(3)"}'       # is_error: false, « Exit code: 3 »
+    … -d '{"language":"rust","code":"fn main() { println!(\"{}\", 6 * 7); }"}'   # « Exit code: 0 », 42
+    docker compose stop executor      # puis un appel : error: unavailable, « unreachable », en ~5 s
+    docker compose start executor
+
+**6. Par un modèle**, `[chat].hosted_tools = true`, un modèle qui sait
+appeler des outils :
+
+    curl -s $PROXY/v1/chat/completions -H "Authorization: Bearer $CLE" -H 'Content-Type: application/json' -d '{
+      "model": "<backend>/<modèle>", "tools": [{"type": "code_execution"}],
+      "messages": [{"role": "user", "content": "Trace sin(x) entre 0 et 10 dans un PNG, garde aussi les points dans /tmp/points.csv, et dis-moi sin(7) à 6 décimales."}]}' | tee /tmp/tour1.json | jq -r '.choices[0].message.content'
+
+Attendu : `0.656987`, suivi de `![….png]($PROXY/v1/files/…)` ; aucun
+`tool_calls` pour le client. Puis la **conversation** : la même requête
+avec, à la suite, le message assistant reçu **tel quel** (liens compris)
+et un message user « Ajoute cos(x) au même graphique, à partir de
+/tmp/points.csv ». Dans le journal du proxy : « 1 échange(s) d'outils
+hébergés réinséré(s) » ; dans celui de l'exécuteur : la seconde
+exécution **sans** « [bac neuf] ».
+
+**7. Open WebUI**, `always = ["code_execution"]` : l'image s'affiche-t-elle
+dans la réponse, et la conversation retrouve-t-elle son bac au tour
+suivant (Open WebUI renvoie-t-il le contenu avec les liens, inchangé) ?
+Son modèle de tâches doit être dans `always_except`.
+
+**8. Redémarrages.** `docker compose restart executor` avec un bac
+ouvert : au journal, « 1 orphelin(s) détruit(s) » ou 0, puis l'appel
+suivant de la conversation dit « Sandbox: new and empty ». `docker
+compose restart albert-proxy` : les liens d'avant rendent 404 (magasin en
+mémoire), et la conversation repart d'un bac neuf.
+
+**9. Durcissements, à essayer en dernier**, `validate.py` rejoué après
+chacun : `cap_drop: [ALL]` avec `cap_add: [SETUID, SETGID]` sur
+`executor` (newuidmap n'a besoin que de ces deux capacités — devrait
+marcher, pas essayé) ; puis régler `mem_limit`, `cpus`, `pids_limit` et
+`SANDBOX_MAX_SESSIONS` sur la machine.
+
 ### Cache web
 
 Une page lue par `web_fetch` et les résultats d'une recherche sont gardés
@@ -1466,6 +1822,11 @@ l'activer là où l'agent travaille sans surveillance.
 `searxng`, le métamoteur des [outils hébergés](#outils-hébergés) : sans
 elle `docker compose` avertit et démarre quand même.
 
+Le service `executor` (l'[exécution de code](#exécution-de-code)) est
+sous profil : cette commande ne le construit ni ne le lance. Le mettre
+en route, après avoir lu ce qu'il vaut : `EXECUTOR_TOKEN` dans `.env`,
+puis `docker compose --profile code-execution up -d --build`.
+
 `./data` est monté comme volume : il porte la configuration
 (`config.toml`, créée au premier démarrage depuis l'exemple) **et** la
 base de statistiques (`stats.db`), qui survit ainsi aux redémarrages et
@@ -1480,7 +1841,8 @@ de statistiques), ajouter les secrets en variables d'environnement
 un sous-domaine interne. Les réglages se modifient ensuite dans
 `data/config.toml`, dans le volume. Le Dockerfile seul ne livre pas
 SearXNG : pour la recherche web, déployer une instance à part et y
-pointer `tools.web_search.searxng_url`.
+pointer `tools.web_search.searxng_url`. Ni l'exécuteur de code : c'est
+un second service, avec ses propres options de sécurité.
 
 ## Configuration
 
@@ -1677,6 +2039,30 @@ dans `data/config.example.toml` et
 | `<serveur>.prefix` | le nom de la table | Préfixe des noms de fonction ; `""` = aucun |
 | `<serveur>.verify_ssl` | `true` | `false` : certificat TLS non vérifié |
 
+### `[tools.code_execution]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Active l'outil `code_execution` (`/v1/chat/completions` et `/v1/tools`). Activé sans exécuteur joignable, l'outil rend `unavailable` au modèle ; rien d'autre ne change |
+| `url` | `""` (`"http://executor:8080"` dans l'exemple) | Base du service exécuteur ; vide → « non configuré ». Adresse de configuration, privée : `[tools.net]` ne s'y applique pas |
+| `token` | `""` (`"${EXECUTOR_TOKEN}"` dans l'exemple) | Le jeton partagé avec l'exécuteur ; vide → « non configuré » |
+| `timeout` | `30` | Secondes pour un programme, compilation comprise ; dit au modèle. Le délai de l'outil est `timeout` + 120 s, à la place de `[tools].run_timeout` |
+| `max_calls` | `8` | Appels par réponse, comptés à part de `[tools].max_calls` |
+| `max_output_chars` | `12000` | Caractères de sortie rendus par appel ; au-delà, le début et la fin |
+
+Les bornes d'un bac (mémoire, CPU, processus, `/work`, `/tmp`, fichiers
+rendus, nombre de bacs, durées) sont celles de l'exécuteur : variables
+`SANDBOX_*` de son service, dans `docker-compose.yml`.
+
+### `[files]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `public_url` | `""` | L'adresse sous laquelle le navigateur du client joint le proxy, sans `/` final. Vide : aucun lien ne peut être écrit, aucun fichier n'est gardé, le modèle est prévenu |
+| `ttl` | `14400` | Durée de vie (s) d'un fichier |
+| `max_bytes` | `128000000` | Octets gardés au plus, tous fichiers confondus (les plus anciens sortent), en mémoire vive |
+| `max_file_bytes` | `10000000` | Taille au plus d'un fichier ; au-delà il n'est pas gardé, et le modèle le sait |
+
 ### `[tools.net]`
 
 Le garde-fou de téléchargement, **commun** à tout ce que le proxy va
@@ -1739,7 +2125,11 @@ proxy **émet des requêtes vers des adresses choisies par le modèle** —
 bornées aux adresses publiques — et fait entrer du texte du web dans le
 contexte d'un agent : lire
 [Ce qu'aucun garde-fou n'empêche](#ce-quaucun-garde-fou-nempêche) avant
-de les ouvrir.
+de les ouvrir. Et avec `code_execution`, du code écrit par un modèle
+tourne sur la machine : lire
+[Ce que le bac à sable vaut](#ce-que-le-bac-à-sable-vaut). La route
+`GET /v1/files/<jeton>/<nom>` est la seule, avec `/healthz`, servie
+**sans** la clé du proxy : le jeton du lien vaut droit d'accès.
 
 ## Vérification
 
@@ -1858,6 +2248,16 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   leur modèle (`[chat].always_except`), et aux
   modèles de conversation qui ne savent pas appeler d'outils — voir
   [Open WebUI](#open-webui--présenter-les-outils-doffice).
+- **Exécution de code** (`[tools.code_execution]`) : jamais exécutée sur
+  un vrai moteur de conteneurs — image non construite, isolation non
+  éprouvée, Go et Rust jamais compilés ; testée contre des doublures
+  seulement. Limites de mémoire et de CPU par bac probablement non tenues
+  sous Docker (plafond du conteneur exécuteur seul). Un programme peut
+  laisser un processus tourner jusqu'à la fin de son bac. Pas sur
+  `/v1/responses` ni `/v1/messages`. La conversation n'est reconnue que
+  par la mémoire des échanges cachés : historique modifié ou proxy
+  redémarré, bac neuf. Fichiers rendus gardés en mémoire vive. Voir
+  [Exécution de code](#exécution-de-code).
 - **Outils hébergés, autres surfaces.** Sur `/v1/messages`, la
   recherche et la lecture de page sont branchées, chacune pour le
   client qui déclare son outil serveur ;

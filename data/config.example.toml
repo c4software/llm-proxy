@@ -538,6 +538,100 @@ cache_entries = 64
 # verify_ssl = true
 
 
+# Exécution de code : le modèle écrit un programme, il tourne dans un BAC
+# À SABLE et le modèle en lit le code de sortie et la sortie. Le proxy
+# n'exécute rien lui-même : il appelle le service `executor` du
+# docker-compose (executor/ dans le dépôt), seul à avoir un moteur de
+# conteneurs (podman sans root), sur un réseau interne sans sortie.
+# Langages : python (numpy, pandas, scipy, sympy, scikit-learn, networkx,
+# matplotlib, seaborn, pillow, openpyxl, python-docx, pypdf, reportlab),
+# bash (et les outils Unix, jq, sqlite3), javascript (Node.js), et les
+# compilés c, cpp, go, rust — un fichier source, compilé puis exécuté dans
+# le délai de l'appel, bibliothèque standard seulement.
+# Pas de réseau dans un bac, rien ne s'y installe : ni paquet pip, ni
+# module Go, ni crate. Ce qui manque s'ajoute à l'IMAGE de l'exécuteur
+# (executor/sandbox/requirements.txt, executor/Dockerfile).
+# Un bac par CONVERSATION : ses fichiers sont gardés d'un appel au suivant
+# (pas ses variables), jusqu'à son expiration côté exécuteur (30 min sans
+# appel, 4 h au plus, ou place à faire) — le modèle est alors prévenu que
+# le bac est neuf. La conversation est reconnue par la mémoire des
+# échanges cachés ([chat].memory) : sans elle, un bac par requête.
+# Sans liaison à l'API Responses ni à l'API Messages : l'outil se déclare
+# par {"type": "code_execution"} sur /v1/chat/completions
+# ([chat].hosted_tools), se présente d'office par [chat].always, et
+# s'appelle par POST /v1/tools/code_execution (un bac par appel).
+#
+# DÉSACTIVÉ par défaut, et le proxy démarre et sert sans exécuteur :
+# activé avec un exécuteur absent ou éteint, l'outil rend une erreur au
+# modèle (`unavailable`), rien d'autre ne change.
+#
+# À SAVOIR avant d'activer : du code écrit par un modèle — donc, par
+# injection de prompt, par n'importe quelle page web lue — tourne sur
+# cette machine. Le bac partage le NOYAU de l'hôte ; l'exécuteur tourne
+# sans profil seccomp ; les limites de mémoire et de CPU par bac ne sont
+# tenues que si podman peut écrire des cgroups dans son conteneur (il le
+# dit : journal de l'exécuteur au démarrage). Voir « Exécution de code »
+# dans le README, et dérouler `docker compose exec executor python -m
+# executor.validate` avant d'activer : rien de cela n'a encore tourné sur
+# un vrai moteur de conteneurs.
+[tools.code_execution]
+enabled = false
+# Base de l'exécuteur ; le proxy appelle <url>/v1/execute. «http://
+# executor:8080» est le nom du service sur le réseau du compose. Vide →
+# l'outil répond au modèle que l'exécution n'est pas configurée.
+# C'est une adresse de CONFIGURATION, privée : le garde-fou des adresses
+# publiques ([tools.net]) ne s'y applique pas.
+url = "http://executor:8080"
+# Le jeton partagé avec l'exécuteur (son EXECUTOR_TOKEN) : dans .env.
+# Vide → même réponse que sans url.
+token = "${EXECUTOR_TOKEN}"
+# Délai (s) d'UN programme — compilation comprise pour c, cpp, go, rust —,
+# dit au modèle. L'exécuteur a le sien, plus haut (SANDBOX_TIMEOUT,
+# 120 s), et ne va jamais au-delà. Le délai de l'outil est ce délai +
+# 120 s (création du bac, récolte des fichiers) : il remplace
+# [tools].run_timeout pour cet outil.
+timeout = 30
+# Appels exécutés au plus pour UNE réponse, comptés À PART de
+# [tools].max_calls : un modèle qui corrige son programme en consomme
+# plusieurs.
+max_calls = 8
+# Caractères de sortie rendus au modèle par appel ; au-delà, le début et
+# la fin sont gardés (une trace d'erreur est à la fin).
+max_output_chars = 12000
+# Les autres bornes — mémoire, CPU, processus, taille de /work et de /tmp,
+# nombre et taille des fichiers rendus, nombre de bacs — sont celles de
+# l'exécuteur : variables SANDBOX_* du service `executor`, dans
+# docker-compose.yml.
+
+
+# ── Fichiers rendus par les outils ──────────────────────────────────────
+# Un outil peut produire des fichiers (le graphique ou le tableur d'une
+# exécution de code). Le proxy les garde quelques heures et écrit leurs
+# LIENS à la fin de la réponse : une image en markdown pour une image
+# (PNG, JPEG, GIF, WebP), un lien de téléchargement sinon —
+#   GET <public_url>/v1/files/<jeton>/<nom>
+# Cette route est HORS clé du proxy : un navigateur n'envoie pas
+# d'Authorization. Le JETON du lien, imprévisible (192 bits, un par
+# fichier), vaut droit d'accès : qui a le lien a le fichier, jusqu'à son
+# expiration. Seules les images matricielles sont servies en ligne ; tout
+# le reste est servi en téléchargement, sous un type inerte.
+# En mémoire vive : un redémarrage du proxy casse les liens déjà rendus.
+[files]
+# L'adresse sous laquelle le NAVIGATEUR du client joint ce proxy
+# («https://llm.example.org»), sans «/» final. Elle ne se devine pas (le
+# proxy est derrière un reverse proxy). VIDE = aucun lien ne peut être
+# écrit : aucun fichier n'est gardé, et le modèle est prévenu que ses
+# fichiers ne sont pas remis.
+public_url = ""
+# Durée de vie (s) d'un fichier.
+ttl = 14400
+# Octets gardés au plus, tous fichiers confondus (les plus anciens
+# sortent) — pris sur la mémoire du proxy.
+max_bytes = 128000000
+# Taille au plus d'UN fichier ; au-delà il n'est pas gardé, et le modèle
+# le sait.
+max_file_bytes = 10000000
+
 # ── Statistiques ────────────────────────────────────────────────────────
 [stats]
 # Base SQLite : une ligne par requête servie, d'où les vues All/Week/Day

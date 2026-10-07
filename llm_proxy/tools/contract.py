@@ -60,10 +60,11 @@ class Result:
     `meta`    : des faits pour l'affichage du client — l'URL réellement
                 lue, un titre, une plage de caractères… Rien que le
                 modèle doive lire, rien qui soit gardé.
-    `files`   : des fichiers produits (Artifact). Aucune mémoire ne les
-                garde, aucune surface ne les rend encore : seul `text`
-                continue de l'être — il doit donc les NOMMER pour que le
-                modèle sache qu'ils existent."""
+    `files`   : des fichiers produits (Artifact), que /v1/chat/completions
+                et /v1/tools rendent au client en LIENS (files.py).
+                Aucune mémoire ne les garde : seul `text` continue de
+                l'être — il doit donc les NOMMER pour que le modèle
+                sache qu'ils existent."""
     text: str
     error: str | None = None
     sources: tuple[Source, ...] = ()
@@ -103,9 +104,10 @@ class Call:
     `client`   : le condensé de la clé du client (tools.owner), «» pour
                  un proxy ouvert — jamais la clé.
     `session`  : l'identifiant de la CONVERSATION, fourni par la surface
-                 — de quoi retrouver un état d'un appel au suivant (un
-                 conteneur d'exécution). «» = la surface n'en a pas ; un
-                 outil à état s'en passe alors (un état par appel)."""
+                 — de quoi retrouver un état d'un appel au suivant (le
+                 bac de code_execution). Seule /v1/chat/completions en a
+                 un (chat_api) ; «» = la surface n'en a pas, un outil à
+                 état s'en passe alors (un état par appel)."""
     settings: Mapping = field(default_factory=dict)
     endpoint: str = ""
     model: str = ""

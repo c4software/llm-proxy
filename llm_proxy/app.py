@@ -86,6 +86,7 @@ from . import albert
 from . import anthropic_api
 from . import chat_api
 from . import config
+from . import files
 from . import multipart
 from . import responses_api
 from . import stats
@@ -215,6 +216,26 @@ async def lifespan(app: FastAPI):
     if tools.net.ALLOW_PRIVATE:
         log.warning("[tools.net].allow_private = true : les outils qui "
                     "téléchargent joignent AUSSI les adresses privées")
+    # Exécution de code : l'exécuteur n'est PAS sondé au démarrage (le
+    # proxy ne dépend pas de lui) ; seule la configuration est dite.
+    ce = tools.code_execution
+    if ce.ENABLED:
+        if not ce.URL or not ce.TOKEN:
+            log.warning(
+                "code_execution actif mais NON configuré ([tools."
+                "code_execution].url et .token) : l'outil répondra au "
+                "modèle que l'exécution n'est pas disponible")
+        else:
+            log.info(
+                "code_execution : exécuteur %s (joint à la demande ; "
+                "injoignable, l'outil rend une erreur au modèle), %d s par "
+                "programme, %d appels par réponse", ce.URL, int(ce.TIMEOUT),
+                ce.MAX_CALLS)
+        if not files.PUBLIC_URL:
+            log.warning(
+                "code_execution : [files].public_url est vide — les "
+                "fichiers produits ne seront PAS remis au client (aucun "
+                "lien ne peut être écrit), et le modèle en est prévenu")
     # Conversion audio de `transcribe` : ffmpeg, s'il est là.
     tr = tools.transcribe
     if tr.ENABLED and len(tr.ACCEPTED) < len(tr.FORMATS):
@@ -355,7 +376,11 @@ def error_response(dialect: str, status: int, type_: str, message: str,
 
 @app.middleware("http")
 async def require_proxy_key(request: Request, call_next):
-    if PROXY_API_KEYS and request.url.path != "/healthz":
+    # /v1/files/<jeton>/<nom> : ouvert par un NAVIGATEUR, qui n'envoie pas
+    # la clé du proxy. Le jeton du chemin vaut droit d'accès (files.py).
+    served = request.method in ("GET", "HEAD") \
+        and files.is_link(request.url.path)
+    if PROXY_API_KEYS and request.url.path != "/healthz" and not served:
         token = client_token(request)
         # En octets : compare_digest refuse une chaîne non ASCII (TypeError),
         # et un jeton accentué ferait tomber la requête en 500.
@@ -679,6 +704,10 @@ async def healthz():
                  "memory": chat_api.MEMORY_ENABLED,
                  "memory_entries": len(chat_api.MEMORY),
                  "memory_chars": chat_api.MEMORY.size},
+        # Le magasin des fichiers rendus par les outils (files.py) :
+        # peut-il écrire des liens, et ce qu'il garde.
+        "files": {"public_url": bool(files.PUBLIC_URL),
+                  "entries": len(files.STORE), "bytes": files.STORE.size},
         "tools": {
             "enabled": [t.name for t in tools.enabled()],
             "max_calls": tools.MAX_CALLS,
@@ -1533,7 +1562,10 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                 task = asyncio.ensure_future(hosted.run(
                     name, pending["arguments"], count, cap,
                     options, endpoint=call.endpoint, model=call.model_key,
-                    client=client))
+                    client=client,
+                    # La conversation, pour un outil à état : seul le
+                    # robinet de chat/completions en connaît une.
+                    session=getattr(robinet, "session", "")))
                 while not await _settled(task, ping):
                     yield ping
                 result, task = task.result(), None
@@ -1801,13 +1833,30 @@ async def tools_run(name: str, request: Request):
         return error_response("openai", 400, "invalid_request_error",
                               "corps attendu : les arguments de l'outil, "
                               "en objet JSON")
+    client = tools.owner(client_token(request)) if PROXY_API_KEYS else ""
     result = await hosted.run(
         name, json.dumps(args, ensure_ascii=False), 0, endpoint="/v1/tools",
-        client=tools.owner(client_token(request)) if PROXY_API_KEYS else "")
+        client=client)
     return {"name": name, "result": result.text,
             "is_error": result.error is not None, "error": result.error,
             "sources": [dataclasses.asdict(s) for s in result.sources],
-            "meta": dict(result.meta)}
+            "meta": dict(result.meta),
+            # Les fichiers produits, rangés au magasin : des LIENS.
+            "files": [{"name": s.name, "media_type": s.media_type,
+                       "size": len(s.data), "url": s.url}
+                      for s in files.keep(result.files, client)]}
+
+
+@app.api_route(files.PATH + "{token}/{name}", methods=["GET", "HEAD"])
+async def rendered_file(token: str, name: str):
+    """Un fichier rendu par un outil hébergé (files.py). HORS clé du
+    proxy (require_proxy_key) : le jeton du chemin, imprévisible, vaut
+    droit d'accès. Inconnu, expiré ou mal nommé : le même 404."""
+    stored = files.STORE.get(token, name)
+    if stored is None:
+        return error_response("openai", 404, "file_not_found",
+                              "fichier inconnu ou expiré")
+    return Response(stored.data, headers=stored.headers())
 
 
 @app.get("/v1/audio/voices")

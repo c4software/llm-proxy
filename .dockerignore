@@ -6,3 +6,5 @@ README.md
 preview.jpg
 data/config.toml
 data/stats.db*
+# Le contexte de build du proxy n'emporte pas le service exécuteur.
+executor/

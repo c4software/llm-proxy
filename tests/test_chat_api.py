@@ -657,3 +657,79 @@ def test_always_leaves_these_requests_untouched(chat, monkeypatch):
     chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
     bare(chat)
     assert len(chat.sent[-1]["tools"]) == 2
+
+
+# ── fichiers rendus et session (code_execution) ─────────────────────────
+
+def test_files_come_back_as_links_and_the_session_follows_the_conversation(
+        chat, monkeypatch):
+    """Un outil qui rend des fichiers (Result.files) : le proxy les range
+    et écrit leurs liens à la FIN de la réponse, en flux comme en JSON ;
+    la réponse ainsi complétée est celle que la mémoire reconnaît, et la
+    session de l'outil (Call.session) est la même à la requête suivante."""
+    from llm_proxy import files
+    monkeypatch.setattr(files, "PUBLIC_URL", "https://proxy.test")
+    monkeypatch.setattr(files, "STORE", files.Store(60, 10_000, 5_000))
+    png = b"\x89PNG\r\n\x1a\n" + bytes(8)
+    sessions = []
+
+    class Trace(type(chat.hosted.by_name["web_search"])):
+        async def run(self, args, call):
+            sessions.append(call.session)
+            return tools.Result("Exit code: 0", files=(
+                tools.Artifact("courbe.png", "image/png", png),
+                tools.Artifact("table.csv", "text/csv", b"a,b\n")))
+
+    chat.hosted.by_name["web_search"] = Trace()
+
+    def links():
+        a, b = files.STORE._data.values()
+        return (f"![courbe.png](https://proxy.test/v1/files/{a.token}/courbe.png)"
+                f"\n\n[table.csv](https://proxy.test/v1/files/{b.token}/table.csv)")
+
+    # En flux : un delta de contenu de plus, avant le bloc de fin.
+    chat.replies = [FakeUpstream(stream(*SEARCH_TURN)),
+                    FakeUpstream(stream(*ANSWER_TURN))]
+    r = post(chat)
+    docs = blocks(r.content)
+    text = "".join(d.get("content") or "" for d in deltas(docs))
+    assert text == "Je cherche.\n\nVoilà.\n\n" + links()
+    assert docs[-1]["choices"][0]["finish_reason"] == "stop"
+    # Le fichier se télécharge par son lien, sans clé ; pas sous un autre nom.
+    token = next(iter(files.STORE._data))
+    got = chat.client.get(f"/v1/files/{token}/courbe.png")
+    assert (got.status_code, got.content) == (200, png)
+    assert got.headers["content-type"] == "image/png"
+    assert got.headers["x-content-type-options"] == "nosniff"
+    assert chat.client.get(f"/v1/files/{token}/autre.png").status_code == 404
+
+    # Requête suivante : le client renvoie la réponse AVEC les liens ;
+    # l'échange caché est reconnu, le backend relit son texte SANS eux,
+    # et l'outil retrouve sa session.
+    chat.replies = [FakeUpstream(stream(*SEARCH_TURN)),
+                    FakeUpstream(stream(*ANSWER_TURN))]
+    sent = ask(chat, [Q1, {"role": "assistant", "content": text}, Q2])
+    assert roles(sent[:5]) == "user assistant tool assistant user"
+    assert sent[3]["content"] == "Voilà."
+    assert len(sessions) == 2 and sessions[0] == sessions[1] != ""
+    # Une AUTRE conversation : une autre session.
+    searched(chat, [{"role": "user", "content": "Autre sujet"}])
+    assert sessions[2] not in ("", sessions[0])
+
+    # En JSON : les liens à la fin du contenu.
+    files.STORE.clear()
+    chat.replies = [FakeUpstream(SEARCH_DOC), FakeUpstream(ANSWER_DOC)]
+    r = post(chat, stream=False)
+    assert r.json()["choices"][0]["message"]["content"] == \
+        "Je cherche.\n\nVoilà.\n\n" + links()
+
+    # Proxy à clés : le LIEN seul se lit sans clé (un navigateur n'en
+    # envoie pas), en lecture seulement ; tout le reste la demande.
+    monkeypatch.setattr(A, "PROXY_API_KEYS", ["k"])
+    token = next(iter(files.STORE._data))
+    link = f"/v1/files/{token}/courbe.png"
+    assert chat.client.get(link).status_code == 200
+    assert chat.client.head(link).status_code == 200
+    assert chat.client.post(link).status_code == 401
+    for path in ("/v1/files/", f"/v1/files/{token}", link + "/x", "/v1/tools"):
+        assert chat.client.get(path).status_code == 401, path

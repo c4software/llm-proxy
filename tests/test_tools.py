@@ -1138,10 +1138,10 @@ def test_route_tools_liste_les_outils_actifs_et_les_execute(routes):
     r = client.post("/v1/tools/web_search", json={"query": "é", "limit": 3})
     assert r.status_code == 200
     # L'enveloppe : `name`, `result`, `is_error` (ce que lisent les
-    # extensions des clients), puis le code d'erreur, les sources, `meta`.
+    # clients), puis le code d'erreur, les sources, `meta`, les fichiers.
     assert r.json() == {"name": "web_search", "is_error": False,
                         "result": "[1] Titre\n    https://e.org\n    extrait",
-                        "error": None, "meta": {}, "sources": [{
+                        "error": None, "meta": {}, "files": [], "sources": [{
                             "url": "https://e.org", "title": "Titre",
                             "date": "", "snippet": "extrait"}]}
     assert seen == [{"query": "é", "limit": 3}]
@@ -1149,7 +1149,8 @@ def test_route_tools_liste_les_outils_actifs_et_les_execute(routes):
     r = client.post("/v1/tools/web_search", json={"query": "panne"})
     assert r.status_code == 200 and r.json() == {
         "name": "web_search", "result": "Error: moteur éteint.",
-        "is_error": True, "error": "unavailable", "sources": [], "meta": {}}
+        "is_error": True, "error": "unavailable", "sources": [], "meta": {},
+        "files": []}
 
 
 def test_route_tools_run_refuse_outil_inactif_et_corps_non_objet(routes):
@@ -1342,11 +1343,13 @@ def test_contrat_outil_minimal_sans_liaison(proxy, monkeypatch):
         "parameters": spec["function"]["parameters"]}]
     r = proxy.client.post("/v1/tools/echo", json={"text": "bonjour"})
     assert r.json() == {"name": "echo", "result": "bonjour", "is_error": False,
-                        "error": None, "sources": [], "meta": {"chars": 7}}
+                        "error": None, "sources": [], "meta": {"chars": 7},
+                        "files": []}
     r = proxy.client.post("/v1/tools/echo", json={})
     assert r.status_code == 200 and r.json() == {
         "name": "echo", "result": "Error: `text` is required.",
-        "is_error": True, "error": "invalid_input", "sources": [], "meta": {}}
+        "is_error": True, "error": "invalid_input", "sources": [], "meta": {},
+        "files": []}
 
     # chat/completions : déclaré par son nom, présenté en fonction, exécuté
     # par le proxy — le client ne voit ni l'appel ni son résultat.
@@ -1476,12 +1479,15 @@ def test_contrat_delai_et_nombre_d_appels_propres_a_un_outil(monkeypatch):
         "Answer now with what you already have."))
 
 
-def test_contrat_fichiers_ignores_et_code_failed(proxy, monkeypatch):
-    """Result.files : le type existe, RIEN ne le garde ni ne le rend —
-    l'enveloppe de /v1/tools, les mémoires et le tour suivant ne portent
-    que `text`. Et `failed`, le code d'un outil qui a tourné et dit avoir
-    échoué : une erreur comme une autre, comptée `error`."""
-    from llm_proxy import anthropic_api, chat_api
+def test_contrat_fichiers_en_liens_et_code_failed(proxy, monkeypatch):
+    """Result.files : rendus en LIENS par l'enveloppe de /v1/tools quand
+    le proxy a une adresse publique ([files].public_url), ignorés sinon ;
+    les mémoires et le tour suivant ne portent que `text`. Et `failed`,
+    le code d'un outil qui a tourné et dit avoir échoué : une erreur comme
+    une autre, comptée `error`."""
+    from llm_proxy import anthropic_api, chat_api, files
+    monkeypatch.setattr(files, "PUBLIC_URL", "")
+    monkeypatch.setattr(files, "STORE", files.Store(60, 10_000, 5_000))
     lines = []
     monkeypatch.setattr(tools.stats, "record_tool", lambda *a: lines.append(a))
     monkeypatch.setattr(tools, "MAX_RESULT_CHARS", 30)
@@ -1503,8 +1509,9 @@ def test_contrat_fichiers_ignores_et_code_failed(proxy, monkeypatch):
         "x" * 30 + "\n[truncated]", files=(png,), meta={"files": [png.name]})
     r = proxy.client.post("/v1/tools/produit", json={})
     assert r.json() == {"name": "produit", "result": "xxx", "is_error": False,
-                        "error": None, "sources": [],
+                        "error": None, "sources": [], "files": [],
                         "meta": {"files": ["courbe.png"]}}
+    assert len(files.STORE) == 0    # sans adresse publique, rien n'est gardé
     r = proxy.client.post("/v1/tools/produit", json={"rate": True})
     assert r.json()["error"] == "failed" and r.json()["is_error"] is True
     assert r.json()["result"] == "Error: exit status 1."
@@ -1529,6 +1536,17 @@ def test_contrat_fichiers_ignores_et_code_failed(proxy, monkeypatch):
     assert proxy.sent[1]["messages"][-1] == {
         "role": "tool", "tool_call_id": "c", "content": "xxx"}
     assert len(memory) == 1 and "PNG" not in repr(memory.__dict__)
+
+    # Avec une adresse publique : le fichier est gardé, et rendu en lien.
+    monkeypatch.setattr(files, "PUBLIC_URL", "https://proxy.test")
+    r = proxy.client.post("/v1/tools/produit", json={})
+    (stored,) = files.STORE._data.values()
+    # Le type servi se lit dans les OCTETS, pas dans ce que l'outil en
+    # dit : quatre octets ne font pas un PNG, il sera téléchargé.
+    assert r.json()["files"] == [{
+        "name": "courbe.png", "media_type": "application/octet-stream",
+        "size": 4,
+        "url": f"https://proxy.test/v1/files/{stored.token}/courbe.png"}]
 
 
 def test_boucle_un_outil_a_compte_propre_ne_pese_pas_sur_le_commun(

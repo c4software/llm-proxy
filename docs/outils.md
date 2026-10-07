@@ -9,12 +9,11 @@ client, les garde-fous, la mise en route : voir
 décrit l'autre côté : **ce qu'est un outil pour le code du proxy**, et
 comment en écrire un.
 
-Le dépôt en porte quatre, `web_search`, `web_fetch`, `ocr` et
-`transcribe` (`llm_proxy/tools/`), plus un **fournisseur**, `mcp.py`, qui
-y ajoute les outils des [serveurs MCP](#serveurs-mcp) de la
-configuration. Le contrat est écrit aussi pour ce qui suivra — une
-exécution de code — sans le construire : voir
-[Prévu, pas construit](#prévu-pas-construit).
+Le dépôt en porte cinq, `web_search`, `web_fetch`, `ocr`, `transcribe`
+et `code_execution` (`llm_proxy/tools/`), plus un **fournisseur**,
+`mcp.py`, qui y ajoute les outils des [serveurs MCP](#serveurs-mcp) de la
+configuration. Ce que le contrat porte et qu'aucune surface ne fait
+encore : voir [Prévu, pas construit](#prévu-pas-construit).
 
 Tout tient dans `llm_proxy/tools/contract.py`, réexporté par le paquet :
 `from llm_proxy import tools` puis `tools.Tool`, `tools.Result`…
@@ -56,21 +55,28 @@ class Result:
 | `sources` | le client | `Source(url, title, date, snippet)` — seule `url` est obligatoire, `date` est `AAAA-MM-JJ` ou vide. Elles font les annotations `url_citation` d'un client chat/completions et les blocs `web_search_result` d'un client Anthropic. Une erreur n'en a pas |
 | `meta` | le client | Un dictionnaire de valeurs JSON : l'URL réellement lue, un titre, une plage de caractères… Rien que le modèle doive lire, rien qui soit gardé. Les clés sont à l'outil |
 
-| `files` | personne encore | `Artifact(name, media_type, data)` : un fichier **produit** par l'outil — un nom sans chemin, son type MIME, ses octets. Voir ci-dessous |
+| `files` | le client | `Artifact(name, media_type, data)` : un fichier **produit** par l'outil — un nom sans chemin, son type MIME, ses octets. Rendu en **lien** : voir ci-dessous |
 
 Quand l'exécuteur coupe un texte trop long, `sources`, `meta` et `files`
 ne sont pas touchés : ils disent ce que l'outil a trouvé ou produit.
 
-**Les fichiers ne vont nulle part pour l'instant.** Le type existe pour
-que l'exécution de code s'écrive contre lui ; rien ne le branche encore.
-L'exécuteur les laisse passer tels quels, puis ils sont **ignorés** :
-l'enveloppe de `/v1/tools` ne les porte pas, aucune surface ne les rend
-au client, aucune mémoire ne les garde — `tools.Memory` et la mémoire des
-échanges cachés ne retiennent que `text`, et le tour suivant ne rend que
-lui au modèle. Un outil qui produit un fichier le **nomme donc dans son
-texte** : c'est tout ce que le modèle en saura. Où vit un fichier,
-combien de temps, et ce que chaque protocole en rend : c'est le chantier
-de l'exécution de code, pas ce contrat.
+**Les fichiers sont rendus en liens.** Le magasin `llm_proxy/files.py`
+les garde quelques heures, en mémoire vive, et les sert par
+`GET <public_url>/v1/files/<jeton>/<nom>` — hors clé du proxy (un
+navigateur n'en envoie pas) : le jeton, imprévisible, vaut droit d'accès.
+Seules les images matricielles, reconnues à leurs octets, sont servies en
+ligne ; tout le reste part en téléchargement, sous un type inerte. Deux
+surfaces les rendent : `/v1/chat/completions` ajoute les liens à la
+**fin** de la réponse (`Stored.markdown`, en flux comme en JSON), et
+l'enveloppe de `/v1/tools` les liste. Sans `[files].public_url`, aucun
+lien ne peut être écrit : rien n'est gardé, et un outil le sait d'avance
+par `files.refusal(taille)`. Les surfaces Responses et Anthropic ne les
+rendent pas (aucun outil lié n'en produit). Aucune **mémoire** ne les
+garde : `tools.Memory` et la mémoire des échanges cachés ne retiennent
+que `text`, et le tour suivant ne rend que lui au modèle. Un outil qui
+produit un fichier le **nomme donc dans son texte** — son nom, jamais
+son URL : c'est le proxy qui écrit le lien, le modèle n'a pas de jeton à
+recopier.
 
 Un échec se construit par `tools.failure(code, message)` —
 `Result("Error: <message>", code)` — ou, depuis `run`, en levant
@@ -106,7 +112,7 @@ Ce qui ne vient **pas** du modèle — qui ne peut donc pas s'en affranchir.
 | `endpoint` | La route par où l'appel arrive (`/v1/responses`, `/v1/tools`…) |
 | `model` | Le modèle préfixé de la conversation ; vide pour l'appel direct |
 | `client` | Le condensé de la clé du client (`tools.owner`), vide pour un proxy ouvert — jamais la clé |
-| `session` | L'identifiant de la **conversation**, fourni par la surface : de quoi retrouver un état d'un appel au suivant (un conteneur d'exécution). **Vide partout pour l'instant** — aucune des trois API n'identifie une conversation, et aucune surface n'en fabrique encore un. Un outil à état doit donc marcher avec `""` : un état par appel, rien de partagé |
+| `session` | L'identifiant de la **conversation**, fourni par la surface : de quoi retrouver un état d'un appel au suivant (le bac de `code_execution`). Seule la surface `/v1/chat/completions` en fournit un — tiré à chaque requête, puis retrouvé avec l'échange caché que la mémoire reconnaît (`[chat].memory`) : il vaut tant que le client renvoie ses réponses inchangées. `""` sur `/v1/tools`, `/v1/responses` et `/v1/messages` : un outil à état doit marcher sans — un état par appel, rien de partagé. Il ne sort jamais du proxy |
 
 ### Ce que `run` peut faire, et ce qui lui arrive
 
@@ -134,7 +140,7 @@ chaque surface le traduit dans son vocabulaire.
 | `too_many_requests` | La cible demande de ralentir (HTTP 429) | l'outil |
 | `timeout` | Délai de l'exécution dépassé (`Tool.timeout`, `run_timeout`) | l'exécuteur |
 | `limit` | Limite d'appels de la réponse atteinte (`[tools].max_calls`, `Tool.max_calls`, `max_uses` du client) — rien n'a été exécuté | l'exécuteur |
-| `failed` | L'outil **a tourné** et rapporte lui-même un échec ; le texte dit lequel : `isError` d'un outil MCP, un programme sorti en erreur. Ni les arguments (`invalid_input`) ni l'outil (`unavailable`) ne sont en cause a priori — le modèle lit, et décide | l'outil |
+| `failed` | L'outil **a tourné** et rapporte lui-même un échec ; le texte dit lequel : `isError` d'un outil MCP. (Un programme sorti en erreur sous `code_execution` n'en est **pas** un : c'est un résultat, `error = None`, avec ses fichiers.) Ni les arguments (`invalid_input`) ni l'outil (`unavailable`) ne sont en cause a priori — le modèle lit, et décide | l'outil |
 | `unavailable` | L'outil lui-même est en panne ou n'est pas configuré : moteur de recherche injoignable, exception | l'outil, l'exécuteur |
 
 Ce que chaque surface en fait :
@@ -237,14 +243,17 @@ rien pour rendre compte de l'appel.
   "is_error": false,
   "error": null,
   "sources": [{"url": "https://example.org/notes", "title": "https://example.org/notes", "date": "", "snippet": ""}],
-  "meta": {"url": "https://example.org/notes", "title": "Notes", "content_type": "text/html", "total": 63, "range": [0, 30]}
+  "meta": {"url": "https://example.org/notes", "title": "Notes", "content_type": "text/html", "total": 63, "range": [0, 30]},
+  "files": []
 }
 ```
 
 `name`, `result` et `is_error` sont stables : des extensions de clients
 les lisent. `error` est le [code](#codes-derreur) (`null` pour un succès),
-`sources` et `meta` ceux du `Result` (ses `files` n'y sont pas : voir
-[Le résultat](#le-résultat--result)). Toujours `200` quand l'outil
+`sources` et `meta` ceux du `Result` ; `files`, ses fichiers produits, en
+**liens** — `{"name", "media_type", "size", "url"}` chacun, liste vide
+sans `[files].public_url` (voir [Le résultat](#le-résultat--result)).
+Toujours `200` quand l'outil
 existe ; `404` `unknown_tool` sinon, `400` si le corps n'est pas un objet.
 
 ## Écrire un outil
@@ -287,7 +296,8 @@ Une fois enregistré, sans une ligne de plus ailleurs :
 
     GET  /v1/tools                      → le liste, avec sa description et son schéma
     POST /v1/tools/echo {"text": "é"}   → {"name": "echo", "result": "é", "is_error": false,
-                                           "error": null, "sources": [], "meta": {"chars": 1}}
+                                           "error": null, "sources": [], "meta": {"chars": 1},
+                                           "files": []}
     POST /v1/tools/echo {}              → … "result": "Error: `text` is required.",
                                            "is_error": true, "error": "invalid_input" …
     POST /v1/chat/completions, "tools": [{"type": "echo"}]
@@ -423,6 +433,48 @@ image, or a PDF with no extractable text (a scan), use ocr with the same
 URL ». Les textes d'**erreur** de `web_fetch`, eux, ne nomment pas `ocr` :
 `run` ne sait pas ce qui est présenté, et un texte mémorisé citerait un
 outil qui peut ne plus l'être au tour suivant.
+
+### `code_execution` : un outil à état, à fichiers, derrière un service
+
+`llm_proxy/tools/code_execution.py`, `[tools.code_execution]` (désactivé
+par défaut) — le modèle écrit un programme, le service `executor` du
+compose (`executor/`) le fait tourner dans un bac à sable. Jamais validé
+sur un vrai moteur de conteneurs à ce jour : voir le README, « Exécution
+de code ».
+
+| | `code_execution` |
+|---|---|
+| Arguments | `language` (`python`, `bash`, `javascript`, `c`, `cpp`, `go`, `rust` ; `sh`, `shell`, `js`, `node`, `c++`, `golang`, `rs`… acceptés), `code` (le programme entier) |
+| `summary` | `{"type": "code_execution", "language"}` |
+| `text` | L'issue (`Exit code: N`, ou `Timed out…`), l'état du bac s'il est neuf, détruit ou d'un seul appel, les fichiers remis et ceux qui ne le sont pas (avec la raison), puis la sortie — en dernier, c'est elle qu'une coupe emporte. Jamais d'URL |
+| `files` | Les fichiers créés ou modifiés dans `/work` par CET appel, que le magasin accepte : nom sans chemin, type lu dans les octets pour une image |
+| `meta` | `exit_code`, `timed_out`, `fresh`, `files` (les chemins) |
+| `call` lus | `client` et `session` : la clé du bac |
+| `timeout`, `max_calls` | `[tools.code_execution].timeout` + 120 s ; `max_calls`, compté à part |
+| Codes rendus | `invalid_input` (langage, code), `too_many_requests` (tous les bacs exécutent), `unavailable` (non configuré, exécuteur injoignable, en panne, réponse illisible). **Un programme sorti en erreur, ou tué par son délai, est un SUCCÈS de l'outil** : `error = None`, le code de sortie dans le texte, les fichiers rendus — ni `failed`, ni `timeout` |
+
+Ce qu'il montre du contrat :
+
+- **L'état vit ailleurs.** L'outil ne garde rien : `call.client` et
+  `call.session` nomment un bac chez l'exécuteur, qui l'expire seul. Sans
+  session (`/v1/tools`), un bac par appel.
+- **Le texte nomme les fichiers, le proxy écrit les liens.** Le modèle ne
+  recopie pas une URL à jeton ; la surface range `Result.files`
+  (`llm_proxy/files.py`) et ajoute les liens à la réponse.
+- **Ne rien annoncer qu'on ne peut tenir** : un fichier que le magasin
+  refuserait (`files.refusal`) est listé comme non remis.
+- **Un service voisin est une adresse de configuration**, avec un jeton :
+  ni le garde-fou réseau, ni le détail de ses pannes pour le modèle (il
+  va au journal). Le proxy ne le sonde pas au démarrage et n'en dépend
+  pas : éteint, l'outil rend `unavailable`.
+- **Les langages compilés ont leur valeur de `language`**, plutôt que de
+  passer par `bash` : le modèle donne son source comme pour Python,
+  l'exécuteur le compile sous `/tmp` (ni source ni binaire parmi les
+  fichiers produits) et l'exécute dans le délai de l'appel. La
+  description dit ce que l'absence de réseau interdit — ni module Go, ni
+  crate — parce que le modèle, sinon, l'essaie.
+
+L'API de l'exécuteur : en tête de `executor/server.py`.
 
 ### `transcribe` : un outil sans liaison, qui appelle un backend
 
@@ -584,15 +636,14 @@ tableau de bord en fait une ligne du panneau « Outils ».
 ## Prévu, pas construit
 
 Le contrat porte de quoi écrire un outil à fichiers, à état, lent ou
-compté à part. Ce qui n'est **pas** construit derrière :
+compté à part ; `code_execution` s'en sert sur `/v1/chat/completions` et
+`/v1/tools`. Ce qui n'est **pas** construit derrière :
 
-- **Les fichiers produits ne sont rendus à personne.** `Result.files`
-  existe ; aucune surface ne le rend, aucune mémoire ne le garde (voir
-  [Le résultat](#le-résultat--result)). Reste à dire où vit un fichier,
-  combien de temps, et ce que chaque protocole en fait.
-- **Aucune surface ne fournit de `session`.** `Call.session` vaut `""`
-  partout : aucune des trois API n'identifie une conversation, et il
-  reste à décider de quoi le proxy en dérive un identifiant stable.
+- **Fichiers et session sur les surfaces Responses et Anthropic.**
+  `Result.files` n'y est rendu à personne et `Call.session` y vaut `""` :
+  aucun outil lié à ces protocoles n'en produit, et il resterait à dire
+  ce que chacun en fait (un élément `code_interpreter_call`, un bloc
+  `code_execution_tool_result`) et de quoi dériver une conversation.
 - **Un outil à `max_calls` sous un `max_uses` du client** : la limite du
   client abaisse la sienne comme elle abaisse la commune ; aucun outil
   lié à l'API Messages n'a encore de compte propre pour l'éprouver.
