@@ -9,11 +9,11 @@ client, les garde-fous, la mise en route : voir
 décrit l'autre côté : **ce qu'est un outil pour le code du proxy**, et
 comment en écrire un.
 
-Le dépôt en porte trois, `web_search`, `web_fetch` et `transcribe`
-(`llm_proxy/tools/`). Le contrat est écrit pour ceux qui suivront — une
-lecture d'image par un modèle de vision, les outils d'un serveur MCP
-découverts au démarrage, une exécution de code — sans les construire :
-voir [Prévu, pas construit](#prévu-pas-construit).
+Le dépôt en porte quatre, `web_search`, `web_fetch`, `ocr` et
+`transcribe` (`llm_proxy/tools/`). Le contrat est écrit pour ceux qui
+suivront — les outils d'un serveur MCP découverts au démarrage, une
+exécution de code — sans les construire : voir
+[Prévu, pas construit](#prévu-pas-construit).
 
 Tout tient dans `llm_proxy/tools/contract.py`, réexporté par le paquet :
 `from llm_proxy import tools` puis `tools.Tool`, `tools.Result`…
@@ -338,6 +338,84 @@ Ce qu'il faut tenir :
 | `settings` lus | `allowed_domains`, `blocked_domains` | `allowed_domains`, `blocked_domains`, `max_chars` |
 | Codes rendus | `invalid_input` (pas de `query`), `unavailable` (tout le reste : SearXNG injoignable, non configuré, moteurs bloqués) | `invalid_input`, `not_allowed`, `not_accessible`, `too_many_requests`, `unsupported` |
 
+### `ocr` : lire le texte d'une image ou d'un PDF scanné
+
+`llm_proxy/tools/ocr.py`, `[tools.ocr]` (désactivé par défaut). Le texte
+est lu par un **modèle de vision** qu'un backend du proxy relaie déjà
+(`model = "<backend>/<modèle>"`, backend avec `images = true`) : pas de
+Tesseract, pas de route OCR dédiée.
+
+| Argument | | |
+|---|---|---|
+| `url` | chaîne, requis | L'URL http(s) de l'image ou du PDF |
+| `pages` | chaîne | PDF seulement : `"3"`, `"1-3"`, `"2,5-7"`. Défaut : les premières (`max_pages`) |
+
+Pas d'argument de langue ni de consigne : le modèle de vision reconnaît
+l'écriture seul, et une consigne libre du modèle ferait de l'outil autre
+chose qu'une transcription (et un canal d'injection vers le modèle de
+vision).
+
+**Ce qui est lu.** PNG, JPEG, GIF, WebP — reconnus à leurs premiers octets,
+quel que soit le type annoncé. D'un PDF : les images *embarquées* dans ses
+pages, pas un rendu (pypdf ne dessine pas une page ; ni Pillow ni poppler
+ne sont requis). Un scan est une image par page — ou plusieurs bandes,
+envoyées ensemble. JPEG repris tel quel ; pixels bruts gris ou RVB réécrits
+en PNG. **Pas lus** : les scans codés en CCITT (fax), JBIG2 ou JPEG 2000,
+les images CMJN ou à palette, une page sans image (son texte, s'il y en a,
+se lit par `web_fetch`). Aucune image n'est redimensionnée ni redressée
+(`/Rotate` ignoré).
+
+**Résultat.** Du texte seulement :
+
+    URL: https://exemple.org/scan.pdf
+    Content-Type: application/pdf
+    Pages: 1-4 of 12 (pass pages="5-12" to continue)
+
+    ---
+    [Page 1]
+    …
+
+`meta` : `url` (celle réellement lue), `content_type`, `pages` (numéros
+rendus), `total_pages` (PDF), `model`. `sources` : l'URL demandée.
+`summary` : `{"type": "ocr", "url"}`, l'URL suivie des pages lues d'un
+PDF (`<url> [pages 5-8]`).
+
+**Erreurs** (codes du contrat) : `invalid_input` (URL ou `pages`
+illisibles, pages hors du document), `not_allowed` (adresse privée,
+domaine refusé), `not_accessible` (introuvable, HTTP ≥ 400),
+`too_many_requests` (429 de la cible, quota ou 429 du modèle de vision),
+`unsupported` (ni image ni PDF, trop gros, PDF chiffré ou abîmé, aucune
+image lisible), `timeout` (rien de lu dans le délai), `unavailable` (outil
+non configuré, modèle de vision injoignable ou en erreur).
+
+**Bornes.** Téléchargement `max_bytes` (20 Mo), image `max_image_bytes`
+(5 Mo), `max_pages` par appel (4), `max_chars` rendus (20 000), `timeout`
+(50 s). Une page en échec ou pas finie à temps n'efface pas les autres :
+ce qui est lu est rendu, la ligne `Pages:` dit quoi redemander. C'est
+pourquoi l'outil tient **son** budget et que l'exécuteur lui laisse
+davantage (`Tool.timeout` = `timeout` + 10 s, à la place de
+`[tools].run_timeout`) : coupé par l'exécuteur, il ne rendrait rien.
+
+**Coût.** Une requête chat/completions au modèle de vision par page :
+elle passe par le limiteur d'un backend à quotas, et laisse une ligne de
+statistiques « requête » (endpoint `/v1/tools/ocr`) en plus de celle de
+l'outil. Le fichier téléchargé et chaque page lue sont gardés dans le
+cache web (`[tools].web_cache_ttl`) : relire ou demander la suite ne
+retélécharge ni ne relit rien.
+
+**Garde-fou.** Le commun, `[tools.net]`, par `net.download`. Le texte lu
+dans une image est du contenu non fiable, comme une page web.
+
+**Présentation.** `POST /v1/tools/ocr` ; sur `/v1/chat/completions`,
+`{"type": "ocr"}` dans `tools` ou `[chat].always`. Pas de liaison
+Responses ni Anthropic. Présenté avec `web_fetch`, chacun renvoie à
+l'autre par `spec(present)` : `ocr` dit « when web_fetch reports an
+image, or a PDF with no extractable text », `web_fetch` dit « For an
+image, or a PDF with no extractable text (a scan), use ocr with the same
+URL ». Les textes d'**erreur** de `web_fetch`, eux, ne nomment pas `ocr` :
+`run` ne sait pas ce qui est présenté, et un texte mémorisé citerait un
+outil qui peut ne plus l'être au tour suivant.
+
 ### `transcribe` : un outil sans liaison, qui appelle un backend
 
 `llm_proxy/tools/transcribe.py` — le modèle passe l'URL d'un fichier
@@ -363,9 +441,10 @@ Ce qu'il montre du contrat :
   client HTTP du backend. Il refait alors lui-même ce que `app.py` fait
   autour d'un relais : la porte de quota (`settings.is_exempt`, le
   limiteur du backend) et la ligne de statistiques « requête »
-  (`stats.record`, sur `/v1/audio/transcriptions`) — en plus de celle de
-  l'outil, écrite par `Hosted.run`. Le modèle de transcription apparaît
-  donc dans l'usage, qu'il serve un client ou l'outil.
+  (`stats.record`) — en plus de celle de l'outil, écrite par
+  `Hosted.run`. Son endpoint est la route du proxy d'où la requête naît,
+  `/v1/tools/transcribe` : dans l'usage du modèle de transcription, ce
+  que l'outil consomme se distingue de ce que les clients consomment.
 - **Un délai à lui** (`Tool.timeout`, une propriété qui lit sa
   configuration) : une transcription ne tient pas dans le délai commun.
 - **Reconnaître un contenu** : les premiers octets d'abord, le

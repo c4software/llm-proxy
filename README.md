@@ -95,7 +95,9 @@ et un tableau de bord.
   (`{"type": "web_search"}`) et reçoit une réponse ordinaire, la boucle
   faite ; `[chat].always` les présente d'office à un client qui ne
   déclare rien (Open WebUI). Voir [Outils hébergés](#outils-hébergés).
-  Sur cette route et par `/v1/tools` seulement, si
+  Sur cette route et par `/v1/tools` seulement : si
+  `[tools.ocr].enabled`, l'outil `ocr` lit le texte d'une image ou d'un
+  PDF scanné par son URL, avec un modèle de vision d'un backend ; si
   `[tools.transcribe].enabled`, l'outil `transcribe` rend le texte d'un
   fichier audio donné par son URL, par le modèle de transcription d'un
   backend.
@@ -142,6 +144,7 @@ et un tableau de bord.
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
 | `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en sources pour les annotations et les blocs d'un client Anthropic ; filtre par domaines |
 | `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page (ou du texte d'un PDF) par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
+| `llm_proxy/tools/ocr.py` | L'outil `ocr` : texte d'une image ou d'un PDF scanné (images embarquées dans ses pages) par son URL, téléchargée sous le garde-fou, lue par un modèle de vision d'un backend — limiteur de quotas et statistiques compris |
 | `llm_proxy/tools/transcribe.py` | L'outil `transcribe` : téléchargement d'un fichier audio par son URL sous le garde-fou, transcription par le modèle d'un backend (`/v1/audio/transcriptions`), texte découpé et gardé en cache |
 | `docs/outils.md` | Le contrat des outils hébergés, membre par membre, et comment en écrire un |
 | `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
@@ -686,6 +689,7 @@ s'appellent par [`/v1/tools`](#appel-direct--v1tools-pi-omp) :
 
 | Fonction présentée au modèle | Ce qu'elle fait | Par quoi |
 |---|---|---|
+| `ocr` (`url`, `pages`) | Lit le texte d'une image (PNG, JPEG, GIF, WebP) ou d'un PDF scanné — les images embarquées dans ses pages, 4 pages par appel ; le recours de `web_fetch`, dont la description y renvoie le modèle | Téléchargement par le proxy sous le garde-fou réseau, puis une requête chat/completions par page au modèle de vision de `[tools.ocr].model` |
 | `transcribe` (`url`, `language`, `offset`) | Transcrit un fichier audio (mp3, wav, flac, ogg, m4a, aac, webm, amr, mp4 ; 25 Mo au plus) et rend le texte, sans horodatage ; reconnu à ses premiers octets ou à son type, refusé sinon | Téléchargement par le proxy sous le garde-fou réseau, puis `POST /v1/audio/transcriptions` au modèle de `[tools.transcribe].model` |
 
 Ce qu'est un outil pour le code du proxy — son contrat, ses codes
@@ -1497,6 +1501,22 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 | `max_chars` | `20000` | Caractères de texte rendus par appel ; la suite se demande par `offset` |
 
 Ce que `web_fetch` a le droit de joindre se règle dans `[tools.net]`.
+
+### `[tools.ocr]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Active l'outil `ocr` (`/v1/chat/completions` et `/v1/tools`) |
+| `model` | `""` | Le modèle de vision, préfixé : `"<backend>/<modèle>"`, sur un backend à `images = true`. Vide, préfixe inconnu, backend sans images ou modèle que le catalogue ne dit pas multimodal → le modèle reçoit « ocr non configuré », la raison est dans le journal |
+| `timeout` | `50` | Secondes pour une exécution, téléchargement et lectures compris ; passé ce délai les pages déjà lues sont rendues. Remplace `[tools].run_timeout` pour cet outil (plus 10 s de marge) |
+| `max_bytes` | `20000000` | Taille au plus du fichier téléchargé ; plus gros, il est refusé |
+| `max_image_bytes` | `5000000` | Taille au plus d'une image envoyée au modèle de vision |
+| `max_pages` | `4` | Pages d'un PDF lues par appel, une requête au modèle de vision chacune ; la suite se demande par `pages` |
+| `concurrency` | `2` | Pages lues en même temps |
+| `max_chars` | `20000` | Caractères rendus par appel |
+| `max_tokens` | `4096` | `max_tokens` de chaque requête au modèle de vision, ramené au plafond du backend s'il est plus bas |
+
+Ce que l'outil a le droit de joindre : `[tools.net]`.
 
 ### `[tools.transcribe]`
 

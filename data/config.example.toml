@@ -330,6 +330,58 @@ allow_private = false
 # allowed_domains = ["github.com", "docs.python.org", "wikipedia.org"]
 # blocked_domains = ["pastebin.com"]
 
+# Lecture du texte d'une IMAGE ou d'un PDF SCANNÉ (OCR), par son URL. Pas
+# de Tesseract : le texte est lu par un MODÈLE DE VISION qu'un backend de
+# ce fichier relaie déjà — une requête chat/completions ordinaire, l'image
+# en `image_url`. C'est le recours de `web_fetch`, qui ne lit ni une image
+# ni un PDF sans couche texte (sa description y renvoie le modèle quand
+# les deux lui sont présentés).
+# Le fichier arrive par URL seulement, téléchargé par le proxy sous le
+# garde-fou de [tools.net].
+# Image : PNG, JPEG, GIF, WebP (reconnue à ses premiers octets). PDF : les
+# images EMBARQUÉES dans ses pages (un scan = une image par page), pas un
+# rendu de la page — JPEG repris tel quel, pixels bruts (gris, RVB)
+# réécrits en PNG ; un scan codé en fax (CCITT, JBIG2) ou en JPEG 2000
+# n'est pas lu, et l'erreur le dit.
+# Sans liaison à l'API Responses ni à l'API Messages : l'outil se présente
+# sur /v1/chat/completions — déclaré par {"type": "ocr"}
+# ([chat].hosted_tools) ou d'office ([chat].always) — et s'appelle par
+# POST /v1/tools/ocr.
+# À SAVOIR : le texte lu dans une image entre dans le contexte du modèle
+# comme celui d'une page web — une image peut porter des instructions.
+[tools.ocr]
+enabled = false
+# Le modèle de vision, PRÉFIXÉ comme dans une requête d'un client. Son
+# backend doit avoir `images = true`. Vide, préfixe inconnu, backend sans
+# images, ou modèle que le catalogue ne dit pas multimodal → l'outil
+# répond au modèle qu'il n'est pas configuré (la raison est dans le journal).
+# Sur un backend à quotas, chaque page lue passe par son limiteur ; chaque
+# requête laisse, en plus de la ligne d'usage de l'outil, une ligne de
+# requête de ce modèle, endpoint «/v1/tools/ocr».
+model = ""
+# Durée (s) d'une exécution, téléchargement et lectures compris. Ce délai
+# passé, les pages déjà lues sont rendues et le modèle redemande la suite.
+# Il remplace [tools].run_timeout pour cet outil (10 s de marge en plus,
+# le temps de rendre) : le monter suffit pour un modèle de vision lent.
+timeout = 50
+# Octets téléchargés au plus ; un fichier plus gros est refusé.
+max_bytes = 20000000
+# Octets d'UNE image envoyée au modèle de vision (en base64 dans le corps
+# de la requête : un tiers de plus). Aucune image n'est redimensionnée.
+max_image_bytes = 5000000
+# Pages d'un PDF lues par appel — une requête au modèle de vision chacune ;
+# le modèle demande les suivantes par l'argument `pages` ("5-8").
+max_pages = 4
+# Pages lues en même temps.
+concurrency = 2
+# Caractères de texte rendus par appel ; au-delà, les pages restantes sont
+# à redemander (déjà lues, elles sortent du cache web).
+max_chars = 20000
+# `max_tokens` de chaque requête au modèle de vision (une page dense :
+# 1 500 à 3 000 tokens) ; ramené à [backends.<nom>].max_tokens s'il est
+# plus bas.
+max_tokens = 4096
+
 # Transcription d'un fichier audio : le modèle donne une URL, le proxy
 # télécharge le fichier (sous le garde-fou de [tools.net]) et le confie au
 # modèle de transcription d'un de ses backends (API OpenAI
@@ -346,7 +398,7 @@ enabled = false
 # C'est une adresse de CONFIGURATION : le garde-fou des adresses publiques
 # ne s'y applique pas (il protège de l'URL choisie par le modèle).
 # Chaque transcription laisse, en plus de la ligne d'usage de l'outil, une
-# ligne de requête de ce modèle (/v1/audio/transcriptions).
+# ligne de requête de ce modèle, endpoint «/v1/tools/transcribe».
 model = ""
 # model = "bigchuck/qwen3-asr-1.7b"
 # Délai (s) de la requête de transcription, et délai (s) du téléchargement,

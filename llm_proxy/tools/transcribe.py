@@ -57,6 +57,11 @@ LANGUAGE = config.text("tools.transcribe.language", "").strip().lower()
 USER_AGENT = "llm-proxy transcribe (+https://github.com/c4software/llm-proxy)"
 ACCEPT = "audio/*,video/*;q=0.8,*/*;q=0.5"
 PATH = "/v1/audio/transcriptions"
+# L'endpoint des lignes de statistiques des requêtes au modèle de
+# transcription : la route du proxy d'où elles naissent, pas celle du
+# backend — ce que l'outil consomme d'un modèle se distingue ainsi de ce
+# que les clients en consomment.
+ENDPOINT = "/v1/tools/transcribe"
 
 NAME = "transcribe"
 
@@ -198,7 +203,7 @@ def _count(backend, model: str, status: int, started: float, usage) -> None:
             and not isinstance(value, bool) else 0
 
     try:
-        stats.record(MODEL, backend.name, model, PATH, status,
+        stats.record(MODEL, backend.name, model, ENDPOINT, status,
                      time.monotonic() - started,
                      tokens("input_tokens", "prompt_tokens"),
                      tokens("output_tokens", "completion_tokens"),

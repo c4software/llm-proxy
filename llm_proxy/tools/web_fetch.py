@@ -50,6 +50,11 @@ NAME = "web_fetch"
 _SEARCH = "web_search"
 _SEARCH_HINT = f"Use it to read a page found with {_SEARCH}. "
 
+# Et à `ocr`, de même : pour ce que cet outil-ci ne lit pas.
+_OCR = "ocr"
+_OCR_HINT = (f"For an image, or a PDF with no extractable text (a scan), "
+             f"use {_OCR} with the same URL. ")
+
 TEXT_TYPES = ("text/", "application/json", "application/xml",
               "application/xhtml+xml", "application/javascript",
               "application/rss+xml", "application/atom+xml")
@@ -183,6 +188,7 @@ class WebFetch(Tool):
                 "converted to plain text; JSON and text are returned as is; the "
                 "text of a PDF is extracted). "
                 + (_SEARCH_HINT if _SEARCH in present else "")
+                + (_OCR_HINT if _OCR in present else "")
                 + "Long pages are truncated: "
                 "pass `offset` to continue from a given character position."),
             "parameters": {

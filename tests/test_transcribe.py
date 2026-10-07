@@ -178,7 +178,7 @@ def test_transcription_fichier_envoye_au_backend_et_texte_rendu(asr):
     # La ligne de statistiques de cette requête, comme pour un relais.
     [line] = asr.lines
     assert line[:5] == ("asr/whisper-test", "asr", "whisper-test",
-                        "/v1/audio/transcriptions", 200)
+                        "/v1/tools/transcribe", 200)
 
 
 def test_format_reconnu_aux_octets_puis_au_type_jamais_a_l_extension():
