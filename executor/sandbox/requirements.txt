@@ -1,0 +1,24 @@
+# Les bibliothèques Python d'un bac. Rien ne s'installe APRÈS coup (pas de
+# réseau dans un bac) : ce qui manque ici manque au modèle. Versions
+# figées, comme celles du proxy ; les changer = reconstruire l'image de
+# l'exécuteur (`docker compose build executor`), dont le contrôle
+# (check.py) échoue si l'une d'elles ne s'importe plus.
+# Calcul et données
+numpy==2.5.3
+pandas==3.0.6
+scipy==1.18.1
+sympy==1.14.0
+scikit-learn==1.9.1
+networkx==3.7
+# Graphiques et images (matplotlib sans écran : MPLBACKEND=Agg)
+matplotlib==3.11.2
+seaborn==0.13.2
+pillow==12.3.0
+# Fichiers de bureau : lire et produire xlsx, docx, pdf
+openpyxl==3.1.5
+python-docx==1.2.0
+pypdf==6.19.0
+reportlab==5.0.1
+# Divers
+tabulate==0.10.0
+pyyaml==6.0.3
