@@ -684,7 +684,8 @@ def test_files_come_back_as_links_and_the_session_follows_the_conversation(
 
     def links():
         a, b = files.STORE._data.values()
-        return (f"![courbe.png](https://proxy.test/v1/files/{a.token}/courbe.png)"
+        return (f"[![courbe.png](https://proxy.test/v1/files/{a.token}/courbe.png)]"
+                f"(https://proxy.test/v1/files/{a.token}/courbe.png)"
                 f"\n\n[table.csv](https://proxy.test/v1/files/{b.token}/table.csv)")
 
     # En flux : un delta de contenu de plus, avant le bloc de fin.

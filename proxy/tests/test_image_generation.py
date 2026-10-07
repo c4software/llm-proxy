@@ -329,7 +329,7 @@ def test_par_hosted_delai_et_compte_propres_et_lien_ecrit_par_le_proxy(
     assert r.error is None and len(r.text) < 300
     (stored,) = files.keep(r.files)
     assert stored.markdown == (
-        f"![{NAME}](https://proxy.test/v1/files/{stored.token}/{NAME})")
+        f"[![{NAME}]({stored.url})]({stored.url})")
     assert (stored.inline, stored.media_type) == (True, "image/png")
     r = go(h.run("image_generation", '{"prompt": "un phare"}', 2))
     assert (r.error, r.text) == ("limit", (

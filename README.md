@@ -1946,7 +1946,7 @@ appeler des outils :
       "model": "<backend>/<modèle>", "tools": [{"type": "code_execution"}],
       "messages": [{"role": "user", "content": "Trace sin(x) entre 0 et 10 dans un PNG, garde aussi les points dans /tmp/points.csv, et dis-moi sin(7) à 6 décimales."}]}' | tee /tmp/tour1.json | jq -r '.choices[0].message.content'
 
-Attendu : `0.656987`, suivi de `![….png]($PROXY/v1/files/…)` ; aucun
+Attendu : `0.656987`, suivi de `[![….png]($PROXY/v1/files/…)]($PROXY/v1/files/…)` ; aucun
 `tool_calls` pour le client. Puis la **conversation** : la même requête
 avec, à la suite, le message assistant reçu **tel quel** (liens compris)
 et un message user « Ajoute cos(x) au même graphique, à partir de

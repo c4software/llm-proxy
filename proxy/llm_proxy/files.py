@@ -132,9 +132,13 @@ class Stored:
 
     @property
     def markdown(self) -> str:
-        """Ce que le proxy ajoute à la réponse : l'image, ou un lien."""
-        return f"![{self.name}]({self.url})" if self.inline \
-            else f"[{self.name}]({self.url})"
+        """Ce que le proxy ajoute à la réponse : l'image, ou un lien.
+        L'image est elle-même un LIEN vers son fichier : une interface de
+        chat l'affiche, cliquable ; un client en terminal (omp, pi), qui
+        ne rend d'une image que son texte de remplacement, montre alors
+        un lien au lieu d'un simple nom de fichier."""
+        link = f"[{self.name}]({self.url})"
+        return f"[!{link}]({self.url})" if self.inline else link
 
     def headers(self) -> dict:
         """Les en-têtes de la réponse qui le sert (tête de module)."""

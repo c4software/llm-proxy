@@ -465,10 +465,11 @@ def test_servi_sans_risque():
             "inline; " if inline else "attachment; "), name
         assert h["X-Content-Type-Options"] == "nosniff"
         assert h["Content-Security-Policy"].startswith("sandbox")
-        assert stored.markdown.startswith("![" if inline else "["), name
+        assert stored.markdown.startswith("[![" if inline else "["), name
+        assert stored.markdown.endswith(f"]({stored.url})"), name
     stored = store.put("a.png", PNG)
     assert stored.url == f"https://proxy.test/v1/files/{stored.token}/a.png"
-    assert stored.markdown == f"![a.png]({stored.url})"
+    assert stored.markdown == f"[![a.png]({stored.url})]({stored.url})"
     assert stored.headers()["Cache-Control"].startswith("private, max-age=")
 
 
@@ -501,7 +502,7 @@ def test_ranger_les_fichiers_d_un_resultat(monkeypatch):
     assert [s.name for s in kept] == ["a.png", "t.csv"]
     assert files.STORE.get(kept[0].token, "a.png").data == PNG
     assert "\n\n".join(s.markdown for s in kept) == (
-        f"![a.png](https://proxy.test/v1/files/{kept[0].token}/a.png)\n\n"
+        f"[![a.png]({kept[0].url})]({kept[0].url})\n\n"
         f"[t.csv](https://proxy.test/v1/files/{kept[1].token}/t.csv)")
     monkeypatch.setattr(files, "PUBLIC_URL", "")
     assert files.keep(produced) == [] and len(files.STORE) == 2
