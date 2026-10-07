@@ -732,7 +732,8 @@ Depuis le 07/10/2026, pi et omp ne passent plus par l'extension
 par `[chat].always`, comme Open WebUI — voir
 [pi et omp](#pi-et-omp--les-outils-doffice). Les deux lignes du tableau
 disent ce qui a été joué le 05/10/2026, par l'ancien chemin ; le nouveau
-n'a pas été rejoué avec ces clients.
+l'a été le 07/10/2026 par les bancs `envTest` (pi 1.0.4, omp 18.8.0 :
+6/6 chacun, recherche comprise).
 
 Ce jour-là SearXNG rendait 20 résultats, deux de ses moteurs étant
 refusés par leur source (Brave en limite de débit, DuckDuckGo en
@@ -1357,8 +1358,9 @@ commandes `/web` et `/page`) :
   [Client chat/completions](#client-chatcompletions--déclarer-loutil).
 
 Les bancs `envTest/pi` et `envTest/omp` jouent leur recherche web par ce
-chemin depuis le 07/10/2026 ; ils n'ont **pas été rejoués** depuis, et
-aucun essai de pi ou d'omp contre `[chat].always` n'a été fait.
+chemin depuis le 07/10/2026, et l'ont joué ce jour-là contre le proxy
+déployé : 6/6 chacun (pi 1.0.4, omp 18.8.0, `bigchuck/qwen3.8-flash-next`),
+voir `envTest/README.md`.
 
 ### Appel direct : `/v1/tools`
 

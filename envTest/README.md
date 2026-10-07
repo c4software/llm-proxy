@@ -22,12 +22,28 @@ sans les lancer est dit dans leurs sections.
 `/v1/tools`, commandes `/web` et `/page`) est retirée : pi et omp
 reçoivent les outils web **d'office**, par `[chat].always` du proxy, et
 leur scénario 6 joue ce chemin. Les images ne téléchargent plus cette
-extension. **Ces deux bancs n'ont pas été rejoués depuis** : les 6/6
-ci-dessous sont ceux de l'ancien scénario 6, et le nouveau n'a été
-vérifié qu'à blanc (syntaxe, verdict contre des traces écrites à la
-main) — ni contre pi, ni contre omp, ni contre un proxy.
+extension. Rejoués sous cette forme le jour même (premier tableau
+ci-dessous) ; les 6/6 du 05/10/2026, plus bas, sont ceux de l'ancien
+scénario 6.
 
 ## Derniers résultats
+
+Run du 7 octobre 2026, proxy `633e70f` déployé (`[chat].always =
+web_search, web_fetch, ocr, transcribe, code_execution`), pi 1.0.4, omp
+18.8.0, backend gufo `bigchuck`, clients en conteneurs sur la machine du
+proxy (`PROXY_URL=http://llmproxy`), les deux bancs joués à la suite.
+
+| Modèle | pi (6 scénarios) | omp (6 scénarios) |
+|---|---|---|
+| `bigchuck/qwen3.8-flash-next` | **6/6** | **6/6** |
+
+Premier passage du scénario 6 par les outils d'office : lancés avec
+`--no-tools`, sans extension, les deux clients ont rendu l'URL d'une
+source, et le compteur d'exécutions de `web_search` du proxy sur
+`/v1/chat/completions` a avancé de 1 à chaque fois. Les scénarios 1 à 5
+(fichiers, édition, création de code) passent avec les cinq définitions
+d'outils du proxy en plus dans chaque requête. Codex, Claude Code et
+`api` n'ont pas été rejoués ce jour-là.
 
 Run du 5 octobre 2026, proxy `9cd08f1` déployé avec son instance SearXNG
 (outils `web_search` et `web_fetch` actifs), Codex CLI 0.157.1, pi 0.87.1,
@@ -322,7 +338,7 @@ Codex un second qui enchaîne recherche et lecture de page. Écrits le
 05/10/2026 et joués le jour même contre un proxy déployé avec SearXNG :
 les quatre passent (voir « Derniers résultats »). Ceux de pi et d'omp
 ont changé de chemin le 07/10/2026 (outils d'office, plus d'extension)
-et n'ont **pas été rejoués** sous cette forme.
+et ont été rejoués sous cette forme le jour même : 6/6 chacun.
 
 | Client | N° | Ce qui est demandé | Chemin dans le proxy |
 |---|---|---|---|
@@ -416,8 +432,9 @@ Ce que ces scénarios ne peuvent pas dire :
   passer sans que sa propre requête ait cherché — la trace du client ne
   relie plus la recherche au scénario.
 - `--no-tools` a été lu dans `pi --help` (1.0.4) et `omp --help`
-  (18.6.3) le 07/10/2026, pas dans les versions validées à la main le
-  05/10/2026 (pi 0.87.1, omp 18.3.2).
+  (18.6.3) le 07/10/2026, et joué ce jour-là avec pi 1.0.4 et omp
+  18.8.0 ; pas avec les versions validées à la main le 05/10/2026 (pi
+  0.87.1, omp 18.3.2).
 - Le scénario 7 de Codex lit toujours `tools/llm-proxy-web.ts` de
   llmsetup, mais à un **commit donné** : le fichier y reste lisible une
   fois l'extension retirée de la branche, tant que ce commit existe dans
