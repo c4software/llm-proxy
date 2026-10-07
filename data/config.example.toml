@@ -260,7 +260,7 @@ enabled = true
 # hors compose (uvicorn lancé à la main), mettre l'adresse réelle. Vide →
 # l'outil répond au modèle que la recherche n'est pas configurée.
 # C'est une adresse de CONFIGURATION, en général privée : le garde-fou des
-# adresses publiques de [tools.web_fetch] ne s'y applique pas.
+# adresses publiques de [tools.net] ne s'y applique pas.
 # SearXNG ne sert le JSON que si `search.formats` le liste
 # (searxng/settings.yml) ; sinon 403, et l'erreur rendue au modèle le dit.
 searxng_url = "http://searxng:8080"
@@ -295,6 +295,19 @@ pdf_max_bytes = 20000000
 # texte tels quels ; texte extrait d'un PDF, sans OCR ; tout autre type
 # refusé). Page plus longue : le modèle redemande la suite par `offset`.
 max_chars = 20000
+# Ce que `web_fetch` a le droit de joindre — adresses privées, listes de
+# domaines — se règle dans [tools.net], pour tous les outils qui
+# téléchargent.
+
+# Garde-fou de TÉLÉCHARGEMENT, commun à tout ce que le proxy va chercher à
+# la demande du modèle : une page (`web_fetch`), et tout outil qui lit un
+# fichier par son URL. Une seule table : ce qu'un déploiement interdit de
+# lire, il l'interdit partout. Les bornes de taille et de durée restent à
+# chaque outil.
+# Ces trois clés vivaient dans [tools.web_fetch] : elles y sont encore
+# LUES si [tools.net] ne les pose pas, avec un avertissement au démarrage
+# qui demande de les déplacer ici.
+[tools.net]
 # Garde-fou des adresses privées. La cible est choisie par le MODÈLE, et
 # la requête part DU PROXY : sans filtre, une page web (ou un prompt)
 # pourrait lui faire lire un service de son réseau — le backend

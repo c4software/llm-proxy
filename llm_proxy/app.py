@@ -182,6 +182,21 @@ async def lifespan(app: FastAPI):
         else:
             log.warning("[chat].always sans effet : [chat].hosted_tools "
                         "absent ou false")
+    # Garde-fou de téléchargement ([tools.net]) : ses clés lues à leur
+    # ancienne place, [tools.web_fetch].
+    if tools.net.LEGACY:
+        log.warning(
+            "[tools.web_fetch].%s : ces clés sont celles du garde-fou "
+            "commun à tous les outils qui téléchargent — lues ici faute de "
+            "[tools.net], à déplacer dans [tools.net]",
+            ", ".join(tools.net.LEGACY))
+    if tools.net.SHADOWED:
+        log.warning(
+            "[tools.web_fetch].%s IGNORÉ : [tools.net] règle déjà ces clés",
+            ", ".join(tools.net.SHADOWED))
+    if tools.net.ALLOW_PRIVATE:
+        log.warning("[tools.net].allow_private = true : les outils qui "
+                    "téléchargent joignent AUSSI les adresses privées")
     if albert.ROUTER_MODELS:
         log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 

@@ -1063,8 +1063,8 @@ def test_fetch_errors_become_error_codes(monkeypatch):
         return httpx.Response(int(path[1:]))
 
     for name in ("ALLOWED_DOMAINS", "BLOCKED_DOMAINS"):
-        monkeypatch.setattr(web_fetch, name, [])
-    monkeypatch.setattr(web_fetch, "ALLOW_PRIVATE", False)
+        monkeypatch.setattr(web_fetch.net, name, [])
+    monkeypatch.setattr(web_fetch.net, "ALLOW_PRIVATE", False)
     class Offline(web_fetch.WebFetch):
         async def run(self, args, call):
             return await super().run(args, call, httpx.MockTransport(site))

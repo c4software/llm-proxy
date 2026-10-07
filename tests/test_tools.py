@@ -76,7 +76,7 @@ def dns(monkeypatch):
 def reglages(monkeypatch):
     """Les réglages dont dépendent les tests, quels que soient ceux du
     fichier de configuration chargé à l'import."""
-    monkeypatch.setattr(web_fetch, "ALLOW_PRIVATE", False)
+    monkeypatch.setattr(net, "ALLOW_PRIVATE", False)
     monkeypatch.setattr(web_fetch, "MAX_BYTES", 2_000_000)
     monkeypatch.setattr(web_fetch, "MAX_CHARS", 20_000)
     monkeypatch.setattr(web_fetch, "PDF_MAX_BYTES", 20_000_000)
@@ -85,8 +85,8 @@ def reglages(monkeypatch):
     # pages différentes. Ceux du cache le rallument (ttl).
     webcache.CACHE.clear()
     monkeypatch.setattr(webcache.CACHE, "ttl", 0)
-    monkeypatch.setattr(web_fetch, "ALLOWED_DOMAINS", [])
-    monkeypatch.setattr(web_fetch, "BLOCKED_DOMAINS", [])
+    monkeypatch.setattr(net, "ALLOWED_DOMAINS", [])
+    monkeypatch.setattr(net, "BLOCKED_DOMAINS", [])
     monkeypatch.setattr(web_search, "SEARXNG_URL", "http://searx.test:8080")
     monkeypatch.setattr(web_search, "LIMIT", 8)
     monkeypatch.setattr(web_search, "LANGUAGE", "")
@@ -359,7 +359,7 @@ def test_fetch_cible_absente_ou_refusee_erreur_sans_aucune_requete():
 
 
 def test_fetch_allow_private(monkeypatch):
-    monkeypatch.setattr(web_fetch, "ALLOW_PRIVATE", True)
+    monkeypatch.setattr(net, "ALLOW_PRIVATE", True)
     web = Web(default=page("interne"))
     assert web.fetch("http://intern.test:8009/").endswith("interne")
     assert str(web.requests[0].url) == "http://10.0.0.5:8009/"
@@ -424,7 +424,7 @@ def test_fetch_listes_de_domaines_a_chaque_saut(monkeypatch, dns):
     web = Web({("site.test", "/sortie"): redirect("http://autre.test/x")},
               default=page("ok"))
     dns["docs.site.test"] = [PUBLIC]
-    monkeypatch.setattr(web_fetch, "ALLOWED_DOMAINS", ["site.test"])
+    monkeypatch.setattr(net, "ALLOWED_DOMAINS", ["site.test"])
     assert web.fetch("http://site.test/").endswith("ok")
     assert web.fetch("http://docs.site.test/").endswith("ok")
     refus = "Error: autre.test is not a domain this proxy is allowed to read."
@@ -433,8 +433,8 @@ def test_fetch_listes_de_domaines_a_chaque_saut(monkeypatch, dns):
     assert web.fetch("http://site.test/sortie") == refus
     assert [r.headers["host"] for r in web.requests[2:]] == ["site.test"]
 
-    monkeypatch.setattr(web_fetch, "ALLOWED_DOMAINS", [])
-    monkeypatch.setattr(web_fetch, "BLOCKED_DOMAINS", ["autre.test"])
+    monkeypatch.setattr(net, "ALLOWED_DOMAINS", [])
+    monkeypatch.setattr(net, "BLOCKED_DOMAINS", ["autre.test"])
     assert web.fetch("http://site.test/").endswith("ok")
     assert web.fetch("http://sous.autre.test/") == refus.replace(
         "autre.test is", "sous.autre.test is")
@@ -461,7 +461,7 @@ def test_fetch_nombre_de_redirections_borne():
                   if len(web.requests) <= sauts else page("arrivé"))
         return web.fetch("http://site.test/"), len(web.requests)
 
-    maxi = web_fetch.MAX_REDIRECTS
+    maxi = net.MAX_REDIRECTS
     out, requetes = chaine(maxi)
     assert out.endswith("arrivé") and requetes == maxi + 1
     assert chaine(maxi + 20) == ("Error: too many redirects.", maxi + 1)
@@ -1264,10 +1264,10 @@ def test_cache_web_ne_garde_ni_les_echecs_ni_ce_que_les_listes_interdisent(monke
     assert len(web.requests) == 4 and len(webcache.CACHE) == 0
     # Une page en cache reste soumise aux listes de domaines.
     assert web.fetch("http://site.test/").endswith("ok")
-    monkeypatch.setattr(web_fetch, "BLOCKED_DOMAINS", ["site.test"])
+    monkeypatch.setattr(net, "BLOCKED_DOMAINS", ["site.test"])
     assert web.fetch("http://site.test/").startswith("Error: site.test is not")
     # Désactivé : tout repart sur le réseau.
-    monkeypatch.setattr(web_fetch, "BLOCKED_DOMAINS", [])
+    monkeypatch.setattr(net, "BLOCKED_DOMAINS", [])
     monkeypatch.setattr(webcache.CACHE, "ttl", 0)
     webcache.CACHE.clear()
     n = len(web.requests)
@@ -1572,3 +1572,104 @@ def test_boucle_un_outil_a_compte_propre_ne_pese_pas_sur_le_commun(
     proxy.sent.clear()
     proxy.replies = [tour("propre") for _ in range(9)]
     assert post().status_code == 200 and len(proxy.sent) == 6
+
+
+# ── le garde-fou commun ([tools.net]) et le téléchargement partagé ──────
+
+def test_net_table_commune_et_repli_sur_l_ancienne_place(monkeypatch):
+    """[tools.net] règle le garde-fou de tous les outils qui téléchargent.
+    Un déploiement d'avant, dont les clés sont dans [tools.web_fetch],
+    continue de marcher : elles y sont lues, et le démarrage le dit."""
+    from llm_proxy import config
+
+    def lu(conf):
+        monkeypatch.setattr(config, "CONFIG", {"tools": conf})
+        monkeypatch.setattr(net, "LEGACY", [])
+        monkeypatch.setattr(net, "SHADOWED", [])
+        return (net._setting("allow_private", config.flag),
+                net._setting("allowed_domains", config.strings),
+                net._setting("blocked_domains", config.strings),
+                net.LEGACY, net.SHADOWED)
+
+    assert lu({}) == (False, [], [], [], [])
+    assert lu({"net": {"allow_private": True, "blocked_domains": ["x.test"]}}) \
+        == (True, [], ["x.test"], [], [])
+    # L'ancienne place, seule : lue, signalée.
+    assert lu({"web_fetch": {"allow_private": True,
+                             "allowed_domains": ["a.test"]}}) == (
+        True, ["a.test"], [], ["allow_private", "allowed_domains"], [])
+    # Les deux : [tools.net] fait foi, clé par clé.
+    assert lu({"net": {"allow_private": False},
+               "web_fetch": {"allow_private": True,
+                             "blocked_domains": ["b.test"]}}) == (
+        False, [], ["b.test"], ["blocked_domains"], ["allow_private"])
+    # L'exemple du dépôt ne porte que la table commune.
+    monkeypatch.undo()
+    assert net.LEGACY == [] and net.SHADOWED == []
+    assert config.get("tools.net.allow_private") is False
+    assert config.get("tools.web_fetch.allow_private") is None
+
+
+def test_net_download_bornes_de_l_outil_et_erreurs_du_contrat(monkeypatch):
+    """net.download : le saut gardé et la boucle de redirections pour tout
+    outil, qui n'apporte que ses bornes — un nombre d'octets, ou une
+    fonction qui décide aux en-têtes puis aux premiers octets."""
+    vus = []
+
+    async def flux():
+        for _ in range(10):
+            vus.append(1)
+            yield b"x" * 10
+
+    web = Web({
+        ("site.test", "/"): lambda q: httpx.Response(
+            200, content=flux(), headers={"content-type": "audio/x"}),
+        ("site.test", "/va"): httpx.Response(302, headers={"location": "/"}),
+        ("site.test", "/429"): httpx.Response(429),
+        ("site.test", "/sortie"): httpx.Response(
+            302, headers={"location": "http://ailleurs.test/"}),
+    })
+
+    def dl(url, limit, settings=None):
+        vus.clear()
+        return go(net.download(
+            url, settings, timeout=5, limit=limit, user_agent="essai",
+            accept="audio/*", transport=httpx.MockTransport(web.handler)))
+
+    url, r, body = dl("http://site.test/va", 25)
+    assert (url, r.status_code, body) == ("http://site.test/", 200, b"x" * 25)
+    assert len(vus) == 3                 # le flux n'est pas lu jusqu'au bout
+    assert web.requests[-1].headers["user-agent"] == "essai"
+    assert web.requests[-1].headers["accept"] == "audio/*"
+    # Une fonction : rien lu sur la foi des en-têtes, ou assez vu.
+    assert dl("http://site.test/", lambda r, body: 0)[2] == b"" and not vus
+    assert dl("http://site.test/", lambda r, body: len(body) or 1)[2] == b"x" * 10
+
+    def trop(r, body):
+        raise tools.ToolError("unsupported", "too big.")
+
+    with pytest.raises(tools.ToolError) as exc:
+        dl("http://site.test/", trop)
+    assert exc.value.code == "unsupported" and not vus
+    # Les erreurs : celles du contrat, et elles seules.
+    monkeypatch.setattr(net, "BLOCKED_DOMAINS", ["ailleurs.test"])
+    for url, settings, code, message in [
+        ("http://site.test/429", None, "too_many_requests",
+         "http://site.test/429 returned HTTP 429."),
+        ("http://site.test/rien", None, "not_accessible",
+         "http://site.test/rien returned HTTP 404."),
+        ("http://127.0.0.1/", None, "not_allowed",
+         "127.0.0.1 désigne une adresse privée ou locale : refusé."),
+        ("ftp://site.test/", None, "invalid_input",
+         "seules les URL http(s) sont lues."),
+        # Une redirection ne sort pas des listes : celle de [tools.net]…
+        ("http://site.test/sortie", None, "not_allowed",
+         "ailleurs.test is not a domain this proxy is allowed to read."),
+        # … ni de celles du client, qui s'y ajoutent.
+        ("http://site.test/", {"allowed_domains": ["autre.test"]},
+         "not_allowed",
+         "site.test is not a domain this proxy is allowed to read."),
+    ]:
+        with pytest.raises(tools.ToolError) as exc:
+            dl(url, 100, settings)
+        assert (exc.value.code, exc.value.message) == (code, message), url

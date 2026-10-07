@@ -313,9 +313,14 @@ Ce qu'il faut tenir :
 - **`args` vient du modèle** : types faux, champs en trop, URL hostiles.
   Valider, et rendre `invalid_input` avec une phrase qui dit quoi
   corriger.
-- **Une cible choisie par le modèle passe par `net.public_target`**
-  (`tools/net.py`) : adresses publiques seulement, connexion vers
-  l'adresse vérifiée, à chaque redirection.
+- **Une cible choisie par le modèle passe par `net.download`**
+  (`tools/net.py`), le téléchargement gardé commun, réglé par
+  `[tools.net]` : listes de domaines (celles de la configuration, plus
+  celles de `call.settings`), adresses publiques seulement, connexion
+  vers l'adresse vérifiée — à chaque saut de redirection. L'outil lui
+  donne **ses** bornes (`timeout`, `limit` : un nombre d'octets ou une
+  fonction qui décide aux premiers octets) et ne reçoit que des
+  `ToolError`. Avant de lire un cache, `net.check(url, call.settings)`.
 - **`run` est annulable** : pas de travail bloquant dans la boucle
   asyncio (`asyncio.to_thread` pour du CPU), et rien à nettoyer ailleurs
   que dans un `finally`.

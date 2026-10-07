@@ -4,10 +4,11 @@ résultat de `web_search` (c'est l'action `open_page` de la recherche web
 d'OpenAI ; chez oh-my-pi, la lecture d'URL de l'outil `read`, sans ses
 extracteurs par site).
 
-La cible est choisie par le modèle : elle passe par net.public_target —
-adresses publiques seulement, connexion vers l'adresse vérifiée — à
-CHAQUE saut de redirection. Le corps est lu jusqu'à `max_bytes`, rendu
-en texte (HTML → texte, JSON et texte tels quels) et coupé à `max_chars`.
+La cible est choisie par le modèle : elle passe par le téléchargement
+gardé (net.download, [tools.net]) — listes de domaines, adresses publiques
+seulement, connexion vers l'adresse vérifiée, à CHAQUE saut de
+redirection. Le corps est lu jusqu'à `max_bytes`, rendu en texte (HTML →
+texte, JSON et texte tels quels) et coupé à `max_chars`.
 
 Un PDF est lu aussi : téléchargé jusqu'à `pdf_max_bytes`, son texte est
 extrait par pypdf, hors de la boucle asyncio, puis rendu comme celui d'une
@@ -18,9 +19,6 @@ import asyncio
 import io
 import logging
 import time
-from urllib.parse import urljoin, urlsplit
-
-import httpx
 
 from .. import config
 from . import net, webcache
@@ -36,23 +34,13 @@ MAX_CHARS = config.integer("tools.web_fetch.max_chars", 20_000)
 # pas à un article ou à une notice (souvent 1 à 10 Mo, figures comprises),
 # et un PDF coupé ne se lit pas — sa table des objets est à la fin.
 PDF_MAX_BYTES = config.integer("tools.web_fetch.pdf_max_bytes", 20_000_000)
-# Lire aussi les adresses privées : à n'ouvrir que sur un proxy dont tous
-# les clients sont de confiance, et jamais derrière un modèle qui lit le web.
-ALLOW_PRIVATE = config.flag("tools.web_fetch.allow_private", False)
-# Listes de domaines, fixées par celui qui déploie (pas par le modèle) :
-# `allowed_domains` non vide = SEULS ces domaines sont lus ;
-# `blocked_domains` = jamais lus. Mêmes règles que net.domain_match
-# (sous-domaines couverts, chemin facultatif). C'est la seule parade à la
-# fuite par l'URL : une page lue qui pousse le modèle à ouvrir
-# https://ailleurs/?d=<contenu de la conversation>.
-ALLOWED_DOMAINS = config.strings("tools.web_fetch.allowed_domains")
-BLOCKED_DOMAINS = config.strings("tools.web_fetch.blocked_domains")
-MAX_REDIRECTS = 5
 # Pages d'un PDF dont le texte est extrait (du CPU, quelques dizaines de
 # millisecondes par page) ; l'extraction s'arrête aussi passé TIMEOUT.
 PDF_MAX_PAGES = 500
 PDF_TYPE = "application/pdf"
 USER_AGENT = "llm-proxy web_fetch (+https://github.com/c4software/llm-proxy)"
+ACCEPT = ("text/html,application/xhtml+xml,application/json,"
+          "text/plain;q=0.9,*/*;q=0.5")
 
 NAME = "web_fetch"
 
@@ -65,59 +53,6 @@ _SEARCH_HINT = f"Use it to read a page found with {_SEARCH}. "
 TEXT_TYPES = ("text/", "application/json", "application/xml",
               "application/xhtml+xml", "application/javascript",
               "application/rss+xml", "application/atom+xml")
-
-
-async def _get(url: str, transport) -> tuple[httpx.Response, bytes]:
-    """Un saut : résolution contrôlée, connexion vers l'adresse vérifiée
-    (Host et SNI portent le nom), corps lu jusqu'à MAX_BYTES."""
-    scheme, ip, port = await net.public_target(url, ALLOW_PRIVATE)
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    # Le nom tel qu'il part sur le fil : en ASCII (un nom accentué passe
-    # en punycode, comme getaddrinfo l'a résolu — un en-tête non ASCII
-    # ferait lever httpx), une IPv6 littérale entre crochets dans Host.
-    try:
-        host = host.encode("idna").decode("ascii")
-    except UnicodeError:
-        raise net.Blocked(f"hôte introuvable : {host}", "not_accessible")
-    host_header = f"[{host}]" if ":" in host else host
-    literal = f"[{ip}]" if ":" in ip else ip
-    target = f"{scheme}://{literal}:{port}{parts.path or '/'}"
-    if parts.query:
-        target += "?" + parts.query
-    default_port = 443 if scheme == "https" else 80
-    headers = {
-        "Host": host_header if port == default_port
-                else f"{host_header}:{port}",
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/json,"
-                  "text/plain;q=0.9,*/*;q=0.5",
-        # Pas de compression : MAX_BYTES se compte après décompression,
-        # bloc par bloc — un seul bloc gzip peut en rendre mille fois plus.
-        "Accept-Encoding": "identity",
-    }
-    limit = MAX_BYTES
-    # trust_env=False : sans lui httpx lirait HTTP_PROXY / ALL_PROXY, et
-    # « la connexion part vers l'adresse vérifiée » deviendrait « un proxy
-    # s'y connecte pour nous ».
-    async with httpx.AsyncClient(timeout=TIMEOUT, transport=transport,
-                                 follow_redirects=False,
-                                 trust_env=False) as c:
-        req = c.build_request("GET", target, headers=headers,
-                              extensions={"sni_hostname": host})
-        r = await c.send(req, stream=True)
-        body = bytearray()
-        try:
-            async for chunk in r.aiter_bytes():
-                body += chunk
-                # Connu aux premiers octets : un PDF a sa propre borne.
-                if is_pdf(r.headers.get("content-type", ""), body):
-                    limit = PDF_MAX_BYTES
-                if len(body) >= limit:
-                    break
-        finally:
-            await r.aclose()
-    return r, bytes(body[:limit])
 
 
 def is_pdf(content_type: str, body: bytes) -> bool:
@@ -282,7 +217,8 @@ class WebFetch(Tool):
         `max_chars` — ne vient jamais du modèle : ce sont les réglages que
         le CLIENT pose sur son outil serveur (surface Anthropic —
         `max_chars` y est tiré de `max_content_tokens`). Ses listes
-        s'AJOUTENT à celles de la configuration, elles n'en lèvent rien."""
+        s'AJOUTENT à celles de la configuration ([tools.net]), elles n'en
+        lèvent rien : voir net.check."""
         asked = args.get("url")
         if not isinstance(asked, str) or not asked.strip():
             raise ToolError("invalid_input", "`url` is required.")
@@ -292,18 +228,7 @@ class WebFetch(Tool):
         offset = args.get("offset")
         offset = offset if isinstance(offset, int) \
             and not isinstance(offset, bool) else 0
-        allowed_domains = call.settings.get("allowed_domains")
-        blocked_domains = call.settings.get("blocked_domains")
         max_chars = call.settings.get("max_chars")
-
-        def check(u: str) -> None:
-            if any(not net.domain_match(u, allowed)
-                   for allowed in (ALLOWED_DOMAINS, allowed_domains) if allowed) \
-                    or net.domain_match(u, BLOCKED_DOMAINS) \
-                    or net.domain_match(u, blocked_domains or ()):
-                raise ToolError("not_allowed", (
-                    f"{urlsplit(u).hostname or u} is not a "
-                    f"domain this proxy is allowed to read."))
 
         def read(page) -> Result:
             """Le morceau demandé, et sa source : l'URL telle que le modèle
@@ -318,34 +243,19 @@ class WebFetch(Tool):
         # d'adresse et celui de chaque redirection ont été faits au
         # téléchargement.
         key = ("fetch", url.split("#", 1)[0])
-        check(url)
+        net.check(url, call.settings)
         hit = webcache.CACHE.get(key)
         if hit is not None:
             return read(hit)
-        try:
-            for _ in range(MAX_REDIRECTS + 1):
-                # À chaque saut, comme le contrôle d'adresse : une
-                # redirection ne sort pas des listes.
-                check(url)
-                r, body = await _get(url, transport)
-                if r.status_code in (301, 302, 303, 307, 308) \
-                        and r.headers.get("location"):
-                    url = urljoin(url, r.headers["location"])
-                    continue
-                break
-            else:
-                raise ToolError("not_accessible", "too many redirects.")
-        except net.Blocked as exc:
-            raise ToolError(exc.code, f"{exc}.")
-        # InvalidURL n'est PAS une HTTPError : caractère de contrôle dans le
-        # chemin, URL trop longue — y compris dans un Location de redirection.
-        except (httpx.HTTPError, httpx.InvalidURL) as exc:
-            raise ToolError("not_accessible", f"could not fetch {url} "
-                                              f"({type(exc).__name__}).")
-        if r.status_code >= 400:
-            raise ToolError(
-                "too_many_requests" if r.status_code == 429 else "not_accessible",
-                f"{url} returned HTTP {r.status_code}.")
+
+        def limit(r, body: bytes) -> int:
+            # Connu aux premiers octets : un PDF a sa propre borne.
+            return PDF_MAX_BYTES if is_pdf(
+                r.headers.get("content-type", ""), body) else MAX_BYTES
+
+        url, r, body = await net.download(
+            url, call.settings, timeout=TIMEOUT, limit=limit,
+            user_agent=USER_AGENT, accept=ACCEPT, transport=transport)
         content_type = r.headers.get("content-type", "")
         page = (url, content_type, body, r.charset_encoding)
         if is_pdf(content_type, body):

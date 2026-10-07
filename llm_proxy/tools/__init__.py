@@ -70,7 +70,7 @@ from collections import OrderedDict
 
 from .. import config, stats
 from ..settings import log
-from . import web_fetch, web_search, webcache
+from . import net, web_fetch, web_search, webcache  # noqa: F401
 # Le contrat, tel que le reste du proxy et un outil l'importent d'ici.
 from .contract import (ERRORS, Anthropic, Artifact, Call,  # noqa: F401
                        Responses, Result, Source, Tool, ToolError, failure)

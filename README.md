@@ -133,7 +133,7 @@ et un tableau de bord.
 | `llm_proxy/chat_api.py` | Les outils hébergés sur `/v1/chat/completions` : déclaration dans `tools` remplacée par les fonctions du proxy, robinet qui rend une seule réponse chat/completions pour plusieurs tours upstream |
 | `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre (`register`), exécution bornée (délai, taille du résultat, nombre d'appels par réponse) qui rend toujours un `Result`, ligne de statistiques de chaque exécution, **mémoire des résultats** |
 | `llm_proxy/tools/contract.py` | Le **contrat** d'un outil hébergé : `Tool`, `Result` (texte, code d'erreur, sources, `meta`), `Call`, `ToolError`, la liste fermée des codes d'erreur, les liaisons aux protocoles — décrit dans [`docs/outils.md`](docs/outils.md) |
-| `llm_proxy/tools/net.py` | Garde-fou réseau : résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée |
+| `llm_proxy/tools/net.py` | Garde-fou réseau, commun à tous les outils qui téléchargent (`[tools.net]`) : listes de domaines, résolution du nom par le proxy, adresses **publiques** seulement, connexion vers l'adresse vérifiée, redirections suivies saut par saut — le téléchargement gardé `net.download` |
 | `llm_proxy/tools/webcache.py` | Cache web : pages lues et recherches gardées quelques minutes, borné, en mémoire vive |
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
 | `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en sources pour les annotations et les blocs d'un client Anthropic ; filtre par domaines |
@@ -883,7 +883,7 @@ recherche ; cet outil-ci sert aux clients écrits avec le SDK.
   | `error_code` | Quand |
   |---|---|
   | `invalid_tool_input` | pas d'`url`, arguments illisibles, URL invalide ou d'un autre schéma que http(s) |
-  | `url_not_allowed` | domaine hors des listes (celles du client ou celles de `[tools.web_fetch]`), adresse privée ou locale |
+  | `url_not_allowed` | domaine hors des listes (celles du client ou celles de `[tools.net]`), adresse privée ou locale |
   | `url_not_accessible` | statut HTTP ≥ 400, hôte introuvable, connexion en échec, trop de redirections |
   | `too_many_requests` | la page a répondu 429 |
   | `unsupported_content_type` | ni texte, ni HTML, ni JSON, ni PDF lisible |
@@ -897,7 +897,7 @@ recherche ; cet outil-ci sert aux clients écrits avec le SDK.
   (voir [Sécurité](#sécurité)).
 - **`max_uses`** : respecté, par outil, lectures en échec comprises.
 - **`allowed_domains` / `blocked_domains`** : appliqués à l'URL demandée
-  et à chaque redirection, EN PLUS des listes de `[tools.web_fetch]`,
+  et à chaque redirection, EN PLUS des listes de `[tools.net]`,
   qu'ils ne peuvent que restreindre. Les deux ensemble s'appliquent
   toutes les deux, là où Anthropic répond 400.
 - **`max_content_tokens`** : borne la taille d'un morceau à 4 caractères
@@ -974,7 +974,8 @@ Diagnostic, l'instance n'étant pas joignable de l'hôte :
 
 ### Garde-fous
 
-- **Adresses publiques seulement** (`web_fetch`). La cible est choisie
+- **Adresses publiques seulement** (`[tools.net]` : `web_fetch` et tout
+  outil qui télécharge une cible du modèle). La cible est choisie
   par le modèle et la requête part du proxy : sans filtre, une page web
   ou un prompt pourrait lui faire lire un service de son réseau — le
   backend d'inférence, l'instance SearXNG, un routeur, les métadonnées
@@ -1311,7 +1312,7 @@ Une variante ne passe pas par le poste du client : la page demande au
 modèle d'ouvrir `https://ailleurs/?d=<ce qu'il a en contexte>`, et
 `web_fetch` l'emporte. La seule parade côté proxy est de restreindre ce
 qu'il peut ouvrir : `allowed_domains` (liste blanche) ou
-`blocked_domains` dans `[tools.web_fetch]`. Vides par défaut.
+`blocked_domains` dans `[tools.net]`. Vides par défaut.
 
 Les garde-fous ci-dessus protègent **le réseau du proxy** et bornent des
 tailles. Aucun ne lit, ne filtre ni ne neutralise ce qu'une page dit, et
@@ -1479,9 +1480,27 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 | `max_bytes` | `2000000` | Octets lus au plus sur le corps d'une page |
 | `pdf_max_bytes` | `20000000` | Taille au plus d'un PDF (reconnu à son `Content-Type` ou à ses premiers octets `%PDF-`) ; plus gros, il est refusé |
 | `max_chars` | `20000` | Caractères de texte rendus par appel ; la suite se demande par `offset` |
+
+Ce que `web_fetch` a le droit de joindre se règle dans `[tools.net]`.
+
+### `[tools.net]`
+
+Le garde-fou de téléchargement, **commun** à tout ce que le proxy va
+chercher à la demande du modèle (`web_fetch`, et tout outil qui lit un
+fichier par son URL). Les bornes de taille et de durée restent à chaque
+outil.
+
+| Clé | Défaut | Rôle |
+|---|---|---|
 | `allow_private` | `false` | `false` : seules les adresses **publiques** sont jointes, contrôle refait à chaque redirection. `true` lève le filtre — à n'ouvrir que sur un proxy dont tous les clients sont de confiance, et jamais derrière un modèle qui lit le web |
-| `allowed_domains` | `[]` | Non vide : **seuls** ces domaines sont lus par `web_fetch` (sous-domaines couverts, chemin facultatif : `example.com/blog`). Contrôlé à chaque redirection |
-| `blocked_domains` | `[]` | Domaines jamais lus, mêmes règles |
+| `allowed_domains` | `[]` | Non vide : **seuls** ces domaines sont joints (sous-domaines couverts, chemin facultatif : `example.com/blog`). Contrôlé à chaque redirection |
+| `blocked_domains` | `[]` | Domaines jamais joints, mêmes règles |
+
+Ces trois clés vivaient dans `[tools.web_fetch]`. Un déploiement qui les
+y a encore continue de marcher : chacune y est **lue** tant que
+`[tools.net]` ne la pose pas, et le démarrage le signale par un
+avertissement qui demande de la déplacer. Posée aux deux endroits, c'est
+`[tools.net]` qui fait foi (avertissement aussi).
 
 ### `[quotas]` (backends à quotas)
 
