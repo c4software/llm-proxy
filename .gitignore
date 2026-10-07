@@ -10,3 +10,6 @@ data/stats.db-shm
 .venv/
 .pytest_cache/
 envTest/.env
+# Le facultatif et le propre à la machine (voir
+# docker-compose.override.example.yml).
+docker-compose.override.yml

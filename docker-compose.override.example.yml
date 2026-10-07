@@ -1,0 +1,173 @@
+# Ce que la pile a de FACULTATIF et de PROPRE À LA MACHINE, à part du
+# docker-compose.yml versionné — comme le compose.override.yaml de dev-box.
+#
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#
+# puis ne garder que les blocs voulus. Docker Compose lit ce fichier tout
+# seul, à côté de docker-compose.yml, et FUSIONNE les deux : rien à
+# passer à `docker compose`. docker-compose.override.yml n'est pas
+# versionné (.gitignore) : un `git pull` ne le touche jamais, et
+# docker-compose.yml reste celui du dépôt.
+#
+# Dans une pile à `include` (un compose racine qui réunit plusieurs
+# dossiers), nommer les deux fichiers :
+#
+#   include:
+#     - path:
+#         - ./llm-proxy/docker-compose.yml
+#         - ./llm-proxy/docker-compose.override.yml
+#
+# Vérifier le résultat de la fusion : `docker compose config`.
+
+services:
+
+  # ── Bloc 1 : l'exécution de code (outil hébergé `code_execution`) ─────
+  # Trois morceaux qui vont ENSEMBLE : le proxy rejoint le réseau interne,
+  # le service `executor`, et le réseau `sandbox` tout en bas. Il faut en
+  # plus EXECUTOR_TOKEN dans .env, puis [tools.code_execution] et [files]
+  # dans data/config.toml. Ordre de mise en route : README, « Exécution de
+  # code ».
+  albert-proxy:
+    # Dès qu'un service nomme ses réseaux il quitte `default` s'il ne le
+    # nomme pas : les deux, donc.
+    networks:
+      - default     # searxng, et la sortie vers les backends
+      - sandbox     # l'exécuteur de code, et rien d'autre
+
+  # L'exécuteur de code de l'outil hébergé `code_execution` : le SEUL
+  # conteneur de la pile qui a un moteur de conteneurs (podman sans root),
+  # où tournent les programmes écrits par un modèle — chacun dans un bac
+  # sans réseau. Le proxy l'appelle en HTTP (http://executor:8080, voir
+  # [tools.code_execution] dans data/config.example.toml), jeton à l'appui.
+  # Le proxy n'en dépend PAS pour démarrer — pas de `depends_on` : exécuteur
+  # absent ou en panne, l'outil rend une erreur au modèle, le reste sert.
+  #
+  # Validé le 07/10/2026 sur Docker 29.7, noyau 6.1, cgroup v2. Sur une
+  # autre machine, dérouler d'abord
+  #   docker compose exec executor python -m executor.validate
+  # et n'activer l'outil que sur un verdict « activable » (README,
+  # « Exécution de code »).
+  executor:
+    build: ./executor
+    restart: unless-stopped
+    # PAS de `ports:`, PAS de `volumes:` — volontaire. Ni secret, ni
+    # dossier du proxy, ni socket Docker : ce conteneur ne voit rien de
+    # l'hôte, et ne garde rien (les bacs vivent en tmpfs, leur système de
+    # fichiers est dans l'image).
+    networks:
+      # Le réseau INTERNE seul (plus bas) : aucune route vers l'extérieur,
+      # ni vers searxng, ni vers les autres piles de l'hôte.
+      - sandbox
+    environment:
+      # Le jeton partagé avec le proxy, exigé sur toute l'API. Sans `:?` :
+      # absent, le service démarre et REFUSE tout (503, « unhealthy »), il
+      # ne tourne jamais ouvert — et compose n'arrête pas les autres
+      # services.
+      EXECUTOR_TOKEN: "${EXECUTOR_TOKEN:-}"
+      # Bornes d'un bac et quotas : défauts de executor/sandbox.py
+      # (Limits), à surcharger ici — SANDBOX_<NOM>.
+      # SANDBOX_MEMORY: 512m        # mémoire d'un bac (si les cgroups la tiennent)
+      # SANDBOX_CPUS: "1.0"         # aussi le nombre de fils des bibliothèques
+      # SANDBOX_PIDS: "128"         # processus et fils d'un bac
+      # SANDBOX_TIMEOUT: "120"      # délai d'un programme, AU PLUS
+      # SANDBOX_IDLE: "1800"        # bac sans appel → détruit (s)
+      # SANDBOX_LIFETIME: "14400"   # vie maximale d'un bac (s)
+      # SANDBOX_MAX_SESSIONS: "8"   # bacs ouverts, tous clients confondus
+      # SANDBOX_MAX_SESSIONS_PER_CLIENT: "4"
+      # SANDBOX_WORK_SIZE: 256m     # tmpfs /work d'un bac
+      # SANDBOX_TMP_SIZE: 128m      # tmpfs /tmp d'un bac (caches, compilations)
+    security_opt:
+      # La recette de dev-box (compose.override.example.yaml), trouvée par
+      # essais ; sans --privileged ni CAP_SYS_ADMIN. Le prix : l'isolation
+      # de CE conteneur est desserrée — une évasion d'un bac vers ce
+      # conteneur, puis de ce conteneur vers l'hôte, est plus facile que
+      # depuis un conteneur ordinaire. Voir « Exécution de code » dans le
+      # README.
+      #
+      # Le profil seccomp par défaut de Docker refuse clone(CLONE_NEWUSER)
+      # sans CAP_SYS_ADMIN : podman s'arrête sur « cannot clone: Operation
+      # not permitted ». (Les BACS, eux, reçoivent le profil seccomp de
+      # podman.)
+      - seccomp=unconfined
+      # Docker masque des chemins de /proc et monte /proc/sys en lecture
+      # seule ; le noyau refuse alors de monter un /proc neuf dans un
+      # espace d'utilisateurs imbriqué : aucun bac ne démarre.
+      - systempaths=unconfined
+      # Sans effet sur un hôte sans AppArmor ; nécessaire là où il est
+      # actif (Debian) : le profil docker-default refuse les `mount` de crun.
+      - apparmor=unconfined
+      # Le cgroup du conteneur monté en ÉCRITURE (Docker 28 et plus) : le
+      # point d'entrée le délègue à l'utilisateur de l'exécuteur, et podman
+      # y crée un cgroup par bac. Sans cette ligne podman accepte --memory,
+      # --cpus et --pids-limit et ne borne RIEN ; l'exécuteur le constate
+      # au démarrage et le dit (journal, GET /v1/status), et seul le
+      # plafond du conteneur, plus bas, retient les bacs.
+      - writable-cgroups=true
+      # ET SURTOUT PAS `no-new-privileges` : newuidmap et newgidmap tirent
+      # leur droit de capacités de fichier, que cette option neutralise —
+      # podman n'écrirait plus la table d'uid de ses bacs. Dans une pile
+      # dont les services étendent une base commune qui la pose, ce
+      # service ne l'étend PAS : il recopie ce qu'il en veut.
+    # PAS de `devices:` : ni /dev/fuse (le magasin de podman est `vfs`, et
+    # un bac démarre d'un système de fichiers déplié, sans image — voir
+    # executor/Dockerfile), ni /dev/net/tun (un bac n'a pas de réseau).
+    tmpfs:
+      # L'état d'exécution de podman : vide à chaque démarrage du
+      # conteneur, comme après un redémarrage de machine — c'est à cela
+      # que podman reconnaît qu'aucun conteneur ne tourne plus.
+      - /run/user/10001:mode=700,uid=10001,gid=10001
+    # Le FILET. Les limites par bac (mémoire, CPU, processus) ne sont
+    # tenues que si le cgroup est délégué (writable-cgroups, plus haut) ;
+    # l'exécuteur le vérifie au démarrage et le dit (GET /v1/status,
+    # journal). Ce plafond-ci, tenu par Docker, vaut dans tous les cas :
+    # c'est lui qui protège l'hôte. À RÉGLER sur la machine.
+    # Mémoire : les tmpfs des bacs y comptent. Pire cas sans cgroups par
+    # bac : 8 bacs × (256 Mo /work + 128 Mo /tmp + 16 Mo /dev/shm) ≈
+    # 3,2 Go, plus les programmes en cours. À ajuster avec
+    # SANDBOX_MAX_SESSIONS.
+    mem_limit: 4g
+    # Pas d'échange : un programme qui déborde est tué, il ne fait pas
+    # ramer l'hôte.
+    memswap_limit: 4g
+    cpus: 2
+    # 8 bacs × 128 processus (RLIMIT_NPROC, tenu par uid de bac) + conmon,
+    # init et `sleep` de chaque bac + le serveur.
+    pids_limit: 2048
+    # Même forme que celui du proxy. 503 tant que podman n'a pas démarré
+    # un conteneur d'essai, ou sans jeton.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # ── Bloc 2 : adapter la pile à la machine ─────────────────────────────
+  # Exemples, à décommenter et à ajuster. Une clé posée ici REMPLACE celle
+  # de docker-compose.yml pour une valeur simple, et S'AJOUTE pour une
+  # liste (ports, volumes, security_opt…) ; `!reset` vide une liste héritée,
+  # `!override` la remplace (Docker Compose 2.24 et plus).
+  #
+  # albert-proxy:
+  #   container_name: llm-proxy
+  #   # Derrière un reverse proxy du même hôte : plus de port publié.
+  #   ports: !reset []
+  #   # Un backend joint par un nom que le DNS du conteneur ne connaît pas.
+  #   extra_hosts:
+  #     - "bigchuck:100.64.0.4"
+  #   # Une base commune à tous les services de l'hôte (redémarrage,
+  #   # journaux, no-new-privileges). PAS pour `executor` : voir plus haut.
+  #   extends:
+  #     file: ../bases-configuration/base.yml
+  #     service: base
+  #
+  # searxng:
+  #   container_name: searxng
+
+networks:
+  # Entre le proxy et l'exécuteur, et rien d'autre. `internal` : Docker ne
+  # lui donne ni passerelle vers l'extérieur ni port publiable — un
+  # programme qui s'évaderait d'un bac serait dans un conteneur sans
+  # sortie.
+  sandbox:
+    internal: true
