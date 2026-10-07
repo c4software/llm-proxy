@@ -1563,11 +1563,18 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
     et l'écrit au modèle ; il suffit de reconstruire son image. Un proxy
     d'avant ne change rien pour un exécuteur à jour.
 
-  **Vérifié le 07/10/2026 par les tests seulement** (faux exécuteur côté
-  proxy, doublure de podman côté exécuteur — où le `tar` est bien celui
-  de la machine, GNU tar 1.35). **Pas encore joué sur un vrai podman** :
-  le cas 15 de `validate.py` et l'étape 5bis de la procédure sont là pour
-  cela.
+  **Joué le 07/10/2026 sur le déploiement** : les cas 15 et 15bis de
+  `validate.py` passent sur le vrai podman (fichiers déposés sous l'uid
+  du bac, liens piégés remplacés, rien à la récolte sauf le fichier
+  modifié), et à travers le proxy : un CSV déposé et lu par pandas, un
+  nom choisi, une URL en 404 (le programme tourne, le texte le dit), deux
+  adresses privées (`not_allowed`, rien n'est exécuté), un fichier
+  modifié rendu par lien. Par un modèle, sur deux tours : il compte les
+  lignes et les moyennes du CSV, puis trace un graphique depuis le même
+  bac, où le fichier est resté. À noter : `bigchuck/qwen3.8-flash-next`
+  essaie d'abord de télécharger depuis son programme, puis de lire le
+  fichier par `web_fetch`, avant de passer par `files` — la description
+  de l'outil a été durcie pour cela, et il y arrive au troisième appel.
 - **Un programme en erreur est un résultat**, pas une erreur de l'outil :
   le modèle lit `Exit code: 1` et la trace, et corrige. L'outil n'est en
   erreur que s'il n'a pas pu exécuter (`unavailable` : non configuré,
@@ -1900,7 +1907,7 @@ n'est pas la bonne. À provoquer aussi :
     docker compose stop executor      # puis un appel : error: unavailable, « unreachable », en ~5 s
     docker compose start executor
 
-**5bis. Un fichier d'entrée** (`files`) — pas encore joué sur un
+**5bis. Un fichier d'entrée** (`files`) — joué le 07/10/2026 sur le
 déploiement. L'image de l'exécuteur doit être celle du dépôt à jour
 (`docker compose build executor && docker compose up -d executor`),
 sinon le résultat dit « the sandbox service is too old to receive
@@ -1947,7 +1954,7 @@ et un message user « Ajoute cos(x) au même graphique, à partir de
 hébergés réinséré(s) » ; dans celui de l'exécuteur : la seconde
 exécution **sans** « [bac neuf] ».
 
-Et un fichier d'entrée, par le modèle (pas encore joué) :
+Et un fichier d'entrée, par le modèle (joué le 07/10/2026) :
 
     curl -s $PROXY/v1/chat/completions -H "Authorization: Bearer $CLE" -H 'Content-Type: application/json' -d '{
       "model": "<backend>/<modèle>", "tools": [{"type": "code_execution"}],
@@ -2053,8 +2060,15 @@ trois générations en tout :
 | `POST /v1/tools/image_generation` | 17 s ; le texte ci-dessus, `files` : un lien `/v1/files/<jeton>/image-eecf50.png`, relu sans clé : `image/png`, 515 ko, 512×512 ; deux lignes de statistiques (requête, outil) |
 | `POST /v1/chat/completions`, `tools: [{"type": "image_generation"}]`, sans flux | le modèle appelle l'outil une fois (prompt développé par lui, 22 s), répond en une phrase sans écrire de lien, et le proxy ajoute `![image-99d53c.png](…/v1/files/…)` à la fin ; 98 s en tout : 38 s et 37 s pour les deux tours du modèle de conversation (à recharger, semble-t-il, après chaque génération), 22 s pour l'image |
 
-Pas joués : `always`, le flux, Open WebUI, une taille autre que 512×512,
-un backend qui rend une `url`, un backend à quotas, la retouche.
+Le même jour sur le déploiement, par `[chat].always` et en flux : une
+requête qui ne déclare rien (« Generate an image of… ») rend l'image en
+140 s, la connexion tenue par 12 pings, et le lien sert un PNG de
+1,5 Mo. Sans flux, la même requête dépasse le délai de lecture de 60 s
+d'un reverse proxy nginx laissé à ses défauts (504) : un client qui
+passe par lui demande le flux, ou le délai du reverse proxy est relevé.
+
+Pas joués : Open WebUI, un backend qui rend une `url`, un backend à
+quotas, la retouche.
 
 ### Cache web
 
