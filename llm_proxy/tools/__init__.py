@@ -4,7 +4,8 @@ rendre la main au client. Un client de l'API Responses (Codex CLI)
 déclare `{"type": "web_search"}` en comptant qu'OpenAI fera la recherche ;
 derrière ce proxy il n'y a pas d'OpenAI — c'est donc ici qu'elle se fait.
 Même chose pour un client de l'API Messages (Claude Code) et son outil
-serveur `{"type": "web_search_20250305"}`, qu'Anthropic exécuterait.
+serveur `{"type": "web_search_20250305"}`, qu'Anthropic exécuterait — ou
+`{"type": "web_fetch_20250910"}`, pour un client du SDK.
 
 Un outil = un module de ce dossier, qui expose :
   NAME        le nom de la fonction présentée au modèle
@@ -24,11 +25,17 @@ Et, FACULTATIF, pour un outil dont l'élément terminé dépend du résultat
 Ajouter un outil : un module, une ligne dans MODULES, une table
 [tools.<nom>] dans config.example.toml.
 
-La surface Anthropic ne se sert que de `web_search`, et lui demande en
-plus `definition(fetch=False)` (la fonction sans renvoi à `web_fetch`,
-qu'elle ne présente pas), `parse` et `render` (texte ↔ liste structurée,
-pour les blocs `web_search_result`), et que `run` accepte les listes de
-domaines du client.
+La surface Anthropic ne présente que les outils serveur que son client
+déclare — l'un, l'autre ou les deux — et demande en plus :
+  * à `web_search` : `definition(fetch=False)` (la fonction sans renvoi
+    à `web_fetch`, quand il n'est pas présenté), `parse` et `render`
+    (texte ↔ liste structurée, pour les blocs `web_search_result`) ;
+  * à `web_fetch` : DEFINITION_ALONE (la fonction sans renvoi à
+    `web_search`), `page` (l'URL lue et le titre, tirés du texte rendu,
+    pour le bloc `web_fetch_result`) et `error_code` (texte d'erreur →
+    code d'erreur d'Anthropic) ;
+  * aux deux : que `run` accepte les réglages du client — listes de
+    domaines, et pour `web_fetch` la taille d'un morceau (`max_chars`).
 
 Ce module porte ce qui est commun : le registre, l'exécution bornée
 (délai, taille du résultat), la ligne de STATISTIQUES de chaque exécution
@@ -45,7 +52,8 @@ proxy l'oublie, le modèle reçoit alors un mot qui le dit. CLOISONNÉE par
 client : une entrée ne se relit qu'avec le condensé de la clé qui l'a
 rangée (`owner`), l'identifiant de l'élément ne suffit pas. La surface
 Anthropic n'y range RIEN : son client renvoie le résultat avec l'appel
-(blocs `web_search_tool_result`), le texte se reconstruit de là.
+(blocs `web_search_tool_result` et `web_fetch_tool_result`), le texte se
+reconstruit de là.
 
 La boucle qui relance le backend après un appel vit dans app.py ; la
 traduction des éléments, dans responses_api.py et anthropic_api.py — qui
@@ -185,7 +193,8 @@ class Hosted:
         """Exécute la fonction `name`. `used` : appels déjà exécutés pour
         cette réponse ; `limit` : voir cap(). `options` : ce que le CLIENT
         a réglé sur son outil, par nom de fonction (les listes de domaines
-        de l'outil serveur Anthropic) — passé au module en plus des
+        et la taille de contenu des outils serveur Anthropic) — passé au
+        module en plus des
         arguments du modèle, qui ne peut donc pas s'en affranchir.
         `endpoint` / `model` : la route par où l'appel arrive et le modèle
         PRÉFIXÉ de la conversation (aucun pour l'appel direct) — ils ne

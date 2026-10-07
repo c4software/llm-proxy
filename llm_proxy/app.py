@@ -28,7 +28,8 @@ Rôles :
      la forme Anthropic quand la requête porte `anthropic-version`. Un
      client Claude Code s'y branche avec ANTHROPIC_BASE_URL. Son outil
      serveur `web_search_…` (la sous-requête de son `WebSearch`) est
-     exécuté ici quand la recherche hébergée est active ;
+     exécuté ici quand la recherche hébergée est active — de même
+     l'outil serveur `web_fetch_…` d'un client du SDK ;
   4quater. la surface Responses (responses_api.py), si [responses].enabled :
      POST /v1/responses, traduit vers /v1/chat/completions comme la
      surface Anthropic. Un client Codex CLI s'y branche avec
@@ -979,9 +980,10 @@ async def messages(request: Request):
     images = False
     if backend.images and anthropic_api.has_images(payload):
         images = await accepts_images(backend, resolved[len(backend.name) + 1:])
-    # La recherche que le proxy exécute lui-même (aucun outil hébergé =
-    # None : l'outil serveur `web_search_…` du client est ignoré, comme
-    # avant). `ctx.hosted` n'est rempli que si la requête le DÉCLARE.
+    # Les outils que le proxy exécute lui-même (aucun outil hébergé =
+    # None : les outils serveur `web_search_…` et `web_fetch_…` du client
+    # sont ignorés, comme avant). `ctx.hosted` n'est rempli que de ceux
+    # que la requête DÉCLARE.
     hosted = tools.Hosted() or None
     ctx = anthropic_api.Context(payload, hosted)
     openai_payload = anthropic_api.to_openai(payload, images=images,
@@ -1019,7 +1021,7 @@ async def messages(request: Request):
             ping = anthropic_api.ping_event() \
                 if robinet.sse and anthropic_api.PING_INTERVAL > 0 else None
             return hosted_loop(call, request, hosted, robinet, upstream, cost,
-                               rebuild, limit=ctx.limit, options=ctx.options,
+                               rebuild, limit=ctx.limits, options=ctx.options,
                                ping=ping)
 
     if openai_payload.get("stream") and backend.quotas \
@@ -1334,7 +1336,8 @@ async def _settled(task: asyncio.Future, ping: bytes | None) -> bool:
 
 
 async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
-                      prompt_estimate: int, rebuild, limit: int | None = None,
+                      prompt_estimate: int, rebuild,
+                      limit: int | dict | None = None,
                       options: dict | None = None, ping: bytes | None = None):
     """Une réponse avec outils hébergés, pour les deux surfaces traduites
     (/v1/responses, /v1/messages) : relaie le tour upstream ouvert,
@@ -1352,7 +1355,9 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
         reconstruit depuis la requête d'origine et ce que le robinet a
         déjà rendu — par la traduction même que suivra le rejeu du client ;
       * `limit` / `options` : la limite d'appels et les réglages que le
-        client a posés sur son outil (tools.Hosted.run) ;
+        client a posés sur son outil (tools.Hosted.run). `limit` en
+        dict : une limite PAR FONCTION (le `max_uses` de chaque outil
+        serveur Anthropic), chacune comptée à part ;
       * `ping` : l'événement à émettre pendant les attentes (exécution
         d'un outil, quota d'un tour suivant), ou None.
 
@@ -1368,9 +1373,12 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
     `finally` compte ce qui a été consommé et ferme l'upstream."""
     quiet = Call(call.backend, "", call.endpoint, call.dialect)
     status = upstream.status_code
-    hard_limit = HOSTED_HARD_LIMIT if limit is None \
-        else min(HOSTED_HARD_LIMIT, limit + HOSTED_EXTRA_CALLS)
+    limits = limit if isinstance(limit, dict) else None
+    budget = sum(limits.values()) if limits is not None else limit
+    hard_limit = HOSTED_HARD_LIMIT if budget is None \
+        else min(HOSTED_HARD_LIMIT, budget + HOSTED_EXTRA_CALLS)
     used = 0
+    spent: dict[str, int] = {}        # appels exécutés, par fonction
     # L'attente en cours (exécution d'un outil, ou porte de quota + envoi
     # du tour suivant) : une tâche, pour pouvoir émettre des pings pendant
     # qu'elle dure, et l'annuler si le client raccroche.
@@ -1390,13 +1398,23 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                 return      # tour sans appel hébergé : le robinet a clos
             handback = robinet.client_calls > 0
             for pending in list(robinet.pending):
+                name = pending["name"]
+                count, cap = used, limit
+                if limits is not None:
+                    # Limites par fonction : c'est le compte de CETTE
+                    # fonction que l'exécution compare à sa limite — tant
+                    # que la borne du proxy, commune à toutes, n'est pas
+                    # atteinte.
+                    count, cap = (used, None) if used >= hosted.cap() \
+                        else (spent.get(name, 0), limits.get(name))
                 task = asyncio.ensure_future(hosted.run(
-                    pending["name"], pending["arguments"], used, limit,
+                    name, pending["arguments"], count, cap,
                     options, endpoint=call.endpoint, model=call.model_key))
                 while not await _settled(task, ping):
                     yield ping
                 result, task = task.result(), None
                 used += 1
+                spent[name] = spent.get(name, 0) + 1
                 out = robinet.resolve(pending, result)
                 if out:
                     yield out

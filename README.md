@@ -89,7 +89,8 @@ et un tableau de bord.
   `web_search_call`. Même service pour l'outil serveur
   `web_search_20250305` d'un client Anthropic — celui par lequel passe
   le `WebSearch` de Claude Code —, rendu en blocs `server_tool_use` /
-  `web_search_tool_result`. Si `[chat].hosted_tools`, un client
+  `web_search_tool_result`, et pour son outil serveur
+  `web_fetch_20250910` (blocs `web_fetch_tool_result`). Si `[chat].hosted_tools`, un client
   `/v1/chat/completions` peut déclarer ces mêmes outils dans `tools`
   (`{"type": "web_search"}`) et reçoit une réponse ordinaire, la boucle
   faite. Voir [Outils hébergés](#outils-hébergés).
@@ -126,7 +127,7 @@ et un tableau de bord.
 | `llm_proxy/backends.py` | Déclaration des backends, clients HTTP, **routage au préfixe de modèle** |
 | `llm_proxy/albert.py` | Tout ce qui est spécifique à Albert : limiteur de quotas (fenêtres minute/jour), familles de modèles, association routeurs ↔ modèles via `/v1/me/info` |
 | `llm_proxy/stats.py` | Compteurs persistés en SQLite (une ligne par requête, une par exécution d'outil hébergé), extraction de l'`usage` dans le flux de réponse, et l'Usage API (requêtes, outils) |
-| `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` ; outil serveur `web_search_…` remplacé par la recherche hébergée, rendue et rejouée en blocs `server_tool_use` / `web_search_tool_result` |
+| `llm_proxy/anthropic_api.py` | La surface Anthropic : traduction Messages ↔ chat/completions, flux SSE compris ; `model_map` ; outils serveur `web_search_…` et `web_fetch_…` remplacés par la recherche et la lecture hébergées, rendues et rejouées en blocs `server_tool_use` / `web_search_tool_result` / `web_fetch_tool_result` |
 | `llm_proxy/responses_api.py` | La surface Responses : traduction Responses ↔ chat/completions, flux d'événements compris ; outils hébergés par le proxy présentés au modèle et rejoués, les autres ignorés, `namespace` aplatis |
 | `llm_proxy/chat_api.py` | Les outils hébergés sur `/v1/chat/completions` : déclaration dans `tools` remplacée par les fonctions du proxy, robinet qui rend une seule réponse chat/completions pour plusieurs tours upstream |
 | `llm_proxy/tools/__init__.py` | Les outils hébergés, ce qui leur est commun : registre, exécution bornée (délai, taille du résultat, nombre d'appels par réponse), ligne de statistiques de chaque exécution, **mémoire des résultats** |
@@ -134,7 +135,7 @@ et un tableau de bord.
 | `llm_proxy/tools/webcache.py` | Cache web : pages lues et recherches gardées quelques minutes, borné, en mémoire vive |
 | `llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
 | `llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en liste structurée pour les blocs d'un client Anthropic ; filtre par domaines |
-| `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
+| `llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page (ou du texte d'un PDF) par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
 | `llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
 | `tests/` | Tests des traducteurs et des stats (`pytest`, `requirements-dev.txt`) — sur des octets et une base temporaire, sans réseau |
@@ -471,8 +472,9 @@ Ce qui se passe :
   | `thinking` / `redacted_thinking` | jetés (aucun backend ne les rejoue) |
   | `tools[{name, input_schema}]` | `tools[{type: function, …parameters}]` |
   | outil serveur `web_search_…` (`{"type": "web_search_20250305", "name": "web_search"}`) | la fonction `web_search` du proxy, exécutée par lui, si `[tools.web_search].enabled` — voir [Outils hébergés](#claude-code-et-loutil-serveur-web_search) ; ignoré sinon |
-  | autres outils serveur (`web_fetch_…`, `code_execution_…`, `bash`…) | ignorés |
-  | blocs `server_tool_use` + `web_search_tool_result` rejoués (assistant) | un appel `web_search` et son message `tool`, si la requête déclare encore l'outil ; ignorés sinon |
+  | outil serveur `web_fetch_…` (`{"type": "web_fetch_20250910", "name": "web_fetch"}`) | la fonction `web_fetch` du proxy, exécutée par lui, si `[tools.web_fetch].enabled` — voir [L'outil serveur `web_fetch`](#loutil-serveur-web_fetch) ; ignoré sinon |
+  | autres outils serveur (`code_execution_…`, `bash`…) | ignorés |
+  | blocs `server_tool_use` + `web_search_tool_result` / `web_fetch_tool_result` rejoués (assistant) | un appel `web_search` / `web_fetch` et son message `tool`, si la requête déclare encore l'outil ; ignorés sinon |
   | `tool_choice` `auto` / `any` / `tool` / `none`, `disable_parallel_tool_use` | `auto` / `required` / `{function}` / `none`, `parallel_tool_calls: false` |
   | `stop_sequences`, `metadata.user_id`, `temperature`, `top_p`, `max_tokens` | `stop`, `user`, idem (plafond `max_tokens` du backend appliqué) |
   | `top_k`, `cache_control`, `thinking`, `output_config`, `context_management`, paramètres d'URL (`?beta=true`) | ignorés |
@@ -517,14 +519,16 @@ Ce qui se passe :
   proxy fait la recherche — voir
   [Claude Code et l'outil serveur `web_search`](#claude-code-et-loutil-serveur-web_search).
   `WebFetch`, lui, lit les pages depuis le poste du client : le proxy
-  n'y est pour rien.
+  n'y est pour rien (l'outil serveur `web_fetch` d'Anthropic, que Claude
+  Code ne déclare pas, est branché pour les clients qui le déclarent —
+  voir [L'outil serveur `web_fetch`](#loutil-serveur-web_fetch)).
 
 À savoir : le prompt système de Claude Code pèse plusieurs milliers de
 tokens, renvoyés à chaque tour sans cache exploitable côté OpenAI — le
 quota journalier Albert se consomme vite ; `ANTHROPIC_SMALL_FAST_MODEL`
 vers un backend local soulage (les tâches d'arrière-plan sont
 nombreuses). Hors périmètre : Batches, Files, les outils serveur autres
-que la recherche (`web_fetch`, `code_execution`…), PDF.
+que la recherche et la lecture de page (`code_execution`…), PDF.
 
 ## Codex CLI
 
@@ -652,14 +656,16 @@ d'OpenAI — sans rien faire, l'outil est retiré et le modèle n'a pas de
 recherche web. Un outil **hébergé** est un outil que le proxy exécute
 lui-même, à la place d'OpenAI. Il y en a deux, activés ensemble par le
 `web_search` du client. Un client de l'API Messages d'Anthropic est dans
-le même cas avec son outil serveur `web_search_20250305` ; pour lui,
-seule la recherche est branchée — voir
-[Claude Code et l'outil serveur `web_search`](#claude-code-et-loutil-serveur-web_search).
+le même cas avec ses outils serveur `web_search_20250305` et
+`web_fetch_20250910` ; pour lui, chaque fonction n'est présentée que si
+son outil est déclaré — voir
+[Claude Code et l'outil serveur `web_search`](#claude-code-et-loutil-serveur-web_search)
+et [L'outil serveur `web_fetch`](#loutil-serveur-web_fetch).
 
 | Fonction présentée au modèle | Ce qu'elle fait | Par quoi |
 |---|---|---|
 | `web_search` (`query`, `recency`, `limit`) | Une recherche ; rend une liste numérotée — titre, date, URL, extrait de 240 caractères | Une instance **SearXNG** auto-hébergée (métamoteur libre, API JSON, sans clé), `GET <searxng_url>/search?q=…&format=json` |
-| `web_fetch` (`url`, `offset`) | Lit une page ; HTML converti en texte, JSON et texte tels quels, tout autre type refusé | Une requête HTTP du proxy, sous le garde-fou réseau |
+| `web_fetch` (`url`, `offset`) | Lit une page ; HTML converti en texte, JSON et texte tels quels, texte extrait d'un PDF (pas d'OCR : un scan est refusé, un PDF chiffré aussi), tout autre type refusé | Une requête HTTP du proxy, sous le garde-fou réseau |
 
 Le schéma de `web_search` et la forme de sa sortie sont repris de l'outil
 `web_search` d'[oh-my-pi](https://github.com/can1357/oh-my-pi).
@@ -746,10 +752,12 @@ proxy tient ce rôle :
 
 1. L'outil serveur `web_search_…` (toute version datée) devient, pour le
    modèle, la fonction `web_search` du tableau ci-dessus. **`web_fetch`
-   n'est pas présenté** sur cette surface : la lecture de page de Claude
-   Code (`WebFetch`) se fait sur le poste du client. Une fonction du
+   n'est pas présenté** à Claude Code, qui ne le déclare pas : sa lecture
+   de page (`WebFetch`) se fait sur le poste du client — la description
+   de `web_search` n'y renvoie donc pas. Une fonction du
    client nommée `web_search` garde son nom, l'outil hébergé n'est alors
-   pas présenté. Les autres outils serveur restent ignorés.
+   pas présenté. Les autres outils serveur restent ignorés, sauf
+   [`web_fetch_…`](#loutil-serveur-web_fetch).
 2. Quand le modèle l'appelle, le proxy exécute la recherche et relance
    le backend — la même boucle que pour Codex. Le modèle reçoit le même
    texte de résultats que sur la surface Responses.
@@ -782,6 +790,8 @@ proxy tient ce rôle :
 Ce qui vient de l'outil du client :
 
 - **`max_uses`** est respecté, sans jamais dépasser `[tools].max_calls`.
+  Il vaut pour SON outil : recherche et lecture déclarées ensemble ont
+  chacune leur compte, et `max_calls` borne leur total.
 - **`allowed_domains` / `blocked_domains`** filtrent les résultats avant
   la limite, aux règles d'Anthropic : domaine nu, sous-domaines couverts
   (`example.com` couvre `docs.example.com`), chemin optionnel
@@ -818,6 +828,85 @@ Ce qui diffère d'Anthropic, à savoir :
   et pendant l'attente d'un quota aux tours suivants (`ping_interval`).
   En JSON rien ne part avant la fin : un backend qui tombe en cours de
   boucle donne son vrai statut d'erreur, pas un `200`.
+
+### L'outil serveur `web_fetch`
+
+Un client de l'API Messages qui déclare `{"type": "web_fetch_20250910",
+"name": "web_fetch"}` (toute version datée : `web_fetch_20260209`,
+`…_20260309`, `…_20260318`) compte qu'Anthropic lira la page. Avec
+`[tools.web_fetch].enabled`, le proxy le fait, par le même chemin que la
+recherche : la fonction `web_fetch` du tableau plus haut est présentée
+au modèle à la place de l'outil, ses appels sont exécutés par le proxy,
+et le client reçoit ce qu'Anthropic rend, en flux SSE comme en JSON :
+
+    {"type": "server_tool_use", "id": "srvtoolu_…", "name": "web_fetch",
+     "input": {"url": "https://example.org/notes"}}
+    {"type": "web_fetch_tool_result", "tool_use_id": "srvtoolu_…", "content": {
+       "type": "web_fetch_result", "url": "https://example.org/notes",
+       "content": {"type": "document", "title": "Notes",
+                   "source": {"type": "text", "media_type": "text/plain",
+                              "data": "URL: https://example.org/notes\nTitle: Notes\n…\n\n---\n<le texte>"}},
+       "retrieved_at": "2026-10-07T09:30:00Z"}}
+    … "usage": {…, "server_tool_use": {"web_fetch_requests": 1}}
+
+Chaque outil n'est présenté que s'il est déclaré : la lecture seule, la
+recherche seule, ou les deux — et la description de chaque fonction ne
+renvoie à l'autre que si elle est là. Claude Code ne déclare que la
+recherche ; cet outil-ci sert aux clients écrits avec le SDK.
+
+- **`data` porte le texte entier rendu au modèle, en-tête compris** (URL
+  lue, titre, type, plage de caractères), pas le seul corps de la page.
+  C'est ce qui permet de rejouer le bloc sans mémoire côté proxy : au
+  tour suivant, le message `tool` est cette `data`, à l'octet près — le
+  préfixe ne bouge pas pour le cache du backend. `url` (celle
+  réellement lue, après redirections) et `title` (ou `null`) sont tirés
+  de cet en-tête. D'un résultat en erreur rejoué il ne reste que le code.
+- **`offset` reste dans la fonction présentée au modèle**, alors que
+  l'outil d'Anthropic n'a que `url` : une page est rendue par morceaux
+  de `max_chars` caractères, et sans lui le modèle ne lirait jamais la
+  suite. L'`input` du bloc `server_tool_use` peut donc porter `offset`
+  en plus de `url` — c'est l'appel réel, qu'un rejeu doit redonner.
+- **Erreurs** : jamais une erreur HTTP, `content` est l'objet `{"type":
+  "web_fetch_tool_result_error", "error_code": …}`, et le modèle lit le
+  texte `Error: …` complet.
+
+  | `error_code` | Quand |
+  |---|---|
+  | `invalid_tool_input` | pas d'`url`, arguments illisibles, URL invalide ou d'un autre schéma que http(s) |
+  | `url_not_allowed` | domaine hors des listes (celles du client ou celles de `[tools.web_fetch]`), adresse privée ou locale |
+  | `url_not_accessible` | statut HTTP ≥ 400, hôte introuvable, connexion en échec, trop de redirections |
+  | `too_many_requests` | la page a répondu 429 |
+  | `unsupported_content_type` | ni texte, ni HTML, ni JSON, ni PDF lisible |
+  | `max_uses_exceeded` | au-delà du `max_uses` de l'outil, ou de `[tools].max_calls` |
+  | `unavailable` | délai dépassé, tout autre échec |
+
+  `url_too_long` et `url_not_in_prior_context` ne sont jamais rendus : le
+  proxy ne borne pas l'URL à 250 caractères et **ne vérifie pas que
+  l'URL figurait déjà dans la conversation** — le modèle peut ouvrir
+  toute adresse publique que les listes de domaines laissent passer
+  (voir [Sécurité](#sécurité)).
+- **`max_uses`** : respecté, par outil, lectures en échec comprises.
+- **`allowed_domains` / `blocked_domains`** : appliqués à l'URL demandée
+  et à chaque redirection, EN PLUS des listes de `[tools.web_fetch]`,
+  qu'ils ne peuvent que restreindre. Les deux ensemble s'appliquent
+  toutes les deux, là où Anthropic répond 400.
+- **`max_content_tokens`** : borne la taille d'un morceau à 4 caractères
+  par token, sans jamais dépasser `max_chars` ; le reste de la page
+  reste lisible par `offset`.
+- **Ignorés** : `citations` (ni `citations` dans le document, ni
+  citations dans le texte de la réponse), `use_cache` (le
+  [cache web](#cache-web) du proxy sert toujours), `response_inclusion`.
+  Le filtrage dynamique des versions `web_fetch_20260209` et suivantes
+  n'existe pas : toute version rend la lecture simple.
+- **Un PDF** est rendu comme une page — son texte extrait, en document
+  `text/plain` —, pas en document base64 comme chez Anthropic.
+- `retrieved_at` est l'heure de la réponse, y compris pour une page
+  servie par le cache web. Seules les lectures abouties sont comptées
+  dans `web_fetch_requests`.
+
+Pas joué contre un client réel : la forme des blocs suit la
+[documentation d'Anthropic](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool)
+et les tests du dépôt.
 
 ### Mise en route
 
@@ -890,7 +979,9 @@ Diagnostic, l'instance n'étant pas joignable de l'hôte :
   L'adresse de SearXNG, elle, est une adresse de configuration : le
   filtre ne s'y applique pas.
 - **Tailles** : `max_bytes` octets lus par page, le reste n'est pas
-  téléchargé ; `max_chars` caractères rendus par appel (le modèle
+  téléchargé ; `pdf_max_bytes` pour un PDF, refusé au-delà (coupé, il ne
+  se lit pas), et 500 pages extraites au plus, dans un fil à part ;
+  `max_chars` caractères rendus par appel (le modèle
   redemande la suite par `offset`) ; `max_result_chars` par résultat,
   quel que soit l'outil ; `limit` résultats par recherche, 20 au plus.
 - **Délais** : `timeout` par requête, pour chaque outil ; `run_timeout`
@@ -1290,9 +1381,10 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `enabled` | `false` | Présente `web_fetch` au modèle quand un client **Responses** déclare `web_search` — sans elle, la recherche ne rend que des extraits de 240 caractères. Jamais présenté à un client Anthropic |
+| `enabled` | `false` | Présente `web_fetch` au modèle quand un client **Responses** déclare `web_search` — sans elle, la recherche ne rend que des extraits de 240 caractères. À un client Anthropic, seulement s'il déclare l'outil serveur `web_fetch_…` |
 | `timeout` | `20` | Secondes par requête (une par saut de redirection, 5 sauts au plus) |
 | `max_bytes` | `2000000` | Octets lus au plus sur le corps d'une page |
+| `pdf_max_bytes` | `20000000` | Taille au plus d'un PDF (reconnu à son `Content-Type` ou à ses premiers octets `%PDF-`) ; plus gros, il est refusé |
 | `max_chars` | `20000` | Caractères de texte rendus par appel ; la suite se demande par `offset` |
 | `allow_private` | `false` | `false` : seules les adresses **publiques** sont jointes, contrôle refait à chaque redirection. `true` lève le filtre — à n'ouvrir que sur un proxy dont tous les clients sont de confiance, et jamais derrière un modèle qui lit le web |
 | `allowed_domains` | `[]` | Non vide : **seuls** ces domaines sont lus par `web_fetch` (sous-domaines couverts, chemin facultatif : `example.com/blog`). Contrôlé à chaque redirection |
@@ -1427,8 +1519,8 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
 - **Images** : seul le catalogue du backend décide ; un modèle vision
   servi sans `--mmproj` est un modèle texte.
 - **Hors périmètre, volontairement** : Batches, Files, les outils
-  serveur Anthropic autres que la recherche (`web_fetch`,
-  `code_execution`…), et le sens proxy → backend Anthropic.
+  serveur Anthropic autres que la recherche et la lecture de page
+  (`code_execution`…), et le sens proxy → backend Anthropic.
 - **Surface Responses** : des outils hébergés, seul `web_search` est
   exécuté par le proxy, et seulement s'il est activé
   ([Outils hébergés](#outils-hébergés)) ; les autres (`file_search`,
@@ -1455,13 +1547,18 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   recherche. Pas de `ping` pendant l'attente du quota du
   premier tour. `n` > 1 refusé. Pas joué contre un client réel. Voir
   [Client chat/completions](#client-chatcompletions--déclarer-loutil).
-- **Outils hébergés, autres surfaces.** Sur `/v1/messages`, seule la
-  recherche est branchée ;
+- **Outils hébergés, autres surfaces.** Sur `/v1/messages`, la
+  recherche et la lecture de page sont branchées, chacune pour le
+  client qui déclare son outil serveur ;
   pas de citations, pas de `pause_turn`, `user_location` ignoré, et les
   listes de domaines ne font que filtrer ce que SearXNG a rendu — voir
   [Claude Code et l'outil serveur `web_search`](#claude-code-et-loutil-serveur-web_search).
+  L'outil serveur `web_fetch` ne vérifie pas que l'URL figurait dans la
+  conversation, rend un PDF en texte, et n'a été joué contre aucun
+  client réel — voir [L'outil serveur `web_fetch`](#loutil-serveur-web_fetch).
   Pas de rendu de JavaScript dans `web_fetch` (une page construite côté
-  navigateur rend peu de texte), pas de PDF. La mémoire des résultats
+  navigateur rend peu de texte), pas d'OCR (d'un PDF, seule la couche
+  texte est lue). La mémoire des résultats
   (surface Responses) ne survit pas à un redémarrage. État de la
   validation : voir [Outils hébergés](#outils-hébergés).
 

@@ -44,9 +44,10 @@ KINDS = ("web_search", "web_search_preview", "web_search_2025_08_26")
 
 # La description dit au modèle de lire une page par `web_fetch` : vrai
 # seulement là où `web_fetch` lui est présenté aussi. La surface Anthropic
-# ne présente que la recherche (Claude Code lit les pages sur le poste du
-# client) — elle prend `definition(fetch=False)`, sans cette phrase, pour
-# que le modèle n'appelle pas une fonction qui n'existe pas.
+# ne présente que les outils serveur que son client déclare — pour celui
+# qui ne déclare que la recherche (Claude Code, qui lit les pages sur le
+# poste du client), elle prend `definition(fetch=False)`, sans cette
+# phrase, pour que le modèle n'appelle pas une fonction qui n'existe pas.
 _FETCH_HINT = "Use web_fetch to read a result page. "
 
 

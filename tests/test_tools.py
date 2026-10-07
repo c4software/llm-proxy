@@ -10,8 +10,10 @@ parcourues dans le test, une entrée par classe (plus celles qui ont déjà
 révélé un défaut), et l'assertion nomme l'entrée fautive."""
 
 import asyncio
+import io
 import json
 import socket
+import threading
 import types
 
 import httpx
@@ -75,6 +77,8 @@ def reglages(monkeypatch):
     monkeypatch.setattr(web_fetch, "ALLOW_PRIVATE", False)
     monkeypatch.setattr(web_fetch, "MAX_BYTES", 2_000_000)
     monkeypatch.setattr(web_fetch, "MAX_CHARS", 20_000)
+    monkeypatch.setattr(web_fetch, "PDF_MAX_BYTES", 20_000_000)
+    monkeypatch.setattr(web_fetch, "PDF_MAX_PAGES", 500)
     # Cache web vidé et COUPÉ : les tests resservent les mêmes URL avec des
     # pages différentes. Ceux du cache le rallument (ttl).
     webcache.CACHE.clear()
@@ -129,6 +133,41 @@ def page(text="bonjour", ct="text/plain", status=200, **headers):
 
 def redirect(location, status=302):
     return httpx.Response(status, headers={"location": location})
+
+
+def pdf(*pages, password=None):
+    """Un PDF écrit à la main, une page par texte (ASCII ; «» : une page
+    sans couche texte, comme un scan). `password` : chiffré par pypdf, en
+    RC4 — le seul algorithme qu'il porte sans autre dépendance."""
+    n = len(pages)
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Count %d /Kids [%s] >>" % (
+                n, b" ".join(b"%d 0 R" % (4 + 2 * i) for i in range(n))),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    for i, text in enumerate(pages):
+        flux = b"BT /F1 12 Tf 72 720 Td (%s) Tj ET" % text.encode("ascii") \
+            if text else b""
+        objs += [b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                 b"/Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>"
+                 % (5 + 2 * i),
+                 b"<< /Length %d >>\nstream\n%s\nendstream" % (len(flux), flux)]
+    out, places = bytearray(b"%PDF-1.4\n"), []
+    for i, obj in enumerate(objs, 1):
+        places.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (i, obj)
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % place for place in places)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objs) + 1, xref)
+    if password is None:
+        return bytes(out)
+    import pypdf
+    writer = pypdf.PdfWriter(clone_from=io.BytesIO(bytes(out)))
+    writer.encrypt(password, "proprio", algorithm="RC4-128")
+    chiffre = io.BytesIO()
+    writer.write(chiffre)
+    return chiffre.getvalue()
 
 
 def search(args, reponse=None):
@@ -420,7 +459,7 @@ def test_fetch_nombre_de_redirections_borne():
 # ── web_fetch : contenu ─────────────────────────────────────────────────
 
 def test_fetch_ne_lit_que_les_types_textuels():
-    for ct in ["image/png", "application/pdf", "IMAGE/PNG; q=1"]:
+    for ct in ["image/png", "application/zip", "IMAGE/PNG; q=1"]:
         out = Web(default=page(b"\x89PNG\r\n", ct=ct)).fetch("http://site.test/f")
         assert out.startswith("Error: http://site.test/f is "), ct
         assert "cannot read" in out and "PNG" not in out, ct
@@ -499,6 +538,90 @@ def test_fetch_arrete_de_lire_a_max_bytes(monkeypatch):
     # Coupé au milieu d'un caractère : remplacé, pas d'exception.
     monkeypatch.setattr(web_fetch, "MAX_BYTES", 3)
     assert Web(default=page("éé")).fetch("http://site.test/").endswith("\n---\né�")
+
+
+def test_fetch_pdf_texte_extrait_decoupe_et_garde_en_cache(monkeypatch):
+    """Un PDF se lit comme une page : texte extrait (hors de la boucle
+    asyncio), morceaux par `offset`, plage affichée, cache. Reconnu à son
+    type OU à ses premiers octets, et téléchargé sous SA borne."""
+    doc = pdf("Page un", "Page deux", "Page trois")
+    web = Web({("site.test", "/a.pdf"): page(doc, ct="application/pdf"),
+               ("site.test", "/b"): page(doc, ct="Application/PDF; qs=0.9"),
+               # Type faux ou absent : les premiers octets tranchent.
+               ("site.test", "/c"): page(doc, ct="application/octet-stream"),
+               ("site.test", "/d"): page(doc, ct="text/plain"),
+               ("site.test", "/e"): page(doc, ct=None)})
+    monkeypatch.setattr(web_fetch, "MAX_BYTES", 100)    # la borne des pages HTML
+    for chemin in ("/a.pdf", "/b", "/c", "/d", "/e"):
+        assert web.fetch("http://site.test" + chemin) == (
+            f"URL: http://site.test{chemin}\nContent-Type: application/pdf\n\n"
+            "---\nPage un\n\nPage deux\n\nPage trois"), chemin
+    # Chiffré sans mot de passe d'ouverture (droits restreints) : lisible.
+    assert Web(default=page(pdf("Ouvert", password=""))).fetch(
+        "http://site.test/").endswith("\n---\nOuvert")
+    # Morceaux : une seule requête, une seule extraction, dans un autre fil.
+    monkeypatch.setattr(webcache.CACHE, "ttl", 600)
+    monkeypatch.setattr(web_fetch, "MAX_CHARS", 12)
+    fils, extrait = [], web_fetch.pdf_text
+
+    def espion(body):
+        fils.append(threading.current_thread())
+        return extrait(body)
+    monkeypatch.setattr(web_fetch, "pdf_text", espion)
+    u, n = "http://site.test/a.pdf", len(web.requests)
+    debut = web.fetch(u)
+    assert debut.endswith("Characters: 0-12 of 30 (truncated: pass offset=12 to "
+                          "continue)\n\n---\nPage un\n\nPag")
+    assert web.fetch(u, offset=12).endswith("\n---\ne deux\n\nPage")
+    assert web.fetch(u, offset=24).endswith("Characters: 24-30 of 30\n\n---\n trois")
+    assert len(web.requests) == n + 1 and len(fils) == 1
+    assert fils[0] is not threading.main_thread()
+    assert web_fetch.action({"url": u}, debut)["url"] == u + " [0, 12]"
+    # Au-delà de PDF_MAX_PAGES : le début, et un mot qui le dit.
+    monkeypatch.setattr(web_fetch, "PDF_MAX_PAGES", 2)
+    monkeypatch.setattr(web_fetch, "MAX_CHARS", 20_000)
+    assert web.fetch("http://site.test/b").endswith(
+        "\n---\nPage un\n\nPage deux\n\n[only the first 2 of 3 pages were extracted]")
+
+
+def test_fetch_pdf_illisible_rendu_en_erreur_jamais_garde(monkeypatch):
+    """Chiffré, abîmé, sans couche texte, trop gros : un texte « Error: »
+    qui dit pourquoi, pas une exception, et rien en cache."""
+    monkeypatch.setattr(webcache.CACHE, "ttl", 600)
+    doc = pdf("Texte")
+    for nom, corps, ct, attendu in [
+        ("chiffré", pdf("Secret", password="sésame"), "application/pdf",
+         "is an encrypted PDF (a password is required)"),
+        ("scan", pdf("", ""), "application/pdf",
+         "is a PDF with no extractable text (2 of 2 pages read, probably scanned "
+         "images)"),
+        ("coupé", doc[:len(doc) // 2], "application/octet-stream",
+         "is not a readable PDF"),
+        ("en-tête seul", b"%PDF-1.7\n", "text/plain", "is not a readable PDF"),
+        ("pas un PDF", b"<html>connexion requise</html>", "application/pdf",
+         "is not a readable PDF"),
+        ("vide", b"", "application/pdf", "is not a readable PDF"),
+    ]:
+        out = Web(default=page(corps, ct=ct)).fetch("http://site.test/f")
+        assert out.startswith("Error: http://site.test/f " + attendu), (nom, out)
+        assert "Secret" not in out, nom
+    # Plus gros que sa borne : refusé sans tenter l'extraction (la fin d'un
+    # PDF porte sa table des objets), et le flux n'est pas lu jusqu'au bout.
+    monkeypatch.setattr(web_fetch, "PDF_MAX_BYTES", 300)
+    monkeypatch.setattr(web_fetch, "pdf_text", lambda body: pytest.fail("extrait"))
+    servis = []
+
+    async def sans_fin():
+        yield b"%PDF-1.4\n"
+        while True:
+            servis.append(1)
+            yield b"y" * 100
+
+    assert Web(default=lambda req: httpx.Response(
+        200, content=sans_fin())).fetch("http://site.test/f") == (
+        "Error: http://site.test/f is a PDF larger than 300 bytes, which this "
+        "tool does not download.")
+    assert len(servis) == 3 and len(webcache.CACHE) == 0
 
 
 def test_fetch_echec_http_ou_reseau_rendu_en_texte():

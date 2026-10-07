@@ -1,6 +1,6 @@
 """
 HTML → texte lisible par un modèle, avec la seule bibliothèque standard
-(le proxy n'a que fastapi, uvicorn et httpx en dépendances). Pas un
+(pas de dépendance de plus pour cela). Pas un
 navigateur : pas de JavaScript, pas de mise en page. Ce qui est gardé —
 titres, paragraphes, listes, liens, blocs de code — suffit pour lire une
 documentation, un article ou une page de dépôt.

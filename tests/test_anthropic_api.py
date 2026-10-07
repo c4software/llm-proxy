@@ -1,12 +1,14 @@
 """Le traducteur Anthropic ↔ OpenAI, testé sur des octets : aucun
 réseau, aucun serveur — anthropic_api ne connaît ni FastAPI ni httpx.
-La recherche hébergée (outil serveur `web_search_…`) est testée en fin
-de fichier, jusqu'à la route entière par le client de test de Starlette ;
+Les outils hébergés (outils serveur `web_search_…` et `web_fetch_…`) sont
+testés en fin de fichier, jusqu'à la route entière par le client de test
+de Starlette ;
 la boucle d'app.py, commune aux deux surfaces traduites, est déroulée
 scénario par scénario dans test_responses_api.py."""
 
 import asyncio
 import json
+import re
 import types
 
 import httpx
@@ -19,7 +21,7 @@ from fakes import sse_events as events
 from llm_proxy import anthropic_api as A
 from llm_proxy import app
 from llm_proxy import tools
-from llm_proxy.tools import web_search
+from llm_proxy.tools import web_fetch, web_search
 
 BACKENDS = {"albert": None, "bigchuck": None}
 
@@ -557,8 +559,9 @@ def test_to_openai_declares_hosted_search_from_claude_code_request():
     out = A.to_openai(request, hosted=hosted)
     # La fonction du paquet tools/ à la place de l'outil serveur : la même
     # que sur la surface Responses, moins le renvoi à web_fetch — qui
-    # n'est PAS présenté (Claude Code lit les pages chez le client), bien
-    # que l'annuaire le porte, comme sur un proxy réel.
+    # n'est PAS présenté (Claude Code ne déclare que la recherche, il lit
+    # les pages chez le client), bien que l'annuaire le porte, comme sur
+    # un proxy réel.
     assert out["tools"] == [web_search.definition(fetch=False)]
     assert "web_fetch" not in json.dumps(out)
     assert out["tool_choice"] == "auto" and out["stream"] is True
@@ -567,8 +570,8 @@ def test_to_openai_declares_hosted_search_from_claude_code_request():
         "role": "user",
         "content": "Perform a web search for the query: llama.cpp latest release"}
     ctx = A.Context(request, hosted)
-    assert list(ctx.hosted) == ["web_search"] and ctx.limit == 8
-    assert ctx.options == {}
+    assert list(ctx.hosted) == ["web_search"]
+    assert ctx.limits == {"web_search": 8} and ctx.options == {}
 
     # Sans annuaire, ou annuaire sans recherche : ignoré, comme avant.
     for h in (None, tools.Hosted(modules=[]),
@@ -593,11 +596,12 @@ def test_to_openai_hosted_search_variants(monkeypatch):
         {"type": "web_search_20260209", "name": "web_search"}, READ,
         {"type": "web_search_20250305", "name": "web_search", "max_uses": 2}]}
     assert names(r) == ["web_search", "Read"]
-    assert A.Context(r, hosted).limit == 8      # le premier déclaré fait foi
-    # Les autres outils serveur restent ignorés — web_fetch compris.
-    r = req({"type": "web_fetch_20250910", "name": "web_fetch"},
-            {"type": "code_execution_20250825", "name": "code_execution"},
-            {"type": "web_search", "name": "web_search"})
+    # Le premier déclaré fait foi.
+    assert A.Context(r, hosted).limits == {"web_search": 8}
+    # Les autres outils serveur restent ignorés, un type non daté aussi.
+    r = req({"type": "code_execution_20250825", "name": "code_execution"},
+            {"type": "web_search", "name": "web_search"},
+            {"type": "web_fetch", "name": "web_fetch"})
     assert names(r) == ["Read"] and not A.Context(r, hosted).hosted
     # max_uses : ne fait que BAISSER la limite du proxy (tools.MAX_CALLS).
     monkeypatch.setattr(tools, "MAX_CALLS", 5)
@@ -605,7 +609,7 @@ def test_to_openai_hosted_search_variants(monkeypatch):
                          (0, 0), (-1, 0)):
         r = req({"type": "web_search_20250305", "name": "web_search",
                  "max_uses": asked})
-        assert A.Context(r, hosted).limit == limit
+        assert A.Context(r, hosted).limits == {"web_search": limit}
     # Listes de domaines du client : passées à l'exécution.
     r = req({"type": "web_search_20250305", "name": "web_search",
              "allowed_domains": ["github.com"], "blocked_domains": []})
@@ -903,6 +907,261 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
         "Error: the web search failed (unavailable)."
 
 
+# ── lecture de page hébergée ────────────────────────────────────────────
+# L'outil serveur `web_fetch_…`, par le même chemin que la recherche. Ce
+# que le modèle lit d'une page : le texte de tools/web_fetch, en-tête
+# compris — ici un premier morceau de 30 caractères, la suite par `offset`.
+
+PAGE = "https://example.org/notes"
+HTML = ("<html><head><title>Notes : b6789</title></head><body><p>"
+        + "Bonjour à tous. " * 4 + "</p></body></html>").encode()
+READ_TEXT = web_fetch.render(PAGE, "text/html", HTML, "utf-8", 0, 30)
+FETCH_ARGS = "{\"url\": \"https://example.org/notes\"}"
+SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search"}
+
+
+def fetch_tool(**extra):
+    return {"type": "web_fetch_20250910", "name": "web_fetch", **extra}
+
+
+def fetch_request(*tools, **extra):
+    return {"model": "essai/qwen", "max_tokens": 100, "stream": True,
+            "messages": [{"role": "user", "content": f"Lis {PAGE}"}],
+            "tools": list(tools or (SEARCH_TOOL, fetch_tool())), **extra}
+
+
+def fetch_error(code):
+    return {"type": "web_fetch_tool_result_error", "error_code": code}
+
+
+def fetched(block, text=READ_TEXT, url=PAGE, title="Notes : b6789"):
+    """Le bloc `web_fetch_tool_result` est-il celui de `text` ? À
+    l'horodatage près, dont seule la forme est vérifiée."""
+    content = dict(block["content"])
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ",
+                        content.pop("retrieved_at"))
+    return block["type"] == "web_fetch_tool_result" and content == {
+        "type": "web_fetch_result", "url": url, "content": {
+            "type": "document", "title": title, "source": {
+                "type": "text", "media_type": "text/plain", "data": text}}}
+
+
+def test_to_openai_declares_hosted_fetch():
+    hosted = hosted_tools()
+    defs = lambda *tools, h=hosted: A.to_openai(
+        fetch_request(*tools), hosted=h).get("tools")
+    assert READ_TEXT.startswith(
+        f"URL: {PAGE}\nTitle: Notes : b6789\nContent-Type: text/html\n"
+        "Characters: 0-30 of 63 (truncated: pass offset=30 to continue)\n\n---\n")
+    # Seul déclaré : seul présenté, et sa description ne renvoie pas à une
+    # recherche que le modèle n'a pas. Toute version datée de l'outil.
+    for kind in ("web_fetch_20250910", "web_fetch_20260318"):
+        assert defs(fetch_tool(type=kind)) == [web_fetch.DEFINITION_ALONE]
+    assert "web_search" not in json.dumps(web_fetch.DEFINITION_ALONE)
+    assert set(web_fetch.DEFINITION_ALONE["function"]["parameters"][
+        "properties"]) == {"url", "offset"}
+    # Les deux déclarés : chacun à sa place, une fois, et chaque
+    # description renvoie à l'autre — les fonctions de la surface Responses.
+    assert defs(fetch_tool(), READ, SEARCH_TOOL, fetch_tool())[::2] == [
+        web_fetch.DEFINITION, web_search.definition()]
+    # Lecture non hébergée : ignorée, la recherche reste sans renvoi.
+    assert defs(SEARCH_TOOL, fetch_tool(), h=tools.Hosted(
+        modules=hosted.modules[:1])) == [web_search.definition(fetch=False)]
+    # Une fonction du client nommée web_fetch garde son nom.
+    mine = {"name": "web_fetch", "description": "la mienne", "input_schema": {}}
+    assert [t["function"]["description"]
+            for t in defs(mine, fetch_tool())] == ["la mienne"]
+    assert not A.Context(fetch_request(mine, fetch_tool()), hosted).hosted
+    # Ce que le client règle sur CHAQUE outil : sa limite, ses listes de
+    # domaines ; `max_content_tokens` en caractères ; `citations` ignoré.
+    ctx = A.Context(fetch_request(
+        {**SEARCH_TOOL, "max_uses": 3, "blocked_domains": ["x.test"]},
+        fetch_tool(max_uses=2, allowed_domains=["example.org"],
+                   max_content_tokens=500, citations={"enabled": True})), hosted)
+    assert ctx.limits == {"web_search": 3, "web_fetch": 2} and ctx.cap == 8
+    assert ctx.options == {
+        "web_search": {"blocked_domains": ["x.test"]},
+        "web_fetch": {"allowed_domains": ["example.org"], "max_chars": 2000}}
+    for size in (0, -5, True, "500", None):
+        assert not A.Context(fetch_request(
+            fetch_tool(max_content_tokens=size)), hosted).options
+
+
+def test_stream_hosted_fetch_blocks():
+    hosted = hosted_tools()
+    t = translator(fetch_request(), hosted)
+    ev = turn(t, chunk({"content": "Je lis."}),
+              tool_call(0, "call_f", "web_fetch", "{\"url\": \"https://exa"),
+              chunk({"tool_calls": [{"index": 0, "function": {
+                  "arguments": "mple.org/notes\"}"}}]}),
+              chunk(finish="tool_calls"), usage(100, 10))
+    # Les mêmes événements que pour une recherche : le bloc server_tool_use
+    # entier, son input en un delta, et rien d'autre avant l'exécution.
+    use = ev[4][1]["content_block"]
+    assert use == {"type": "server_tool_use", "id": use["id"],
+                   "name": "web_fetch", "input": {}}
+    assert use["id"].startswith("srvtoolu_")
+    assert [d["delta"] for e, d in ev[5:] if e == "content_block_delta"] == [
+        {"type": "input_json_delta", "partial_json": FETCH_ARGS}]
+    assert ev[-1][0] == "content_block_stop" and len(t.pending) == 1
+
+    done = events(t.resolve(t.pending[0], READ_TEXT))
+    assert [e for e, _ in done] == ["content_block_start", "content_block_stop"]
+    block = done[0][1]["content_block"]
+    # Le document porte le texte ENTIER rendu au modèle ; l'URL et le
+    # titre en sont tirés.
+    assert done[0][1]["index"] == 2 and block["tool_use_id"] == use["id"]
+    assert fetched(block)
+    # Un texte sans en-tête lisible : l'URL demandée, pas de titre.
+    assert A._fetch_content(hosted.by_name["web_fetch"], {
+        "arguments": FETCH_ARGS}, "du texte")["url"] == PAGE
+    assert fetched({"type": "web_fetch_tool_result", "content": A._fetch_content(
+        hosted.by_name["web_fetch"], {"arguments": "{"}, "du texte")},
+        "du texte", "", None)
+
+    t.next_turn()
+    end = turn(t, *ANSWER_TURN)
+    assert end[-2][1]["delta"]["stop_reason"] == "end_turn"
+    assert end[-2][1]["usage"]["server_tool_use"] == {"web_fetch_requests": 1}
+    assert [b["type"] for b in t.content] == [
+        "text", "server_tool_use", "web_fetch_tool_result", "text"]
+    assert t.content[1]["input"] == {"url": PAGE}
+    assert t.summary().endswith("tools: web_fetch(" + FETCH_ARGS + ")")
+    assert len(hosted.memory) == 0
+
+
+def test_fetch_errors_become_error_codes(monkeypatch):
+    """Les textes d'erreur du VRAI module (aucun réseau : la résolution
+    et le transport sont factices) → les codes de l'outil d'Anthropic."""
+    async def public(url, allow_private=False):
+        return "https", "93.184.216.34", 443
+
+    def site(request):
+        path = request.url.path
+        if path == "/png":
+            return httpx.Response(200, content=b"\x89PNG",
+                                  headers={"content-type": "image/png"})
+        if path == "/boucle":
+            return httpx.Response(302, headers={"location": "/boucle"})
+        if path == "/ailleurs":
+            return httpx.Response(302, headers={"location": "https://x.test/"})
+        if path == "/panne":
+            raise httpx.ConnectError("non")
+        return httpx.Response(int(path[1:]))
+
+    for name in ("ALLOWED_DOMAINS", "BLOCKED_DOMAINS"):
+        monkeypatch.setattr(web_fetch, name, [])
+    monkeypatch.setattr(web_fetch, "ALLOW_PRIVATE", False)
+    run = lambda url, **options: asyncio.run(web_fetch.run(
+        {"url": url}, transport=httpx.MockTransport(site), **options))
+    # Refusés avant toute requête, par le vrai contrôle d'adresse.
+    results = [(run("ftp://example.org/a"), "invalid_tool_input"),
+               (run("http://127.0.0.1/admin"), "url_not_allowed")]
+    monkeypatch.setattr(web_fetch.net, "public_target", public)
+    theirs = {"allowed_domains": ["example.org"], "blocked_domains": ["x.test"]}
+    results += [(run(f"https://example.org/{path}", **theirs), code)
+                for path, code in (("404", "url_not_accessible"),
+                                   ("500", "url_not_accessible"),
+                                   ("429", "too_many_requests"),
+                                   ("png", "unsupported_content_type"),
+                                   ("boucle", "url_not_accessible"),
+                                   ("panne", "url_not_accessible"),
+                                   # Les listes du CLIENT, à chaque saut.
+                                   ("ailleurs", "url_not_allowed"))]
+    results += [(run("https://github.com/", **theirs), "url_not_allowed"),
+                ("Error: web_fetch timed out after 60 s.", "unavailable")]
+    assert all(text.startswith("Error:") for text, _ in results)
+    # Sans `url`, arguments illisibles, et au-delà du `max_uses` de l'outil.
+    extra = [("{\"uri\": \"x\"}", "Error: `url` is required.",
+              "invalid_tool_input"),
+             ("{pas du json", "Error: the tool arguments are not a JSON object.",
+              "invalid_tool_input"),
+             (FETCH_ARGS, "Error: the limit of 13 web tool calls for one "
+                          "answer is reached. Answer now with what you "
+                          "already have.", "max_uses_exceeded")]
+    calls = [(FETCH_ARGS, *r) for r in results] + extra
+    monkeypatch.setattr(tools, "MAX_CALLS", 50)
+    t = translator(fetch_request(fetch_tool(max_uses=len(calls) - 1)))
+    turn(t, *(tool_call(i, f"c{i}", "web_fetch", args)
+              for i, (args, _, _) in enumerate(calls)),
+         chunk(finish="tool_calls"))
+    blocks = [blocks_of(events(t.resolve(t.pending[0], text)))[0]
+              for _, text, _ in calls]
+    assert [(b["type"], b["content"]) for b in blocks] == [
+        ("web_fetch_tool_result", fetch_error(code)) for _, _, code in calls]
+    end = events(t.finalize())
+    assert "server_tool_use" not in end[0][1]["usage"]
+    # `max_content_tokens` ne fait que BAISSER la taille d'un morceau.
+    monkeypatch.setattr(web_fetch, "MAX_CHARS", 20)
+    assert "Characters: 0-20 of 63 " in web_fetch.render(
+        PAGE, "text/html", HTML, "utf-8", 0, 10 ** 6)
+
+
+def test_fetch_loop_turn_and_client_replay_send_the_same_bytes():
+    """La contrainte du rejeu, pour une recherche PUIS deux lectures : ce
+    que le backend reçoit dans la boucle est, octet pour octet, le début
+    de ce qu'il recevra quand le client rejouera ses blocs — le document
+    porte le texte lu, tronqué ou non, rien n'est reconstruit."""
+    hosted = hosted_tools()
+    request = fetch_request()
+    rest = web_fetch.render(PAGE, "text/html", HTML, "utf-8", 30) + "\n[truncated]"
+    t = translator(request, hosted)
+    turn(t, *SEARCH_TURN)
+    t.resolve(t.pending[0], FOUND)
+    t.next_turn()
+    turn(t, tool_call(0, "a", "web_fetch", FETCH_ARGS),
+         tool_call(1, "b", "web_fetch", FETCH_ARGS[:-1] + ", \"offset\": 30}"),
+         chunk(finish="tool_calls"), usage(10, 2))
+    t.resolve(t.pending[0], READ_TEXT)
+    t.resolve(t.pending[0], rest)
+    rebuilt = lambda results: A.to_openai(
+        {**request, "messages": request["messages"] + [
+            {"role": "assistant", "content": t.content}]},
+        hosted=hosted, results=results)
+    looped = rebuilt(t.results)
+    # Chaque résultat suit son appel, pour les lectures comme pour les
+    # recherches : deux appels lancés d'un coup font deux messages.
+    assert [m["role"] for m in looped["messages"]] == [
+        "user", "assistant", "tool", "assistant", "tool", "assistant", "tool"]
+    assert [m["content"] for m in looped["messages"][2::2]] == [
+        FOUND, READ_TEXT, rest]
+    assert [m["tool_calls"][0]["function"] for m in looped["messages"][3::2]] == [
+        {"name": "web_fetch", "arguments": FETCH_ARGS},
+        {"name": "web_fetch",
+         "arguments": "{\"url\": \"https://example.org/notes\", \"offset\": 30}"}]
+    t.next_turn()
+    turn(t, *ANSWER_TURN)
+    # Le bloc rendu au client reste valide avec `offset` dans son input.
+    assert t.content[5]["input"] == {"url": PAGE, "offset": 30}
+    assert fetched(t.content[6], rest)
+    again = A.to_openai({**request, "messages": request["messages"] + [
+        {"role": "assistant", "content": json.loads(json.dumps(t.content))},
+        {"role": "user", "content": "Merci"}]}, hosted=hosted)
+    n = len(looped["messages"])
+    encode = lambda doc: json.dumps(doc, ensure_ascii=False)
+    assert encode(again["messages"][:n]) == encode(looped["messages"])
+    assert again["messages"][n:] == [{"role": "assistant", "content": "Voilà."},
+                                     {"role": "user", "content": "Merci"}]
+    assert encode(again["tools"]) == encode(looped["tools"])
+    assert len(hosted.memory) == 0
+    # Une erreur rejouée n'a plus que son code ; un document qui n'est pas
+    # du texte (PDF en base64 venu d'Anthropic) est rendu comme un échec.
+    t.content[4]["content"] = fetch_error("url_not_accessible")
+    t.content[6]["content"]["content"]["source"] = {
+        "type": "base64", "media_type": "application/pdf", "data": "JVBERi0="}
+    assert [m["content"] for m in rebuilt(None)["messages"][4:7:2]] == [
+        "Error: the web fetch failed (url_not_accessible).",
+        "Error: the web fetch failed (unavailable)."]
+    # Si la requête ne déclare plus la lecture, ses blocs sont ignorés —
+    # ceux de la recherche restent rejoués.
+    alone = A.to_openai({**request, "tools": [SEARCH_TOOL], "messages":
+                         request["messages"] + [
+                             {"role": "assistant", "content": t.content}]},
+                        hosted=hosted)
+    assert [m["role"] for m in alone["messages"]] == [
+        "user", "assistant", "tool", "assistant"]
+
+
 # ── la route /v1/messages ───────────────────────────────────────────────
 # La boucle d'app.py est commune aux deux surfaces traduites : ses
 # scénarios sont déroulés dans test_responses_api.py. Ici, par la route
@@ -1007,6 +1266,56 @@ def test_app_honors_max_uses_then_stops(proxy):
     assert ev[-2][1]["delta"]["stop_reason"] == "end_turn"
     assert ev[-2][1]["usage"]["server_tool_use"] == {"web_search_requests": 2}
     assert proxy.lines[0][6:8] == (60, 6)
+
+
+def test_app_search_then_fetch_each_under_its_own_max_uses(proxy, monkeypatch):
+    """Les deux outils serveur déclarés, en JSON : chaque fonction a SA
+    limite (`max_uses`) et reçoit les réglages posés sur son outil ; les
+    appels de trop sont rendus en `max_uses_exceeded` sans être exécutés."""
+    seen, lines = [], []
+
+    async def read(args, **options):
+        seen.append((args, options))
+        return READ_TEXT
+
+    proxy.hosted.by_name["web_fetch"].run = read
+    monkeypatch.setattr(app.stats, "record_tool", lambda *a: lines.append(a))
+    call = lambda name, args: FakeUpstream(chat_doc({"content": None, "tool_calls": [
+        {"id": "c", "function": {"name": name, "arguments": args}}]},
+        "tool_calls", 10, 1))
+    proxy.replies = [call("web_search", QUERY), call("web_fetch", FETCH_ARGS),
+                     call("web_fetch", FETCH_ARGS), call("web_fetch", FETCH_ARGS),
+                     call("web_search", QUERY), FakeUpstream(ANSWER_DOC)]
+    r = proxy.client.post("/v1/messages", json=fetch_request(
+        {**SEARCH_TOOL, "max_uses": 1},
+        fetch_tool(max_uses=2, allowed_domains=["example.org"],
+                   max_content_tokens=500), stream=False))
+    msg = r.json()
+    assert r.status_code == 200 and msg["stop_reason"] == "end_turn"
+    results = [b for b in msg["content"] if b["type"] != "server_tool_use"]
+    assert results[0]["content"] == BLOCKS
+    assert fetched(results[1]) and fetched(results[2])
+    assert [b["content"] for b in results[3:5]] == [
+        fetch_error("max_uses_exceeded"), search_error("max_uses_exceeded")]
+    assert [b["name"] for b in msg["content"]
+            if b["type"] == "server_tool_use"] == [
+        "web_search", "web_fetch", "web_fetch", "web_fetch", "web_search"]
+    assert msg["usage"]["server_tool_use"] == {
+        "web_search_requests": 1, "web_fetch_requests": 2}
+    # Exécutés : une recherche, deux lectures — avec les réglages du client.
+    assert len(proxy.hosted.runs) == 1 and seen == [({"url": PAGE}, {
+        "allowed_domains": ["example.org"], "max_chars": 2000})] * 2
+    # Le backend a reçu les deux fonctions, et relit ce qu'il avait lu.
+    assert [t["function"]["name"] for t in proxy.sent[0]["tools"]] == [
+        "web_search", "web_fetch"]
+    assert proxy.sent[2]["messages"][-1]["content"] == READ_TEXT
+    assert "the limit of 2 web tool calls" in proxy.sent[4]["messages"][-1]["content"]
+    # Une ligne de statistiques par appel, avec la route et le modèle.
+    assert [line[:4] for line in lines] == [
+        (name, "/v1/messages", "essai/qwen", outcome) for name, outcome in (
+            ("web_search", "ok"), ("web_fetch", "ok"), ("web_fetch", "ok"),
+            ("web_fetch", "limit"), ("web_search", "limit"))]
+    assert len(proxy.hosted.memory) == 0
 
 
 def test_app_failure_takes_the_anthropic_error_form(proxy):

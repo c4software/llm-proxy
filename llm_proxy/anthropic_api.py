@@ -40,13 +40,19 @@ il lit dans la réponse les blocs `server_tool_use` puis
 serveur devient la fonction `web_search` présentée au modèle ; ses appels
 ne sont PAS rendus en `tool_use` : le robinet les met de côté (`pending`),
 app.py les exécute et relance le backend — même boucle que la surface
-Responses —, et le client reçoit les deux blocs qu'il attend. SEULE la
-recherche est branchée : `WebFetch` de Claude Code lit les pages sur le
-poste du client, `web_fetch` n'est donc pas présenté ici. Rien n'est
+Responses —, et le client reçoit les deux blocs qu'il attend. Rien n'est
 conservé entre deux requêtes : le bloc `web_search_tool_result` porte
 tout le résultat, un client qui le rejoue rend au modèle le même texte
 (voir _assistant_messages). Ce module ne fait aucune requête : il reçoit
 un objet `Hosted` et s'en sert comme d'un annuaire.
+
+Lecture de page hébergée : l'outil serveur `{"type": "web_fetch_20250910",
+"name": "web_fetch"}` suit le même chemin, vers la fonction `web_fetch` —
+blocs `server_tool_use` puis `web_fetch_tool_result`, dont le document
+porte le texte ENTIER rendu au modèle. Chaque outil n'est présenté que si
+le client le déclare : Claude Code ne déclare que la recherche (son
+`WebFetch` lit les pages sur le poste du client), un client du SDK peut
+déclarer l'un, l'autre ou les deux.
 
 Ce module ne connaît ni FastAPI ni httpx.
 """
@@ -54,6 +60,7 @@ Ce module ne connaît ni FastAPI ni httpx.
 import datetime as _dt
 import json
 import re
+import time
 import uuid
 
 from . import config
@@ -97,11 +104,20 @@ STOP_REASONS = {
     "content_filter": "refusal",
 }
 
-# L'outil serveur de recherche d'Anthropic, toutes versions datées
-# (`web_search_20250305`, `web_search_20260209`…), et la fonction du
-# paquet tools/ qui le remplace.
-_SERVER_SEARCH = re.compile(r"^web_search_\d+$")
+# Les outils serveur d'Anthropic que le proxy exécute, toutes versions
+# datées (`web_search_20250305`, `web_search_20260209`,
+# `web_fetch_20250910`…), et la fonction du paquet tools/ qui remplace
+# chacun — elle porte le même nom que lui.
 SEARCH = "web_search"
+FETCH = "web_fetch"
+_SERVER = {SEARCH: re.compile(r"^web_search_\d+$"),
+           FETCH: re.compile(r"^web_fetch_\d+$")}
+# Par fonction : le bloc qui rend son résultat au client (son erreur est
+# un objet `<bloc>_error`), l'argument sans lequel l'appel est un
+# `invalid_tool_input`, son compteur dans `usage.server_tool_use`.
+_RESULT = {SEARCH: "web_search_tool_result", FETCH: "web_fetch_tool_result"}
+_REQUIRED = {SEARCH: "query", FETCH: "url"}
+_COUNTER = {SEARCH: "web_search_requests", FETCH: "web_fetch_requests"}
 
 # Types d'erreur de l'API Anthropic par statut HTTP.
 ERROR_TYPES = {
@@ -330,53 +346,74 @@ def _prepend_text(msg: dict, text: str) -> None:
 
 
 class Context:
-    """Ce que la requête dit de la recherche hébergée, pour to_openai, le
+    """Ce que la requête dit des outils hébergés, pour to_openai, le
     robinet et la boucle d'app.py. Vide (`hosted` = {}) tant que le proxy
-    n'héberge pas `web_search` ou que le client ne déclare pas l'outil
-    serveur : tout se passe alors comme avant, l'outil est ignoré.
+    n'héberge ni `web_search` ni `web_fetch`, ou que le client ne déclare
+    aucun des deux outils serveur : tout se passe alors comme avant, ils
+    sont ignorés.
 
-    `hosted` : nom de fonction → module de tools/ (au plus `web_search`) ;
-    `limit`  : recherches exécutées au plus pour cette réponse — le
-               `max_uses` du client, borné par tools.MAX_CALLS ;
+    `hosted` : nom de fonction → module de tools/, pour chaque outil
+               serveur déclaré ET hébergé (`web_search`, `web_fetch`) ;
+    `limits` : par fonction, appels exécutés au plus pour cette réponse —
+               le `max_uses` que le client a posé sur CET outil, borné
+               par tools.MAX_CALLS ;
+    `cap`    : appels exécutés au plus, toutes fonctions confondues
+               (tools.MAX_CALLS) ;
     `options`: par nom de fonction, ce que le client a réglé sur son outil
                et que l'exécution doit respecter (`allowed_domains`,
-               `blocked_domains`). Anthropic refuse les deux listes à la
-               fois (400) ; ici elles s'appliquent toutes les deux."""
+               `blocked_domains` ; pour `web_fetch`, `max_chars`, tiré de
+               `max_content_tokens`). Anthropic refuse les deux listes à
+               la fois (400) ; ici elles s'appliquent toutes les deux."""
 
     def __init__(self, request: dict, hosted=None):
         self.hosted: dict = {}
-        self.limit: int | None = None
+        self.limits: dict[str, int] = {}
+        self.cap: int = hosted.cap() if hosted else 0
         self.options: dict[str, dict] = {}
-        module = hosted.by_name.get(SEARCH) if hosted else None
         tools = request.get("tools")
         tools = tools if isinstance(tools, list) else []
         # Une fonction du client garde son nom : l'outil hébergé homonyme
         # n'est alors pas présenté (même règle que la surface Responses).
-        if module is None or any(
-                isinstance(t, dict) and t.get("name") == SEARCH
-                and "input_schema" in t for t in tools):
-            return
+        taken = [t.get("name") for t in tools
+                 if isinstance(t, dict) and "input_schema" in t]
         for t in tools:
-            if not is_server_search(t):
+            name = server_tool(t)
+            module = hosted.by_name.get(name) if hosted and name else None
+            # Déclaré deux fois : le premier fait foi.
+            if module is None or name in taken or name in self.hosted:
                 continue
-            self.hosted[SEARCH] = module
-            self.limit = hosted.cap(t.get("max_uses"))
-            domains = {k: [str(d) for d in t[k]]
-                       for k in ("allowed_domains", "blocked_domains")
-                       if isinstance(t.get(k), list) and t[k]}
-            if domains:
-                self.options[SEARCH] = domains
-            return
+            self.hosted[name] = module
+            self.limits[name] = hosted.cap(t.get("max_uses"))
+            options: dict = {k: [str(d) for d in t[k]]
+                             for k in ("allowed_domains", "blocked_domains")
+                             if isinstance(t.get(k), list) and t[k]}
+            # `max_content_tokens` : la taille du contenu rendu, que
+            # web_fetch compte en caractères — même approximation que
+            # partout ici, et l'outil d'Anthropic dit lui-même sa limite
+            # approximative. Il ne fait que BAISSER la borne du proxy.
+            size = t.get("max_content_tokens")
+            if name == FETCH and isinstance(size, int) \
+                    and not isinstance(size, bool) and size > 0:
+                options["max_chars"] = size * CHARS_PER_TOKEN
+            if options:
+                self.options[name] = options
 
 
-def is_server_search(tool) -> bool:
-    return isinstance(tool, dict) and "input_schema" not in tool \
-        and bool(_SERVER_SEARCH.match(str(tool.get("type") or "")))
+def server_tool(tool) -> str | None:
+    """La fonction hébergée que remplace cet outil du client (SEARCH,
+    FETCH), ou None : une fonction du client (`input_schema`), un autre
+    outil serveur."""
+    if not isinstance(tool, dict) or "input_schema" in tool:
+        return None
+    kind = str(tool.get("type") or "")
+    return next((name for name, dated in _SERVER.items()
+                 if dated.match(kind)), None)
 
 
 # Texte rendu au modèle pour un résultat en erreur REJOUÉ par le client :
 # le bloc n'en garde que le code.
-_REPLAYED_ERROR = "Error: the web search failed ({code})."
+_REPLAYED_ERROR = {SEARCH: "Error: the web search failed ({code}).",
+                   FETCH: "Error: the web fetch failed ({code})."}
 
 
 def _search_entries(content) -> list[dict]:
@@ -397,21 +434,40 @@ def _search_text(module, use: dict, result: dict) -> str:
     content = result.get("content")
     if not isinstance(content, list):
         code = content.get("error_code") if isinstance(content, dict) else None
-        return _REPLAYED_ERROR.format(code=code or "unavailable")
+        return _REPLAYED_ERROR[SEARCH].format(code=code or "unavailable")
     query = (use.get("input") or {}).get("query") \
         if isinstance(use.get("input"), dict) else ""
     return module.render(str(query or "").strip(), _search_entries(content))
 
 
-def _assistant_messages(content, search=None, results=None) -> list[dict]:
+def _fetch_text(result: dict) -> str:
+    """Le texte qu'avait lu le modèle, relu du bloc `web_fetch_tool_result`
+    que le client rejoue : c'est la `data` du document, où _fetch_content
+    l'a mis ENTIER — rien à reconstruire, donc rien qui puisse différer.
+    Un document qui n'est pas du texte (le PDF en base64 d'une conversation
+    commencée chez Anthropic) est rendu comme une lecture en échec."""
+    content = result.get("content")
+    content = content if isinstance(content, dict) else {}
+    doc = content.get("content")
+    source = doc.get("source") if isinstance(doc, dict) else None
+    if content.get("type") == "web_fetch_result" and isinstance(source, dict) \
+            and source.get("type") == "text" \
+            and isinstance(source.get("data"), str):
+        return source["data"]
+    return _REPLAYED_ERROR[FETCH].format(
+        code=content.get("error_code") or "unavailable")
+
+
+def _assistant_messages(content, hosted=None, results=None) -> list[dict]:
     """thinking / redacted_thinking sont JETÉS : aucun backend OpenAI ne
     les rejoue, et leur signature n'a de sens que chez Anthropic.
 
     Un message assistant Anthropic donne UN message OpenAI — sauf s'il
-    porte des recherches que le proxy a exécutées (`search` : le module
-    de tools/, quand la requête déclare l'outil serveur). Chaque paire
-    `server_tool_use` + `web_search_tool_result` redevient alors un appel
-    suivi de son message `tool`, et ce qui vient APRÈS un résultat ouvre
+    porte des appels que le proxy a exécutés (`hosted` : nom de fonction →
+    module de tools/, pour les outils serveur que la requête déclare).
+    Chaque paire `server_tool_use` + `web_search_tool_result` (ou
+    `web_fetch_tool_result`) redevient alors un appel suivi de son
+    message `tool`, et ce qui vient APRÈS un résultat ouvre
     un nouveau message assistant : c'est un autre tour du backend. Un
     message [texte, recherche, résultat, texte] rend donc assistant(texte
     + appel), tool, assistant(texte) — ce que le backend a réellement vu
@@ -421,15 +477,18 @@ def _assistant_messages(content, search=None, results=None) -> list[dict]:
 
     `results` : id d'appel → texte exact rendu au modèle, pour les appels
     de la réponse EN COURS (app.py) ; un bloc rejoué par le client est
-    relu par _search_text. Sans `search`, ou pour un `server_tool_use`
-    sans son résultat, les blocs sont ignorés comme avant : un appel sans
-    message `tool` serait refusé par le backend."""
+    relu par _search_text ou _fetch_text. Sans `hosted`, pour un outil
+    que la requête ne déclare pas, ou pour un `server_tool_use` sans le
+    résultat de son type, les blocs sont ignorés comme avant : un appel
+    sans message `tool` serait refusé par le backend."""
     if isinstance(content, str):
         return [{"role": "assistant", "content": content}]
     blocks = [b for b in content if isinstance(b, dict)] \
         if isinstance(content, list) else []
+    hosted = hosted or {}
+    kinds = [_RESULT[name] for name in hosted]
     answers = {str(b.get("tool_use_id")): b for b in blocks
-               if search and b.get("type") == "web_search_tool_result"}
+               if b.get("type") in kinds}
     out: list[dict] = []
     text: list[str] = []
     calls: list[dict] = []
@@ -445,13 +504,15 @@ def _assistant_messages(content, search=None, results=None) -> list[dict]:
 
     for b in blocks:
         t = b.get("type")
-        hosted = t == "server_tool_use" and b.get("name") == SEARCH \
-            and str(b.get("id")) in answers
-        if tools and (hosted or t in ("text", "tool_use")):
+        name = b.get("name")
+        ours = t == "server_tool_use" and isinstance(name, str) \
+            and name in hosted and answers.get(
+                str(b.get("id")), {}).get("type") == _RESULT[name]
+        if tools and (ours or t in ("text", "tool_use")):
             flush()
         if t == "text":
             text.append(b.get("text", ""))
-        elif t == "tool_use" or hosted:
+        elif t == "tool_use" or ours:
             call_id = str(b.get("id") or _tool_id())
             calls.append({
                 "id": call_id,
@@ -462,12 +523,13 @@ def _assistant_messages(content, search=None, results=None) -> list[dict]:
                                             ensure_ascii=False),
                 },
             })
-            if hosted:
+            if ours:
                 known = (results or {}).get(call_id)
-                tools.append({
-                    "role": "tool", "tool_call_id": call_id,
-                    "content": known if isinstance(known, str)
-                    else _search_text(search, b, answers[call_id])})
+                if not isinstance(known, str):
+                    known = _fetch_text(answers[call_id]) if name == FETCH \
+                        else _search_text(hosted[name], b, answers[call_id])
+                tools.append({"role": "tool", "tool_call_id": call_id,
+                              "content": known})
     if text or calls or not out:
         flush()
     return out
@@ -500,11 +562,11 @@ def to_openai(p: dict, images: bool = False, hosted=None,
     context_management…) est ignoré plutôt que relayé à un backend qui
     le refuserait.
     `hosted` : l'annuaire des outils que le proxy exécute (tools.Hosted),
-    ou None — avec lui, l'outil serveur `web_search_…` du client devient
-    la fonction `web_search` (voir Context). `results` : textes des
-    recherches de la réponse en cours (voir _assistant_messages)."""
+    ou None — avec lui, les outils serveur `web_search_…` et `web_fetch_…`
+    du client deviennent les fonctions `web_search` et `web_fetch` (voir
+    Context). `results` : textes des appels hébergés de la réponse en
+    cours (voir _assistant_messages)."""
     ctx = Context(p, hosted)
-    search = ctx.hosted.get(SEARCH)
     out: dict = {"model": p.get("model", "")}
     messages: list[dict] = []
     system = _text_of(p.get("system"))
@@ -531,7 +593,7 @@ def to_openai(p: dict, images: bool = False, hosted=None,
             if pending:
                 messages.append({"role": "user", "content": "\n\n".join(pending)})
                 pending = []
-            messages.extend(_assistant_messages(content, search, results))
+            messages.extend(_assistant_messages(content, ctx.hosted, results))
         elif role == "user":
             batch = _user_message(content, images)
             if pending:
@@ -567,6 +629,7 @@ def to_openai(p: dict, images: bool = False, hosted=None,
         out["user"] = str(meta["user_id"])
 
     tools = []
+    present = dict(ctx.hosted)      # fonctions hébergées restant à présenter
     for t in p.get("tools") or []:
         if not isinstance(t, dict):
             continue
@@ -577,15 +640,21 @@ def to_openai(p: dict, images: bool = False, hosted=None,
                 "parameters": t.get("input_schema")
                 or {"type": "object", "properties": {}},
             }})
-        elif search and is_server_search(t):
-            # La recherche que le proxy exécute : sa fonction à la place
-            # de l'outil serveur, à la même position, une seule fois —
-            # et sans renvoi à `web_fetch`, qui n'est pas présenté ici.
-            tools.append(search.definition(fetch=False))
-            search = None       # les messages sont déjà traduits
-        # Les autres outils serveur Anthropic (web_fetch, code_execution,
-        # bash, text_editor…) ont un `type` et pas d'input_schema : rien
-        # à traduire.
+        elif (name := server_tool(t)) in present:
+            # L'outil que le proxy exécute : sa fonction à la place de
+            # l'outil serveur, à la même position, une seule fois. Chaque
+            # description ne renvoie à l'autre fonction que si le client
+            # l'a déclarée aussi : le modèle n'appelle pas ce qui ne lui
+            # est pas présenté.
+            module = present.pop(name)
+            if name == SEARCH:
+                tools.append(module.definition(fetch=FETCH in ctx.hosted))
+            else:
+                tools.append(module.DEFINITION if SEARCH in ctx.hosted
+                             else module.DEFINITION_ALONE)
+        # Les autres outils serveur Anthropic (code_execution, bash,
+        # text_editor…) ont un `type` et pas d'input_schema : rien à
+        # traduire.
     if tools:
         out["tools"] = tools
         _tool_choice(p.get("tool_choice"), out)
@@ -668,7 +737,7 @@ def _message_blocks(msg: dict, hosted: dict) -> tuple[list[dict], list[dict]]:
 
 
 def _stop_reason(finish, client_tool: bool, searched: bool = False) -> str:
-    """`searched` : la réponse a exécuté des recherches hébergées. Un
+    """`searched` : la réponse a exécuté des appels hébergés. Un
     dernier tour clos sur `tool_calls` sans aucun `tool_use` pour le
     client (le modèle cherchait encore quand la boucle s'est arrêtée)
     n'est pas un `tool_use` : le client n'a rien à exécuter."""
@@ -705,7 +774,7 @@ def from_openai(doc: dict, model: str) -> dict:
                     _usage(doc.get("usage")))
 
 
-# ── recherche hébergée : ce que le client en voit ──
+# ── outils hébergés : ce que le client en voit ──
 
 def _pending(name: str, arguments: str) -> dict:
     """Un appel hébergé à exécuter : ce que Translator.pending contient.
@@ -731,8 +800,24 @@ def _search_content(module, result: str) -> list[dict]:
             for e in module.parse(result)]
 
 
-def _search_error(code: str) -> dict:
-    return {"type": "web_search_tool_result_error", "error_code": code}
+def _fetch_content(module, call: dict, result: str) -> dict:
+    """Texte rendu au modèle → contenu du bloc `web_fetch_tool_result` :
+    un `web_fetch_result`, dont le document est du texte brut.
+    `data` : le texte ENTIER que le modèle a lu, en-tête compris (URL
+    finale, type, plage de caractères lue et `offset` de la suite) — pas
+    le seul corps de la page. C'est ce qui rend le rejeu exact sans
+    mémoire : _fetch_text n'a qu'à le relire, quoi que l'en-tête porte.
+    `url` (celle réellement lue, après redirections) et `title` en sont
+    tirés par tools/web_fetch ; `citations` n'est pas rendu (ignoré)."""
+    page = module.page(result)
+    return {"type": "web_fetch_result",
+            "url": page["url"]
+            or str(_parse_args(call["arguments"]).get("url") or ""),
+            "content": {"type": "document",
+                        "source": {"type": "text", "media_type": "text/plain",
+                                   "data": result},
+                        "title": page["title"] or None},
+            "retrieved_at": _iso(time.time())}
 
 
 def from_openai_error(doc, status: int) -> dict:
@@ -779,7 +864,7 @@ class Translator:
       * JSON : bufferisé, finish() rend le Message traduit ;
       * SSE : traduit au fil de l'eau, événement par événement.
 
-    Recherche hébergée (`ctx.hosted` non vide) : UNE réponse peut couvrir
+    Outils hébergés (`ctx.hosted` non vide) : UNE réponse peut couvrir
     PLUSIEURS tours upstream — même contrat que responses_api.Translator,
     c'est la même boucle d'app.py qui pilote les deux. Un appel à la
     fonction hébergée n'est pas rendu en `tool_use` : il est rangé dans
@@ -794,11 +879,13 @@ class Translator:
     Ce que le client voit d'une recherche, à la forme d'Anthropic : un
     bloc `server_tool_use` (ouvert, son `input` en un `input_json_delta`,
     fermé) JUSTE AVANT l'exécution, puis un bloc `web_search_tool_result`
-    complet dès le résultat connu. Pendant le tour du backend, l'appel
-    hébergé ne produit rien : ses arguments sont retenus jusqu'à la fin
-    du tour, et les blocs sortent par paires, chaque résultat à la suite
-    de son appel — y compris quand le modèle lance deux recherches d'un
-    coup, ou une recherche et un outil du client.
+    complet dès le résultat connu — pour une lecture de page, les deux
+    mêmes, le second étant un `web_fetch_tool_result`. Pendant le tour
+    du backend, l'appel hébergé ne produit rien : ses arguments sont
+    retenus jusqu'à la fin du tour, et les blocs sortent par paires,
+    chaque résultat à la suite de son appel — y compris quand le modèle
+    lance deux recherches d'un coup, ou une recherche et un outil du
+    client.
     """
 
     def __init__(self, status: int, content_type: str, model: str,
@@ -820,12 +907,14 @@ class Translator:
         # s'il y en a, la main revient au client, pas de tour suivant.
         self.client_calls = 0
         self.turns = 1
-        # Texte exact rendu au modèle pour chaque recherche de CETTE
+        # Texte exact rendu au modèle pour chaque appel hébergé de CETTE
         # réponse, par id d'appel : le tour suivant le reprend tel quel
         # (to_openai, `results`), erreurs et troncature comprises.
         self.results: dict[str, str] = {}
-        self._resolved = 0                # appels hébergés rendus, erreurs comprises
-        self._searches = 0                # recherches abouties (usage)
+        # Par fonction : appels hébergés rendus, erreurs comprises ; et
+        # ceux qui ont abouti (usage).
+        self._resolved: dict[str, int] = {}
+        self._done: dict[str, int] = {}
         # État du flux.
         self._started = False
         self._finished = False
@@ -921,8 +1010,9 @@ class Translator:
         suivant sortira après le résultat de celui-ci, pour que chaque
         résultat suive son appel.
         `input` : les arguments du modèle, relus (`query`, et `recency` /
-        `limit` s'il les a donnés — l'outil d'Anthropic ne connaît que
-        `query`, mais c'est l'appel réel qu'un rejeu doit redonner) ;
+        `limit` s'il les a donnés ; `url`, et `offset` pour la suite d'une
+        page longue — les outils d'Anthropic ne connaissent que `query`
+        et `url`, mais c'est l'appel réel qu'un rejeu doit redonner) ;
         illisibles → {}. Ils partent en UN `input_json_delta`, du JSON
         valide, jamais les fragments bruts du modèle."""
         if not self.pending or self.pending[0]["announced"]:
@@ -941,30 +1031,48 @@ class Translator:
 
     def resolve(self, call: dict, result: str) -> bytes:
         """Le résultat d'un appel de `pending`, exécuté par l'appelant :
-        le bloc `web_search_tool_result` suit celui de l'appel. `result`
-        est le texte rendu au modèle ; un texte «Error: …» donne l'objet
-        d'erreur d'Anthropic à la place de la liste — `max_uses_exceeded`
-        au-delà de la limite de la requête, `invalid_tool_input` pour
-        des arguments sans `query`, `unavailable` pour tout le reste
-        (moteur injoignable, délai…). Rien n'est rangé en mémoire."""
+        le bloc `web_search_tool_result` (ou `web_fetch_tool_result`) suit
+        celui de l'appel. `result` est le texte rendu au modèle ; un texte
+        «Error: …» donne l'objet d'erreur d'Anthropic à la place du
+        contenu (voir _error_code). Rien n'est rangé en mémoire."""
+        name = call["name"]
         self.results[call["id"]] = result
         if not result.startswith("Error:"):
-            self._searches += 1
-            content = _search_content(self.hosted[call["name"]], result)
-        elif self.ctx.limit is not None and self._resolved >= self.ctx.limit:
-            content = _search_error("max_uses_exceeded")
+            self._done[name] = self._done.get(name, 0) + 1
+            content = _search_content(self.hosted[name], result) \
+                if name == SEARCH \
+                else _fetch_content(self.hosted[name], call, result)
         else:
-            query = _parse_args(call["arguments"]).get("query")
-            content = _search_error(
-                "unavailable" if isinstance(query, str) and query.strip()
-                else "invalid_tool_input")
-        self._resolved += 1
-        block = {"type": "web_search_tool_result", "tool_use_id": call["id"],
+            content = {"type": _RESULT[name] + "_error",
+                       "error_code": self._error_code(call, result)}
+        self._resolved[name] = self._resolved.get(name, 0) + 1
+        block = {"type": _RESULT[name], "tool_use_id": call["id"],
                  "content": content}
         self._content.append(block)
         self.pending = [c for c in self.pending if c is not call]
         out = self._whole(block) if self.sse else b""
         return out + self._announce()
+
+    def _error_code(self, call: dict, result: str) -> str:
+        """Le `error_code` d'un appel en échec — le client n'en reçoit
+        rien d'autre, le modèle, lui, lit le texte. `max_uses_exceeded`
+        au-delà de la limite de la requête (celle de l'outil, ou celle
+        du proxy toutes fonctions confondues : le même compte que la
+        boucle d'app.py, qui refuse alors sans exécuter),
+        `invalid_tool_input` pour des arguments sans `query` / `url`.
+        Pour le reste : `unavailable` pour une recherche (moteur
+        injoignable, délai…) ; pour une lecture, ce que tools/web_fetch
+        dit de son propre texte (`url_not_allowed`, `url_not_accessible`,
+        `unsupported_content_type`…)."""
+        name = call["name"]
+        if sum(self._resolved.values()) >= self.ctx.cap \
+                or self._resolved.get(name, 0) >= self.ctx.limits[name]:
+            return "max_uses_exceeded"
+        value = _parse_args(call["arguments"]).get(_REQUIRED[name])
+        if not isinstance(value, str) or not value.strip():
+            return "invalid_tool_input"
+        return self.hosted[name].error_code(result) if name == FETCH \
+            else "unavailable"
 
     def next_turn(self) -> None:
         """Avant de recevoir le flux upstream suivant : l'état propre au
@@ -1029,11 +1137,14 @@ class Translator:
 
     def _final_usage(self) -> dict:
         """L'usage Anthropic du message. `server_tool_use` n'apparaît que
-        si une recherche a abouti (chez Anthropic, une recherche en
-        erreur n'est pas comptée)."""
+        si une recherche ou une lecture a abouti (chez Anthropic, une
+        recherche en erreur n'est pas comptée), avec le compteur de
+        chaque fonction qui a servi."""
         usage = _usage(self._total())
-        if self._searches:
-            usage["server_tool_use"] = {"web_search_requests": self._searches}
+        if self._done:
+            usage["server_tool_use"] = {
+                _COUNTER[name]: self._done[name]
+                for name in _COUNTER if name in self._done}
         return usage
 
     def _stop(self) -> str:
@@ -1118,7 +1229,7 @@ class Translator:
 
     def _whole(self, block: dict, delta: dict | None = None) -> bytes:
         """Un bloc entier d'un coup — ouvert, son éventuel delta, fermé :
-        les deux blocs d'une recherche hébergée. Aucun bloc n'est ouvert
+        les deux blocs d'un appel hébergé. Aucun bloc n'est ouvert
         à ce moment-là (le tour upstream est fini)."""
         index = self._next_block
         self._next_block += 1

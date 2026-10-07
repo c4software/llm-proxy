@@ -171,7 +171,11 @@ memory_chars = 8000000
 # Pour lui le proxy ne présente QUE `web_search` (Claude Code lit les
 # pages sur le poste du client) et rend les blocs `server_tool_use` puis
 # `web_search_tool_result` ; `max_uses`, `allowed_domains` et
-# `blocked_domains` de l'outil sont respectés.
+# `blocked_domains` de l'outil sont respectés. Un client du SDK Anthropic
+# qui déclare l'outil serveur `{"type": "web_fetch_20250910", "name":
+# "web_fetch"}` reçoit de même `web_fetch`, rendu en blocs
+# `server_tool_use` puis `web_fetch_tool_result` (`max_content_tokens`
+# respecté aussi, `citations` ignoré).
 # /v1/chat/completions en profite si [chat].hosted_tools ; rien n'est
 # ajouté à une requête qui ne DÉCLARE pas l'outil.
 # Tables absentes ou enabled = false → comme avant : `web_search` est
@@ -252,16 +256,20 @@ categories = ""
 # Lecture d'une page par son URL, pour que le modèle ouvre un résultat de
 # la recherche — sans elle il n'en a que les extraits. Présentée au modèle
 # en même temps que `web_search`, quand un client Responses déclare
-# `web_search` ; jamais à un client Anthropic.
+# `web_search` ; à un client Anthropic, seulement s'il déclare l'outil
+# serveur `web_fetch_…` (Claude Code ne le fait pas).
 [tools.web_fetch]
 enabled = true
 # Délai (s) de chaque requête (une par saut de redirection, 5 sauts au plus).
 timeout = 20
 # Octets lus au plus sur le corps d'une page ; le reste n'est pas téléchargé.
 max_bytes = 2000000
+# La même borne pour un PDF (reconnu à son type ou à ses premiers octets),
+# plus haute : un PDF coupé ne se lit pas. Au-delà, il est refusé.
+pdf_max_bytes = 20000000
 # Caractères de texte rendus par appel (HTML converti en texte ; JSON et
-# texte tels quels ; tout autre type refusé). Page plus longue : le modèle
-# redemande la suite par `offset`.
+# texte tels quels ; texte extrait d'un PDF, sans OCR ; tout autre type
+# refusé). Page plus longue : le modèle redemande la suite par `offset`.
 max_chars = 20000
 # Garde-fou des adresses privées. La cible est choisie par le MODÈLE, et
 # la requête part DU PROXY : sans filtre, une page web (ou un prompt)

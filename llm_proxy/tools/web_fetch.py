@@ -8,9 +8,17 @@ La cible est choisie par le modèle : elle passe par net.public_target —
 adresses publiques seulement, connexion vers l'adresse vérifiée — à
 CHAQUE saut de redirection. Le corps est lu jusqu'à `max_bytes`, rendu
 en texte (HTML → texte, JSON et texte tels quels) et coupé à `max_chars`.
+
+Un PDF est lu aussi : téléchargé jusqu'à `pdf_max_bytes`, son texte est
+extrait par pypdf, hors de la boucle asyncio, puis rendu comme celui d'une
+page — mêmes morceaux, même cache. Pas d'OCR : un scan n'a pas de texte.
 """
 
+import asyncio
+import io
+import logging
 import re
+import time
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -23,6 +31,10 @@ ENABLED = config.flag("tools.web_fetch.enabled", False)
 TIMEOUT = config.num("tools.web_fetch.timeout", 20)
 MAX_BYTES = config.integer("tools.web_fetch.max_bytes", 2_000_000)
 MAX_CHARS = config.integer("tools.web_fetch.max_chars", 20_000)
+# Un PDF a sa borne de téléchargement : 2 Mo suffisent à une page HTML,
+# pas à un article ou à une notice (souvent 1 à 10 Mo, figures comprises),
+# et un PDF coupé ne se lit pas — sa table des objets est à la fin.
+PDF_MAX_BYTES = config.integer("tools.web_fetch.pdf_max_bytes", 20_000_000)
 # Lire aussi les adresses privées : à n'ouvrir que sur un proxy dont tous
 # les clients sont de confiance, et jamais derrière un modèle qui lit le web.
 ALLOW_PRIVATE = config.flag("tools.web_fetch.allow_private", False)
@@ -35,6 +47,10 @@ ALLOW_PRIVATE = config.flag("tools.web_fetch.allow_private", False)
 ALLOWED_DOMAINS = config.strings("tools.web_fetch.allowed_domains")
 BLOCKED_DOMAINS = config.strings("tools.web_fetch.blocked_domains")
 MAX_REDIRECTS = 5
+# Pages d'un PDF dont le texte est extrait (du CPU, quelques dizaines de
+# millisecondes par page) ; l'extraction s'arrête aussi passé TIMEOUT.
+PDF_MAX_PAGES = 500
+PDF_TYPE = "application/pdf"
 USER_AGENT = "llm-proxy web_fetch (+https://github.com/c4software/llm-proxy)"
 
 NAME = "web_fetch"
@@ -43,25 +59,41 @@ ITEM_TYPE = "web_search_call"
 # extraits de 240 caractères.
 KINDS = ("web_search", "web_search_preview", "web_search_2025_08_26")
 
-DEFINITION = {"type": "function", "function": {
-    "name": NAME,
-    "description": (
-        "Fetch a web page by URL and return its content as text (HTML is "
-        "converted to plain text; JSON and text are returned as is). Use it "
-        "to read a page found with web_search. Long pages are truncated: "
-        "pass `offset` to continue from a given character position."),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "url": {"type": "string",
-                    "description": "The http(s) URL to fetch."},
-            "offset": {"type": "integer",
-                       "description": "Character position to start from, "
-                                      "to continue a truncated page."},
+# La description renvoie le modèle à `web_search` : vrai seulement là où
+# `web_search` lui est présenté aussi. La surface Anthropic ne présente
+# que les outils serveur que son client déclare — pour celui qui ne
+# déclare que la lecture, elle prend DEFINITION_ALONE, sans cette phrase
+# (le pendant de web_search.definition(fetch=False) ; pas de fonction
+# `definition` ici : les autres surfaces l'appelleraient avec `fetch`).
+_SEARCH_HINT = "Use it to read a page found with web_search. "
+
+
+def _definition(search: bool = True) -> dict:
+    return {"type": "function", "function": {
+        "name": NAME,
+        "description": (
+            "Fetch a web page by URL and return its content as text (HTML is "
+            "converted to plain text; JSON and text are returned as is; the "
+            "text of a PDF is extracted). "
+            + (_SEARCH_HINT if search else "")
+            + "Long pages are truncated: "
+            "pass `offset` to continue from a given character position."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string",
+                        "description": "The http(s) URL to fetch."},
+                "offset": {"type": "integer",
+                           "description": "Character position to start from, "
+                                          "to continue a truncated page."},
+            },
+            "required": ["url"],
         },
-        "required": ["url"],
-    },
-}}
+    }}
+
+
+DEFINITION = _definition()
+DEFINITION_ALONE = _definition(search=False)
 
 TEXT_TYPES = ("text/", "application/json", "application/xml",
               "application/xhtml+xml", "application/javascript",
@@ -90,6 +122,54 @@ def action(args: dict, result=None) -> dict:
 def item(args: dict, result) -> dict:
     """Les champs de l'élément terminé : l'action, avec la plage lue."""
     return {"status": "completed", "action": action(args, result)}
+
+
+# ── pour la surface Anthropic (outil serveur `web_fetch_…`) ──
+# Son client reçoit le TEXTE rendu au modèle, entier, dans un bloc
+# `web_fetch_result`, et le renvoie tel quel au tour suivant : rien n'est
+# à relire dans l'autre sens (pas de `parse` comme pour web_search). Il
+# ne reste à tirer de ce texte que ce que le bloc dit À CÔTÉ de lui.
+
+def page(result: str) -> dict:
+    """Ce que l'en-tête écrit par render() dit de la page : `url` (celle
+    réellement lue, après redirections) et `title` — «» s'il manque."""
+    out = {"url": "", "title": ""}
+    for line in result.split("\n\n---\n", 1)[0].split("\n"):
+        key, _, value = line.partition(": ")
+        if key in ("URL", "Title") and not out[key.lower()]:
+            out[key.lower()] = value
+    return out
+
+
+# Fragments des textes d'erreur de run() (et de net.Blocked) → `error_code`
+# de l'outil serveur d'Anthropic, dans l'ordre où ils sont cherchés. Le
+# modèle lit le texte ; le client Anthropic n'en reçoit que ce code.
+_ERROR_CODES = (
+    ("is not a domain this proxy is allowed to read", "url_not_allowed"),
+    ("adresse privée ou locale", "url_not_allowed"),
+    ("URL invalide", "invalid_tool_input"),
+    ("seules les URL http(s) sont lues", "invalid_tool_input"),
+    ("which this tool cannot read", "unsupported_content_type"),
+    ("PDF", "unsupported_content_type"),
+    ("returned HTTP 429.", "too_many_requests"),
+    ("returned HTTP ", "url_not_accessible"),
+    ("hôte introuvable", "url_not_accessible"),
+    ("too many redirects", "url_not_accessible"),
+    ("could not fetch ", "url_not_accessible"),
+)
+
+
+def error_code(result: str) -> str:
+    """Un texte «Error: …» rendu par cet outil → le code d'erreur de
+    l'outil serveur web fetch d'Anthropic. `unavailable` pour ce qui n'est
+    pas dans la table : délai, exception (tools.Hosted.run), texte
+    inconnu. L'URL, que le modèle choisit et que le texte cite, est
+    retirée avant la recherche : elle ne décide pas du code."""
+    for word in result.split():
+        if "://" in word:
+            result = result.replace(word.rstrip("."), "")
+    return next((code for mark, code in _ERROR_CODES if mark in result),
+                "unavailable")
 
 
 async def _get(url: str, transport) -> tuple[httpx.Response, bytes]:
@@ -121,6 +201,7 @@ async def _get(url: str, transport) -> tuple[httpx.Response, bytes]:
         # bloc par bloc — un seul bloc gzip peut en rendre mille fois plus.
         "Accept-Encoding": "identity",
     }
+    limit = MAX_BYTES
     # trust_env=False : sans lui httpx lirait HTTP_PROXY / ALL_PROXY, et
     # « la connexion part vers l'adresse vérifiée » deviendrait « un proxy
     # s'y connecte pour nous ».
@@ -134,29 +215,99 @@ async def _get(url: str, transport) -> tuple[httpx.Response, bytes]:
         try:
             async for chunk in r.aiter_bytes():
                 body += chunk
-                if len(body) >= MAX_BYTES:
+                # Connu aux premiers octets : un PDF a sa propre borne.
+                if is_pdf(r.headers.get("content-type", ""), body):
+                    limit = PDF_MAX_BYTES
+                if len(body) >= limit:
                     break
         finally:
             await r.aclose()
-    return r, bytes(body[:MAX_BYTES])
+    return r, bytes(body[:limit])
 
 
-def render(url: str, content_type: str, body: bytes, encoding: str | None,
-           offset: int = 0) -> str:
-    ct = (content_type or "").split(";")[0].strip().lower()
-    if ct and not ct.startswith(TEXT_TYPES):
-        return (f"Error: {url} is {ct}, which this tool cannot read "
-                f"(text, HTML and JSON only).")
+def is_pdf(content_type: str, body: bytes) -> bool:
+    """Un PDF : annoncé comme tel, ou reconnu à ses premiers octets — bien
+    des serveurs le servent en `application/octet-stream`, voire en texte."""
+    return (content_type or "").split(";")[0].strip().lower() == PDF_TYPE \
+        or body.startswith(b"%PDF-")
+
+
+def pdf_text(body: bytes) -> tuple[str, str]:
+    """(texte, «»), ou («», pourquoi il n'y en a pas : la suite d'une phrase
+    « Error: <url> … »). Ne lève pas : un PDF tordu fait lever n'importe
+    quoi à pypdf. BLOQUANT (du CPU) : à appeler dans un fil, voir run().
+    Borné en pages et en durée — passé le délai de l'outil, wait_for
+    abandonne l'attente mais n'arrête pas un fil : c'est ici qu'il s'arrête,
+    entre deux pages. Un texte incomplet le dit, à la fin."""
     try:
-        text = body.decode(encoding or "utf-8", "replace")
-    except LookupError:  # charset annoncé inconnu de Python
-        text = body.decode("utf-8", "replace")
+        # Importé ici : le proxy démarre sans pypdf, seule la lecture d'un
+        # PDF le demande.
+        from pypdf import PdfReader
+    except ImportError:
+        return "", ("is a PDF, which this proxy cannot read (pypdf is not "
+                    "installed)")
+    # pypdf signale chaque défaut d'un fichier par un avertissement.
+    logging.getLogger("pypdf").setLevel(logging.ERROR)
+    deadline = time.monotonic() + TIMEOUT
+    try:
+        reader = PdfReader(io.BytesIO(body))
+        if reader.is_encrypted:
+            # Souvent chiffré SANS mot de passe (seules l'impression ou la
+            # copie sont restreintes) : celui-là s'ouvre. Un algorithme que
+            # pypdf ne déchiffre pas seul (AES) lève : même réponse.
+            try:
+                opened = reader.decrypt("")
+            except Exception:
+                opened = 0
+            if not opened:
+                return "", ("is an encrypted PDF (a password is required), "
+                            "which this tool cannot read")
+        total = len(reader.pages)
+    except Exception:
+        return "", "is not a readable PDF (damaged or truncated file)"
+    parts, read = [], 0
+    for n in range(min(total, PDF_MAX_PAGES)):
+        if n and time.monotonic() > deadline:
+            break
+        try:
+            text = (reader.pages[n].extract_text() or "").strip()
+        except Exception:
+            text = ""  # page illisible : les autres restent lues
+        read += 1
+        if text:
+            parts.append(text)
+    if not parts:
+        return "", (f"is a PDF with no extractable text ({read} of {total} "
+                    f"pages read, probably scanned images): this tool does "
+                    f"no OCR")
+    if read < total:
+        parts.append(f"[only the first {read} of {total} pages were extracted]")
+    return "\n\n".join(parts), ""
+
+
+def render(url: str, content_type: str, body: bytes | str,
+           encoding: str | None, offset: int = 0,
+           max_chars: int | None = None) -> str:
+    """`body` en octets : la page telle que téléchargée. En `str` : un texte
+    déjà extrait par run() (PDF), rendu tel quel. `max_chars` : une taille
+    de morceau plus PETITE que MAX_CHARS (voir run), jamais plus grande."""
+    ct = (content_type or "").split(";")[0].strip().lower()
     title = ""
-    if "html" in ct or (not ct and "<html" in text[:2000].lower()):
-        title, text = html_to_text(text)
+    if isinstance(body, str):
+        text = body
+    else:
+        if ct and not ct.startswith(TEXT_TYPES):
+            return (f"Error: {url} is {ct}, which this tool cannot read "
+                    f"(text, HTML, JSON and PDF only).")
+        try:
+            text = body.decode(encoding or "utf-8", "replace")
+        except LookupError:  # charset annoncé inconnu de Python
+            text = body.decode("utf-8", "replace")
+        if "html" in ct or (not ct and "<html" in text[:2000].lower()):
+            title, text = html_to_text(text)
     total = len(text)
     offset = min(max(offset, 0), total)
-    shown = text[offset:offset + MAX_CHARS]
+    shown = text[offset:offset + min(max_chars or MAX_CHARS, MAX_CHARS)]
     head = [f"URL: {url}"]
     if title:
         head.append(f"Title: {title}")
@@ -167,12 +318,18 @@ def render(url: str, content_type: str, body: bytes, encoding: str | None,
         head.append(f"Characters: {offset}-{end} of {total}"
                     + (f" (truncated: pass offset={end} to continue)"
                        if end < total else ""))
-    if len(body) >= MAX_BYTES:
+    if isinstance(body, bytes) and len(body) >= MAX_BYTES:
         head.append(f"Note: only the first {MAX_BYTES} bytes were downloaded.")
     return "\n".join(head) + "\n\n---\n" + (shown or "(empty page)")
 
 
-async def run(args: dict, transport=None) -> str:
+async def run(args: dict, transport=None, allowed_domains=None,
+              blocked_domains=None, max_chars=None) -> str:
+    """`allowed_domains` / `blocked_domains` / `max_chars` ne viennent
+    jamais du modèle : ce sont les réglages que le CLIENT pose sur son
+    outil serveur (surface Anthropic — `max_chars` y est tiré de
+    `max_content_tokens`), passés par tools.Hosted.run. Ses listes
+    s'AJOUTENT à celles de la configuration, elles n'en lèvent rien."""
     url = args.get("url")
     if not isinstance(url, str) or not url.strip():
         return "Error: `url` is required."
@@ -183,8 +340,10 @@ async def run(args: dict, transport=None) -> str:
     offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else 0
 
     def refused(u: str) -> str | None:
-        if (ALLOWED_DOMAINS and not net.domain_match(u, ALLOWED_DOMAINS)) \
-                or net.domain_match(u, BLOCKED_DOMAINS):
+        if any(not net.domain_match(u, allowed)
+               for allowed in (ALLOWED_DOMAINS, allowed_domains) if allowed) \
+                or net.domain_match(u, BLOCKED_DOMAINS) \
+                or net.domain_match(u, blocked_domains or ()):
             return (f"Error: {urlsplit(u).hostname or u} is not a "
                     f"domain this proxy is allowed to read.")
         return None
@@ -198,7 +357,7 @@ async def run(args: dict, transport=None) -> str:
         return no
     hit = webcache.CACHE.get(key)
     if hit is not None:
-        return render(*hit, offset)
+        return render(*hit, offset, max_chars)
     try:
         for _ in range(MAX_REDIRECTS + 1):
             # À chaque saut, comme le contrôle d'adresse : une redirection
@@ -221,10 +380,23 @@ async def run(args: dict, transport=None) -> str:
         return f"Error: could not fetch {url} ({type(exc).__name__})."
     if r.status_code >= 400:
         return f"Error: {url} returned HTTP {r.status_code}."
-    page = (url, r.headers.get("content-type", ""), body, r.charset_encoding)
-    out = render(*page, offset)
+    content_type = r.headers.get("content-type", "")
+    page = (url, content_type, body, r.charset_encoding)
+    if is_pdf(content_type, body):
+        if len(body) >= PDF_MAX_BYTES:
+            return (f"Error: {url} is a PDF larger than {PDF_MAX_BYTES} "
+                    f"bytes, which this tool does not download.")
+        # Dans un fil : l'extraction est du CPU, la boucle asyncio (les
+        # autres requêtes du proxy) ne l'attend pas.
+        text, why = await asyncio.to_thread(pdf_text, body)
+        if why:
+            return f"Error: {url} {why}."
+        # C'est le TEXTE qui est rendu et gardé en cache : chaque morceau
+        # (`offset`) en sort sans refaire l'extraction.
+        page = (url, PDF_TYPE, text, None)
+    out = render(*page, offset, max_chars)
     # Seule une page lue avec succès est gardée (un type non lisible rend
     # une erreur : rien à garder).
     if r.status_code == 200 and not out.startswith("Error:"):
-        webcache.CACHE.put(key, page, len(body))
+        webcache.CACHE.put(key, page, len(page[2]))
     return out

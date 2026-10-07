@@ -121,7 +121,8 @@ def hosted_tools(result: str = FOUND, memory=None):
             return hosted.result
 
         kept = ("NAME", "KINDS", "ITEM_TYPE", "DEFINITION", "definition",
-                "action", "parse", "render")
+                "DEFINITION_ALONE", "action", "parse", "render", "page",
+                "error_code")
         return types.SimpleNamespace(ENABLED=True, run=run, **{
             k: getattr(module, k) for k in kept if hasattr(module, k)})
 
