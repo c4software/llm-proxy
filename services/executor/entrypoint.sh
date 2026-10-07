@@ -1,5 +1,5 @@
 #!/bin/sh
-# Démarrage de l'exécuteur. Deux choses avant le serveur.
+# Démarrage de l'exécuteur. Trois choses avant le serveur.
 #
 # 1. L'état d'exécution de podman (XDG_RUNTIME_DIR) doit être VIDE à chaque
 #    démarrage du conteneur, comme après un redémarrage de machine — c'est
@@ -22,9 +22,18 @@
 #    portée d'ici.
 #
 # Puis root cède la place : le serveur et podman tournent sous `executor`.
+#
+# 3. Le PID 1 est un INIT (catatonit, celui que podman embarque), pas le
+#    serveur. Chaque `podman run` et chaque `podman exec` laisse un conmon
+#    qui se détache : orphelin, il revient au PID 1, et uvicorn n'enterre
+#    pas des enfants qu'il n'a pas lancés. Vu sur le déploiement le
+#    07/10/2026 : 111 zombies en vingt minutes d'usage, comptés dans le
+#    plafond de processus de l'utilisateur — et plus aucun bac ne se créait
+#    (« crun: clone: Resource temporarily unavailable », 503).
 set -eu
+INIT=/usr/libexec/podman/catatonit
 rm -rf "${XDG_RUNTIME_DIR:?}"/* 2>/dev/null || true
-[ "$(id -u)" = 0 ] || exec "$@"
+[ "$(id -u)" = 0 ] || exec "$INIT" -- "$@"
 
 cg=/sys/fs/cgroup
 if [ -w "$cg/cgroup.subtree_control" ] && mkdir -p "$cg/init" 2>/dev/null; then
@@ -38,4 +47,4 @@ if [ -w "$cg/cgroup.subtree_control" ] && mkdir -p "$cg/init" 2>/dev/null; then
     fi
 fi
 exec setpriv --reuid executor --regid executor --init-groups \
-    env HOME=/home/executor "$@"
+    env HOME=/home/executor "$INIT" -- "$@"

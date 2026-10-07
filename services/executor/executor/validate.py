@@ -51,6 +51,27 @@ UID = UID_BASE + 1000
 FAILED, UNBOUNDED = [], []
 
 
+def zombies() -> int:
+    """Processus zombies visibles d'ici (/proc)."""
+    count = 0
+    for entry in os.listdir("/proc"):
+        if entry.isdigit():
+            try:
+                with open(f"/proc/{entry}/stat") as fh:
+                    count += fh.read().rsplit(")", 1)[1].split()[0] == "Z"
+            except OSError:
+                pass
+    return count
+
+
+def pid1() -> str:
+    try:
+        with open("/proc/1/comm") as fh:
+            return fh.read().strip()
+    except OSError:
+        return "?"
+
+
 def verdict(title: str, ok: bool, out=None, detail: str = "",
             unbounded: bool = False) -> None:
     mark = "OK      " if ok else "NON BORNÉ" if unbounded else "ÉCHEC   "
@@ -353,6 +374,14 @@ async def main() -> int:
             "--format", "{{.Names}}", timeout=30)
         print(f"\nbacs restants après nettoyage (ceux du serveur compris) : "
               f"{out.decode('utf-8', 'replace').split()}")
+        # Chaque `podman run` / `podman exec` laisse un conmon orphelin :
+        # c'est au PID 1 du conteneur de l'enterrer (l'init du point
+        # d'entrée). Sans lui les zombies s'accumulent jusqu'au plafond de
+        # processus, et plus aucun bac ne se crée.
+        await asyncio.sleep(1)
+        verdict("16. aucun zombie laissé dans le conteneur exécuteur "
+                "(le PID 1 est un init)", zombies() == 0,
+                detail=f"zombies : {zombies()} ; PID 1 : {pid1()}")
 
     print(f"\n{len(FAILED)} ÉCHEC(S), {len(UNBOUNDED)} ressource(s) NON "
           f"BORNÉE(S) par bac.")
