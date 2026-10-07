@@ -5,7 +5,7 @@ et jouent des scénarios de validation — **Claude Code** (API Anthropic,
 traduite par le proxy), **pi** ([pi.dev](https://pi.dev), API OpenAI),
 **Codex CLI** (API Responses, traduite par le proxy), **omp**
 ([oh-my-pi](https://github.com/can1357/oh-my-pi), fork de pi, API OpenAI
-par ses extensions) et **api**, qui n'est pas un agent : un client HTTP nu
+par l'extension de son provider) et **api**, qui n'est pas un agent : un client HTTP nu
 pour le chemin qu'aucun agent ne prend de lui-même, l'outil hébergé
 *déclaré* sur `/v1/chat/completions`.
 Chaque jeu est rejoué pour **chaque modèle** de `MODELS`. Rien n'est
@@ -16,6 +16,16 @@ dossier de travail disparaît avec le conteneur.
 Les bancs `omp` et `api` ont été **écrits le 05/10/2026 et pas encore
 joués** : aucun chiffre ci-dessous ne les concerne. Ce qui en a été vérifié
 sans les lancer est dit dans leurs sections.
+
+**Changement du 07/10/2026 — pi et omp, scénario 6.** L'extension
+`llm-proxy-web.ts` (outils `proxy_web_search` / `proxy_web_fetch` par
+`/v1/tools`, commandes `/web` et `/page`) est retirée : pi et omp
+reçoivent les outils web **d'office**, par `[chat].always` du proxy, et
+leur scénario 6 joue ce chemin. Les images ne téléchargent plus cette
+extension. **Ces deux bancs n'ont pas été rejoués depuis** : les 6/6
+ci-dessous sont ceux de l'ancien scénario 6, et le nouveau n'a été
+vérifié qu'à blanc (syntaxe, verdict contre des traces écrites à la
+main) — ni contre pi, ni contre omp, ni contre un proxy.
 
 ## Derniers résultats
 
@@ -140,8 +150,8 @@ réseau Docker, le réseau hôte ne le verra pas : remplacer alors
 client en tire sa propre adresse — `ANTHROPIC_BASE_URL` pour Claude Code
 (posée par le `docker-compose.yml`, qui lit `.env` : d'où le changement
 dans le fichier plutôt que par `-e`), `${PROXY_URL}/v1` pour pi et Codex,
-`LLM_PROXY_URL` pour l'extension web de pi et pour les deux extensions
-d'omp, `PROXY_URL` tel quel pour `api`.
+`LLM_PROXY_URL` pour l'extension du provider d'omp, `PROXY_URL` tel quel
+pour `api`.
 
 Les images prennent la **dernière** version de chaque client. Pour
 rejouer celles qui ont été validées à la main le 05/10/2026 :
@@ -164,16 +174,16 @@ encore été joué.)
 | `claude/Dockerfile` | `node:22-slim` + `@anthropic-ai/claude-code` (`CLAUDE_CODE_VERSION`, la dernière par défaut), utilisateur non root (requis par `--dangerously-skip-permissions`), télémétrie et mises à jour coupées |
 | `claude/settings.json` | Le `~/.claude/settings.json` **du conteneur** : `CLAUDE_CODE_ATTRIBUTION_HEADER=0`, pour que l'attribution (variable d'une requête à l'autre) ne décale pas le préfixe et ne fasse pas manquer le cache du backend |
 | `claude/scenarios.sh` | Les 14 scénarios Claude Code, rejoués pour chaque modèle de `MODELS` (`ANTHROPIC_MODEL` posé par le script) ; `ONLY=N` pour n'en jouer que N |
-| `pi/Dockerfile` | `node:22-slim` + `@earendil-works/pi-coding-agent` (`PI_VERSION`), `PI_CODING_AGENT_DIR=/pi/agent` ; télécharge l'extension `tools/llm-proxy-web.ts` de [llmsetup](https://github.com/c4software/llmsetup) à un commit **épinglé**, sha256 vérifié, dans `/pi/extensions` — la mise à jour est décrite dans le fichier |
+| `pi/Dockerfile` | `node:22-slim` + `@earendil-works/pi-coding-agent` (`PI_VERSION`), `PI_CODING_AGENT_DIR=/pi/agent` ; aucune extension (jusqu'au 07/10/2026 : `tools/llm-proxy-web.ts` de llmsetup, retirée) |
 | `pi/models.json.tpl` | Les providers pi : `llm-proxy` (`openai-completions`, `${PROXY_URL}/v1`) — le seul joué — et `llm-proxy-anthropic` (`anthropic-messages`), gardé pour un essai à la main |
-| `pi/entrypoint.sh` | Substitue `${PROXY_URL}` et génère une entrée de modèle par élément de `MODELS` → `models.json` du conteneur ; pose `LLM_PROXY_URL` et `LLM_PROXY_KEY` (lues par l'extension) depuis `PROXY_URL` et `PROXY_API_KEY` |
+| `pi/entrypoint.sh` | Substitue `${PROXY_URL}` et génère une entrée de modèle par élément de `MODELS` → `models.json` du conteneur |
 | `pi/scenarios.sh` | 6 scénarios, rejoués pour chaque modèle de `MODELS` |
 | `codex/Dockerfile` | `node:22-slim` + `@openai/codex` (`CODEX_VERSION`), `CODEX_HOME=/codex` |
 | `codex/entrypoint.sh` | Génère `config.toml` : provider `llm-proxy`, `wire_api = "responses"`, `${PROXY_URL}/v1`, clé lue dans `PROXY_API_KEY` (non vide), `model` = le premier de `MODELS` pour un essai à la main |
 | `codex/scenarios.sh` | 8 scénarios (les cinq de pi, deux sur les outils web, et l'exemple en deux tours), rejoués pour chaque modèle de `MODELS` |
-| `omp/Dockerfile` | `node:22-slim` + le binaire `omp-linux-x64` des [releases GitHub](https://github.com/can1357/oh-my-pi/releases) (`OMP_VERSION`, la dernière par défaut), `PI_CODING_AGENT_DIR=/omp/agent` (vide) ; les deux extensions de [llmsetup](https://github.com/c4software/llmsetup) dans `/omp/extensions`, au même commit **épinglé** que pi, sha256 vérifiés |
-| `omp/install.mjs` | Ce que le Dockerfile exécute à la construction : télécharge omp (sha256 lu dans le `SHA256SUMS.txt` de la release) et les deux extensions (sha256 épinglés), puis remplace dans `llm-proxy.ts` les deux lignes qui portent l'adresse et la clé en dur par la lecture de `LLM_PROXY_URL` / `LLM_PROXY_API_KEY` |
-| `omp/entrypoint.sh` | Pose `LLM_PROXY_URL`, `LLM_PROXY_API_KEY` et `LLM_PROXY_KEY` (lues par les extensions) depuis `PROXY_URL` et `PROXY_API_KEY` ; aucun fichier de configuration à générer |
+| `omp/Dockerfile` | `node:22-slim` + le binaire `omp-linux-x64` des [releases GitHub](https://github.com/can1357/oh-my-pi/releases) (`OMP_VERSION`, la dernière par défaut), `PI_CODING_AGENT_DIR=/omp/agent` (vide) ; l'extension du provider, `tools/llm-proxy.ts` de [llmsetup](https://github.com/c4software/llmsetup), dans `/omp/extensions`, à un commit **épinglé**, sha256 vérifié |
+| `omp/install.mjs` | Ce que le Dockerfile exécute à la construction : télécharge omp (sha256 lu dans le `SHA256SUMS.txt` de la release) et l'extension du provider (sha256 épinglé), puis remplace dans `llm-proxy.ts` les deux lignes qui portent l'adresse et la clé en dur par la lecture de `LLM_PROXY_URL` / `LLM_PROXY_API_KEY` |
+| `omp/entrypoint.sh` | Pose `LLM_PROXY_URL` et `LLM_PROXY_API_KEY` (lues par l'extension du provider) depuis `PROXY_URL` et `PROXY_API_KEY` ; aucun fichier de configuration à générer |
 | `omp/scenarios.sh` | 6 scénarios (ceux de pi), rejoués pour chaque modèle de `MODELS` sous le nom `albert/<modèle>` |
 | `api/Dockerfile` | `python:3-slim`, rien à installer |
 | `api/scenarios.py` | 8 scénarios en requêtes HTTP (bibliothèque standard), rejoués pour chaque modèle de `MODELS` |
@@ -310,23 +320,29 @@ détaillés dans [Le banc `api`](#le-banc-api--loutil-hébergé-déclaré-sur-ch
 Un scénario « recherche web » par client, à la suite des autres, et pour
 Codex un second qui enchaîne recherche et lecture de page. Écrits le
 05/10/2026 et joués le jour même contre un proxy déployé avec SearXNG :
-les quatre passent (voir « Derniers résultats »). Celui d'omp, écrit le
-même jour, n'a pas encore été joué.
+les quatre passent (voir « Derniers résultats »). Ceux de pi et d'omp
+ont changé de chemin le 07/10/2026 (outils d'office, plus d'extension)
+et n'ont **pas été rejoués** sous cette forme.
 
 | Client | N° | Ce qui est demandé | Chemin dans le proxy |
 |---|---|---|---|
 | Claude Code | 14 | l'URL de la page des releases du dépôt GitHub `ggml-org/llama.cpp`, avec l'outil `WebSearch` | sous-requête `/v1/messages` avec l'outil serveur `web_search_20250305` |
-| pi | 6 | la même URL, avec pour seul outil `proxy_web_search` (extension `llm-proxy-web.ts`) | `GET /v1/tools`, `POST /v1/tools/web_search` |
+| pi | 6 | la même URL, **sans aucun outil côté pi** (`--no-tools`) : ceux du proxy, présentés d'office | `[chat].always` : boucle de `/v1/chat/completions`, appel caché du client |
 | Codex | 6 | la même URL (`--sandbox read-only`) | `web_search` déclaré dans `/v1/responses`, boucle du proxy |
 | Codex | 7 | une recherche sur le dépôt `c4software/llmsetup`, puis la lecture de `tools/llm-proxy-web.ts` à un commit donné, et la ligne qui y définit `PREFIXE` | `web_search` puis `web_fetch` dans la même boucle |
 | Codex | 8 | l'exemple en deux tours : résumer une page longue, puis, dans la même session (`codex exec resume --last`), une question dont la réponse n'est que dans la page | `web_fetch` par morceaux (`offset`), puis la mémoire des résultats du proxy |
-| omp | 6 | la même URL que pi, avec pour seuls outils ceux de l'extension `llm-proxy-web.ts` (`proxy_web_search`, et `proxy_web_fetch` si le proxy l'héberge) | `GET /v1/tools`, `POST /v1/tools/web_search` |
+| omp | 6 | la même URL que pi, **sans aucun outil d'omp** (`--no-tools`) : ceux du proxy, présentés d'office | `[chat].always` : boucle de `/v1/chat/completions`, appel caché du client |
 
 **Sauté plutôt qu'échoué.** Avant de jouer, chaque banc lit `GET
 /healthz` du proxy visé (`tools.enabled`, sans clé). Sans `web_search` —
 et, pour le scénario 7 de Codex, sans `web_fetch` — le scénario imprime
 `SKIP` avec ce qu'il a lu. Un proxy antérieur au 05/10/2026, ou qui ne
-répond pas sur `/healthz`, donne une liste vide : sauté aussi.
+répond pas sur `/healthz`, donne une liste vide : sauté aussi. Les
+scénarios 6 de pi et d'omp sont sautés de même quand le proxy ne présente
+pas `web_search` d'office (`chat.always` de `/healthz`) — il faut, côté
+proxy, `[chat] hosted_tools = true` et `always = ["web_search",
+"web_fetch"]`, et que les modèles de `MODELS` ne soient pas dans
+`always_except`.
 
 **Deux vérifications par scénario, et c'est la première qui compte.**
 
@@ -337,24 +353,22 @@ répond pas sur `/healthz`, donne une liste vide : sauté aussi.
      moins une URL. Claude Code compose ce résultat depuis les blocs
      `web_search_tool_result` de sa sous-requête ; une recherche en échec
      y laisse `Web search error: …`, sans lien.
-   - pi (`--mode json`) : un événement `tool_execution_end` de
-     `proxy_web_search`, `isError` faux, dont le résultat porte au moins
-     une URL — le texte rendu par `POST /v1/tools/web_search`.
-   - omp (`--mode json`) : comme pi, un `tool_execution_end` de
-     `proxy_web_search`, `isError` faux, résultat avec une URL. Mais omp a
-     un `web_search` **intégré**, qui cherche depuis le conteneur
-     (DuckDuckGo et d'autres, sans clé), et son `read` lit une URL : la
-     trace doit aussi ne montrer **aucun autre outil exécuté** que
-     `proxy_web_search` et `proxy_web_fetch` — des noms que seuls les
-     outils de l'extension portent. `--tools` ne laisse d'ailleurs aucun
-     outil intégré au modèle. Et une preuve **côté proxy** s'y ajoute : le
-     compteur d'exécutions de `web_search` par la route `/v1/tools`
+   - pi et omp (`--mode json --no-tools`, depuis le 07/10/2026) : la
+     recherche est faite **par le proxy**, dans sa boucle, et le client
+     n'en voit rien — ni appel, ni résultat : c'est le principe des outils
+     d'office. Sa trace ne prouve donc qu'une chose, qu'**aucun outil du
+     client n'a été exécuté** (pas d'événement `tool_execution_start` ;
+     `--no-tools` n'en laisse d'ailleurs aucun au modèle — ni le
+     `web_search` intégré d'omp, qui cherche depuis le conteneur, ni
+     `read`, ni `bash`). La preuve est **côté proxy** : le compteur
+     d'exécutions de `web_search` par la route `/v1/chat/completions`
      ([Usage API des outils](../README.md#usage-des-outils-hébergés)), lu
      avant et après l'appel, doit avoir avancé d'au moins 1. Le compteur
-     est celui du proxy entier — un autre client peut l'avancer : il
-     confirme la trace, il ne la remplace pas. Devant un proxy sans cette
-     route, il n'est pas exigé et le libellé le dit (« compteur du proxy
-     illisible »).
+     est celui du proxy entier — un autre client peut l'avancer. Illisible
+     (proxy sans cette route, clé refusée), rien ne prouve la recherche :
+     le scénario échoue et le libellé le dit. (Avant le 07/10/2026 : un
+     événement `tool_execution_end` de `proxy_web_search`, l'outil de
+     l'extension, dans la trace du client.)
    - Codex (`--json`) : un élément `web_search` terminé dans la trace, et
      pour le scénario 7 un second dont l'action est `open_page`. Codex ne
      les construit que depuis les `web_search_call` du proxy. La trace ne
@@ -386,19 +400,29 @@ Ce que ces scénarios ne peuvent pas dire :
   le modèle ou les moteurs que SearXNG joint ce jour-là, pas la
   traduction : le message d'échec dit laquelle des deux vérifications a
   manqué.
-- La lecture de page de Claude Code (`WebFetch`) et les commandes `/web`
-  et `/page` de l'extension pi ne sont pas jouées ; la lecture de page
-  par `/v1/tools/web_fetch` (pi) non plus.
-- Le scénario de pi limite le modèle à l'outil de recherche : pi avec
-  tous ses outils **et** l'extension n'est pas joué.
-- Celui d'omp aussi : omp avec ses outils intégrés **et** l'extension —
-  deux recherches côte à côte, le modèle choisit — n'est pas joué, ni la
-  lecture de page par `proxy_web_fetch` (l'outil est offert au modèle
-  quand le proxy l'héberge, rien ne l'exige), ni `/web` et `/page`.
+- La lecture de page de Claude Code (`WebFetch`) n'est pas jouée ; celle
+  de pi et d'omp (`web_fetch` d'office) non plus : l'outil est présenté
+  au modèle, rien ne l'exige.
+- Les scénarios 6 de pi et d'omp retirent au client tous ses outils :
+  pi ou omp avec leurs outils **et** ceux du proxy — tour mixte, et pour
+  omp son `web_search` intégré à côté — n'est pas joué. Les scénarios 1 à
+  5 reçoivent bien les outils d'office en plus des leurs, mais rien n'y
+  vérifie ce que le modèle en fait.
+- La mémoire des échanges cachés (le tour suivant d'une conversation où
+  le proxy a cherché) n'est pas jouée par ces bancs : une seule requête.
 - Le compteur du proxy dit qu'une recherche a été exécutée par
-  `/v1/tools` pendant l'appel, pas par qui : sur un proxy que d'autres
-  utilisent au même moment, seule la trace du client relie la recherche
-  au scénario.
+  `/v1/chat/completions` pendant l'appel, pas par qui : sur un proxy que
+  d'autres utilisent au même moment, le scénario 6 de pi ou d'omp peut
+  passer sans que sa propre requête ait cherché — la trace du client ne
+  relie plus la recherche au scénario.
+- `--no-tools` a été lu dans `pi --help` (1.0.4) et `omp --help`
+  (18.6.3) le 07/10/2026, pas dans les versions validées à la main le
+  05/10/2026 (pi 0.87.1, omp 18.3.2).
+- Le scénario 7 de Codex lit toujours `tools/llm-proxy-web.ts` de
+  llmsetup, mais à un **commit donné** : le fichier y reste lisible une
+  fois l'extension retirée de la branche, tant que ce commit existe dans
+  le dépôt public. S'il disparaissait (historique réécrit), le scénario
+  serait à pointer sur un autre fichier immuable.
 - Le scénario 7 de Codex lit `raw.githubusercontent.com` : un proxy dont
   `[tools.web_fetch].allowed_domains` ne le permet pas le fera échouer.
 

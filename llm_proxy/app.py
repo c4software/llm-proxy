@@ -1763,8 +1763,9 @@ async def root():
 # ── Outils hébergés, appelés directement ────────────────────────────────
 # Les mêmes outils que la boucle de /v1/responses, pour un client qui
 # préfère les déclarer LUI-MÊME à son modèle et garder l'appel et son
-# résultat dans son propre historique (pi, omp : une extension enregistre
-# un outil qui appelle ces routes — llmsetup, tools/llm-proxy-web.ts). Le
+# résultat dans son propre historique (c'était le chemin de l'extension
+# pi / omp llm-proxy-web.ts, retirée le 07/10/2026 : ces clients reçoivent
+# désormais les outils d'office, [chat].always). Le
 # proxy n'a alors ni boucle ni mémoire à tenir : il exécute, c'est tout.
 # Derrière la clé du proxy comme le reste ; mêmes garde-fous (tools/).
 

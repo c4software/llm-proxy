@@ -406,11 +406,11 @@ model_provider = "llm-proxy"
 name = "llm-proxy"
 base_url = "${origin}/v1"
 wire_api = "responses"${auth ? '\nenv_key = "LLM_PROXY_KEY"   # export LLM_PROXY_KEY=' + key : ""}`,
-        // pi et omp : les extensions du dépôt llmsetup, qui lisent ces variables.
+        // pi et omp : l'extension du dépôt llmsetup, qui lit ces variables.
+        // Les outils web viennent du proxy, d'office ([chat].always).
         pi: `export LLM_PROXY_URL=${origin}${auth ? "\nexport LLM_PROXY_API_KEY=" + key : ""}
-# extensions à copier dans ~/.pi/agent/extensions/ (et ~/.omp/agent/extensions/) :
+# extension à copier dans ~/.pi/agent/extensions/ (et ~/.omp/agent/extensions/) :
 #   llm-proxy.ts      le provider (modèles du proxy)
-#   llm-proxy-web.ts  recherche web et lecture de page du proxy
 pi --model albert/${model}`,
       };
     });

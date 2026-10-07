@@ -1,7 +1,7 @@
 # Cinq clients jetables pour valider le proxy : Claude Code (API Anthropic,
 # traduite), pi (pi.dev — API OpenAI, et API Anthropic aussi), Codex CLI
-# (API Responses, traduite), omp (oh-my-pi, fork de pi — API OpenAI, par ses
-# extensions) et `api`, un client HTTP nu pour ce qu'aucun agent n'envoie de
+# (API Responses, traduite), omp (oh-my-pi, fork de pi — API OpenAI, par
+# l'extension de son provider) et `api`, un client HTTP nu pour ce qu'aucun agent n'envoie de
 # lui-même (outil hébergé déclaré sur /v1/chat/completions). Rien n'est
 # installé sur l'hôte, rien ne touche ~/.claude, ~/.pi, ~/.codex ni ~/.omp :
 # chaque client
@@ -31,9 +31,6 @@ services:
       ANTHROPIC_SMALL_FAST_MODEL: "${SMALL_MODEL}"
     command: ["./scenarios.sh"]
 
-  # LLM_PROXY_URL et LLM_PROXY_KEY, que lit l'extension web de pi, ne sont
-  # pas posées ici : pi/entrypoint.sh les dérive de PROXY_URL et
-  # PROXY_API_KEY (env_file), pour n'avoir qu'une source.
   pi:
     build: ./pi
     network_mode: host
@@ -47,9 +44,9 @@ services:
     env_file: .env
     command: ["./scenarios.sh"]
 
-  # LLM_PROXY_URL, LLM_PROXY_API_KEY et LLM_PROXY_KEY, que lisent les deux
-  # extensions d'omp, ne sont pas posées ici : omp/entrypoint.sh les dérive
-  # de PROXY_URL et PROXY_API_KEY (env_file), pour n'avoir qu'une source.
+  # LLM_PROXY_URL et LLM_PROXY_API_KEY, que lit l'extension du provider
+  # d'omp, ne sont pas posées ici : omp/entrypoint.sh les dérive de
+  # PROXY_URL et PROXY_API_KEY (env_file), pour n'avoir qu'une source.
   omp:
     build: ./omp
     network_mode: host

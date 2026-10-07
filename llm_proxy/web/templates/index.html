@@ -358,7 +358,7 @@
       <section>
         <h3>pi / omp</h3>
         <pre>{{ snippets.pi }}</pre>
-        <p class="note">Les deux extensions sont dans le dépôt
+        <p class="note">L'extension est dans le dépôt
           <code>llmsetup</code> (<code>tools/</code>). Le provider
           s'appelle <code>albert</code> : les modèles s'y nomment
           <code>albert/&lt;backend&gt;/&lt;modèle&gt;</code>.</p>
@@ -370,9 +370,10 @@
         </h3>
         <p class="note">Le proxy exécute ces outils lui-même. Codex et
           Claude Code s'en servent sans réglage (leur recherche web passe
-          par le proxy) ; pi et omp par l'extension
-          <code>llm-proxy-web.ts</code> ; tout autre client en déclarant
-          <code>{"type": "web_search"}</code> dans <code>tools</code>.
+          par le proxy) ; pi, omp et Open WebUI les reçoivent d'office si
+          <code>[chat].always</code> les nomme ; tout autre client en
+          déclarant <code>{"type": "web_search"}</code> dans
+          <code>tools</code>.
           Leur usage est dans le panneau <em>Outils</em>.</p>
       </section>
     </div>

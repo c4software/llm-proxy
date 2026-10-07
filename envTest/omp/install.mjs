@@ -1,13 +1,13 @@
 // Appelé UNE fois, à la construction de l'image (voir Dockerfile) : télécharge
-// omp et les deux extensions de llmsetup, vérifie le sha256 de chacun, et
+// omp et l'extension du provider de llmsetup, vérifie le sha256 de chacun, et
 // s'arrête au premier écart en affichant celui du fichier reçu. Node seul
 // (fetch, crypto) : node:22-slim n'a ni curl ni wget.
 //
-//   node install.mjs <OMP_VERSION> <LLMSETUP_REV> <sha256 llm-proxy.ts> <sha256 llm-proxy-web.ts>
+//   node install.mjs <OMP_VERSION> <LLMSETUP_REV> <sha256 llm-proxy.ts>
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 
-const [version, rev, sumProvider, sumWeb] = process.argv.slice(2);
+const [version, rev, sumProvider] = process.argv.slice(2);
 
 async function get(url) {
   const r = await fetch(url);
@@ -44,12 +44,11 @@ writeFileSync("/usr/local/bin/omp", await verified(`${release}/${asset}`, line[0
 chmodSync("/usr/local/bin/omp", 0o755);
 console.log(`omp : ${release}/${asset} (sha256 ${line[0]})`);
 
-// ── les deux extensions ──────────────────────────────────────────────────
+// ── l'extension du provider ─────────────────────────────────────────────────
 // Dépôt public c4software/llmsetup, à une révision ÉPINGLÉE — le commit
 // entier dans l'URL raw de GitHub, donc un contenu qui ne peut pas changer.
 const raw = `https://raw.githubusercontent.com/c4software/llmsetup/${rev}/tools`;
 mkdirSync("/omp/extensions", { recursive: true });
-writeFileSync("/omp/extensions/llm-proxy-web.ts", await verified(`${raw}/llm-proxy-web.ts`, sumWeb));
 
 // llm-proxy.ts, le provider. À la révision épinglée, la version VERSIONNÉE a
 // l'adresse du proxy et sa clé en dur (« Valeurs en dur pour le test —
@@ -70,4 +69,4 @@ for (const [from, to] of [
   provider = provider.replace(from, to);
 }
 writeFileSync("/omp/extensions/llm-proxy.ts", provider);
-console.log(`extensions : llmsetup ${rev}, tools/llm-proxy.ts (adresse et clé lues dans l'environnement) et tools/llm-proxy-web.ts`);
+console.log(`extension : llmsetup ${rev}, tools/llm-proxy.ts (adresse et clé lues dans l'environnement)`);

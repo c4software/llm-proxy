@@ -1,8 +1,8 @@
 """
 Les outils hébergés sur /v1/chat/completions : ce qu'il faut pour qu'un
 client qui ne parle QUE cette API (pi, omp, Hermes, tout SDK OpenAI)
-déclare un outil que le proxy exécute, sans rien porter d'autre — ni
-extension, ni boucle. Les deux autres surfaces ont ça par leur API
+déclare un outil que le proxy exécute — ou le reçoive d'office —, sans
+rien porter d'autre : ni extension, ni boucle. Les deux autres surfaces ont ça par leur API
 (`{"type": "web_search"}` de Responses, outil serveur d'Anthropic) ;
 chat/completions n'a PAS de forme standard pour le dire.
 

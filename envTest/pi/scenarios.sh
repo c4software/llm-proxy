@@ -6,11 +6,14 @@
 # joué ici — il reste disponible pour un essai à la main.)
 #
 # Scénario 6 : la recherche web HÉBERGÉE par le proxy (README principal,
-# « Outils hébergés »). pi parle chat/completions : l'outil lui vient de
-# l'extension /pi/extensions/llm-proxy-web.ts (posée par le Dockerfile), qui
-# lit GET /v1/tools et exécute par POST /v1/tools/<nom>. Il est SAUTÉ (SKIP,
-# ni PASS ni FAIL) quand le proxy visé n'héberge pas l'outil — lu dans
-# /healthz.
+# « Outils hébergés »). pi parle chat/completions et ne déclare rien : les
+# outils lui viennent D'OFFICE, par [chat].always du proxy, qui les présente
+# au modèle, les exécute dans sa boucle et rend UNE réponse — pi n'en voit
+# ni l'appel ni le résultat. (Jusqu'au 07/10/2026 l'outil venait d'une
+# extension, llm-proxy-web.ts, retirée depuis.) Il est SAUTÉ (SKIP, ni PASS
+# ni FAIL) quand le proxy visé n'héberge pas web_search ou ne le présente
+# pas d'office — lu dans /healthz. Avec [chat].always, les scénarios 1 à 5
+# reçoivent eux aussi ces outils, à la suite de ceux de pi.
 set -u
 cd /work
 fails=0
@@ -19,42 +22,88 @@ pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails + 1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$1"; skips=$((skips + 1)); }
 
-# Les outils que le proxy héberge, séparés par des espaces (« web_search
-# web_fetch »), lus dans /healthz — exempté de clé. Vide si aucun n'est
-# activé, si le proxy est plus ancien que ces outils ou s'il ne répond pas.
-hosted=$(node -e '
+# Ce que le proxy héberge et présente, lu dans /healthz — exempté de clé :
+# `hosted`, ses outils actifs (« web_search web_fetch ») ; `offered`, ceux
+# qu'il présente D'OFFICE à toute requête /v1/chat/completions
+# ([chat].always, vide si [chat].hosted_tools est faux). Vides si rien n'est
+# activé, si le proxy est plus ancien que ces réglages ou s'il ne répond pas.
+health=$(node -e '
   fetch(process.argv[1] + "/healthz", {signal: AbortSignal.timeout(10000)})
     .then(r => r.json())
-    .then(j => process.stdout.write(((j.tools || {}).enabled || []).join(" ")))
+    .then(j => process.stdout.write(((j.tools || {}).enabled || []).join(" ") + "|"
+      + ((j.chat || {}).hosted_tools ? (j.chat.always || []) : []).join(" ")))
     .catch(() => {});' "$PROXY_URL")
+hosted=${health%%|*}
+offered=${health#*|}
 hosts() { case " $hosted " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+offers() { case " $offered " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# Le compteur du proxy : exécutions de web_search arrivées par
+# /v1/chat/completions, lues sur son Usage API des outils (README principal,
+# « Usage des outils hébergés »). Imprime le nombre, ou rien si la route ne
+# répond pas (proxy antérieur au 05/10/2026, clé refusée). $1 : le nombre à
+# atteindre — le proxy écrit ses lignes hors de la requête, on relit donc
+# jusqu'à 5 s tant qu'il n'y est pas (0 : une seule lecture).
+# La fenêtre est la MÊME à chaque lecture (un jour avant le début du banc,
+# deux jours après) : deux lectures ne diffèrent que par ce qui s'est
+# exécuté entre elles, et l'horloge du proxy n'a pas à être celle d'ici.
+usage_start=$(($(date +%s) - 86400))
+usage_end=$((usage_start + 259200))
+searches() { node -e '
+  const [url, key, start, end, want] = process.argv.slice(1);
+  const query = new URLSearchParams([["start_time", start], ["end_time", end], ["bucket_width", "all"],
+    ["group_by[]", "endpoint"], ["group_by[]", "tool"]]);
+  const read = () => fetch(url + "/v1/organization/usage/tools?" + query,
+      {headers: {Authorization: "Bearer " + key}, signal: AbortSignal.timeout(10000)})
+    .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+    .then(j => {
+      if (j.object !== "page") throw new Error("forme inattendue");
+      return (j.data || []).flatMap(b => b.results || [])
+        .filter(r => r.endpoint === "/v1/chat/completions" && r.tool === "web_search")
+        .reduce((n, r) => n + (r.num_requests || 0), 0);
+    });
+  (async () => {
+    let n = await read();
+    for (let i = 0; n < Number(want) && i < 10; i++) {
+      await new Promise(done => setTimeout(done, 500));
+      n = await read();
+    }
+    process.stdout.write(String(n));
+  })().catch(() => {});' "$PROXY_URL" "${PROXY_API_KEY:-unused}" "$usage_start" "$usage_end" "$1"; }
 
 # Verdict du scénario web, sur la sortie de `pi --mode json` (JSONL, un
 # événement par ligne) lue sur l'entrée standard. $1 : le texte que la
-# réponse doit contenir (casse ignorée). Imprime « OK … » ou « KO … ».
-# La PREUVE que le proxy a cherché n'est pas la réponse, qu'un modèle peut
-# écrire de mémoire : c'est un événement `tool_execution_end` de l'outil
-# `proxy_web_search`, sans erreur, dont le résultat porte au moins une URL —
-# le texte rendu par POST /v1/tools/web_search. La réponse est le texte du
-# dernier message `assistant` ; le message `user` (le prompt) est écarté.
+# réponse doit contenir (casse ignorée) ; $2 et $3 : le compteur du proxy
+# avant et après (vides s'il n'est pas lisible). Imprime « OK … » ou « KO … ».
+# La recherche est faite PAR LE PROXY, dans sa boucle : le client n'en voit
+# rien — ni appel, ni résultat, c'est le principe des outils d'office. Sa
+# trace ne peut donc prouver qu'une chose, et la réponse rien (un modèle
+# l'écrit de mémoire) :
+#   1. côté client, AUCUN outil exécuté (`tool_execution_start`) : ce n'est
+#      pas pi qui a cherché — --no-tools ne lui en laisse d'ailleurs aucun ;
+#   2. côté proxy, LA preuve : son compteur d'exécutions de web_search par
+#      /v1/chat/completions a avancé pendant l'appel. « Au moins 1 » : le
+#      compteur est celui du proxy entier, un autre client peut l'avancer
+#      aussi — sur un proxy partagé, le scénario peut donc passer à tort.
+#      Illisible, rien ne prouve la recherche : échec, et le libellé le dit.
+# La réponse est le texte du dernier message `assistant` ; le message `user`
+# (le prompt) est écarté.
 verdict() { node -e '
-  const [needle] = process.argv.slice(1);
+  const [needle, before, after] = process.argv.slice(1);
   const events = require("fs").readFileSync(0, "utf8").split("\n")
     .flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
-  const calls = events.filter(e => e.type === "tool_execution_end" && e.toolName === "proxy_web_search");
-  const text = r => JSON.stringify((r || {}).content || "");
-  const good = calls.filter(e => e.isError !== true && text(e.result).includes("http"));
-  const query = (events.filter(e => e.type === "tool_execution_start" && e.toolName === "proxy_web_search")
-    .map(e => (e.args || {}).query || "").pop() || "?").slice(0, 60);
+  const ran = [...new Set(events.filter(e => e.type === "tool_execution_start").map(e => String(e.toolName)))];
   const last = events.filter(e => e.type === "message_end" && (e.message || {}).role === "assistant")
     .map(e => e.message).pop() || {};
   const answer = (Array.isArray(last.content) ? last.content : [])
     .filter(b => b.type === "text").map(b => b.text || "").join(" ").replace(/\s+/g, " ").trim();
-  const seen = good.length + " recherche(s) aboutie(s) sur " + calls.length + " (" + query + ") — "
+  const counted = before !== "" && after !== "" ? Number(after) - Number(before) : null;
+  const seen = (counted === null ? "compteur du proxy illisible" : "compteur du proxy /v1/chat/completions : +" + counted) + " — "
     + (answer.slice(0, 200) || "pas de réponse" + (last.errorMessage ? " : " + String(last.errorMessage).slice(0, 200) : ""));
-  const ko = !events.length ? "aucun événement JSON en sortie de pi"
-    : !calls.length ? "aucun appel à proxy_web_search dans la trace (extension non chargée, ou outil non appelé) : " + seen
-    : !good.length ? "proxy_web_search appelé mais sans résultat (" + text(calls[calls.length - 1].result).slice(0, 160) + ") : " + seen
+  const ko = !events.length ? "aucun événement JSON rendu par pi"
+    : ran.length ? "un outil du client a été exécuté (" + ran.join(", ") + ") malgré --no-tools : " + seen
+    : counted === null ? "rien ne prouve que le proxy a cherché (GET /v1/organization/usage/tools ne répond pas, ou refuse la clé) : " + seen
+    : counted < 1 ? "aucune exécution de web_search comptée par le proxy sur /v1/chat/completions pendant cet appel : " + seen
     : !answer.toLowerCase().includes(needle.toLowerCase()) ? "réponse sans « " + needle + " » : " + seen
     : "";
   process.stdout.write(ko ? "KO " + ko : "OK " + seen);' "$@"; }
@@ -71,17 +120,16 @@ for MODEL in $MODELS; do
   # </dev/null : sans terminal sur l'entrée standard (docker compose run -T,
   # CI), pi attend la fin d'une entrée qu'il préfixerait au prompt.
   run() { pi -p --no-session --provider llm-proxy --model "$MODEL" "$@" </dev/null 2>&1 | tail -n 20; }
-  # Scénario web : --mode json pour la trace (voir verdict) ; -e charge
-  # l'extension pour ce seul appel ; --tools ne laisse au modèle QUE la
-  # recherche du proxy — ni bash (un curl partirait du conteneur, pas du
-  # proxy), ni les autres outils : c'est aussi ce qui a été validé à la main.
-  # stderr va dans un fichier, hors du JSONL : `diag` en rend la fin sur un
-  # échec (l'extension y écrit « découverte impossible » si /v1/tools ne
-  # répond pas ou refuse la clé).
+  # Scénario web : --mode json pour la trace (voir verdict), dans un fichier
+  # — le compteur du proxy se relit APRÈS l'appel, avant le verdict.
+  # --no-tools (lu dans `pi --help`, 1.0.4) ne laisse AUCUN outil à pi : ni
+  # bash (un curl partirait du conteneur, pas du proxy), ni read. La requête
+  # part donc sans `tools`, et ceux que le modèle reçoit sont ceux du proxy.
+  # stderr va dans un autre fichier, hors du JSONL : `diag` en rend la fin
+  # sur un échec.
   web() {
     pi --mode json --no-session --provider llm-proxy --model "$MODEL" \
-      -e /pi/extensions/llm-proxy-web.ts --tools proxy_web_search "$@" \
-      </dev/null 2>/tmp/pi-web.err
+      --no-tools "$@" </dev/null >/tmp/pi-web.jsonl 2>/tmp/pi-web.err
   }
   diag() { [ -s /tmp/pi-web.err ] && printf ' — stderr : %s' "$(tail -n 3 /tmp/pi-web.err | tr '\n' ' ')"; return 0; }
 
@@ -126,16 +174,22 @@ JS
   elif node slugify.test.js >/dev/null 2>&1; then pass "slugify.js corrigé — $(echo "$out" | tail -n 1)"; else fail "$out"; fi
   cd /work
 
-  echo "6. Recherche web hébergée (extension llm-proxy-web.ts → GET /v1/tools, POST /v1/tools/web_search)"
+  echo "6. Recherche web hébergée (outils d'office du proxy, [chat].always → boucle de /v1/chat/completions ; aucun outil côté pi)"
   # La réponse attendue est une URL que le nom du dépôt détermine : elle ne
   # dépend ni de l'actualité ni de la formulation (on ne cherche que
   # « github.com/ggml-org/llama.cpp », que toute bonne réponse contient,
   # /releases, /releases/latest ou lien Markdown compris).
-  if hosts web_search; then
-    out=$(web "Trouve par une recherche web la page des releases du dépôt GitHub ggml-org/llama.cpp et réponds uniquement par son URL." | verdict "github.com/ggml-org/llama.cpp")
-    case "$out" in "OK "*) pass "${out#OK }" ;; *) fail "${out#KO }$(diag)" ;; esac
-  else
+  if ! hosts web_search; then
     skip "web_search n'est pas hébergé par ce proxy (/healthz : tools.enabled = [${hosted}])"
+  elif ! offers web_search; then
+    skip "web_search n'est pas présenté d'office par ce proxy (/healthz : chat.always = [${offered}] ; [chat] hosted_tools = true, always = [\"web_search\", \"web_fetch\"])"
+  else
+    before=$(searches 0)
+    web "Trouve par une recherche web la page des releases du dépôt GitHub ggml-org/llama.cpp et réponds uniquement par son URL."
+    after=""
+    if [ -n "$before" ]; then after=$(searches $((before + 1))); fi
+    out=$(verdict "github.com/ggml-org/llama.cpp" "$before" "$after" </tmp/pi-web.jsonl)
+    case "$out" in "OK "*) pass "${out#OK }" ;; *) fail "${out#KO }$(diag)" ;; esac
   fi
 
   failed=$((fails - fails_before))
@@ -149,5 +203,5 @@ done
 
 echo
 echo "Résumé :$summary"
-[ "$skips" -gt 0 ] && echo "$skips scénario(s) sauté(s) : outils web non hébergés par le proxy."
+[ "$skips" -gt 0 ] && echo "$skips scénario(s) sauté(s) : outils web non hébergés, ou non présentés d'office, par le proxy."
 [ "$fails" -eq 0 ] && echo "Tout passe." || { echo "$fails scénario(s) en échec."; exit 1; }

@@ -692,7 +692,7 @@ D'autres outils hébergés ne remplacent l'outil d'aucun fournisseur :
 aucun type de l'API Responses ni de l'API Messages ne les active. Ils se
 présentent sur `/v1/chat/completions` — déclarés par leur nom dans
 `tools` (`{"type": "transcribe"}`), ou d'office par `[chat].always` — et
-s'appellent par [`/v1/tools`](#appel-direct--v1tools-pi-omp) :
+s'appellent par [`/v1/tools`](#appel-direct--v1tools) :
 
 | Fonction présentée au modèle | Ce qu'elle fait | Par quoi |
 |---|---|---|
@@ -715,6 +715,14 @@ trouvée par SearXNG :
 | Claude Code 2.1.287 | `/v1/messages`, outil serveur `web_search` | recherche par son outil `WebSearch` ; six recherches en erreur enchaînées (moteur éteint), blocs d'erreur lus par Claude Code |
 | pi 0.87.1 | `/v1/tools`, extension `llm-proxy-web.ts` | recherche ; lecture de page ; commandes `/web` et `/page` |
 | omp 18.3.2 | `/v1/tools`, extension `llm-proxy-web.ts` | recherche ; lecture de page ; commandes `/web` et `/page` |
+
+Depuis le 07/10/2026, pi et omp ne passent plus par l'extension
+`llm-proxy-web.ts` (`proxy_web_search`, `proxy_web_fetch`, commandes
+`/web` et `/page`), qui est retirée : ils reçoivent les outils d'office,
+par `[chat].always`, comme Open WebUI — voir
+[pi et omp](#pi-et-omp--les-outils-doffice). Les deux lignes du tableau
+disent ce qui a été joué le 05/10/2026, par l'ancien chemin ; le nouveau
+n'a pas été rejoué avec ces clients.
 
 Ce jour-là SearXNG rendait 20 résultats, deux de ses moteurs étant
 refusés par leur source (Brave en limite de débit, DuckDuckGo en
@@ -1162,7 +1170,7 @@ porter plusieurs échanges cachés, chacun retrouvé indépendamment. Une
 réponse close par la limite d'appels (le modèle n'a pas conclu) ne range
 rien. Un client qui tient à garder lui-même ce que le modèle a lu
 déclare l'outil et passe par
-l'[appel direct](#appel-direct--v1tools-pi-omp).
+l'[appel direct](#appel-direct--v1tools).
 
 La mémoire des échanges n'a été jouée que par les tests du dépôt
 (`tests/test_chat_api.py`, backend simulé).
@@ -1274,9 +1282,7 @@ Limites :
   sait pas reçoit `tools` quand même : selon le backend il les ignore, ou
   refuse la requête — son erreur est relayée telle quelle.
 - **Tous les clients de la route.** pi, omp, Hermes… reçoivent les outils
-  aussi. L'extension `llm-proxy-web.ts` déclare les siens sous
-  `proxy_web_search` / `proxy_web_fetch` : pas d'homonymie, donc deux
-  jeux d'outils web pour ces clients tant que `always` les nomme.
+  aussi : c'est voulu, voir [pi et omp](#pi-et-omp--les-outils-doffice).
 - **Injection de prompt.** Le texte de pages web entre dans toutes les
   conversations, sans que le client l'ait demandé : voir
   [Ce qu'aucun garde-fou n'empêche](#ce-quaucun-garde-fou-nempêche).
@@ -1284,7 +1290,46 @@ Limites :
 Joué par les tests du dépôt seulement (`tests/test_chat_api.py`, backend
 simulé) ; pas encore contre un Open WebUI réel.
 
-### Appel direct : `/v1/tools` (pi, omp)
+### pi et omp : les outils d'office
+
+pi et omp parlent `/v1/chat/completions` et ne déclarent pas d'outil
+hébergé. Depuis le 07/10/2026 ils les reçoivent comme Open WebUI, par
+`[chat].always` : rien à installer côté client, aucune extension.
+
+    [chat]
+    hosted_tools = true
+    always = ["web_search", "web_fetch"]
+
+Ce que cela change pour eux, par rapport à l'extension
+`llm-proxy-web.ts` du dépôt llmsetup, **retirée** (elle enregistrait
+`proxy_web_search` et `proxy_web_fetch` par l'appel direct, et les
+commandes `/web` et `/page`) :
+
+- **L'appel est caché.** Le proxy exécute la recherche dans sa boucle et
+  rend une réponse ordinaire : le client n'affiche ni l'appel ni son
+  résultat, et ne les a pas dans son historique. Le modèle les retrouve
+  au tour suivant par la
+  [mémoire des échanges cachés](#client-chatcompletions--déclarer-loutil)
+  — tant que l'historique n'est ni compacté ni tronqué, et que le proxy
+  n'a pas redémarré.
+- **Plus de commandes `/web` et `/page`.** Il n'y a plus d'outil côté
+  client à appeler à la main : on demande au modèle de chercher ou de
+  lire la page.
+- **Un outil du client garde son nom.** omp a un `web_search` intégré,
+  qui cherche depuis le poste. S'il l'envoie au modèle sous ce nom —
+  c'est celui de sa trace, pas vérifié sur le fil —, celui du proxy
+  n'est pas présenté (homonymie) et `web_fetch` l'est. Pour que la
+  recherche soit celle du proxy, désactiver l'outil intégré côté omp.
+- **Un tour mixte coûte un tour.** Si le modèle appelle dans le même tour
+  un outil du proxy et un outil du client (`bash`, `read`), le premier
+  appel décide et l'autre est réémis au tour suivant — voir
+  [Client chat/completions](#client-chatcompletions--déclarer-loutil).
+
+Les bancs `envTest/pi` et `envTest/omp` jouent leur recherche web par ce
+chemin depuis le 07/10/2026 ; ils n'ont **pas été rejoués** depuis, et
+aucun essai de pi ou d'omp contre `[chat].always` n'a été fait.
+
+### Appel direct : `/v1/tools`
 
 Un client qui parle `/v1/chat/completions` et veut garder ses appels
 d'outils et leurs résultats dans son propre historique ne déclare pas un
@@ -1313,10 +1358,9 @@ l'[usage des outils](#usage-des-outils-hébergés), route `/v1/tools`,
 sans modèle. Un `404` ou un corps refusé n'y laisse rien — l'outil n'a
 pas été appelé.
 
-C'est ce que fait l'extension pi / omp `tools/llm-proxy-web.ts` du dépôt
-[llmsetup](https://github.com/c4software/llmsetup) : elle lit
-`GET /v1/tools` au démarrage et enregistre `proxy_web_search` et
-`proxy_web_fetch`, plus les commandes `/web` et `/page`.
+C'était le chemin de l'extension pi / omp `llm-proxy-web.ts`, retirée le
+07/10/2026 (voir [pi et omp](#pi-et-omp--les-outils-doffice)). La route
+reste, pour tout client ou script qui veut exécuter un outil lui-même.
 
 ### Cache web
 
@@ -1838,13 +1882,15 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   [Codex CLI](#codex-cli).
 - Hermes : retirer `extra_body.tool_choice` du provider dans
   `~/.hermes/config.yaml`, pointer `api` sur le proxy.
-- pi et omp, outils web : l'extension `tools/llm-proxy-web.ts` de
-  llmsetup, qui appelle `/v1/tools` — voir
-  [Appel direct](#appel-direct--v1tools-pi-omp).
-- Tout client `/v1/chat/completions`, outils web sans extension :
+- pi et omp, outils web : rien côté client — `[chat].always` côté
+  proxy ; l'extension `llm-proxy-web.ts` n'a plus lieu d'être. Voir
+  [pi et omp](#pi-et-omp--les-outils-doffice).
+- Tout client `/v1/chat/completions`, outils web :
   `{"type": "web_search"}` dans `tools` si `[chat].hosted_tools` — le
   proxy boucle, mais le client ne garde pas ce que le modèle a lu ; voir
   [Client chat/completions](#client-chatcompletions--déclarer-loutil).
+  Ou l'[appel direct](#appel-direct--v1tools), pour qui exécute l'outil
+  lui-même.
 - Open WebUI : une connexion OpenAI sur `http://…:8000/v1`, et
   `[chat].always` pour que le modèle ait la recherche web sans que
   l'interface la déclare — voir
