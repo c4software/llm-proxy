@@ -52,6 +52,14 @@ scénario 6.
 
 ## Derniers résultats
 
+Run du 15 octobre 2026 (soir), même proxy, Codex CLI 0.162.1,
+`silentchuck/qwen3.8-flash-next` : **10/10**. Deux scénarios nouveaux :
+le 9, `web_grep` par la boucle de `web_search` (un élément `find_in_page`
+dans la trace, la valeur `70_000` trouvée dans un fichier à un commit
+donné) ; le 10, la recherche par le serveur MCP du proxy (`CODEX_HOME`
+qui le déclare, outils approuvés d'office, délai de 600 s) — un
+`mcp_tool_call` `llmproxy/web_search` abouti.
+
 Run du 15 octobre 2026, proxy `536193d` déployé (`[mcp_server]` actif,
 `[chat].always` vide), pi 1.3.0, omp 18.11.1, backend gufo `silentchuck`,
 clients en conteneurs sur le poste (`PROXY_URL=http://llmproxy`), les

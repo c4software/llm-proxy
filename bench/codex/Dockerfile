@@ -11,7 +11,7 @@
 FROM node:22-slim
 ARG CODEX_VERSION=latest
 RUN npm install -g --ignore-scripts "@openai/codex@${CODEX_VERSION}" \
- && mkdir -p /work /codex && chown node:node /work /codex
+ && mkdir -p /work /codex /codex-mcp && chown node:node /work /codex /codex-mcp
 USER node
 WORKDIR /work
 ENV CODEX_HOME=/codex

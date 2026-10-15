@@ -13,7 +13,10 @@
 # « Outils hébergés »). Codex déclare lui-même `web_search` ; le proxy
 # exécute recherche et lecture de page et rend des éléments
 # `web_search_call`. Ils sont SAUTÉS (SKIP, ni PASS ni FAIL) quand le proxy
-# visé ne les héberge pas — lu dans /healthz.
+# visé ne les héberge pas — lu dans /healthz. Scénario 9 : `web_grep`, la
+# recherche dans une page, par la même boucle (action `find_in_page`).
+# Scénario 10 : le serveur MCP du proxy (POST /mcp), dans un second
+# CODEX_HOME qui le déclare ($CODEX_HOME-mcp, écrit par entrypoint.sh).
 set -u
 cd /work
 fails=0
@@ -25,11 +28,15 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$1"; skips=$((skips + 1)); }
 # Les outils que le proxy héberge, séparés par des espaces (« web_search
 # web_fetch »), lus dans /healthz — exempté de clé. Vide si aucun n'est
 # activé, si le proxy est plus ancien que ces outils ou s'il ne répond pas.
-hosted=$(node -e '
+# `mcp` : « true » si le serveur MCP du proxy est actif.
+health=$(node -e '
   fetch(process.argv[1] + "/healthz", {signal: AbortSignal.timeout(10000)})
     .then(r => r.json())
-    .then(j => process.stdout.write(((j.tools || {}).enabled || []).join(" ")))
+    .then(j => process.stdout.write(((j.tools || {}).enabled || []).join(" ") + "|"
+      + String(!!(j.mcp_server || {}).enabled)))
     .catch(() => {});' "$PROXY_URL")
+hosted=${health%%|*}
+mcp=${health#*|}
 hosts() { case " $hosted " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # Verdict d'un scénario web, sur la sortie de `codex exec --json` (JSONL,
@@ -63,6 +70,49 @@ verdict() { node -e '
   const ko = !events.length ? "aucun événement JSON en sortie de codex exec"
     : !searches.length ? "aucune recherche dans la trace : " + seen
     : needPage === "1" && !pages.length ? "aucune lecture de page dans la trace : " + seen
+    : !answer.toLowerCase().includes(needle.toLowerCase()) ? "réponse sans « " + needle + " » : " + seen
+    : "";
+  process.stdout.write(ko ? "KO " + ko : "OK " + seen);' "$@"; }
+
+# Verdict du scénario 9 (web_grep), sur la sortie de `codex exec --json`.
+# $1 : la valeur attendue, comparée sans séparateurs (« 70_000 », « 70 000 »
+# et « 70000 » valent pareil). La preuve : un élément `web_search` d'action
+# `find_in_page` — ce que le proxy rend pour un appel à `web_grep` —, la
+# valeur demandée n'étant que dans la page (un fichier à un commit donné).
+verdict_grep() { node -e '
+  const [needle] = process.argv.slice(1);
+  const events = require("fs").readFileSync(0, "utf8").split("\n")
+    .flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+  const items = events.filter(e => e.type === "item.completed" && e.item).map(e => e.item);
+  const finds = items.filter(i => i.type === "web_search" && (i.action || {}).type === "find_in_page");
+  const answer = (items.filter(i => i.type === "agent_message").map(i => i.text || "").pop() || "")
+    .replace(/\s+/g, " ").trim();
+  const flat = s => s.replace(/[_\s\u00a0\u202f,.]/g, "");
+  const seen = finds.length + " recherche(s) dans la page" + (finds.length ? " (/" + (finds[0].action.pattern || "?").slice(0, 40) + "/)" : "")
+    + " — " + (answer.slice(0, 200) || "pas de réponse");
+  const ko = !events.length ? "aucun événement JSON en sortie de codex exec"
+    : !finds.length ? "aucune recherche dans la page (find_in_page) dans la trace : " + seen
+    : !flat(answer).includes(flat(needle)) ? "réponse sans « " + needle + " » : " + seen
+    : "";
+  process.stdout.write(ko ? "KO " + ko : "OK " + seen);' "$@"; }
+
+# Verdict du scénario 10 (serveur MCP). La preuve : un élément
+# `mcp_tool_call` du serveur `llmproxy`, outil `web_search`, terminé sans
+# erreur — Codex ne le construit que d'un tools/call de /mcp. $1 : le texte
+# que la réponse doit contenir (casse ignorée).
+verdict_mcp() { node -e '
+  const [needle] = process.argv.slice(1);
+  const events = require("fs").readFileSync(0, "utf8").split("\n")
+    .flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+  const items = events.filter(e => e.type === "item.completed" && e.item).map(e => e.item);
+  const calls = items.filter(i => i.type === "mcp_tool_call" && i.server === "llmproxy");
+  const good = calls.filter(i => i.tool === "web_search" && i.status === "completed" && !i.error);
+  const answer = (items.filter(i => i.type === "agent_message").map(i => i.text || "").pop() || "")
+    .replace(/\s+/g, " ").trim();
+  const seen = good.length + " recherche(s) MCP aboutie(s) sur " + calls.length + " appel(s) à llmproxy ("
+    + calls.map(i => i.tool + ":" + i.status).join(", ") + ") — " + (answer.slice(0, 200) || "pas de réponse");
+  const ko = !events.length ? "aucun événement JSON en sortie de codex exec"
+    : !good.length ? "aucun appel MCP llmproxy/web_search abouti dans la trace : " + seen
     : !answer.toLowerCase().includes(needle.toLowerCase()) ? "réponse sans « " + needle + " » : " + seen
     : "";
   process.stdout.write(ko ? "KO " + ko : "OK " + seen);' "$@"; }
@@ -218,9 +268,32 @@ JS
     skip "web_fetch n'est pas hébergé par ce proxy (/healthz : tools.enabled = [${hosted}])"
   fi
 
+  echo "9. Recherche dans une page (web_grep, action find_in_page, par la boucle de web_search)"
+  # La valeur demandée n'est que dans le fichier, adressé par son commit
+  # (contenu immuable), écrit le 05/10/2026 : aucun modèle ne l'a en
+  # mémoire. Le prompt NOMME l'outil : rien d'autre n'oblige le modèle à
+  # chercher dans la page plutôt qu'à la lire en entier.
+  if hosts web_grep; then
+    out=$(web "Avec l'outil web_grep (recherche dans une page), trouve dans https://raw.githubusercontent.com/c4software/llmsetup/93698d56c65d66cdf722473efcc8c8f9a668c19d/tools/llm-proxy-web.ts la ligne qui définit la constante DELAI_APPEL, et réponds uniquement par sa valeur." | verdict_grep "70000")
+    case "$out" in "OK "*) pass "${out#OK }" ;; *) fail "${out#KO }$(diag)" ;; esac
+  else
+    skip "web_grep n'est pas hébergé par ce proxy (/healthz : tools.enabled = [${hosted}])"
+  fi
+
+  echo "10. Recherche web par le serveur MCP du proxy (POST /mcp, tools/call web_search)"
+  # Même question que le scénario 6, dans le CODEX_HOME qui déclare le
+  # serveur MCP : ses outils portent les noms de ceux du proxy, qui ne
+  # présente alors pas les siens (homonymie) — la recherche passe par MCP.
+  if hosts web_search && [ "$mcp" = "true" ]; then
+    out=$(export CODEX_HOME="$CODEX_HOME-mcp"; web "Trouve par une recherche web la page des releases du dépôt GitHub ggml-org/llama.cpp et réponds uniquement par son URL." | verdict_mcp "github.com/ggml-org/llama.cpp")
+    case "$out" in "OK "*) pass "${out#OK }" ;; *) fail "${out#KO }$(diag)" ;; esac
+  else
+    skip "web_search ou le serveur MCP du proxy inactif (/healthz : tools.enabled = [${hosted}], mcp_server.enabled = ${mcp:-?} ; [mcp_server] enabled = true)"
+  fi
+
   failed=$((fails - fails_before))
   skipped=$((skips - skips_before))
-  played=$((8 - skipped))
+  played=$((10 - skipped))
   line="$((played - failed))/$played"
   [ "$skipped" -gt 0 ] && line="$line, $skipped sauté(s)"
   summary="$summary

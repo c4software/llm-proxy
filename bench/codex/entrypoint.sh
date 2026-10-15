@@ -20,4 +20,17 @@ base_url = "${PROXY_URL}/v1"
 wire_api = "responses"
 env_key = "PROXY_API_KEY"
 TOML
+# Le CODEX_HOME du scénario 10 : la même configuration, plus le serveur MCP
+# du proxy (POST /mcp). Ses outils sont approuvés d'office — `codex exec`
+# ne peut rien demander, il refuserait chaque appel — et leur délai porté à
+# 600 s (les outils longs du proxy). Les autres scénarios ne l'ont pas.
+mkdir -p "$CODEX_HOME-mcp"
+cat "$CODEX_HOME/config.toml" - > "$CODEX_HOME-mcp/config.toml" <<TOML
+
+[mcp_servers.llmproxy]
+url = "${PROXY_URL}/mcp"
+bearer_token_env_var = "PROXY_API_KEY"
+default_tools_approval_mode = "approve"
+tool_timeout_sec = 600
+TOML
 exec "$@"

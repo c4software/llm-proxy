@@ -12,7 +12,9 @@ export LLM_PROXY_API_KEY="${LLM_PROXY_API_KEY:-${PROXY_API_KEY:-unused}}"
 # Le mcp.json du scénario 6 (serveur MCP du proxy, POST /mcp), dans un
 # second dossier d'agent, $PI_CODING_AGENT_DIR-mcp : les cinq autres
 # scénarios gardent le dossier vide. omp lit les variables dans `headers`.
+# `timeout` en MILLISECONDES (défaut 30 s) : les outils longs du proxy vont
+# jusqu'à 7 min.
 mkdir -p "$PI_CODING_AGENT_DIR-mcp"
-printf '{ "mcpServers": { "llmproxy": {\n    "url": "%s/mcp",\n    "headers": { "Authorization": "Bearer ${LLM_PROXY_API_KEY}" } } } }\n' \
+printf '{ "mcpServers": { "llmproxy": {\n    "url": "%s/mcp",\n    "headers": { "Authorization": "Bearer ${LLM_PROXY_API_KEY}" },\n    "timeout": 600000 } } }\n' \
     "$LLM_PROXY_URL" > "$PI_CODING_AGENT_DIR-mcp/mcp.json"
 exec "$@"
