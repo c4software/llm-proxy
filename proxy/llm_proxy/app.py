@@ -698,6 +698,9 @@ async def healthz():
             "model_map": anthropic_api.MODEL_MAP,
         },
         "responses": {"enabled": responses_api.ENABLED},
+        # Le serveur MCP (POST /mcp) : de quoi savoir, sans clé, si un
+        # client MCP (pi, omp, Claude Code) peut s'y brancher.
+        "mcp_server": {"enabled": mcp_server.ENABLED},
         "chat": {"hosted_tools": chat_api.ENABLED,
                  # Présentés d'office EN CE MOMENT : les noms de
                  # [chat].always qui sont ceux d'un outil actif.

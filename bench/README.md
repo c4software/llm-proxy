@@ -27,6 +27,20 @@ Les bancs `omp` et `api` ont été **écrits le 05/10/2026 et pas encore
 joués** : aucun chiffre ci-dessous ne les concerne. Ce qui en a été vérifié
 sans les lancer est dit dans leurs sections.
 
+**Changement du 15/10/2026 — pi et omp, scénario 6, par MCP.** Le proxy
+sert ses outils par son serveur MCP (`POST /mcp`, `[mcp_server]`) et
+`[chat].always` est vidé sur le déploiement : pi et omp prennent les
+outils **comme les leurs**, appel et résultat dans leur trace. Le
+scénario 6 joue ce chemin, dans un second dossier d'agent qui déclare le
+serveur (`$PI_CODING_AGENT_DIR-mcp`, écrit par `entrypoint.sh`) ; les
+scénarios 1 à 5 tournent sans serveur MCP. Les bancs en conteneur n'ont
+pas encore été rejoués sous cette forme ; le même chemin a été joué à la
+main le jour même, depuis le poste, contre le proxy déployé (`352b088`) :
+pi 1.2.0 (`--tools 'mcp__llmproxy__*'`) et omp 18.11.0 (`--no-tools`),
+`albert/deepseek-v4-flash-0731` — chacun a appelé `web_search` du proxy
+(`mcp__llmproxy__web_search`, `mcp__llmproxy_web_search`) et rendu l'URL
+des releases de `ggml-org/llama.cpp`.
+
 **Changement du 07/10/2026 — pi et omp, scénario 6.** L'extension
 `llm-proxy-web.ts` (outils `proxy_web_search` / `proxy_web_fetch` par
 `/v1/tools`, commandes `/web` et `/page`) est retirée : pi et omp
@@ -353,22 +367,20 @@ et ont été rejoués sous cette forme le jour même : 6/6 chacun.
 | Client | N° | Ce qui est demandé | Chemin dans le proxy |
 |---|---|---|---|
 | Claude Code | 14 | l'URL de la page des releases du dépôt GitHub `ggml-org/llama.cpp`, avec l'outil `WebSearch` | sous-requête `/v1/messages` avec l'outil serveur `web_search_20250305` |
-| pi | 6 | la même URL, **sans aucun outil côté pi** (`--no-tools`) : ceux du proxy, présentés d'office | `[chat].always` : boucle de `/v1/chat/completions`, appel caché du client |
+| pi | 6 | la même URL, avec les seuls outils MCP du proxy (`--tools 'mcp__llmproxy__*'`) | serveur MCP : `POST /mcp`, `tools/call web_search` ; l'appel est dans la trace de pi |
 | Codex | 6 | la même URL (`--sandbox read-only`) | `web_search` déclaré dans `/v1/responses`, boucle du proxy |
 | Codex | 7 | une recherche sur le dépôt `c4software/llmsetup`, puis la lecture de `tools/llm-proxy-web.ts` à un commit donné, et la ligne qui y définit `PREFIXE` | `web_search` puis `web_fetch` dans la même boucle |
 | Codex | 8 | l'exemple en deux tours : résumer une page longue, puis, dans la même session (`codex exec resume --last`), une question dont la réponse n'est que dans la page | `web_fetch` par morceaux (`offset`), puis la mémoire des résultats du proxy |
-| omp | 6 | la même URL que pi, **sans aucun outil d'omp** (`--no-tools`) : ceux du proxy, présentés d'office | `[chat].always` : boucle de `/v1/chat/completions`, appel caché du client |
+| omp | 6 | la même URL que pi, sans aucun outil intégré d'omp (`--no-tools`) : ceux du serveur MCP du proxy | serveur MCP : `POST /mcp`, `tools/call web_search` ; l'appel est dans la trace d'omp |
 
 **Sauté plutôt qu'échoué.** Avant de jouer, chaque banc lit `GET
 /healthz` du proxy visé (`tools.enabled`, sans clé). Sans `web_search` —
 et, pour le scénario 7 de Codex, sans `web_fetch` — le scénario imprime
 `SKIP` avec ce qu'il a lu. Un proxy antérieur au 05/10/2026, ou qui ne
 répond pas sur `/healthz`, donne une liste vide : sauté aussi. Les
-scénarios 6 de pi et d'omp sont sautés de même quand le proxy ne présente
-pas `web_search` d'office (`chat.always` de `/healthz`) — il faut, côté
-proxy, `[chat] hosted_tools = true` et `always = ["web_search",
-"web_fetch"]`, et que les modèles de `MODELS` ne soient pas dans
-`always_except`.
+scénarios 6 de pi et d'omp sont sautés de même quand le serveur MCP du
+proxy est inactif (`mcp_server.enabled` de `/healthz`) — il faut, côté
+proxy, `[mcp_server] enabled = true`.
 
 **Deux vérifications par scénario, et c'est la première qui compte.**
 
@@ -379,22 +391,21 @@ proxy, `[chat] hosted_tools = true` et `always = ["web_search",
      moins une URL. Claude Code compose ce résultat depuis les blocs
      `web_search_tool_result` de sa sous-requête ; une recherche en échec
      y laisse `Web search error: …`, sans lien.
-   - pi et omp (`--mode json --no-tools`, depuis le 07/10/2026) : la
-     recherche est faite **par le proxy**, dans sa boucle, et le client
-     n'en voit rien — ni appel, ni résultat : c'est le principe des outils
-     d'office. Sa trace ne prouve donc qu'une chose, qu'**aucun outil du
-     client n'a été exécuté** (pas d'événement `tool_execution_start` ;
-     `--no-tools` n'en laisse d'ailleurs aucun au modèle — ni le
-     `web_search` intégré d'omp, qui cherche depuis le conteneur, ni
-     `read`, ni `bash`). La preuve est **côté proxy** : le compteur
-     d'exécutions de `web_search` par la route `/v1/chat/completions`
+   - pi et omp (`--mode json`, depuis le 15/10/2026) : un événement
+     `tool_execution_end` de l'outil MCP du proxy — `mcp__llmproxy__web_search`
+     pour pi, `mcp__llmproxy_web_search` pour omp (qui nomme
+     `mcp__<serveur>_<outil>`) —, sans erreur et portant au moins une URL ;
+     et **aucun autre outil exécuté** que ceux du serveur `llmproxy` (ni
+     le `web_search` intégré d'omp, qui cherche depuis le conteneur, ni
+     `read`, ni `bash` : `--tools` pour pi, `--no-tools` pour omp, ne les
+     laissent pas). En plus, côté proxy, le compteur d'exécutions de
+     `web_search` par la route `/mcp`
      ([Usage API des outils](../README.md#usage-des-outils-hébergés)), lu
-     avant et après l'appel, doit avoir avancé d'au moins 1. Le compteur
-     est celui du proxy entier — un autre client peut l'avancer. Illisible
-     (proxy sans cette route, clé refusée), rien ne prouve la recherche :
-     le scénario échoue et le libellé le dit. (Avant le 07/10/2026 : un
-     événement `tool_execution_end` de `proxy_web_search`, l'outil de
-     l'extension, dans la trace du client.)
+     avant et après l'appel, doit avoir avancé d'au moins 1 — il confirme
+     la trace, illisible il n'est pas exigé. (Du 07 au 15/10/2026 : les
+     outils d'office, sans trace côté client, prouvés par ce seul
+     compteur sur `/v1/chat/completions` ; avant le 07/10/2026 :
+     `proxy_web_search`, l'outil de l'extension.)
    - Codex (`--json`) : un élément `web_search` terminé dans la trace, et
      pour le scénario 7 un second dont l'action est `open_page`. Codex ne
      les construit que depuis les `web_search_call` du proxy. La trace ne
@@ -427,24 +438,20 @@ Ce que ces scénarios ne peuvent pas dire :
   traduction : le message d'échec dit laquelle des deux vérifications a
   manqué.
 - La lecture de page de Claude Code (`WebFetch`) n'est pas jouée ; celle
-  de pi et d'omp (`web_fetch` d'office) non plus : l'outil est présenté
-  au modèle, rien ne l'exige.
-- Les scénarios 6 de pi et d'omp retirent au client tous ses outils :
-  pi ou omp avec leurs outils **et** ceux du proxy — tour mixte, et pour
-  omp son `web_search` intégré à côté — n'est pas joué. Les scénarios 1 à
-  5 reçoivent bien les outils d'office en plus des leurs, mais rien n'y
-  vérifie ce que le modèle en fait.
+  de pi et d'omp (`web_fetch`, `web_grep` par MCP) non plus : l'outil est
+  offert au modèle, rien ne l'exige.
+- Les scénarios 6 de pi et d'omp retirent au client ses outils à lui :
+  pi ou omp avec leurs outils **et** ceux du proxy — et pour omp son
+  `web_search` intégré à côté — n'est pas joué.
 - La mémoire des échanges cachés (le tour suivant d'une conversation où
   le proxy a cherché) n'est pas jouée par ces bancs : une seule requête.
-- Le compteur du proxy dit qu'une recherche a été exécutée par
-  `/v1/chat/completions` pendant l'appel, pas par qui : sur un proxy que
-  d'autres utilisent au même moment, le scénario 6 de pi ou d'omp peut
-  passer sans que sa propre requête ait cherché — la trace du client ne
-  relie plus la recherche au scénario.
-- `--no-tools` a été lu dans `pi --help` (1.0.4) et `omp --help`
-  (18.6.3) le 07/10/2026, et joué ce jour-là avec pi 1.0.4 et omp
-  18.8.0 ; pas avec les versions validées à la main le 05/10/2026 (pi
-  0.87.1, omp 18.3.2).
+  Par MCP, pi et omp gardent eux-mêmes l'appel et son résultat.
+- Le compteur du proxy dit qu'une recherche a été exécutée par `/mcp`
+  pendant l'appel, pas par qui : il ne fait que confirmer la trace du
+  client, qui seule relie la recherche au scénario.
+- `--tools 'mcp__llmproxy__*'` (pi) est lu dans `docs/mcp.md` de pi 1.2.0 ;
+  que `--no-tools` d'omp garde les outils MCP, dans ses sources (18.11) —
+  les deux joués à la main le 15/10/2026 (pi 1.2.0, omp 18.11.0).
 - Le scénario 7 de Codex lit toujours `tools/llm-proxy-web.ts` de
   llmsetup, mais à un **commit donné** : le fichier y reste lisible une
   fois l'extension retirée de la branche, tant que ce commit existe dans

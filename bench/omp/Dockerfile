@@ -24,7 +24,8 @@
 #   LLM_PROXY_SHA256      curl -fsSL https://raw.githubusercontent.com/c4software/llmsetup/<commit>/tools/llm-proxy.ts | sha256sum
 # puis `docker compose build omp`. (L'autre extension, llm-proxy-web.ts —
 # recherche web et lecture de page —, était prise de même jusqu'au
-# 07/10/2026 : retirée, les outils web viennent du proxy, d'office.) Un sha256 qui ne correspond pas arrête la
+# 07/10/2026 : retirée ; les outils viennent désormais du serveur MCP du
+# proxy, voir entrypoint.sh.) Un sha256 qui ne correspond pas arrête la
 # construction en affichant celui du fichier reçu.
 # llm-proxy.ts a, à cette révision, l'adresse du proxy en dur : install.mjs
 # y remplace deux lignes pour qu'il lise LLM_PROXY_URL et LLM_PROXY_API_KEY

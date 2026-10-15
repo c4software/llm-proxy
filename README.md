@@ -784,14 +784,12 @@ trouvée par SearXNG :
 | pi 0.87.1 | `/v1/tools`, extension `llm-proxy-web.ts` | recherche ; lecture de page ; commandes `/web` et `/page` |
 | omp 18.3.2 | `/v1/tools`, extension `llm-proxy-web.ts` | recherche ; lecture de page ; commandes `/web` et `/page` |
 
-Depuis le 07/10/2026, pi et omp ne passent plus par l'extension
-`llm-proxy-web.ts` (`proxy_web_search`, `proxy_web_fetch`, commandes
-`/web` et `/page`), qui est retirée : ils reçoivent les outils d'office,
-par `[chat].always`, comme Open WebUI — voir
-[pi et omp](#pi-et-omp--les-outils-doffice). Les deux lignes du tableau
-disent ce qui a été joué le 05/10/2026, par l'ancien chemin ; le nouveau
-l'a été le 07/10/2026 par les bancs `bench/` (pi 1.0.4, omp 18.8.0 :
-6/6 chacun, recherche comprise).
+pi et omp ne passent plus par l'extension `llm-proxy-web.ts`
+(`proxy_web_search`, `proxy_web_fetch`, commandes `/web` et `/page`),
+retirée le 07/10/2026 ; ils ont reçu les outils d'office (`[chat].always`)
+jusqu'au 15/10/2026, et les prennent depuis par le serveur MCP du proxy —
+voir [pi et omp](#pi-et-omp--par-le-serveur-mcp). Les deux lignes du
+tableau disent ce qui a été joué le 05/10/2026, par l'ancien chemin.
 
 Ce jour-là SearXNG rendait 20 résultats, deux de ses moteurs étant
 refusés par leur source (Brave en limite de débit, DuckDuckGo en
@@ -1372,7 +1370,8 @@ Limites :
   sait pas reçoit `tools` quand même : selon le backend il les ignore, ou
   refuse la requête — son erreur est relayée telle quelle.
 - **Tous les clients de la route.** pi, omp, Hermes… reçoivent les outils
-  aussi : c'est voulu, voir [pi et omp](#pi-et-omp--les-outils-doffice).
+  aussi — et pi et omp, qui les prennent par MCP, les auraient alors deux
+  fois : voir [pi et omp](#pi-et-omp--par-le-serveur-mcp).
 - **Injection de prompt.** Le texte de pages web entre dans toutes les
   conversations, sans que le client l'ait demandé : voir
   [Ce qu'aucun garde-fou n'empêche](#ce-quaucun-garde-fou-nempêche).
@@ -1380,45 +1379,50 @@ Limites :
 Joué par les tests du dépôt seulement (`proxy/tests/test_chat_api.py`, backend
 simulé) ; pas encore contre un Open WebUI réel.
 
-### pi et omp : les outils d'office
+### pi et omp : par le serveur MCP
 
-pi et omp parlent `/v1/chat/completions` et ne déclarent pas d'outil
-hébergé. Depuis le 07/10/2026 ils les reçoivent comme Open WebUI, par
-`[chat].always` : rien à installer côté client, aucune extension.
+Depuis le 15/10/2026, pi et omp prennent les outils du proxy par son
+[serveur MCP](#serveur-mcp--mcp), comme des outils à eux. Côté client, un
+`mcp.json` — dans dotarchy (`config/pi/mcp.json`, installé par `setup.sh`
+et par `dotarchy-sync` de dev-box dans `~/.pi/agent/` et `~/.omp/agent/`) :
 
-    [chat]
-    hosted_tools = true
-    always = ["web_search", "web_fetch"]
+```json
+{ "mcpServers": { "llmproxy": {
+    "url": "http://llmproxy/mcp",
+    "headers": { "Authorization": "Bearer ${LLM_PROXY_API_KEY}" },
+    "exposure": "direct" } } }
+```
 
-Ce que cela change pour eux, par rapport à l'extension
-`llm-proxy-web.ts` du dépôt llmsetup, **retirée** (elle enregistrait
-`proxy_web_search` et `proxy_web_fetch` par l'appel direct, et les
-commandes `/web` et `/page`) :
+- **pi** exige `"exposure": "direct"` : son exposition par défaut
+  (`codemode`) ne déclare pas les outils au modèle. Il refuse aussi un
+  en-tête dont la variable n'est pas définie — `LLM_PROXY_API_KEY=unused`
+  suffit pour un proxy ouvert (dotarchy l'exporte par défaut). Il ne lit
+  pas les variables dans `url` : l'adresse s'écrit en clair. Outils :
+  `mcp__llmproxy__web_search`…
+- **omp** lit le même fichier (il ignore `exposure`). Outils :
+  `mcp__llmproxy_web_search`… (un seul `_` entre serveur et outil). Son
+  `web_search` intégré reste à côté : le désactiver côté omp pour que la
+  recherche soit celle du proxy.
 
-- **L'appel est caché.** Le proxy exécute la recherche dans sa boucle et
-  rend une réponse ordinaire : le client n'affiche ni l'appel ni son
-  résultat, et ne les a pas dans son historique. Le modèle les retrouve
-  au tour suivant par la
-  [mémoire des échanges cachés](#client-chatcompletions--déclarer-loutil)
-  — tant que l'historique n'est ni compacté ni tronqué, et que le proxy
-  n'a pas redémarré.
-- **Plus de commandes `/web` et `/page`.** Il n'y a plus d'outil côté
-  client à appeler à la main : on demande au modèle de chercher ou de
-  lire la page.
-- **Un outil du client garde son nom.** omp a un `web_search` intégré,
-  qui cherche depuis le poste. S'il l'envoie au modèle sous ce nom —
-  c'est celui de sa trace, pas vérifié sur le fil —, celui du proxy
-  n'est pas présenté (homonymie) et `web_fetch` l'est. Pour que la
-  recherche soit celle du proxy, désactiver l'outil intégré côté omp.
-- **Un tour mixte coûte un tour.** Si le modèle appelle dans le même tour
-  un outil du proxy et un outil du client (`bash`, `read`), le premier
-  appel décide et l'autre est réémis au tour suivant — voir
-  [Client chat/completions](#client-chatcompletions--déclarer-loutil).
+Pourquoi MCP plutôt que les [outils d'office](#open-webui--présenter-les-outils-doffice)
+(`[chat].always`), le chemin du 07 au 15/10/2026 : pour un agent, la
+boucle cachée du proxy masque le travail et le rend fragile.
 
-Les bancs `bench/pi` et `bench/omp` jouent leur recherche web par ce
-chemin depuis le 07/10/2026, et l'ont joué ce jour-là contre le proxy
-déployé : 6/6 chacun (pi 1.0.4, omp 18.8.0, `bigchuck/qwen3.8-flash-next`),
-voir `bench/README.md`.
+| | `[chat].always` (boucle cachée) | MCP |
+|---|---|---|
+| Config côté client | aucune | un `mcp.json` |
+| Appels visibles dans pi/omp | non : une réponse finale | oui, dans la trace et l'historique |
+| Ce que le modèle a lu, au tour suivant | réinséré par le proxy depuis sa mémoire en RAM ; perdu au redémarrage du proxy, ou si l'agent compacte | dans l'historique de l'agent |
+| Outil du proxy et outil local dans le même tour | un tour de plus | naturel, en parallèle au besoin |
+| Choix des outils | tous, pour tous les modèles | l'agent filtre (`exposure`, `--tools`) |
+
+Les deux ensemble présenteraient chaque outil deux fois : le déploiement
+a vidé `[chat].always`, qui reste pour une interface de chat qui ne
+déclare jamais d'outils (Open WebUI, mise de côté). Validé le 15/10/2026
+contre le proxy déployé, depuis le poste : pi 1.2.0 et omp 18.11.0 ont
+appelé `web_search` du proxy par MCP et rendu l'URL demandée ; les bancs
+`bench/pi` et `bench/omp` jouent ce chemin (scénario 6), pas encore
+rejoués en conteneur — voir `bench/README.md`.
 
 ### Appel direct : `/v1/tools`
 
@@ -1451,7 +1455,7 @@ sans modèle. Un `404` ou un corps refusé n'y laisse rien — l'outil n'a
 pas été appelé.
 
 C'était le chemin de l'extension pi / omp `llm-proxy-web.ts`, retirée le
-07/10/2026 (voir [pi et omp](#pi-et-omp--les-outils-doffice)). La route
+07/10/2026 (voir [pi et omp](#pi-et-omp--par-le-serveur-mcp)). La route
 reste, pour tout client ou script qui veut exécuter un outil lui-même.
 
 ### Serveur MCP : `/mcp`
@@ -1470,7 +1474,7 @@ un serveur MCP distant.
 |---|---|
 | Claude Code | `claude mcp add --transport http llmproxy http://llmproxy/mcp --header "Authorization: Bearer $LLM_PROXY_API_KEY"` |
 | Codex CLI | `~/.codex/config.toml` : `[mcp_servers.llmproxy]`, `url = "http://llmproxy/mcp"`, `bearer_token_env_var = "LLM_PROXY_API_KEY"` |
-| pi, omp | `~/.pi/agent/mcp.json`, `~/.omp/agent/mcp.json` ; pi exige `"exposure": "direct"` pour déclarer les outils au modèle. **Mais** ils reçoivent déjà les outils par `[chat].always` : les deux ensemble les présentent deux fois |
+| pi, omp | `~/.pi/agent/mcp.json`, `~/.omp/agent/mcp.json` ; pi exige `"exposure": "direct"` pour déclarer les outils au modèle. Voir [pi et omp](#pi-et-omp--par-le-serveur-mcp) |
 
 Ce que le serveur sert : `initialize` (version négociée parmi
 2025-11-25, 2025-06-18, 2025-03-26 et 2024-11-05), `ping`, `tools/list`
@@ -2817,9 +2821,9 @@ local : `"model":"bigchuck/qwen3-32b"` part vers llama.cpp (503
   [Codex CLI](#codex-cli).
 - Hermes : retirer `extra_body.tool_choice` du provider dans
   `~/.hermes/config.yaml`, pointer `api` sur le proxy.
-- pi et omp, outils web : rien côté client — `[chat].always` côté
-  proxy ; l'extension `llm-proxy-web.ts` n'a plus lieu d'être. Voir
-  [pi et omp](#pi-et-omp--les-outils-doffice).
+- pi et omp, outils du proxy : un `mcp.json` vers son serveur MCP
+  (`/mcp`), `"exposure": "direct"` pour pi. Voir
+  [pi et omp](#pi-et-omp--par-le-serveur-mcp).
 - Tout client `/v1/chat/completions`, outils web :
   `{"type": "web_search"}` dans `tools` si `[chat].hosted_tools` — le
   proxy boucle, mais le client ne garde pas ce que le modèle a lu ; voir

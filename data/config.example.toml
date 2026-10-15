@@ -143,7 +143,9 @@ reasoning_as_summary = true
 hosted_tools = true
 # Outils présentés D'OFFICE à TOUTE requête /v1/chat/completions, sans
 # déclaration : pour une interface de chat (Open WebUI), qui n'en fera
-# jamais. Des NOMS d'outils hébergés — always = ["web_search",
+# jamais. Pas pour un agent (pi, omp) : il les prend mieux par le
+# serveur MCP ([mcp_server]) — appels dans sa trace, rien de caché —, et
+# les deux ensemble lui présenteraient chaque outil deux fois. Des NOMS d'outils hébergés — always = ["web_search",
 # "web_fetch"] — présentés à la suite des outils du client ; la requête
 # est ensuite traitée comme si elle les avait déclarés (boucle, réponse
 # unique, annotations, mémoire). Vide ou absent = rien d'office (le

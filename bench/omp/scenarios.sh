@@ -11,18 +11,17 @@
 # coupe la découverte, -e charge ce qu'on nomme).
 #
 # Scénario 6 : la recherche web HÉBERGÉE par le proxy (README principal,
-# « Outils hébergés »). omp parle chat/completions et ne déclare rien : les
-# outils lui viennent D'OFFICE, par [chat].always du proxy, qui les présente
-# au modèle, les exécute dans sa boucle et rend UNE réponse — omp n'en voit
-# ni l'appel ni le résultat. (Jusqu'au 07/10/2026 l'outil venait d'une
-# extension, llm-proxy-web.ts, retirée depuis.) omp a aussi un `web_search`
+# « Serveur MCP »). L'outil vient du serveur MCP du proxy (POST /mcp),
+# déclaré dans le dossier d'agent $PI_CODING_AGENT_DIR-mcp qu'écrit
+# entrypoint.sh : omp l'appelle comme un de ses outils, l'appel et le
+# résultat sont dans sa trace. (Jusqu'au 07/10/2026 : l'extension
+# llm-proxy-web.ts ; jusqu'au 15/10/2026 : les outils d'office du proxy,
+# [chat].always.) omp a aussi un `web_search`
 # INTÉGRÉ, qui cherche depuis le conteneur (DuckDuckGo et d'autres, sans
 # clé) : le scénario doit donc prouver que c'est le proxy qui a cherché —
 # voir `verdict`. Il est SAUTÉ (SKIP, ni PASS ni FAIL) quand le proxy visé
-# n'héberge pas web_search ou ne le présente pas d'office — lu dans
-# /healthz. Avec [chat].always, les scénarios 1 à 5 reçoivent eux aussi ces
-# outils, à la suite de ceux d'omp — sauf celui dont omp enverrait déjà le
-# nom (son propre `web_search`, s'il le déclare ainsi : pas vérifié).
+# n'héberge pas web_search ou n'a pas son serveur MCP — lu dans /healthz.
+# Les scénarios 1 à 5 tournent sans serveur MCP.
 set -u
 cd /work
 fails=0
@@ -32,23 +31,21 @@ fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails + 1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$1"; skips=$((skips + 1)); }
 
 # Ce que le proxy héberge et présente, lu dans /healthz — exempté de clé :
-# `hosted`, ses outils actifs (« web_search web_fetch ») ; `offered`, ceux
-# qu'il présente D'OFFICE à toute requête /v1/chat/completions
-# ([chat].always, vide si [chat].hosted_tools est faux). Vides si rien n'est
+# `hosted`, ses outils actifs (« web_search web_fetch ») ; `mcp`, « true »
+# si son serveur MCP est actif. Vides si rien n'est
 # activé, si le proxy est plus ancien que ces réglages ou s'il ne répond pas.
 health=$(node -e '
   fetch(process.argv[1] + "/healthz", {signal: AbortSignal.timeout(10000)})
     .then(r => r.json())
     .then(j => process.stdout.write(((j.tools || {}).enabled || []).join(" ") + "|"
-      + ((j.chat || {}).hosted_tools ? (j.chat.always || []) : []).join(" ")))
+      + String(!!(j.mcp_server || {}).enabled)))
     .catch(() => {});' "$PROXY_URL")
 hosted=${health%%|*}
-offered=${health#*|}
+mcp=${health#*|}
 hosts() { case " $hosted " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
-offers() { case " $offered " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-# Le compteur du proxy : exécutions de web_search arrivées par
-# /v1/chat/completions, lues sur son Usage API des outils (README principal,
+# Le compteur du proxy : exécutions de web_search arrivées par son serveur
+# MCP (route /mcp), lues sur son Usage API des outils (README principal,
 # « Usage des outils hébergés »). Imprime le nombre, ou rien si la route ne
 # répond pas (proxy antérieur au 05/10/2026, clé refusée). $1 : le nombre à
 # atteindre — le proxy écrit ses lignes hors de la requête, on relit donc
@@ -68,7 +65,7 @@ searches() { node -e '
     .then(j => {
       if (j.object !== "page") throw new Error("forme inattendue");
       return (j.data || []).flatMap(b => b.results || [])
-        .filter(r => r.endpoint === "/v1/chat/completions" && r.tool === "web_search")
+        .filter(r => r.endpoint === "/mcp" && r.tool === "web_search")
         .reduce((n, r) => n + (r.num_requests || 0), 0);
     });
   (async () => {
@@ -84,35 +81,43 @@ searches() { node -e '
 # événement par ligne) lue sur l'entrée standard. $1 : le texte que la
 # réponse doit contenir (casse ignorée) ; $2 et $3 : le compteur du proxy
 # avant et après (vides s'il n'est pas lisible). Imprime « OK … » ou « KO … ».
-# La recherche est faite PAR LE PROXY, dans sa boucle : le client n'en voit
-# rien — ni appel, ni résultat, c'est le principe des outils d'office. Sa
-# trace ne peut donc prouver qu'une chose, et la réponse rien (un modèle
-# l'écrit de mémoire) :
-#   1. côté client, AUCUN outil exécuté (`tool_execution_start`) : ce n'est
-#      pas omp qui a cherché — --no-tools ne lui en laisse d'ailleurs aucun ;
-#   2. côté proxy, LA preuve : son compteur d'exécutions de web_search par
-#      /v1/chat/completions a avancé pendant l'appel. « Au moins 1 » : le
-#      compteur est celui du proxy entier, un autre client peut l'avancer
-#      aussi — sur un proxy partagé, le scénario peut donc passer à tort.
-#      Illisible, rien ne prouve la recherche : échec, et le libellé le dit.
-# La réponse est le texte du dernier message `assistant` ; le message `user`
-# (le prompt) est écarté.
+# La réponse ne prouve rien (un modèle l'écrit de mémoire). Les preuves :
+#   1. dans la trace, un `tool_execution_end` de `mcp__llmproxy_web_search`
+#      (omp nomme `mcp__<serveur>_<outil>`), sans erreur, dont le résultat
+#      porte au moins une URL ;
+#   2. aucun outil exécuté qui ne soit un outil MCP du proxy : ni le
+#      `web_search` intégré d'omp, ni `read <url>` — --no-tools les retire ;
+#   3. côté proxy, son compteur d'exécutions de web_search par /mcp a avancé
+#      pendant l'appel (« au moins 1 » : un autre client peut l'avancer
+#      aussi, il confirme la trace sans la remplacer). Illisible, il n'est
+#      pas exigé (le libellé le dit).
+# La réponse est le texte du dernier message `assistant`.
 verdict() { node -e '
   const [needle, before, after] = process.argv.slice(1);
   const events = require("fs").readFileSync(0, "utf8").split("\n")
     .flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
-  const ran = [...new Set(events.filter(e => e.type === "tool_execution_start").map(e => String(e.toolName)))];
+  const TOOL = "mcp__llmproxy_web_search";
+  const starts = events.filter(e => e.type === "tool_execution_start");
+  const foreign = [...new Set(starts.map(e => String(e.toolName))
+    .filter(n => !n.startsWith("mcp__llmproxy_")))];
+  const calls = events.filter(e => e.type === "tool_execution_end" && e.toolName === TOOL);
+  const text = r => JSON.stringify((r || {}).content || "");
+  const good = calls.filter(e => e.isError !== true && text(e.result).includes("http"));
+  const query = (starts.filter(e => e.toolName === TOOL)
+    .map(e => (e.args || {}).query || "").pop() || "?").slice(0, 60);
   const last = events.filter(e => e.type === "message_end" && (e.message || {}).role === "assistant")
     .map(e => e.message).pop() || {};
   const answer = (Array.isArray(last.content) ? last.content : [])
     .filter(b => b.type === "text").map(b => b.text || "").join(" ").replace(/\s+/g, " ").trim();
   const counted = before !== "" && after !== "" ? Number(after) - Number(before) : null;
-  const seen = (counted === null ? "compteur du proxy illisible" : "compteur du proxy /v1/chat/completions : +" + counted) + " — "
+  const seen = good.length + " recherche(s) aboutie(s) sur " + calls.length + " (" + query + "), "
+    + (counted === null ? "compteur du proxy illisible" : "compteur du proxy /mcp : +" + counted) + " — "
     + (answer.slice(0, 200) || "pas de réponse" + (last.errorMessage ? " : " + String(last.errorMessage).slice(0, 200) : ""));
   const ko = !events.length ? "aucun événement JSON rendu par omp"
-    : ran.length ? "un outil du client a été exécuté (" + ran.join(", ") + ") malgré --no-tools : " + seen
-    : counted === null ? "rien ne prouve que le proxy a cherché (GET /v1/organization/usage/tools ne répond pas, ou refuse la clé) : " + seen
-    : counted < 1 ? "aucune exécution de web_search comptée par le proxy sur /v1/chat/completions pendant cet appel : " + seen
+    : foreign.length ? "un outil autre que ceux du proxy a été exécuté (" + foreign.join(", ") + ") : " + seen
+    : !calls.length ? "aucun appel à " + TOOL + " dans la trace (serveur MCP non joint, ou outil non appelé) : " + seen
+    : !good.length ? TOOL + " appelé mais sans résultat (" + text(calls[calls.length - 1].result).slice(0, 160) + ") : " + seen
+    : counted !== null && counted < 1 ? "aucune exécution de web_search par /mcp comptée par le proxy pendant cet appel : " + seen
     : !answer.toLowerCase().includes(needle.toLowerCase()) ? "réponse sans « " + needle + " » : " + seen
     : "";
   process.stdout.write(ko ? "KO " + ko : "OK " + seen);' "$@"; }
@@ -163,11 +168,13 @@ for MODEL in $MODELS; do
   # --no-tools (« Disable all built-in tools », lu dans `omp --help`,
   # 18.6.3) ne laisse au modèle AUCUN outil d'omp : ni son `web_search`, ni
   # `read` (qui lit une URL), ni `bash` (un curl partirait du conteneur, pas
-  # du proxy). La requête part donc sans `tools`, et ceux que le modèle
-  # reçoit sont ceux du proxy. stderr va dans un autre fichier, hors du
-  # JSONL : `diag` en rend la fin sur un échec.
+  # du proxy). Les outils MCP, eux, restent (lu dans les sources d'omp
+  # 18.11 : --no-tools vide la liste des intégrés, pas celle des outils
+  # d'extension et MCP) — le dossier d'agent `-mcp` déclare le serveur du
+  # proxy. stderr va dans un autre fichier, hors du JSONL : `diag` en rend
+  # la fin sur un échec.
   web() {
-    agent "$1" --mode json --no-tools \
+    PI_CODING_AGENT_DIR="$PI_CODING_AGENT_DIR-mcp" agent "$1" --mode json --no-tools \
       </dev/null >/tmp/omp-web.jsonl 2>/tmp/omp-web.err
   }
   diag() { [ -s /tmp/omp-web.err ] && printf ' — stderr : %s' "$(tail -n 3 /tmp/omp-web.err | tr '\n' ' ')"; return 0; }
@@ -213,15 +220,15 @@ JS
   elif node slugify.test.js >/dev/null 2>&1; then pass "slugify.js corrigé — $(echo "$out" | tail -n 1)"; else fail "$out"; fi
   cd /work
 
-  echo "6. Recherche web hébergée (outils d'office du proxy, [chat].always → boucle de /v1/chat/completions ; aucun outil côté omp)"
+  echo "6. Recherche web hébergée (serveur MCP du proxy → POST /mcp, tools/call web_search ; pas le web_search intégré d'omp)"
   # La réponse attendue est une URL que le nom du dépôt détermine : elle ne
   # dépend ni de l'actualité ni de la formulation (on ne cherche que
   # « github.com/ggml-org/llama.cpp », que toute bonne réponse contient,
   # /releases, /releases/latest ou lien Markdown compris).
   if ! hosts web_search; then
     skip "web_search n'est pas hébergé par ce proxy (/healthz : tools.enabled = [${hosted}])"
-  elif ! offers web_search; then
-    skip "web_search n'est pas présenté d'office par ce proxy (/healthz : chat.always = [${offered}] ; [chat] hosted_tools = true, always = [\"web_search\", \"web_fetch\"])"
+  elif [ "$mcp" != "true" ]; then
+    skip "le serveur MCP du proxy est inactif (/healthz : mcp_server.enabled ; [mcp_server] enabled = true)"
   else
     before=$(searches 0)
     web "Trouve par une recherche web la page des releases du dépôt GitHub ggml-org/llama.cpp et réponds uniquement par son URL."

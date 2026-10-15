@@ -12,4 +12,14 @@ for m in $MODELS; do
 done
 sed -e "s|\${PROXY_URL}|${PROXY_URL}|g" -e "s|\${MODELS_JSON}|${entries}|g" \
     /work/models.json.tpl > "$PI_CODING_AGENT_DIR/models.json"
+# Le dossier d'agent du scénario 6 : la même configuration, plus le serveur
+# MCP du proxy (exposure direct : ses outils déclarés au modèle, pas
+# seulement joignables par codemode). L'URL est écrite ici — pi ne lit les
+# variables que dans `headers` et `env` ; la clé reste "${PROXY_API_KEY}",
+# que pi lit dans l'environnement (et refuse si elle n'y est pas).
+mkdir -p "$PI_CODING_AGENT_DIR-mcp"
+cp "$PI_CODING_AGENT_DIR/models.json" "$PI_CODING_AGENT_DIR-mcp/models.json"
+printf '{ "mcpServers": { "llmproxy": {\n    "url": "%s/mcp",\n    "headers": { "Authorization": "Bearer ${PROXY_API_KEY}" },\n    "exposure": "direct" } } }\n' \
+    "$PROXY_URL" > "$PI_CODING_AGENT_DIR-mcp/mcp.json"
+export PROXY_API_KEY="${PROXY_API_KEY:-unused}"
 exec "$@"

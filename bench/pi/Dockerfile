@@ -7,9 +7,11 @@
 # main le 05/10/2026 :
 #   docker compose build --build-arg PI_VERSION=0.87.1 pi
 #
-# Aucune extension : les outils web viennent du proxy, d'office
-# ([chat].always). L'extension llm-proxy-web.ts de llmsetup, que cette image
-# téléchargeait jusqu'au 07/10/2026, a été retirée.
+# Aucune extension : les outils du proxy viennent de son serveur MCP
+# (POST /mcp), que pi joint nativement — entrypoint.sh écrit le mcp.json
+# dans un SECOND dossier d'agent, $PI_CODING_AGENT_DIR-mcp, que seul le
+# scénario 6 utilise. (Jusqu'au 07/10/2026 : l'extension llm-proxy-web.ts ;
+# jusqu'au 15/10/2026 : les outils d'office, [chat].always.)
 FROM node:22-slim
 ARG PI_VERSION=latest
 RUN npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@${PI_VERSION}" \
