@@ -33,9 +33,9 @@ sert ses outils par son serveur MCP (`POST /mcp`, `[mcp_server]`) et
 outils **comme les leurs**, appel et résultat dans leur trace. Le
 scénario 6 joue ce chemin, dans un second dossier d'agent qui déclare le
 serveur (`$PI_CODING_AGENT_DIR-mcp`, écrit par `entrypoint.sh`) ; les
-scénarios 1 à 5 tournent sans serveur MCP. Les bancs en conteneur n'ont
-pas encore été rejoués sous cette forme ; le même chemin a été joué à la
-main le jour même, depuis le poste, contre le proxy déployé (`352b088`) :
+scénarios 1 à 5 tournent sans serveur MCP. Rejoués en conteneur le jour
+même (premier tableau ci-dessous) ; le même chemin avait d'abord été joué
+à la main, depuis le poste, contre le proxy déployé (`352b088`) :
 pi 1.2.0 (`--tools 'mcp__llmproxy__*'`) et omp 18.11.0 (`--no-tools`),
 `albert/deepseek-v4-flash-0731` — chacun a appelé `web_search` du proxy
 (`mcp__llmproxy__web_search`, `mcp__llmproxy_web_search`) et rendu l'URL
@@ -51,6 +51,21 @@ ci-dessous) ; les 6/6 du 05/10/2026, plus bas, sont ceux de l'ancien
 scénario 6.
 
 ## Derniers résultats
+
+Run du 15 octobre 2026, proxy `536193d` déployé (`[mcp_server]` actif,
+`[chat].always` vide), pi 1.3.0, omp 18.11.1, backend gufo `silentchuck`,
+clients en conteneurs sur le poste (`PROXY_URL=http://llmproxy`), les
+deux bancs joués à la suite.
+
+| Modèle | pi (6 scénarios) | omp (6 scénarios) |
+|---|---|---|
+| `silentchuck/qwen3.8-flash-next` | **6/6** | **6/6** |
+
+Premier passage du scénario 6 par le serveur MCP : chaque client a appelé
+`web_search` du proxy comme un de ses outils (`mcp__llmproxy__web_search`,
+`mcp__llmproxy_web_search`), une recherche aboutie dans sa trace, le
+compteur du proxy sur `/mcp` avancé de 1, et l'URL des releases rendue.
+Les scénarios 1 à 5 tournent désormais sans aucun outil du proxy.
 
 Run du 7 octobre 2026, proxy `633e70f` déployé (`[chat].always =
 web_search, web_fetch, ocr, transcribe, code_execution`), pi 1.0.4, omp

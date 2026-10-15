@@ -1421,8 +1421,8 @@ a vidé `[chat].always`, qui reste pour une interface de chat qui ne
 déclare jamais d'outils (Open WebUI, mise de côté). Validé le 15/10/2026
 contre le proxy déployé, depuis le poste : pi 1.2.0 et omp 18.11.0 ont
 appelé `web_search` du proxy par MCP et rendu l'URL demandée ; les bancs
-`bench/pi` et `bench/omp` jouent ce chemin (scénario 6), pas encore
-rejoués en conteneur — voir `bench/README.md`.
+`bench/pi` et `bench/omp` jouent ce chemin (scénario 6) et passent 6/6
+chacun le même jour (pi 1.3.0, omp 18.11.1) — voir `bench/README.md`.
 
 ### Appel direct : `/v1/tools`
 
