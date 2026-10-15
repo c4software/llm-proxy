@@ -124,7 +124,9 @@ class Call:
     `model`    : le modèle PRÉFIXÉ de la conversation, «» pour l'appel
                  direct.
     `client`   : le condensé de la clé du client (tools.owner), «» pour
-                 un proxy ouvert — jamais la clé.
+                 un proxy ouvert — jamais la clé. STABLE d'un démarrage
+                 à l'autre : un outil peut y attacher ce qu'il garde
+                 (la mémoire persistante, tools/memory.py).
     `session`  : l'identifiant de la CONVERSATION, fourni par la surface
                  — de quoi retrouver un état d'un appel au suivant (le
                  bac de code_execution). Seule /v1/chat/completions en a

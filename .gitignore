@@ -7,6 +7,11 @@ data/config.toml
 data/stats.db
 data/stats.db-wal
 data/stats.db-shm
+# Secret des condensés de clés et mémoire persistante des clients.
+data/client.secret
+data/memory.db
+data/memory.db-wal
+data/memory.db-shm
 .venv/
 .pytest_cache/
 bench/.env

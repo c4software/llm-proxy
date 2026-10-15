@@ -148,6 +148,16 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
   déclarables sur `/v1/chat/completions` (`{"type": "mcp"}`) et
   exécutables par `POST /v1/tools/<nom>`. Voir
   [docs/outils.md](docs/outils.md#serveurs-mcp).
+- **Serveur MCP** — si `[mcp_server].enabled`, l'inverse : `POST /mcp`
+  offre les outils hébergés actifs (ceux de `/v1/tools`) à tout client
+  MCP, transport streamable HTTP, sans état — de quoi les donner à la
+  boucle principale de Claude Code, qui n'en a aucun autrement. Voir
+  [Serveur MCP](#serveur-mcp--mcp).
+- **Mémoire persistante** — si `[tools.memory].enabled`, l'outil `memory`
+  (commandes de l'outil memory d'Anthropic) donne au modèle des fichiers
+  texte sous `/memories` qui survivent aux conversations, **cloisonnés
+  par clé du proxy**, visibles et modifiables dans le tableau de bord.
+  Voir [Mémoire persistante](#mémoire-persistante-memory).
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
 - **Observabilité** — `GET /healthz` expose l'état de chaque backend
@@ -192,7 +202,11 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/tools/webcache.py` | Cache web : pages lues et recherches gardées quelques minutes, borné, en mémoire vive |
 | `proxy/llm_proxy/tools/html_text.py` | HTML → texte lisible par un modèle, bibliothèque standard seule (titres, paragraphes, listes, liens, blocs de code) |
 | `proxy/llm_proxy/tools/web_search.py` | L'outil `web_search` : requête JSON à SearXNG, résultats numérotés (titre, date, URL, extrait) — en texte pour le modèle, en sources pour les annotations et les blocs d'un client Anthropic ; filtre par domaines |
-| `proxy/llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page (ou du texte d'un PDF) par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées |
+| `proxy/llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page (ou du texte d'un PDF) par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées ; la lecture (`load`) et le texte d'une page (`page_text`) servent aussi à `web_grep` |
+| `proxy/llm_proxy/tools/web_grep.py` | L'outil `web_grep` : expression régulière cherchée dans une page lue par `web_fetch.load`, lignes trouvées avec contexte et offset ; bibliothèque `regex`, pour son délai |
+| `proxy/llm_proxy/tools/memory.py` | L'outil `memory` : `view`, `create`, `str_replace`, `insert`, `delete`, `rename` sur la mémoire persistante du client qui appelle |
+| `proxy/llm_proxy/memories.py` | Le magasin de la mémoire persistante (SQLite `data/memory.db`) : fichiers par client (`call.client`), chemins sous `/memories`, bornes par client |
+| `proxy/llm_proxy/mcp_server.py` | Le serveur MCP (`POST /mcp`) : JSON-RPC sans état — `initialize`, `ping`, `tools/list`, `tools/call` — sur les outils hébergés actifs |
 | `proxy/llm_proxy/tools/mcp.py` | Client MCP (Streamable HTTP, sans SDK) : découverte des outils des serveurs de la configuration, chacun enregistré comme outil hébergé ; révision 2026-07-28 sans état et révisions à `initialize`/session ; résultats ramenés à du texte |
 | `proxy/llm_proxy/tools/ocr.py` | L'outil `ocr` : texte d'une image ou d'un PDF scanné (images embarquées dans ses pages) par son URL, téléchargée sous le garde-fou, lue par un modèle de vision d'un backend — limiteur de quotas et statistiques compris |
 | `proxy/llm_proxy/tools/transcribe.py` | L'outil `transcribe` : téléchargement d'un fichier audio par son URL sous le garde-fou, transcription par le modèle d'un backend (`/v1/audio/transcriptions`), texte découpé et gardé en cache |
@@ -207,7 +221,7 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
 | `proxy/tests/` | Tests du proxy : traducteurs, outils, stats (`cd proxy && pytest`, `requirements-dev.txt`, `pytest.ini`) — sur des octets et une base temporaire, sans réseau |
 | `bench/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi, Codex CLI, omp et un client HTTP nu, scénarios PASS/FAIL — voir `bench/README.md` |
-| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `dashboard.css`, `vue.global.prod.js`) |
+| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `memory.js` — la section Mémoire, un composant à part —, `dashboard.css`, `vue.global.prod.js`) |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 | `services/searxng/settings.yml` | Réglages de l'instance SearXNG du compose : les défauts de SearXNG, plus le format JSON. Monté en lecture seule dans le service `searxng` |
 
@@ -721,7 +735,7 @@ exécuter lui-même : avec `{"type": "web_search"}`, Codex CLI compte
 qu'OpenAI fera la recherche côté serveur. Derrière ce proxy il n'y a pas
 d'OpenAI — sans rien faire, l'outil est retiré et le modèle n'a pas de
 recherche web. Un outil **hébergé** est un outil que le proxy exécute
-lui-même, à la place d'OpenAI. Il y en a deux, activés ensemble par le
+lui-même, à la place d'OpenAI. Il y en a trois, activés ensemble par le
 `web_search` du client. Un client de l'API Messages d'Anthropic est dans
 le même cas avec ses outils serveur `web_search_20250305` et
 `web_fetch_20250910` ; pour lui, chaque fonction n'est présentée que si
@@ -733,6 +747,7 @@ et [L'outil serveur `web_fetch`](#loutil-serveur-web_fetch).
 |---|---|---|
 | `web_search` (`query`, `recency`, `limit`) | Une recherche ; rend une liste numérotée — titre, date, URL, extrait de 240 caractères | Une instance **SearXNG** auto-hébergée (métamoteur libre, API JSON, sans clé), `GET <searxng_url>/search?q=…&format=json` |
 | `web_fetch` (`url`, `offset`) | Lit une page ; HTML converti en texte, JSON et texte tels quels, texte extrait d'un PDF (pas d'OCR : un scan est refusé, un PDF chiffré aussi), tout autre type refusé | Une requête HTTP du proxy, sous le garde-fou réseau |
+| `web_grep` (`url`, `pattern`, `case_sensitive`, `context`, `max_matches`) | Cherche une expression régulière dans une page (PDF compris) et ne rend que les lignes trouvées, avec un peu de contexte et l'**offset** de chaque ligne, à passer à `web_fetch` pour lire la suite — sur une longue documentation, quelques milliers de caractères au lieu de dix morceaux. Action `find_in_page` de l'élément `web_search_call`. Pas sur `/v1/messages` (Anthropic n'a pas d'outil serveur équivalent) | La lecture de `web_fetch` (même garde-fou, même cache web), puis la bibliothèque `regex`, coupée à `regex_timeout` |
 
 Le schéma de `web_search` et la forme de sa sortie sont repris de l'outil
 `web_search` d'[oh-my-pi](https://github.com/can1357/oh-my-pi).
@@ -748,6 +763,7 @@ s'appellent par [`/v1/tools`](#appel-direct--v1tools) :
 | `ocr` (`url`, `pages`) | Lit le texte d'une image (PNG, JPEG, GIF, WebP) ou d'un PDF scanné — les images embarquées dans ses pages, 4 pages par appel ; le recours de `web_fetch`, dont la description y renvoie le modèle | Téléchargement par le proxy sous le garde-fou réseau, puis une requête chat/completions par page au modèle de vision de `[tools.ocr].model` |
 | `transcribe` (`url`, `language`, `offset`) | Transcrit un fichier audio (mp3, wav, flac, ogg, m4a, aac, webm, amr, mp4 — ce que le modèle de transcription ne lit pas tel quel, `formats`, est converti en WAV par ffmpeg, ou refusé sans lui ; 25 Mo au plus) et rend le texte, sans horodatage, avec la langue et la durée si le backend les donne ; reconnu à ses premiers octets ou à son type, refusé sinon | Téléchargement par le proxy sous le garde-fou réseau, puis `POST /v1/audio/transcriptions` au modèle de `[tools.transcribe].model` |
 | `code_execution` (`language`, `code`, `files`) | Exécute un programme (Python, bash, JavaScript, ou C, C++, Go, Rust compilés puis exécutés) dans un bac à sable sans réseau ; rend le code de sortie, la sortie, et remet au client les fichiers produits. `files` : des URL que le proxy télécharge (garde-fou `[tools.net]`) et dépose dans le bac avant le programme. Les fichiers du bac sont gardés d'un appel au suivant dans une conversation. Voir [Exécution de code](#exécution-de-code) | `POST /v1/execute` au service `executor` du compose (podman sans root) |
+| `memory` (`command`, `path`…) | Mémoire **persistante** : des fichiers texte sous `/memories` que le modèle consulte et tient à jour d'une conversation à l'autre — commandes `view`, `create`, `str_replace`, `insert`, `delete`, `rename`. Cloisonnée par clé du proxy. Voir [Mémoire persistante](#mémoire-persistante-memory) | SQLite (`data/memory.db`) |
 | `image_generation` (`prompt`, `size`) | Génère une image depuis une description et la remet au client (une image en markdown, ajoutée par le proxy à la fin de la réponse) ; le modèle n'en reçoit que le nom, le type et les dimensions. 2 images par réponse au plus. Avec `edits`, retouche aussi une image donnée par `image_url`. Voir [Génération d'images](#génération-dimages) | `POST /v1/images/generations` au modèle de `[tools.image_generation].model` |
 
 Ce qu'est un outil pour le code du proxy — son contrat, son prompt (ce
@@ -1438,6 +1454,39 @@ C'était le chemin de l'extension pi / omp `llm-proxy-web.ts`, retirée le
 07/10/2026 (voir [pi et omp](#pi-et-omp--les-outils-doffice)). La route
 reste, pour tout client ou script qui veut exécuter un outil lui-même.
 
+### Serveur MCP : `/mcp`
+
+Les outils de `/v1/tools`, au [Model Context
+Protocol](https://modelcontextprotocol.io) : transport « streamable
+HTTP », une seule route, `POST /mcp` (`[mcp_server].enabled`). C'est
+l'inverse de [`[tools.mcp]`](docs/outils.md#serveurs-mcp), où le proxy
+est client de serveurs MCP — dont il relaie d'ailleurs ici les outils.
+Le cas visé : la **boucle principale de Claude Code**, qui ne reçoit
+aucun outil du proxy autrement (seule la sous-requête de son `WebSearch`
+passe par l'outil serveur `web_search`), et tout agent qui sait joindre
+un serveur MCP distant.
+
+| Client | Déclaration |
+|---|---|
+| Claude Code | `claude mcp add --transport http llmproxy http://llmproxy/mcp --header "Authorization: Bearer $LLM_PROXY_API_KEY"` |
+| Codex CLI | `~/.codex/config.toml` : `[mcp_servers.llmproxy]`, `url = "http://llmproxy/mcp"`, `bearer_token_env_var = "LLM_PROXY_API_KEY"` |
+| pi, omp | `~/.pi/agent/mcp.json`, `~/.omp/agent/mcp.json` ; pi exige `"exposure": "direct"` pour déclarer les outils au modèle. **Mais** ils reçoivent déjà les outils par `[chat].always` : les deux ensemble les présentent deux fois |
+
+Ce que le serveur sert : `initialize` (version négociée parmi
+2025-11-25, 2025-06-18, 2025-03-26 et 2024-11-05), `ping`, `tools/list`
+(par `Tool.spec`, comme les surfaces) et `tools/call` (par `Hosted.run`,
+comme `/v1/tools`) ; une notification reçoit `202` sans corps, toute
+autre méthode une erreur JSON-RPC `-32601`. **Sans état** : pas de
+`Mcp-Session-Id`, pas de flux serveur (`GET /mcp` → `405`), toujours une
+réponse JSON. Un échec de l'outil est un résultat `isError: true` portant
+son texte `Error: …` ; les fichiers produits (`code_execution`,
+`image_generation`) arrivent en `resource_link` vers `/v1/files/…`.
+L'en-tête `Origin` est contrôlé (celui du proxy, ou
+`[mcp_server].allowed_origins`, sinon `403`). L'authentification est celle
+de tout le proxy, et la clé y dit qui appelle (`call.client`). Chaque
+exécution laisse sa ligne dans l'[usage des outils](#usage-des-outils-hébergés),
+route `/mcp`, sans modèle.
+
 ### Exécution de code
 
 `code_execution` fait tourner un programme écrit par le modèle et lui en
@@ -2090,6 +2139,47 @@ en donne l'état (`tools.web_cache` : entrées, octets, succès et échecs).
 À ne pas confondre avec les mémoires de conversation ci-dessous, qui ne
 gardent pas le web mais ce qu'un modèle a lu dans une conversation.
 
+### Mémoire persistante (`memory`)
+
+Une mémoire **qui survit aux conversations et aux redémarrages**, pour le
+modèle : des fichiers texte sous `/memories`, que l'outil `memory` lit et
+écrit. Ses commandes et arguments sont ceux de l'outil memory
+d'Anthropic — les modèles Claude y sont entraînés, les autres suivent la
+description :
+
+| Commande | Arguments | Effet |
+|---|---|---|
+| `view` | `path`, `view_range` | un répertoire : ses fichiers (taille, date) et l'occupation ; un fichier : son contenu, lignes numérotées |
+| `create` | `path`, `file_text` | crée ou remplace un fichier |
+| `str_replace` | `path`, `old_str`, `new_str` | remplace une occurrence **unique** |
+| `insert` | `path`, `insert_line`, `insert_text` | insère après la ligne N (0 = en tête) |
+| `delete` | `path` | un fichier, ou un répertoire entier |
+| `rename` | `old_path`, `new_path` | renomme ou déplace |
+
+**Cloisonnée par clé.** Chaque fichier appartient à la clé du proxy qui
+l'a écrit (`call.client`, le condensé de `tools.owner`), et ne se relit
+qu'avec elle — le modèle ne choisit pas le client. La clé n'est jamais
+écrite ; le condensé est stable d'un démarrage à l'autre, son secret
+étant gardé dans `data/client.secret`. Changer une clé, c'est changer de
+mémoire. **Proxy ouvert** (`api_keys` vide) : une seule mémoire, commune.
+Bornes par clé (fichiers, taille d'un fichier, taille totale) ; au-delà,
+l'écriture est refusée et le modèle invité à faire de la place. Tout `..`
+est refusé dans un chemin.
+
+Sans liaison de protocole : présentée sur `/v1/chat/completions`
+(déclarée `{"type": "memory"}`, ou d'office par `[chat].always`), par
+`/v1/tools` et par le [serveur MCP](#serveur-mcp--mcp). L'outil memory
+d'Anthropic, lui, est exécuté par le client : rien à remplacer sur
+`/v1/messages`. Dans le **tableau de bord**, la section *Mémoire* montre
+les fichiers de la clé connectée (celle du cookie de `/ui?key=…`) :
+lecture, édition, renommage, suppression — jamais la mémoire d'une autre
+clé. Routes, sous le même cookie : `GET /ui/memory`, `GET|PUT|DELETE
+/ui/memory/file`, `POST /ui/memory/rename`.
+
+Ce qu'un modèle range ici revient dans les conversations suivantes : une
+page web lue par un agent peut lui faire écrire une consigne qui le
+suivra. La section *Mémoire* est là aussi pour relire.
+
 ### Mémoire des résultats
 
 Le proxy ne conserve entre deux requêtes que deux mémoires de ce qu'ont
@@ -2433,6 +2523,32 @@ rendus, nombre de bacs, durées) sont celles de l'exécuteur : variables
 aussi les siennes pour les fichiers d'entrée (`SANDBOX_MAX_INPUTS`,
 `SANDBOX_MAX_INPUT_BYTES`, `SANDBOX_MAX_INPUT_TOTAL_BYTES`, mêmes
 défauts), qu'il applique sans croire le proxy : à monter avec celles-ci.
+
+### `[tools.web_grep]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Présente `web_grep` avec `web_search` (comme `web_fetch`), et l'expose par `/v1/tools` et `/mcp`. Garde-fou, conversion et cache : ceux de `web_fetch` |
+| `max_matches` | `20` | Lignes trouvées rendues quand le modèle n'en précise pas le nombre (il peut en demander jusqu'à 50) |
+| `context` | `1` | Lignes non vides montrées de chaque côté d'une ligne trouvée (le modèle peut en demander jusqu'à 5) |
+| `regex_timeout` | `1.0` | Délai (s) de la recherche du motif, lecture non comprise ; au-delà, coupée (pas de blocage sur un retour arrière catastrophique) |
+
+### `[tools.memory]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Offre l'outil `memory` et la section Mémoire de `/ui` |
+| `database` | `"memory.db"` | Base SQLite ; relatif = à côté de `config.toml` |
+| `max_files` | `500` | Fichiers par clé |
+| `max_file_chars` | `100000` | Caractères d'un fichier |
+| `max_total_chars` | `2000000` | Caractères par clé, tous fichiers confondus |
+
+### `[mcp_server]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Sert `POST /mcp` : les outils hébergés actifs, au Model Context Protocol. Voir [Serveur MCP](#serveur-mcp--mcp) |
+| `allowed_origins` | `[]` | Origines (en-tête `Origin`, que seul un navigateur envoie) admises en plus de celle du proxy ; une autre → `403` |
 
 ### `[tools.image_generation]`
 

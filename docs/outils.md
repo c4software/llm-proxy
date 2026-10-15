@@ -9,9 +9,9 @@ client, les garde-fous, la mise en route : voir
 décrit l'autre côté : **ce qu'est un outil pour le code du proxy**, et
 comment en écrire un.
 
-Le dépôt en porte six, `web_search`, `web_fetch`, `ocr`, `transcribe`,
-`code_execution` et `image_generation` (`proxy/llm_proxy/tools/`), plus
-un **fournisseur**,
+Le dépôt en porte huit, `web_search`, `web_fetch`, `web_grep`, `ocr`,
+`transcribe`, `code_execution`, `image_generation` et `memory`
+(`proxy/llm_proxy/tools/`), plus un **fournisseur**,
 `mcp.py`, qui y ajoute les outils des [serveurs MCP](#serveurs-mcp) de la
 configuration. Ce que le contrat porte et qu'aucune surface ne fait
 encore : voir [Prévu, pas construit](#prévu-pas-construit).
@@ -117,7 +117,7 @@ Ce qui ne vient **pas** du modèle — qui ne peut donc pas s'en affranchir.
 | `settings` | Ce que le **client** a réglé sur cet outil dans sa requête. Clés connues : `allowed_domains`, `blocked_domains` (listes de domaines d'un outil serveur Anthropic), `max_chars` (taille du contenu rendu, tirée de `max_content_tokens`). Un outil ignore celles qui ne le concernent pas |
 | `endpoint` | La route par où l'appel arrive (`/v1/responses`, `/v1/tools`…) |
 | `model` | Le modèle préfixé de la conversation ; vide pour l'appel direct |
-| `client` | Le condensé de la clé du client (`tools.owner`), vide pour un proxy ouvert — jamais la clé |
+| `client` | Le condensé de la clé du client (`tools.owner`), vide pour un proxy ouvert — jamais la clé. **Stable** d'un démarrage à l'autre (son secret est gardé dans `data/client.secret`) : un outil peut y attacher ce qu'il garde, comme `memory` sa mémoire persistante |
 | `session` | L'identifiant de la **conversation**, fourni par la surface : de quoi retrouver un état d'un appel au suivant (le bac de `code_execution`). Seule la surface `/v1/chat/completions` en fournit un — tiré à chaque requête, puis retrouvé avec l'échange caché que la mémoire reconnaît (`[chat].memory`) : il vaut tant que le client renvoie ses réponses inchangées. `""` sur `/v1/tools`, `/v1/responses` et `/v1/messages` : un outil à état doit marcher sans — un état par appel, rien de partagé. Il ne sort jamais du proxy |
 
 ### Ce que `run` peut faire, et ce qui lui arrive
@@ -465,15 +465,19 @@ Ce qu'il faut tenir :
   doit réessayer. « Do not retry the search now » évite huit appels
   identiques.
 
-### Les deux outils web
+### Les trois outils web
 
-| | `web_search` | `web_fetch` |
-|---|---|---|
-| `summary` | `{"type": "search", "query"}` | `{"type": "open_page", "url"}` — l'URL suivie de la plage lue, `<url> [20000, 40000]`, pour un morceau de page |
-| `sources` | une par résultat : titre, URL, date, extrait | une : l'URL telle que le modèle l'a écrite (c'est elle qu'il citera) |
-| `meta` | — | `url` (réellement lue, après redirections), `title`, `content_type`, `total` (caractères de la page), `range` (`[début, fin]`, seulement pour un morceau) |
-| `settings` lus | `allowed_domains`, `blocked_domains` | `allowed_domains`, `blocked_domains`, `max_chars` |
-| Codes rendus | `invalid_input` (pas de `query`), `unavailable` (tout le reste : SearXNG injoignable, non configuré, moteurs bloqués) | `invalid_input`, `not_allowed`, `not_accessible`, `too_many_requests`, `unsupported` |
+| | `web_search` | `web_fetch` | `web_grep` |
+|---|---|---|---|
+| `summary` | `{"type": "search", "query"}` | `{"type": "open_page", "url"}` — l'URL suivie de la plage lue, `<url> [20000, 40000]`, pour un morceau de page | `{"type": "find_in_page", "url", "pattern"}` |
+| `sources` | une par résultat : titre, URL, date, extrait | une : l'URL telle que le modèle l'a écrite (c'est elle qu'il citera) | comme `web_fetch` |
+| `meta` | — | `url` (réellement lue, après redirections), `title`, `content_type`, `total` (caractères de la page), `range` (`[début, fin]`, seulement pour un morceau) | `url`, `title`, `content_type`, `total`, `matches` (lignes trouvées) |
+| `settings` lus | `allowed_domains`, `blocked_domains` | `allowed_domains`, `blocked_domains`, `max_chars` | `allowed_domains`, `blocked_domains` |
+| Codes rendus | `invalid_input` (pas de `query`), `unavailable` (tout le reste : SearXNG injoignable, non configuré, moteurs bloqués) | `invalid_input`, `not_allowed`, `not_accessible`, `too_many_requests`, `unsupported` | ceux de `web_fetch`, dont il reprend la lecture (`web_fetch.load`, `page_text`) ; `invalid_input` pour un motif absent ou invalide, `failed` pour un motif coupé à son délai (`regex`, `regex_timeout`) |
+
+`web_grep` est lié comme `web_fetch` (activé par `web_search`, rendu en
+`web_search_call`), mais pas à l'API Messages : Anthropic n'a pas
+d'outil serveur de recherche dans une page.
 
 ### `ocr` : lire le texte d'une image ou d'un PDF scanné
 
@@ -768,6 +772,16 @@ comme les autres, sans liaison de protocole : présentable sur
 surfaces Responses et Anthropic ne les présentent pas : leurs formes MCP
 (`{"type": "mcp", "server_url": …}`, `mcp_servers`) portent une URL de
 serveur fournie par le client, ce qui est exclu ici.
+
+Le proxy est aussi **serveur MCP** (`proxy/llm_proxy/mcp_server.py`,
+`POST /mcp`, table `[mcp_server]`) : l'inverse. Il offre ses outils
+actifs — ceux du registre, outils des serveurs ci-dessus compris — à un
+client MCP, par la même fabrique que les surfaces (`Tool.spec`) et le
+même exécuteur (`Hosted.run`, route `/mcp` dans les statistiques,
+`call.client` = la clé du client). Un `Result` y devient un contenu
+`text`, ses fichiers des `resource_link` ; un échec, `isError`. Sans état,
+réponses JSON, protocole 2025-11-25 à 2024-11-05 ; le client de `mcp.py`
+s'y relie (test de bout en bout dans `test_mcp_server.py`).
 
 **Ce qui est permis.** HTTP seulement (transport « Streamable HTTP ») ;
 une liste fermée de serveurs, dans la configuration ; des en-têtes

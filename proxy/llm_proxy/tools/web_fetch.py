@@ -13,6 +13,10 @@ texte, JSON et texte tels quels) et coupé à `max_chars`.
 Un PDF est lu aussi : téléchargé jusqu'à `pdf_max_bytes`, son texte est
 extrait par pypdf, hors de la boucle asyncio, puis rendu comme celui d'une
 page — mêmes morceaux, même cache. Pas d'OCR : un scan n'a pas de texte.
+
+La lecture (load) et le texte d'une page (page_text) servent aussi à
+`web_grep`, qui cherche dans la page au lieu de la rendre : mêmes
+garde-fous, même cache.
 """
 
 import asyncio
@@ -120,6 +124,35 @@ def pdf_text(body: bytes) -> tuple[str, str]:
     return "\n\n".join(parts), ""
 
 
+def readable(url: str, content_type: str) -> str:
+    """Le type de la page, normalisé ; lève ToolError s'il n'est pas du
+    texte (un PDF arrive ici déjà converti)."""
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct and ct != PDF_TYPE and not ct.startswith(TEXT_TYPES):
+        raise ToolError("unsupported", (
+            f"{url} is {ct}, which this tool cannot read "
+            f"(text, HTML, JSON and PDF only)."))
+    return ct
+
+
+def page_text(url: str, content_type: str, body: bytes | str,
+              encoding: str | None) -> tuple[str, str, str]:
+    """La page lue → (type, titre, texte) : HTML converti, JSON et texte tels
+    quels, un `body` déjà en `str` (le texte d'un PDF) tel quel. Lève
+    ToolError pour un type qui n'est pas du texte."""
+    ct = readable(url, content_type)
+    if isinstance(body, str):
+        return ct, "", body
+    try:
+        text = body.decode(encoding or "utf-8", "replace")
+    except LookupError:  # charset annoncé inconnu de Python
+        text = body.decode("utf-8", "replace")
+    if "html" in ct or (not ct and "<html" in text[:2000].lower()):
+        title, text = html_to_text(text)
+        return ct, title, text
+    return ct, "", text
+
+
 def render(url: str, content_type: str, body: bytes | str,
            encoding: str | None, offset: int = 0,
            max_chars: int | None = None) -> Result:
@@ -130,21 +163,7 @@ def render(url: str, content_type: str, body: bytes | str,
     page : `url` (celle réellement lue, après redirections), `title`,
     `content_type`, `total` (caractères de la page) et `range` — la plage
     rendue, seulement si ce n'est pas la page entière."""
-    ct = (content_type or "").split(";")[0].strip().lower()
-    title = ""
-    if isinstance(body, str):
-        text = body
-    else:
-        if ct and not ct.startswith(TEXT_TYPES):
-            raise ToolError("unsupported", (
-                f"{url} is {ct}, which this tool cannot read "
-                f"(text, HTML, JSON and PDF only)."))
-        try:
-            text = body.decode(encoding or "utf-8", "replace")
-        except LookupError:  # charset annoncé inconnu de Python
-            text = body.decode("utf-8", "replace")
-        if "html" in ct or (not ct and "<html" in text[:2000].lower()):
-            title, text = html_to_text(text)
+    ct, title, text = page_text(url, content_type, body, encoding)
     total = len(text)
     offset = min(max(offset, 0), total)
     shown = text[offset:offset + min(max_chars or MAX_CHARS, MAX_CHARS)]
@@ -225,11 +244,7 @@ class WebFetch(Tool):
         s'AJOUTENT à celles de la configuration ([tools.net]), elles n'en
         lèvent rien : voir net.check."""
         asked = args.get("url")
-        if not isinstance(asked, str) or not asked.strip():
-            raise ToolError("invalid_input", "`url` is required.")
-        url = asked.strip()
-        if url.startswith("www."):
-            url = "https://" + url
+        url = target(asked)
         offset = args.get("offset")
         offset = offset if isinstance(offset, int) \
             and not isinstance(offset, bool) else 0
@@ -242,46 +257,63 @@ class WebFetch(Tool):
             return Result(out.text, sources=(Source(asked, asked),),
                           meta=out.meta)
 
-        # Le cache web (webcache.py) : la page telle qu'elle a été
-        # téléchargée, d'où chaque morceau (`offset`) est rendu sans la
-        # redemander. Les listes de domaines passent AVANT ; le contrôle
-        # d'adresse et celui de chaque redirection ont été faits au
-        # téléchargement.
-        key = ("fetch", url.split("#", 1)[0])
-        net.check(url, call.settings)
-        hit = webcache.CACHE.get(key)
-        if hit is not None:
-            return read(hit)
+        return read(await load(url, call.settings, transport))
 
-        def limit(r, body: bytes) -> int:
-            # Connu aux premiers octets : un PDF a sa propre borne.
-            return PDF_MAX_BYTES if is_pdf(
-                r.headers.get("content-type", ""), body) else MAX_BYTES
 
-        url, r, body = await net.download(
-            url, call.settings, timeout=TIMEOUT, limit=limit,
-            user_agent=USER_AGENT, accept=ACCEPT, transport=transport)
-        content_type = r.headers.get("content-type", "")
-        page = (url, content_type, body, r.charset_encoding)
-        if is_pdf(content_type, body):
-            if len(body) >= PDF_MAX_BYTES:
-                raise ToolError("unsupported", (
-                    f"{url} is a PDF larger than {PDF_MAX_BYTES} "
-                    f"bytes, which this tool does not download."))
-            # Dans un fil : l'extraction est du CPU, la boucle asyncio (les
-            # autres requêtes du proxy) ne l'attend pas.
-            text, why = await asyncio.to_thread(pdf_text, body)
-            if why:
-                raise ToolError("unsupported", f"{url} {why}.")
-            # C'est le TEXTE qui est rendu et gardé en cache : chaque
-            # morceau (`offset`) en sort sans refaire l'extraction.
-            page = (url, PDF_TYPE, text, None)
-        out = read(page)
-        # Seule une page lue avec succès est gardée (un type non lisible
-        # lève avant : rien à garder).
-        if r.status_code == 200:
-            webcache.CACHE.put(key, page, len(page[2]))
-        return out
+def target(asked) -> str:
+    """L'URL écrite par le modèle, nettoyée. Lève ToolError si elle manque."""
+    if not isinstance(asked, str) or not asked.strip():
+        raise ToolError("invalid_input", "`url` is required.")
+    url = asked.strip()
+    return "https://" + url if url.startswith("www.") else url
+
+
+async def load(url: str, settings, transport=None) -> tuple:
+    """La page à `url` (passée par target()) → (url lue, type, corps,
+    encodage), depuis le cache web ou téléchargée sous les garde-fous ;
+    le corps d'un PDF est déjà son TEXTE. Lève ToolError. `settings` :
+    les réglages du client (listes de domaines), voir run."""
+    # Le cache web (webcache.py) : la page telle qu'elle a été
+    # téléchargée, d'où chaque morceau (`offset`) est rendu sans la
+    # redemander. Les listes de domaines passent AVANT ; le contrôle
+    # d'adresse et celui de chaque redirection ont été faits au
+    # téléchargement.
+    key = ("fetch", url.split("#", 1)[0])
+    net.check(url, settings)
+    hit = webcache.CACHE.get(key)
+    if hit is not None:
+        return hit
+
+    def limit(r, body: bytes) -> int:
+        # Connu aux premiers octets : un PDF a sa propre borne.
+        return PDF_MAX_BYTES if is_pdf(
+            r.headers.get("content-type", ""), body) else MAX_BYTES
+
+    url, r, body = await net.download(
+        url, settings, timeout=TIMEOUT, limit=limit,
+        user_agent=USER_AGENT, accept=ACCEPT, transport=transport)
+    content_type = r.headers.get("content-type", "")
+    page = (url, content_type, body, r.charset_encoding)
+    if is_pdf(content_type, body):
+        if len(body) >= PDF_MAX_BYTES:
+            raise ToolError("unsupported", (
+                f"{url} is a PDF larger than {PDF_MAX_BYTES} "
+                f"bytes, which this tool does not download."))
+        # Dans un fil : l'extraction est du CPU, la boucle asyncio (les
+        # autres requêtes du proxy) ne l'attend pas.
+        text, why = await asyncio.to_thread(pdf_text, body)
+        if why:
+            raise ToolError("unsupported", f"{url} {why}.")
+        # C'est le TEXTE qui est rendu et gardé en cache : chaque
+        # morceau (`offset`) en sort sans refaire l'extraction.
+        page = (url, PDF_TYPE, text, None)
+    else:
+        # Un type non lisible lève ici, avant le cache : rien à garder.
+        readable(url, content_type)
+    # Seule une page lue avec succès est gardée.
+    if r.status_code == 200:
+        webcache.CACHE.put(key, page, len(page[2]))
+    return page
 
 
 TOOL = WebFetch()

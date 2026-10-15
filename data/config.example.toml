@@ -311,6 +311,28 @@ max_chars = 20000
 # domaines — se règle dans [tools.net], pour tous les outils qui
 # téléchargent.
 
+# Recherche dans une page (l'action `find_in_page` de la recherche web
+# d'OpenAI) : le modèle donne une URL et une expression régulière, il ne
+# reçoit que les lignes qui y répondent, avec un peu de contexte et
+# l'offset de chacune — à passer à web_fetch pour lire la suite. Sur une
+# longue documentation, quelques milliers de caractères au lieu de dix
+# morceaux de 20 000. Activée avec `web_search`, comme web_fetch, et
+# rendue par le même élément `web_search_call` ; la page est lue par
+# web_fetch (mêmes [tools.net], même conversion, PDF compris, même cache
+# web). Pas d'outil serveur Anthropic équivalent : absente de
+# /v1/messages, présente partout ailleurs.
+[tools.web_grep]
+enabled = true
+# Lignes trouvées rendues par défaut (le modèle peut en demander jusqu'à
+# 50), et lignes non vides de contexte de chaque côté (au plus 5).
+max_matches = 20
+context = 1
+# Délai (s) de la recherche du motif dans la page, lecture non comprise.
+# L'expression est écrite par le modèle : la bibliothèque `regex` la coupe
+# à ce délai (une expression à retour arrière catastrophique ne bloque
+# pas le proxy), et l'erreur rendue lui demande plus simple.
+regex_timeout = 1.0
+
 # Garde-fou de TÉLÉCHARGEMENT, commun à tout ce que le proxy va chercher à
 # la demande du modèle : une page (`web_fetch`), et tout outil qui lit un
 # fichier par son URL. Une seule table : ce qu'un déploiement interdit de
@@ -695,6 +717,56 @@ max_bytes = 10000000
 # vue du proxy.
 edits = false
 max_input_bytes = 10000000
+
+# Mémoire PERSISTANTE, pour le modèle : des fichiers texte sous
+# `/memories`, que l'outil `memory` lit et écrit (commandes de l'outil
+# memory d'Anthropic : view, create, str_replace, insert, delete, rename)
+# et que le tableau de bord montre — section Mémoire de /ui : lire,
+# corriger, renommer, effacer. Sans liaison de protocole : offerte par
+# /v1/tools, le serveur MCP ([mcp_server]) et /v1/chat/completions
+# (déclarée `{"type": "memory"}`, ou nommée dans [chat].always).
+# CLOISONNÉE PAR CLÉ ([proxy].api_keys) : un client ne lit et n'écrit que
+# la sienne, l'interface ne montre que celle de la clé connectée. La clé
+# n'est jamais écrite : la base range un condensé de la clé sous un secret
+# tiré une fois (client.secret, à côté de ce fichier). Changer de clé =
+# changer de mémoire. Proxy OUVERT : une seule mémoire, commune à tous.
+# À SAVOIR : ce qu'un modèle range ici revient dans les conversations
+# suivantes — une page web lue par un agent peut lui faire écrire une
+# consigne qui le suivra (injection persistante). Relire la mémoire de
+# temps en temps, dans /ui.
+[tools.memory]
+enabled = false
+# Base SQLite ; relatif = à côté de CE fichier.
+database = "memory.db"
+# Bornes PAR CLÉ : nombre de fichiers, caractères d'un fichier, caractères
+# en tout. Au-delà, l'écriture est refusée avec un message qui demande au
+# modèle de faire de la place.
+max_files = 500
+max_file_chars = 100000
+max_total_chars = 2000000
+
+
+# ── Serveur MCP ─────────────────────────────────────────────────────────
+# Le proxy offre ses outils hébergés actifs (ceux de GET /v1/tools, outils
+# des serveurs [tools.mcp.*] compris) à tout client MCP, par POST /mcp —
+# transport « streamable HTTP », sans état, réponses JSON. C'est l'inverse
+# de [tools.mcp] (le proxy client de serveurs MCP). Pour un client qui
+# n'a pas les outils autrement — la boucle principale de Claude Code —,
+# déclaré chez lui comme un serveur MCP distant, avec la clé du proxy :
+#   Claude Code  claude mcp add --transport http llmproxy http://llmproxy/mcp \
+#                  --header "Authorization: Bearer $LLM_PROXY_API_KEY"
+#   Codex        [mcp_servers.llmproxy] url = "http://llmproxy/mcp"
+#                bearer_token_env_var = "LLM_PROXY_API_KEY"
+#   pi / omp     ~/.pi/agent/mcp.json, ~/.omp/agent/mcp.json — pi exige
+#                "exposure": "direct" pour déclarer les outils au modèle.
+# À SAVOIR : un client qui reçoit DÉJÀ les outils par [chat].always (pi,
+# omp sur /v1/chat/completions) les aurait alors deux fois.
+[mcp_server]
+enabled = false
+# Origines (en-tête `Origin`, que seul un navigateur envoie) admises en
+# plus de celle du proxy lui-même ; une autre → 403. Les clients en ligne
+# de commande n'envoient pas d'Origin.
+allowed_origins = []
 
 
 # ── Fichiers rendus par les outils ──────────────────────────────────────

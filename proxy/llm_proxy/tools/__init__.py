@@ -81,8 +81,8 @@ from collections import OrderedDict
 
 from .. import config, stats
 from ..settings import log
-from . import (code_execution, image_generation, mcp, net, ocr,  # noqa: F401
-               transcribe, web_fetch, web_search, webcache)
+from . import (code_execution, image_generation, mcp, memory, net,  # noqa: F401
+               ocr, transcribe, web_fetch, web_grep, web_search, webcache)
 # Le contrat, tel que le reste du proxy et un outil l'importent d'ici.
 from .contract import (ERRORS, Anthropic, Artifact, Call,  # noqa: F401
                        Responses, Result, Source, Tool, ToolError, failure)
@@ -106,9 +106,11 @@ def register(tool: Tool) -> Tool:
 register(web_search.TOOL)
 register(web_fetch.TOOL)
 register(ocr.TOOL)
+register(web_grep.TOOL)
 register(transcribe.TOOL)
 register(code_execution.TOOL)
 register(image_generation.TOOL)
+register(memory.TOOL)
 
 # Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
 # reçoit une erreur qui lui demande de conclure.
@@ -137,20 +139,47 @@ def kinds() -> frozenset:
     return frozenset(k for t in REGISTRY for k in t.kinds) | mcp.kinds()
 
 
-# Sel du condensé des clés clientes : tiré à chaque démarrage, jamais
-# écrit. La mémoire ne survit pas au processus, son cloisonnement non plus
-# n'a pas à le faire — et un condensé sorti d'ici ne dit rien de la clé.
-_OWNER_SALT = os.urandom(16)
+# Secret du condensé des clés clientes : tiré UNE fois, gardé à côté de
+# config.toml (data/client.secret, lisible du seul propriétaire). Le
+# condensé d'une clé est donc STABLE d'un démarrage à l'autre — ce dont
+# a besoin ce qui survit au processus (la mémoire persistante,
+# tools/memory.py) ; il ne dit rien de la clé sans ce fichier.
+SECRET_PATH = config.resolve("client.secret")
+_secret: bytes | None = None
+
+
+def _owner_secret() -> bytes:
+    global _secret
+    if _secret is None:
+        try:
+            with open(SECRET_PATH, "rb") as fh:
+                _secret = fh.read()
+        except FileNotFoundError:
+            value = os.urandom(32)
+            # O_EXCL : deux processus qui démarrent ensemble gardent le
+            # même secret, celui du premier.
+            try:
+                fd = os.open(SECRET_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                             0o600)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(value)
+                _secret = value
+            except FileExistsError:
+                with open(SECRET_PATH, "rb") as fh:
+                    _secret = fh.read()
+        if len(_secret) < 16:
+            raise RuntimeError(f"{SECRET_PATH} : secret trop court ou vide")
+    return _secret
 
 
 def owner(token: str) -> str:
-    """Le client, pour la mémoire : un condensé de la clé qu'il présente
-    au proxy, JAMAIS la clé. «» (pas de clé) reste «» : c'est le client
-    unique d'un proxy ouvert."""
+    """Le client : un condensé de la clé qu'il présente au proxy, JAMAIS la
+    clé, stable d'un démarrage à l'autre. «» (pas de clé) reste «» : c'est
+    le client unique d'un proxy ouvert."""
     if not token:
         return ""
     return hashlib.blake2b(token.encode("utf-8", "surrogatepass"),
-                           key=_OWNER_SALT, digest_size=16).hexdigest()
+                           key=_owner_secret()[:64], digest_size=16).hexdigest()
 
 
 class Memory:

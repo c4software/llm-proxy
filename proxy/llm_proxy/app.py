@@ -87,6 +87,8 @@ from . import anthropic_api
 from . import chat_api
 from . import config
 from . import files
+from . import mcp_server
+from . import memories
 from . import multipart
 from . import responses_api
 from . import stats
@@ -1787,6 +1789,103 @@ async def ui_usage_tools(request: Request):
     return await usage_tools(request)
 
 
+# ── Mémoire, sous /ui ───────────────────────────────────────────────────
+# Ce que l'outil `memory` a gardé pour la clé CONNECTÉE (le cookie de la
+# page, ou l'en-tête) : la liste, un fichier, l'écriture, la suppression,
+# le renommage. Jamais la mémoire d'une autre clé. Le cookie est
+# SameSite=Strict et les écritures exigent un corps JSON : une page tierce
+# ne peut pas les déclencher.
+
+def ui_client(request: Request) -> str:
+    """Le client de la page : tools.owner de la clé du cookie (ou de
+    l'en-tête), «» pour un proxy ouvert — celui que reçoit l'outil
+    `memory` d'un appel fait avec la même clé."""
+    return tools.owner(client_token(request)) if PROXY_API_KEYS else ""
+
+
+def memory_disabled() -> JSONResponse | None:
+    if not tools.memory.ENABLED:
+        return error_response("openai", 404, "unknown_route",
+                              "mémoire désactivée ([tools.memory].enabled)")
+    return None
+
+
+def memory_call(fn, *args):
+    """Une opération du magasin → (résultat, None) ou (None, réponse 400)."""
+    try:
+        return fn(*args), None
+    except memories.MemoryError_ as exc:
+        return None, error_response("openai", 400, "invalid_request_error", str(exc))
+
+
+@app.get("/ui/memory")
+async def ui_memory_list(request: Request):
+    if (off := memory_disabled()) is not None:
+        return off
+    owner = ui_client(request)
+    files = await asyncio.to_thread(memories.list_files, owner)
+    return {"object": "list", "data": files,
+            "usage": await asyncio.to_thread(memories.usage, owner)}
+
+
+@app.get("/ui/memory/file")
+async def ui_memory_read(request: Request, path: str = ""):
+    if (off := memory_disabled()) is not None:
+        return off
+    content, bad = await asyncio.to_thread(
+        memory_call, memories.read, ui_client(request), path)
+    if bad is not None:
+        return bad
+    if content is None:
+        return error_response("openai", 404, "not_found", f"{path} n'existe pas")
+    return {"path": memories.normalize(path), "content": content}
+
+
+@app.put("/ui/memory/file")
+async def ui_memory_write(request: Request):
+    if (off := memory_disabled()) is not None:
+        return off
+    body = parse_json(await request.body())
+    if not isinstance(body, dict):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps JSON attendu : {path, content}")
+    existed, bad = await asyncio.to_thread(
+        memory_call, memories.write, ui_client(request),
+        body.get("path"), body.get("content"))
+    if bad is not None:
+        return bad
+    return {"path": memories.normalize(body.get("path")), "created": not existed}
+
+
+@app.delete("/ui/memory/file")
+async def ui_memory_delete(request: Request, path: str = ""):
+    if (off := memory_disabled()) is not None:
+        return off
+    n, bad = await asyncio.to_thread(
+        memory_call, memories.delete, ui_client(request), path)
+    if bad is not None:
+        return bad
+    if not n:
+        return error_response("openai", 404, "not_found", f"{path} n'existe pas")
+    return {"deleted": n}
+
+
+@app.post("/ui/memory/rename")
+async def ui_memory_rename(request: Request):
+    if (off := memory_disabled()) is not None:
+        return off
+    body = parse_json(await request.body())
+    if not isinstance(body, dict):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps JSON attendu : {old_path, new_path}")
+    n, bad = await asyncio.to_thread(
+        memory_call, memories.rename, ui_client(request),
+        body.get("old_path"), body.get("new_path"))
+    if bad is not None:
+        return bad
+    return {"renamed": n, "path": memories.normalize(body.get("new_path"))}
+
+
 @app.get("/")
 async def root():
     return RedirectResponse("/ui")
@@ -1861,6 +1960,50 @@ async def rendered_file(token: str, name: str):
         return error_response("openai", 404, "file_not_found",
                               "fichier inconnu ou expiré")
     return Response(stored.data, headers=stored.headers())
+
+
+# ── Serveur MCP ─────────────────────────────────────────────────────────
+# Les mêmes outils que /v1/tools, au Model Context Protocol (transport
+# streamable HTTP, sans état) : Claude Code, Codex, pi et omp s'y branchent
+# comme sur n'importe quel serveur MCP distant. Voir mcp_server.py.
+
+def mcp_disabled() -> JSONResponse:
+    return error_response("openai", 404, "unknown_route",
+                          "serveur MCP désactivé ([mcp_server].enabled dans config.toml)")
+
+
+@app.post("/mcp")
+async def mcp_post(request: Request):
+    """Un message JSON-RPC (ou un lot) → sa réponse en JSON ; 202 sans
+    corps pour une notification. Erreur de protocole : statut HTTP 400 et
+    erreur JSON-RPC dans le corps."""
+    if not mcp_server.ENABLED:
+        return mcp_disabled()
+    if not mcp_server.origin_allowed(request.headers.get("origin", ""),
+                                  request.headers.get("host", "")):
+        log.warning("MCP : origine refusée %s → 403",
+                    request.headers.get("origin", ""))
+        return JSONResponse(mcp_server.error(None, mcp_server.INVALID_REQUEST,
+                                          "origin not allowed"), status_code=403)
+    body = parse_json(await request.body())
+    if body is None:
+        return JSONResponse(mcp_server.error(None, mcp_server.PARSE_ERROR,
+                                          "invalid JSON"), status_code=400)
+    client = tools.owner(client_token(request)) if PROXY_API_KEYS else ""
+    out = await mcp_server.handle_body(body, tools.Hosted(), client)
+    if out is None:
+        return Response(status_code=202)
+    bad = isinstance(out, dict) and "error" in out and out.get("id") is None
+    return JSONResponse(out, status_code=400 if bad else 200)
+
+
+@app.api_route("/mcp", methods=["GET", "DELETE"])
+async def mcp_other(request: Request):
+    """Pas de flux serveur ni de session à fermer : 405, comme le prévoit
+    la spécification pour un serveur sans état."""
+    if not mcp_server.ENABLED:
+        return mcp_disabled()
+    return Response(status_code=405, headers={"Allow": "POST"})
 
 
 @app.get("/v1/audio/voices")

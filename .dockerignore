@@ -19,3 +19,5 @@ proxy/pytest.ini
 proxy/requirements-dev.txt
 data/config.toml
 data/stats.db*
+data/client.secret
+data/memory.db*

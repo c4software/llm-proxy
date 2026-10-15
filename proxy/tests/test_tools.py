@@ -23,7 +23,7 @@ import pytest
 from fakes import (FOUND, RESULTS, SEARCHED, Echo, FakeUpstream, chat_doc,
                    outil)
 from llm_proxy import tools
-from llm_proxy.tools import html_text, net, web_fetch, web_search, webcache
+from llm_proxy.tools import html_text, net, web_fetch, web_grep, web_search, webcache
 
 PUBLIC = "93.184.216.34"
 PUBLIC6 = "2606:4700:4700::1111"
@@ -94,6 +94,9 @@ def reglages(monkeypatch):
     monkeypatch.setattr(tools, "MAX_CALLS", 8)
     monkeypatch.setattr(tools, "RUN_TIMEOUT", 60)
     monkeypatch.setattr(tools, "MAX_RESULT_CHARS", 24_000)
+    # Active dans l'exemple : les tests du registre et de /v1/tools comptent
+    # les outils actifs ; ceux de web_grep l'appellent directement.
+    monkeypatch.setattr(web_grep, "ENABLED", False)
 
 
 def rendu(coro) -> tools.Result:
@@ -881,6 +884,11 @@ def test_memory_cloisonnee_par_client():
     # pas de clé = le client unique d'un proxy ouvert.
     assert alice == tools.owner("clé-alice") != bob
     assert len(alice) == 32 and "alice" not in alice and tools.owner("") == ""
+    # Stable d'un démarrage à l'autre : le secret est relu de son fichier,
+    # créé lisible du seul propriétaire.
+    tools._secret = None
+    assert tools.owner("clé-alice") == alice
+    assert os.stat(tools.SECRET_PATH).st_mode & 0o777 == 0o600
     m = tools.Memory(3, 60)
     m.store("ws_1", "n", "{}", "pour alice", alice)
     assert m.recall("ws_1", alice)["result"] == "pour alice"

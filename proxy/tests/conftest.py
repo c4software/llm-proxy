@@ -18,6 +18,15 @@ os.environ.setdefault(
     "CONFIG_PATH", os.path.join(ROOT, "data", "config.example.toml"))
 
 
+@pytest.fixture(autouse=True)
+def secret_client(monkeypatch, tmp_path):
+    """Le secret des condensés de clés (tools.owner) dans un dossier
+    temporaire : un test ne crée jamais data/client.secret."""
+    from llm_proxy import tools
+    monkeypatch.setattr(tools, "SECRET_PATH", str(tmp_path / "client.secret"))
+    monkeypatch.setattr(tools, "_secret", None)
+
+
 @pytest.fixture
 def proxy(monkeypatch):
     """L'application entière, par le client de test de Starlette (`client`),

@@ -564,4 +564,5 @@ pi --model albert/${model}`,
              backendSummary, num, ms, ago, dur, moment, tickLabel, select,
              selectMetric };
   },
-}).mount("#app");
+// La section Mémoire : un composant à part (memory.js), ses propres appels.
+}).component("memory-panel", window.MemoryPanel).mount("#app");
