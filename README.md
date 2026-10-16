@@ -886,7 +886,7 @@ s'appellent par [`/v1/tools`](#appel-direct--v1tools) :
 |---|---|---|
 | `ocr` (`url`, `pages`) | Lit le texte d'une image (PNG, JPEG, GIF, WebP) ou d'un PDF scanné — les images embarquées dans ses pages, 4 pages par appel ; le recours de `web_fetch`, dont la description y renvoie le modèle | Téléchargement par le proxy sous le garde-fou réseau, puis une requête chat/completions par page au modèle de vision de `[tools.ocr].model` |
 | `transcribe` (`url`, `language`, `offset`) | Transcrit un fichier audio (mp3, wav, flac, ogg, m4a, aac, webm, amr, mp4 — ce que le modèle de transcription ne lit pas tel quel, `formats`, est converti en WAV par ffmpeg, ou refusé sans lui ; 25 Mo au plus) et rend le texte, sans horodatage, avec la langue et la durée si le backend les donne ; reconnu à ses premiers octets ou à son type, refusé sinon | Téléchargement par le proxy sous le garde-fou réseau, puis `POST /v1/audio/transcriptions` au modèle de `[tools.transcribe].model` |
-| `code_execution` (`language`, `code`, `files`) | Exécute un programme (Python, bash, JavaScript, ou C, C++, Go, Rust compilés puis exécutés) dans un bac à sable sans réseau ; rend le code de sortie, la sortie, et remet au client les fichiers produits. `files` : des URL que le proxy télécharge (garde-fou `[tools.net]`) et dépose dans le bac avant le programme. Les fichiers du bac sont gardés d'un appel au suivant dans une conversation. Voir [Exécution de code](#exécution-de-code) | `POST /v1/execute` au service `executor` du compose (podman sans root) |
+| `code_execution` (`language`, `code`, `files`) | Exécute un programme (Python, bash, JavaScript, PHP, ou Go et Rust compilés puis exécutés, une fois installés par `devbox dev-env`) dans un bac à sable sans réseau ; rend le code de sortie, la sortie, et remet au client les fichiers produits. `files` : des URL que le proxy télécharge (garde-fou `[tools.net]`) et dépose dans le bac avant le programme. Les fichiers du bac sont gardés d'un appel au suivant dans une conversation. Voir [Exécution de code](#exécution-de-code) | `POST /v1/execute` au service `executor` du compose (podman sans root) |
 | `memory` (`command`, `path`…) | Mémoire **persistante** : des fichiers texte sous `/memories` que le modèle consulte et tient à jour d'une conversation à l'autre — commandes `view`, `create`, `str_replace`, `insert`, `delete`, `rename`. Cloisonnée par clé du proxy. Voir [Mémoire persistante](#mémoire-persistante-memory) | SQLite (`data/memory.db`) |
 | `image_generation` (`prompt`, `size`) | Génère une image depuis une description et la remet au client (une image en markdown, ajoutée par le proxy à la fin de la réponse) ; le modèle n'en reçoit que le nom, le type et les dimensions. 2 images par réponse au plus. Avec `edits`, retouche aussi une image donnée par `image_url`. Voir [Génération d'images](#génération-dimages) | `POST /v1/images/generations` au modèle de `[tools.image_generation].model` |
 
@@ -1787,6 +1787,57 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
   `/v1/chat/completions`, ou `always = ["code_execution"]` ; appel direct
   par `POST /v1/tools/code_execution` (un bac par appel, les fichiers en
   liens dans `files`). Pas sur `/v1/responses` ni `/v1/messages`.
+
+#### Déroulé d'un appel
+
+Ce qui se passe entre l'appel du modèle et sa réponse. Le proxy
+n'exécute rien ; tout ce qui touche au bac est dans
+`services/executor/executor/sandbox.py`.
+
+1. **Le proxy** (`proxy/llm_proxy/tools/code_execution.py`) reçoit
+   `language`, `code` et éventuellement `files`. Il télécharge lui-même
+   les `files` (garde-fous de `[tools.net]`), puis appelle
+   `POST http://executor:8080/v1/execute` sur le réseau interne
+   `sandbox`, avec `Authorization: Bearer <EXECUTOR_TOKEN>` et :
+   `client` (le condensé de la clé : les bacs sont cloisonnés par clé),
+   `session` (la conversation : elle retrouve son bac et ses fichiers),
+   `language`, `code`, `timeout` (`[tools.code_execution].timeout`) et
+   les fichiers d'entrée en base64.
+2. **L'exécuteur trouve le bac** de ce couple (client, session), ou le
+   crée : expiré (inactivité, durée de vie) ou absent. Plus de place
+   (`SANDBOX_MAX_SESSIONS`, par clé `SANDBOX_MAX_SESSIONS_PER_CLIENT`) :
+   le bac inutilisé depuis le plus longtemps part. La création est un
+   `podman run` **sans root** : `--rootfs /opt/sandbox/rootfs` (le
+   système de fichiers de l'image, partagé en lecture seule),
+   `--read-only`, `--network none`, `/work` et `/tmp` en tmpfs bornés (et
+   `/opt/devbox` avec la sortie), un uid propre au bac, `--cap-drop ALL`,
+   `no-new-privileges`, les bornes de cgroups (`--memory`, `--cpus`,
+   `--pids-limit`) et de `ulimit`, `--init`, `--timeout` (la durée de vie,
+   tenue par podman). Le bac vit sur `sleep infinity` ; avec la sortie,
+   son relais (`forward.py`) démarre à côté.
+3. **Les fichiers d'entrée** entrent par une archive `tar` construite en
+   mémoire, dépliée dans `/work` par l'entrée standard d'un `podman
+   exec` — aucun dossier de l'hôte n'est monté.
+4. **Le programme** : `podman exec --interactive --workdir /work <bac>
+   sh -c 'touch .sbx_stamp && exec timeout -k 2 <délai> <interpréteur>'`.
+   Le code arrive par **l'entrée standard** : `python3 -`, `bash -s`,
+   `node -`, `php` ; pour Go et Rust, le source est écrit et compilé sous
+   `/tmp`, puis le binaire lancé. `timeout` envoie TERM au délai, KILL
+   2 s après ; un bac qui ne répond plus est détruit. La sortie
+   (stdout et stderr mêlés) est lue sous plafond, début et fin gardés.
+5. **La récolte** : un `find` dans le bac liste les fichiers de `/work`
+   plus récents que `.sbx_stamp` (dossiers cachés et `node_modules`
+   écartés), l'exécuteur choisit sous ses plafonds, et les fichiers
+   sortent par **une archive `tar` lue sur la sortie standard**. Tout ce
+   qui revient d'un bac est hostile : lu sous plafond, jamais interprété.
+6. **Le retour** : l'exécuteur rend le code de sortie, la sortie, les
+   fichiers, et si le bac est neuf ou perdu. Le proxy en fait un texte
+   pour le modèle (« Exit code: … Output: … »), range les fichiers dans
+   son magasin et ajoute leurs liens `/v1/files/<jeton>/<nom>` à la fin
+   de la réponse — le modèle ne les écrit pas.
+
+`python -m executor.validate`, joué dans le conteneur exécuteur, vérifie
+chacune de ces étapes sur la machine (voir plus bas).
 
 #### Installer des paquets
 
