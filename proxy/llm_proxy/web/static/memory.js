@@ -16,10 +16,19 @@
   Rien ne se rafraîchit tout seul : une modification en cours ne doit
   jamais être écrasée par la liste. Elle se relit à l'ouverture de la
   section, après chaque action, et par « Actualiser ».
+
+  Deux présentations, le même contenu : la section repliable des
+  statistiques, et (`compact`) le panneau latéral du chat. Là, `stamp`
+  change quand le modèle vient d'appeler l'outil `memory` : la liste se
+  relit, et le fichier ouvert aussi s'il n'est pas en cours de
+  modification.
 */
 window.MemoryPanel = {
-  setup() {
-    const { ref, computed, onMounted } = Vue;
+  props: { compact: { type: Boolean, default: false },
+           stamp: { type: Number, default: 0 } },
+  emits: ["close"],
+  setup(props) {
+    const { ref, computed, onMounted, watch } = Vue;
     const enabled = ref(null);       // null : pas encore su
     const files = ref([]);
     const usage = ref(null);
@@ -141,12 +150,16 @@ window.MemoryPanel = {
     const short = (p) => p.replace(/^\/memories\//, "");
 
     onMounted(load);
+    watch(() => props.stamp, async () => {
+      await load();
+      if (selected.value !== null && !dirty.value) open(selected.value);
+    });
     return { enabled, files, usage, selected, path, content, status, error,
              confirming, busy, dirty, renaming, open, fresh, save, remove,
              load, onToggle, num, when, short };
   },
   template: `
-  <details class="panel howto memory" v-if="enabled" @toggle="onToggle">
+  <details class="panel howto memory" v-if="enabled && !compact" @toggle="onToggle">
     <summary>
       <h2>Mémoire</h2>
       <span class="meta">ce que les modèles ont retenu pour la clé connectée
@@ -169,8 +182,9 @@ window.MemoryPanel = {
           </li>
         </ul>
         <p v-else class="note">Rien n'est encore retenu. Un modèle y écrit par
-          l'outil <code>memory</code> (serveur MCP <code>/mcp</code>, ou
-          <code>/v1/tools/memory</code>) ; on peut aussi créer un fichier ici.</p>
+          l'outil <code>memory</code> (interrupteur « Mémoire » du chat, serveur
+          MCP <code>/mcp</code>, ou <code>/v1/tools/memory</code>) ; on peut
+          aussi créer un fichier ici.</p>
       </aside>
       <section class="memory-editor">
         <label class="field">
@@ -192,5 +206,52 @@ window.MemoryPanel = {
         </div>
       </section>
     </div>
-  </details>`,
+  </details>
+  <section class="memory memory-side" v-else-if="enabled && compact">
+    <header class="chat-head">
+      <h2>Mémoire</h2>
+      <span class="dim" v-if="usage">{{ num(usage.files) }} fichier{{ usage.files > 1 ? "s" : "" }}</span>
+      <button type="button" class="icon" title="Fermer" @click="$emit('close')">×</button>
+    </header>
+    <div class="memory-body">
+      <aside class="memory-list">
+        <div class="memory-actions">
+          <button type="button" class="btn" @click="fresh">Nouveau fichier</button>
+          <button type="button" class="btn ghost" @click="load">Actualiser</button>
+        </div>
+        <ul v-if="files.length">
+          <li v-for="f in files" :key="f.path">
+            <button type="button" :aria-current="String(f.path === selected)"
+                    @click="open(f.path)">
+              <span class="name">{{ short(f.path) }}</span>
+              <span class="dim">{{ num(f.chars) }} car. · {{ when(f.updated) }}</span>
+            </button>
+          </li>
+        </ul>
+        <p v-else class="note">Rien n'est encore retenu. Un modèle y écrit par
+          l'outil <code>memory</code> (interrupteur « Mémoire » du chat, serveur
+          MCP <code>/mcp</code>, ou <code>/v1/tools/memory</code>) ; on peut
+          aussi créer un fichier ici.</p>
+      </aside>
+      <section class="memory-editor">
+        <label class="field">
+          <span>Chemin</span>
+          <input v-model="path" spellcheck="false" placeholder="/memories/notes.md">
+        </label>
+        <label class="field grow">
+          <span>Contenu</span>
+          <textarea v-model="content" spellcheck="false"
+                    placeholder="Texte libre, en général du Markdown."></textarea>
+        </label>
+        <div class="memory-actions">
+          <button type="button" class="btn" :disabled="busy || (!dirty && selected !== null)"
+                  @click="save">{{ renaming ? "Renommer et enregistrer" : "Enregistrer" }}</button>
+          <button type="button" class="btn danger" v-if="selected !== null"
+                  :disabled="busy" @click="remove">{{ confirming ? "Confirmer la suppression" : "Supprimer" }}</button>
+          <span v-if="dirty" class="dim">modifié</span>
+          <span class="status" :class="{ err: error }" role="status">{{ status }}</span>
+        </div>
+      </section>
+    </div>
+  </section>`,
 };

@@ -1450,8 +1450,10 @@ async def responses(request: Request):
 # ── Outils hébergés : la boucle ─────────────────────────────────────────
 
 # Garde-fou de la boucle : au-delà de tools.MAX_CALLS le modèle ne reçoit
-# plus que des erreurs qui lui demandent de conclure ; s'il insiste encore
-# autant de fois, la réponse est close sans lui.
+# plus que des erreurs qui lui demandent de conclure, et le tour suivant ne
+# lui présente plus les outils à bout (_drop_exhausted) — il ne peut que
+# répondre. S'il trouvait encore à appeler autant de fois (un outil à
+# compte propre), la réponse est close sans lui.
 HOSTED_EXTRA_CALLS = 4
 HOSTED_HARD_LIMIT = tools.MAX_CALLS + HOSTED_EXTRA_CALLS
 
@@ -1512,6 +1514,35 @@ async def _settled(task: asyncio.Future, ping: bytes | None) -> bool:
     done, _ = await asyncio.wait(
         {task}, timeout=anthropic_api.PING_INTERVAL if ping else None)
     return bool(done)
+
+
+def _drop_exhausted(chat_payload: dict, names) -> bool:
+    """Retire du corps du tour suivant les fonctions hébergées `names`,
+    dont le budget d'appels est épuisé. Sans cela le modèle les voit
+    encore, les rappelle, ne reçoit que des refus, et la limite dure
+    close la réponse SANS réponse : le petit modèle qui cherche encore
+    n'écrit jamais. Plus aucun outil : `tools` et `tool_choice` partent,
+    et le tour ne peut qu'être une réponse. Rend vrai si quelque chose
+    a été retiré."""
+    tools_ = chat_payload.get("tools")
+    if not isinstance(tools_, list):
+        return False
+    names = set(names)
+    kept = [t for t in tools_ if not (
+        isinstance(t, dict) and isinstance(t.get("function"), dict)
+        and t["function"].get("name") in names)]
+    if len(kept) == len(tools_):
+        return False
+    if kept:
+        chat_payload["tools"] = kept
+        choice = chat_payload.get("tool_choice")
+        if isinstance(choice, dict) and (choice.get("function") or {}).get(
+                "name") in names:
+            chat_payload["tool_choice"] = "auto"
+    else:
+        for field in ("tools", "tool_choice", "parallel_tool_calls"):
+            chat_payload.pop(field, None)
+    return True
 
 
 async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
@@ -1637,6 +1668,22 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                 status = 500
                 yield robinet.fail(str(exc), status)
                 return
+            # Les outils dont le budget est épuisé ne sont plus présentés :
+            # le modèle a lu « Answer now », il ne peut plus que le faire.
+            # Même règle que Hosted.run, outil par outil.
+            def exhausted(name: str) -> bool:
+                if hosted.own(name):
+                    return spent.get(name, 0) >= hosted.cap(
+                        (limits or {}).get(name), name)
+                if limits is not None:
+                    return used >= hosted.cap() or spent.get(name, 0) \
+                        >= hosted.cap(limits.get(name))
+                return used >= hosted.cap(limit)
+            spent_out = [n for n in hosted.by_name if exhausted(n)]
+            if spent_out and _drop_exhausted(chat_payload, spent_out):
+                log.info("%s : limite d'appels atteinte, tour suivant sans "
+                         "%s (model=%s)", call.endpoint, ", ".join(spent_out),
+                         call.model_key)
             # Un `tool_choice` forcé par le client (`required`, ou une
             # fonction nommée) vaut pour SA requête : réappliqué à chaque
             # tour, il obligerait le modèle à rappeler un outil sans jamais
@@ -1887,7 +1934,11 @@ def chat_tool_groups() -> list[dict]:
     groups: dict[str, list[str]] = {}
     for tool in tools.Hosted().tools:
         if tool.kinds:
-            groups.setdefault(tool.kinds[0], []).append(tool.name)
+            # Un outil MCP se déclare par son nom ou par son serveur
+            # (`mcp:<serveur>`) : un interrupteur par SERVEUR, pas par outil.
+            kind = next((k for k in tool.kinds
+                         if k.startswith(tools.mcp.KIND + ":")), tool.kinds[0])
+            groups.setdefault(kind, []).append(tool.name)
     return [{"type": kind, "tools": names} for kind, names in groups.items()]
 
 
@@ -1908,6 +1959,9 @@ async def ui_session(request: Request):
             "tools": chat_tool_groups() if chat_tools else [],
             "always": always_shown() if chat_tools else [],
         },
+        # La mémoire persistante (outil `memory`) : son panneau, à côté du
+        # chat comme dans les statistiques.
+        "memory": tools.memory.ENABLED,
     }
 
 

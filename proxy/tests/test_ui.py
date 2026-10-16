@@ -134,6 +134,21 @@ def test_chat_announces_hosted_tool_runs(ui):
     assert b"x_hosted_tool" not in r.content
 
 
+def test_chat_offers_one_switch_per_mcp_server(ui, monkeypatch):
+    """Les outils d'un serveur MCP se déclarent ensemble (`mcp:<serveur>`) :
+    un seul interrupteur pour eux, un par type pour les autres."""
+    from types import SimpleNamespace as T
+    found = [T(name="web_search", kinds=("web_search",)),
+             T(name="web_fetch", kinds=("web_search",)),
+             T(name="issues", kinds=("issues", "mcp:github", "mcp")),
+             T(name="pulls", kinds=("pulls", "mcp:github", "mcp"))]
+    monkeypatch.setattr(A.tools, "Hosted", lambda: T(tools=found))
+    login(ui)
+    assert ui.client.get("/ui/session").json()["chat"]["tools"] == [
+        {"type": "web_search", "tools": ["web_search", "web_fetch"]},
+        {"type": "mcp:github", "tools": ["issues", "pulls"]}]
+
+
 def test_chat_ignores_always(ui, monkeypatch):
     """Les interrupteurs de la page font foi : [chat].always ne s'ajoute
     pas à une requête qui ne déclare rien."""

@@ -24,6 +24,9 @@
   la page : c'est la mémoire du proxy ([chat].memory) qui le réinsère,
   tant que la réponse est renvoyée telle qu'elle a été reçue.
 
+  MÉMOIRE : le panneau de la section Mémoire (memory.js, `compact`), à
+  droite du fil, relu dès que le modèle a appelé l'outil `memory`.
+
   PIÈCES JOINTES : les images partent en `image_url` (data URL) — au
   modèle de les lire ; les fichiers texte sont joints au message, entre
   balises <file name="…">. Le reste est refusé.
@@ -36,6 +39,7 @@ window.ChatPanel = {
     const API = "/ui/chat/completions";
     const STORE = "llm-proxy-chats:" + (props.session.client || "open");
     const LAST_MODEL = "llm-proxy-chat-model";
+    const MEMORY_OPEN = "llm-proxy-chat-memory";
     const MAX_TEXT_FILE = 256 * 1024;
     const MAX_IMAGE = 8 * 1024 * 1024;
     const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|ya?ml|toml|ini|cfg|conf|log|xml|html?|css|js|mjs|ts|tsx|jsx|py|rb|go|rs|java|kt|c|h|cc|cpp|hpp|cs|php|sh|bash|zsh|sql|r|lua|swift|vue|svelte|tex|env|dockerfile|makefile)$/i;
@@ -80,6 +84,16 @@ window.ChatPanel = {
     const renameText = ref("");
     const storageWarning = ref("");
     const dragging = ref(false);
+    // Panneau mémoire : ouvert ou non (préférence de ce navigateur), et
+    // un compteur qui le fait se relire après un appel de l'outil.
+    const memoryOpen = ref((() => {
+      try { return localStorage.getItem(MEMORY_OPEN) === "1"; } catch { return false; }
+    })());
+    const memoryStamp = ref(0);
+    function toggleMemory(open = !memoryOpen.value) {
+      memoryOpen.value = open;
+      try { localStorage.setItem(MEMORY_OPEN, open ? "1" : "0"); } catch { /* sans stockage */ }
+    }
     const thread = ref(null);
     const input = ref(null);
     let controller = null;
@@ -404,6 +418,7 @@ window.ChatPanel = {
           const known = live.tools.find((t) => t.id === ev.id);
           if (known) Object.assign(known, ev);
           else live.tools.push({ ...ev });
+          if (ev.name === "memory" && ev.status !== "running") memoryStamp.value++;
         }
         for (const a of d.annotations || []) {
           const c = a.url_citation;
@@ -503,6 +518,11 @@ window.ChatPanel = {
     function argSummary(t) {
       let a = {};
       try { a = JSON.parse(t.arguments || "{}"); } catch { return t.arguments; }
+      // La mémoire : la commande et le fichier, pas le texte écrit.
+      if (t.name === "memory" && a.command) {
+        return [a.command, a.path || a.old_path, a.new_path ? "→ " + a.new_path : ""]
+          .filter(Boolean).join(" ");
+      }
       const v = a.query || a.queries || a.url || a.urls || a.pattern || a.prompt
         || a.path || a.command || a.code || Object.values(a)[0];
       const s = Array.isArray(v) ? v.join(" · ") : typeof v === "string" ? v
@@ -534,7 +554,7 @@ window.ChatPanel = {
     return { chat, toolGroups, available, convs, sorted, current, currentId,
              models, modelsError, blind, draft, pending, streaming, status,
              settingsOpen, sideOpen, confirming, renaming, renameText,
-             storageWarning, dragging, thread, input, canSend, newConv,
+             storageWarning, dragging, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend, newConv,
              select, remove, startRename, endRename, toggleTool, onPick,
              onDrop, onPaste, send, stop, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, argSummary, num, size, when,
@@ -549,7 +569,8 @@ window.ChatPanel = {
         comptées à la clé connectée, comme celles de l'API.</div>
     </div>
   </div>
-  <div class="panel chat" v-else :class="{ 'side-open': sideOpen }">
+  <div class="panel chat" v-else
+       :class="{ 'side-open': sideOpen, 'with-memory': memoryOpen && $props.session.memory }">
     <aside class="chat-side">
       <div class="chat-side-head">
         <button type="button" class="btn" @click="newConv">Nouvelle conversation</button>
@@ -594,6 +615,8 @@ window.ChatPanel = {
             <option v-for="m in models" :key="m.id" :value="m.id">{{ m.id }}{{ m.vision ? " · images" : "" }}</option>
           </select>
         </label>
+        <button type="button" class="btn ghost" v-if="$props.session.memory"
+                :aria-pressed="String(memoryOpen)" @click="toggleMemory()">Mémoire</button>
         <button type="button" class="btn ghost" :aria-pressed="String(settingsOpen)"
                 @click="settingsOpen = !settingsOpen">Réglages</button>
       </header>
@@ -658,6 +681,7 @@ window.ChatPanel = {
                   <i class="state"></i><b>{{ t.name }}</b>
                   <span class="arg">{{ argSummary(t) }}</span>
                   <span class="dim" v-if="t.status === 'running'">en cours…</span>
+                  <span class="dim" v-else-if="t.status === 'limit'">limite d'appels atteinte</span>
                   <span class="dim" v-else-if="t.chars !== undefined">{{ num(t.chars) }} car.</span>
                 </summary>
                 <pre v-if="t.preview">{{ t.preview }}{{ t.chars > t.preview.length ? "\\n…" : "" }}</pre>
@@ -711,5 +735,7 @@ window.ChatPanel = {
         </div>
       </form>
     </section>
+    <memory-panel v-if="memoryOpen && $props.session.memory" compact
+                  :stamp="memoryStamp" @close="toggleMemory(false)"></memory-panel>
   </div>`,
 };

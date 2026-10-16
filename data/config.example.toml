@@ -225,7 +225,8 @@ memory_chars = 8000000
 # prompt) ; AUCUN réglage de ce fichier ne l'empêche.
 [tools]
 # Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
-# reçoit une erreur qui lui demande de conclure avec ce qu'il a. Le
+# reçoit une erreur qui lui demande de conclure avec ce qu'il a, et le tour
+# suivant ne lui présente plus ces outils : il ne peut que répondre. Le
 # `max_uses` d'un outil serveur Anthropic peut abaisser cette limite pour
 # sa requête, jamais la relever.
 max_calls = 8

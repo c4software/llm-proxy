@@ -540,7 +540,10 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
 - **Outils hébergés** (avec `[chat] hosted_tools = true`) : un
   interrupteur par type déclarable — *Web* déclare `{"type":
   "web_search"}` (donc `web_search`, `web_fetch`, `web_grep`), *Code*,
-  *Images*, *Mémoire*, un serveur MCP… Les interrupteurs **font foi** :
+  *Images*, *Mémoire*, et un par serveur MCP de la configuration
+  (`{"type": "mcp:<serveur>"}`, tous ses outils). Un refus par limite
+  d'appels s'affiche comme tel (`status: "limit"`), pas comme une panne.
+  Les interrupteurs **font foi** :
   `[chat].always` ne s'ajoute pas aux requêtes du chat. Chaque appel
   s'affiche pendant qu'il tourne puis, replié, avec le début de son
   résultat : le proxy l'annonce dans le flux par un champ hors schéma,
@@ -563,6 +566,12 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   chemins du proxy (`/v1/files/…`) font un lien. Le raisonnement
   (`reasoning_content`) se replie au-dessus de la réponse ; tokens et
   durée en dessous.
+
+- **Mémoire** (si `[tools.memory]` est actif) : le bouton *Mémoire* de
+  l'en-tête ouvre, à droite du fil, le panneau de la section Mémoire —
+  les fichiers de la clé connectée, à lire, corriger ou effacer. Il se
+  relit dès que le modèle a appelé l'outil `memory`, et l'appel se lit
+  « `create /memories/…` » plutôt qu'en arguments bruts.
 
 Pendant le chat, les statistiques ne se rafraîchissent pas ; le chat,
 lui, reste monté : une réponse en cours continue pendant qu'on regarde
@@ -2489,7 +2498,7 @@ Les [outils hébergés](#outils-hébergés) : ce qui est commun aux deux.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `max_calls` | `8` | Appels d'outils hébergés exécutés pour **une** réponse ; au-delà, le modèle reçoit une erreur qui lui demande de conclure. Le `max_uses` d'un outil serveur Anthropic peut l'abaisser pour sa requête, jamais le relever. Un outil peut avoir son propre compte, à part (`Tool.max_calls`, [docs/outils.md](docs/outils.md)) |
+| `max_calls` | `8` | Appels d'outils hébergés exécutés pour **une** réponse ; au-delà, le modèle reçoit une erreur qui lui demande de conclure, et le tour suivant ne lui présente plus les outils à bout : il ne peut que répondre (sans cela un petit modèle rappelait l'outil jusqu'à la limite dure, et la réponse était close vide). Le `max_uses` d'un outil serveur Anthropic peut l'abaisser pour sa requête, jamais le relever. Un outil peut avoir son propre compte, à part (`Tool.max_calls`, [docs/outils.md](docs/outils.md)) |
 | `run_timeout` | `60` | Secondes pour une exécution, tout compris (redirections suivies incluses). Dépassé → erreur rendue au modèle. Un outil peut avoir son propre délai (`Tool.timeout`) |
 | `max_result_chars` | `24000` | Caractères d'un résultat rendu au modèle ; le surplus est coupé et marqué `[truncated]` |
 | `cache_entries` | `512` | Appels gardés par la [mémoire des résultats](#mémoire-des-résultats) ; les moins récemment relus sortent |

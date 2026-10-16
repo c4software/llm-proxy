@@ -289,6 +289,23 @@ def test_a_model_that_never_concludes_is_stopped(chat, monkeypatch):
     assert [s["tool_choice"] for s in chat.sent] == ["required", "auto", "auto"]
 
 
+def test_exhausted_tools_are_withdrawn_for_a_final_answer(chat, monkeypatch):
+    """Budget épuisé : le tour suivant ne présente plus les outils à bout
+    — le modèle ne peut que répondre, au lieu d'enchaîner des refus
+    jusqu'à la limite dure et une réponse vide."""
+    monkeypatch.setattr(tools, "MAX_CALLS", 2)
+    search = lambda i: FakeUpstream(stream(
+        tool_call(0, f"call_{i}", "web_search", "{\"query\":\"encore\"}"),
+        chunk(finish="tool_calls"), usage(10, 1)))
+    chat.replies = [search(0), search(1), FakeUpstream(stream(*ANSWER_TURN))]
+    docs = blocks(post(chat, tool_choice="required").content)
+    assert len(chat.hosted.runs) == 2 and len(chat.sent) == 3
+    assert all("tools" in s for s in chat.sent[:2])
+    assert "tools" not in chat.sent[2] and "tool_choice" not in chat.sent[2]
+    text = "".join(d.get("content") or "" for d in deltas(docs))
+    assert text.endswith("Voilà.")
+
+
 def test_failure_on_a_later_turn(chat):
     """En flux le 200 est parti : un bloc `error`, puis `[DONE]`. En JSON
     rien n'est parti : le vrai statut. La ligne de stats garde ce que le

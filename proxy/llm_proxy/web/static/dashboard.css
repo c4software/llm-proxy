@@ -651,3 +651,29 @@ button.icon:disabled { opacity: .4; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .chat-side, .tool.running .state, .typing i { transition: none; animation: none; }
 }
+
+/* ── Chat : panneau Mémoire (memory.js, compact) ─────────────────────── */
+.chat.with-memory { grid-template-columns: 272px minmax(0, 1fr) minmax(300px, 360px); }
+.memory-side {
+  margin-top: 0;
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto;
+}
+.memory-side .chat-head h2 { font-size: 17px; }
+.memory-side .memory-body { grid-template-columns: 1fr; }
+.memory-side .memory-list { border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 0; }
+.memory-side .memory-list ul { max-height: 220px; }
+.memory-side .memory-editor { padding: 12px 14px 16px; }
+.memory-side textarea { min-height: 200px; }
+.tool.limit .state { background: color-mix(in srgb, var(--muted) 70%, transparent); }
+@media (max-width: 1100px) {
+  /* Pas la place pour trois colonnes : le panneau passe par-dessus le fil. */
+  .chat.with-memory { grid-template-columns: 272px minmax(0, 1fr); }
+  .chat.with-memory .memory-side {
+    position: absolute; z-index: 6; inset: 0 0 0 auto; width: min(92%, 380px);
+    box-shadow: 0 10px 40px rgb(0 0 0 / .18);
+  }
+}
+@media (max-width: 760px) {
+  .chat.with-memory { grid-template-columns: minmax(0, 1fr); }
+}

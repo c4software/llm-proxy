@@ -657,7 +657,9 @@ class Translator:
             event["chars"] = len(result.text)
             event["preview"] = result.text[:PREVIEW_CHARS]
             if result.error:
-                event["status"] = "error"
+                # Un refus par limite d'appels n'est pas une panne.
+                event["status"] = "limit" if result.error == "limit" \
+                    else "error"
         return self._block({"x_hosted_tool": event})
 
     def feed(self, chunk: bytes) -> bytes:
