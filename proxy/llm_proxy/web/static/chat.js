@@ -610,6 +610,13 @@ window.ChatPanel = {
     onUpdated(() => {
       const el = thread.value;
       if (el && pinned) el.scrollTop = el.scrollHeight;
+      // L'aperçu du raisonnement : une ligne trop longue montre sa FIN (ce
+      // que le modèle écrit), estompée à gauche ; une ligne courte reste à
+      // gauche. Mesuré ici : le CSS seul ne sait pas faire les deux.
+      if (el) for (const box of el.querySelectorAll(".r-last")) {
+        const text = box.firstElementChild;
+        box.classList.toggle("long", !!text && text.scrollWidth > box.clientWidth + 1);
+      }
     });
 
     // La dernière ligne non vide d'un raisonnement, sans les marques de
@@ -756,8 +763,8 @@ window.ChatPanel = {
               <summary>
                 <span class="r-label">Raisonnement</span>
                 <span class="r-last" :key="thought(m.reasoning).n"
-                      :class="{ live: streaming && i === current.messages.length - 1 && !m.content }">{{
-                  thought(m.reasoning).line }}</span>
+                      :class="{ live: streaming && i === current.messages.length - 1 && !m.content }"><span>{{
+                  thought(m.reasoning).line }}</span></span>
               </summary>
               <div class="md" v-html="html(m, 'reasoning')"></div>
             </details>

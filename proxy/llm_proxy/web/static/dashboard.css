@@ -619,22 +619,29 @@ button.icon:disabled { opacity: .4; cursor: default; }
    place à chaque NOUVELLE ligne (la clé change), et un reflet la parcourt
    tant que le modèle réfléchit. Déplié : le texte entier, sans elle. */
 .reasoning .r-last {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0; display: flex; overflow: hidden;
   font-size: 13px; font-style: italic; opacity: .85;
   animation: r-in .35s cubic-bezier(.22, .61, .36, 1);
 }
+.reasoning .r-last > span { flex: none; white-space: nowrap; }
+/* Trop longue : on en voit la fin, le début s'estompe à gauche. */
+.reasoning .r-last.long {
+  justify-content: flex-end;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 32px);
+  mask-image: linear-gradient(to right, transparent, #000 32px);
+}
 .reasoning[open] .r-last { display: none; }
 @keyframes r-in { from { opacity: 0; transform: translateY(5px); } }
-.reasoning .r-last.live {
+.reasoning .r-last.live > span {
   background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--ink) 50%,
               var(--muted) 60%, var(--muted) 100%);
   background-size: 250% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent;
-  animation: r-in .35s cubic-bezier(.22, .61, .36, 1), r-shine 2.2s linear infinite;
+  animation: r-shine 2.2s linear infinite;
 }
 @keyframes r-shine { from { background-position: 100% 0; } to { background-position: -150% 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .reasoning .r-last, .reasoning .r-last.live { animation: none; }
+  .reasoning .r-last, .reasoning .r-last.live > span { animation: none; }
 }
 .reasoning summary::before, .tool summary::before {
   content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted);
