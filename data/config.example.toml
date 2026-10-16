@@ -810,6 +810,9 @@ chat = false
 public_url = ""
 # Durée de vie (s) d'un fichier.
 ttl = 14400
+# Durée de vie (s) d'un fichier rendu à une conversation INCOGNITO du chat
+# de la page : le temps de s'afficher (au plus `ttl`).
+incognito_ttl = 900
 # Octets gardés au plus, tous fichiers confondus (les plus anciens
 # sortent) — pris sur la mémoire du proxy.
 max_bytes = 128000000

@@ -527,10 +527,12 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   catalogue — ni image, ni voix, ni embeddings —, avec `vision` quand le
   catalogue les dit capables de lire une image ; `?images=1` ajoute les
   modèles d'images, marqués `image`), `POST /ui/chat/completions`, qui
-  **est** `/v1/chat/completions` sous le cookie, et `POST
+  **est** `/v1/chat/completions` sous le cookie, `POST
   /ui/images/generations`, qui **est** `/v1/images/generations` sous le
-  cookie : routage au préfixe, quotas, statistiques — comptées à la clé
-  connectée, comme toute requête de l'API. Corps JSON exigé (`415`
+  cookie, et `POST /ui/images/edits` — un corps JSON (`model`, `prompt`,
+  `image` en data URL, `size`) changé en formulaire pour
+  `/v1/images/edits` : routage au préfixe, quotas, statistiques —
+  comptées à la clé connectée, comme toute requête de l'API. Corps JSON exigé (`415`
   sinon) : avec le cookie `SameSite=Strict`, une page tierce ne peut pas
   les déclencher.
 - **Conversations** : dans le navigateur (`localStorage`), une liste par
@@ -543,22 +545,41 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   l'historique local, pas leurs messages.
 - **Incognito** (bouton de l'en-tête) : la conversation n'est **jamais
   écrite** dans le stockage du navigateur et disparaît dès qu'on la
-  quitte ou qu'on recharge la page ; l'outil `memory` (persistant) n'y
-  est pas déclaré. Sur une conversation vide, le bouton change son
-  genre ; sur une conversation commencée, il en ouvre une neuve. Ce que
-  le proxy garde **en mémoire vive** pour toute requête reste : la
-  [mémoire des résultats](#mémoire-des-résultats) (24 h au plus), les
-  fichiers rendus par un outil (`[files].ttl`), et les statistiques — des
-  comptes, sans contenu.
+  quitte ou qu'on recharge la page. Sur une conversation vide, le bouton
+  change son genre ; sur une conversation commencée, il en ouvre une
+  neuve. Ses requêtes portent `X-Incognito: 1` (jamais relayé au
+  backend), et le proxy n'en garde **rien** au-delà de la réponse : ni
+  [mémoire des résultats](#mémoire-des-résultats), ni cache web
+  (recherches, pages, OCR, transcriptions), et l'outil `memory`
+  (persistant) est retiré même s'il est déclaré. Un fichier rendu par un
+  outil (une image générée) n'est gardé que le temps de s'afficher :
+  `[files].incognito_ttl`, 900 s par défaut (au plus `[files].ttl`).
+  Restent les statistiques — des comptes, sans contenu — et le bac
+  d'exécution de code du tour, qui expire comme les autres.
 - **Modèles d'images** : le sélecteur les range à part (*Génération
-  d'images*). Choisi, un tel modèle reçoit le texte du **dernier
-  message seul** (l'API d'images n'a pas d'historique), à la taille
-  choisie dans la zone de saisie — celles de
+  d'images*). Choisi, un tel modèle reçoit le dernier message **avec son
+  contexte** : les demandes précédentes de la même suite d'images (en
+  remontant jusqu'à une réponse d'un modèle de conversation), une par
+  ligne — « plus sombre » suit « un phare au coucher du soleil » ; le
+  prompt envoyé se relit sous l'image. Une image **jointe** au message,
+  ou une image rendue reprise par *Retoucher*, est retouchée
+  (`/ui/images/edits`) : seule la consigne part alors, l'image porte le
+  reste — au backend de servir `/v1/images/edits`. De 1 à 4 images par
+  demande (une requête chacune, `n` étant ignoré de plus d'un serveur ;
+  elles s'affichent à mesure), à la taille choisie — celles de
   `[tools.image_generation].sizes`, `size` par défaut. L'image rendue
-  (`b64_json`, ou une `url` absolue) s'affiche dans le fil, se
-  télécharge, et est gardée avec la conversation comme une pièce jointe
-  (retirée de même si le stockage déborde). Les pièces jointes ne lui
-  sont pas envoyées, et la page le dit. Pour qu'un modèle de
+  (`b64_json`, ou une `url` absolue) s'affiche dans le fil ; un clic
+  l'agrandit (Échap ferme), pour la télécharger ou la retoucher. Elle est
+  gardée avec la conversation comme une pièce jointe (retirée de même si
+  le stockage déborde). Les fichiers texte ne lui sont pas envoyés, ni
+  une seconde image, et la page le dit.
+- **Recherche** dans le menu latéral : chaque mot, sans casse ni
+  accents, dans le titre ou le texte des messages ; la conversation
+  affichée reste listée.
+- **Export** en Markdown (⤓ dans le menu, ou *Réglages*) : titre, date,
+  modèle, prompt système, messages, fichiers texte joints, sources, et
+  les images en data URL — un fichier qui se suffit. Le raisonnement n'y
+  est pas. Pour qu'un modèle de
   conversation fasse générer une image au fil d'une réponse, c'est
   l'outil *Images* ([génération d'images](#génération-dimages)).
 - **Niveau de réflexion**, par conversation, dans la zone de saisie :
@@ -2902,6 +2923,7 @@ rendue hors de l'origine du backend) : `[tools.net]`.
 |---|---|---|
 | `public_url` | `""` | L'adresse sous laquelle le navigateur du client joint le proxy, sans `/` final. Vide : aucun lien ne peut être écrit, aucun fichier n'est gardé, le modèle est prévenu |
 | `ttl` | `14400` | Durée de vie (s) d'un fichier |
+| `incognito_ttl` | `900` | Durée de vie (s) d'un fichier rendu à une conversation incognito du chat (au plus `ttl`). Voir [Le chat](#le-chat) |
 | `max_bytes` | `128000000` | Octets gardés au plus, tous fichiers confondus (les plus anciens sortent), en mémoire vive |
 | `max_file_bytes` | `10000000` | Taille au plus d'un fichier ; au-delà il n'est pas gardé, et le modèle le sait |
 

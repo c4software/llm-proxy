@@ -97,7 +97,7 @@ createApp({
     // Les conversations du chat (chat.js), listées dans le menu latéral.
     const chats = window.ChatStore;
     const chatState = chats.state;
-    const chatList = chats.sorted;
+    const chatList = chats.filtered;
     function openChat(id) { chats.select(id); setView("chat"); navOpen.value = false; }
     function newChat() { chats.newConv(); setView("chat"); navOpen.value = false; }
     const needLogin = ref(false);

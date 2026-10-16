@@ -54,6 +54,10 @@
       <button type="button" class="nav-new" :disabled="chatState.streaming" @click="newChat">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         <span>Nouvelle conversation</span></button>
+      <input type="search" class="nav-search" v-model="chatState.query" v-if="chats.sorted.value.length > 1"
+             placeholder="Rechercher…" aria-label="Rechercher dans les conversations">
+      <p class="nav-none dim" v-if="chatState.query && !chatList.some((c) => c.id !== chatState.currentId)">
+        Aucune autre conversation ne contient « {{ chatState.query }} ».</p>
       <ul>
         <li v-for="c in chatList" :key="c.id"
             :class="{ current: view === 'chat' && c.id === chatState.currentId }">
@@ -68,6 +72,8 @@
             <span class="dim">{{ chats.when(c.updated) }} · {{ c.messages.length }} msg</span>
           </button>
           <span class="conv-actions" v-if="chatState.renaming !== c.id">
+            <button type="button" class="icon" title="Exporter en Markdown" :disabled="!c.messages.length"
+                    @click="chats.exportMd(c)">⤓</button>
             <button type="button" class="icon" title="Renommer" @click="chats.startRename(c)">✎</button>
             <button type="button" class="icon danger" :class="{ armed: chatState.confirming === c.id }"
                     :title="chatState.confirming === c.id ? 'Cliquer encore pour supprimer' : 'Supprimer'"

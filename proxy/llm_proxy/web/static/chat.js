@@ -41,18 +41,23 @@
 
   INCOGNITO : une conversation marquée `incognito` n'est jamais écrite
   dans le stockage du navigateur, et disparaît dès qu'on la quitte (ou
-  qu'on recharge la page). L'outil `memory` (persistant, côté proxy) n'y
-  est pas déclaré. Ce que le proxy garde en mémoire vive quelques heures
-  (échanges cachés des outils, fichiers rendus) et les statistiques
-  (des comptes, sans contenu) restent comme pour toute requête.
+  qu'on recharge la page). Ses requêtes portent `X-Incognito: 1` : le
+  proxy n'en garde rien (ni échange d'outils, ni cache web, pas l'outil
+  `memory`), et un fichier rendu ne vit que le temps de s'afficher. Les
+  statistiques (des comptes, sans contenu) restent.
 
   MODÈLES D'IMAGES : /ui/models?images=1 les ajoute au catalogue
-  (`image`). Choisi, un tel modèle reçoit le DERNIER message seul, par
-    POST /ui/images/generations   /v1/images/generations, une image
-  à la taille choisie (celles de [tools.image_generation].sizes). L'image
-  rendue (`b64_json`, ou une `url` absolue) devient une pièce jointe de
-  la réponse : gardée comme celles des messages, et retirée de même si le
-  stockage déborde.
+  (`image`). Choisi, un tel modèle reçoit le dernier message, précédé des
+  demandes de la même suite d'images (le contexte : « plus sombre » suit
+  ce qu'il retouche), par
+    POST /ui/images/generations   /v1/images/generations
+    POST /ui/images/edits         /v1/images/edits, si une image est
+                                  jointe (ou « Retoucher » une image rendue)
+  de 1 à 4 images, une requête chacune, à la taille choisie (celles de
+  [tools.image_generation].sizes). L'image rendue (`b64_json`, ou une
+  `url` absolue) devient une pièce jointe de la réponse : gardée comme
+  celles des messages, et retirée de même si le stockage déborde. Un clic
+  l'agrandit.
 */
 // Les CONVERSATIONS : un magasin partagé, lu par le chat (ChatPanel) ET par
 // le menu latéral de la page (dashboard.js), qui en affiche la liste. Dans
@@ -65,6 +70,7 @@ window.ChatStore = (() => {
     confirming: null,               // id de la conversation à supprimer
     renaming: null, renameText: "",
     storageWarning: "",
+    query: "",                      // la recherche du menu latéral
   });
   // Ce qu'une conversation neuve reçoit (modèle, outils) : posé par le chat,
   // qui connaît le catalogue et la session.
@@ -72,6 +78,18 @@ window.ChatStore = (() => {
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const sorted = computed(() => [...state.convs].sort((a, b) => b.updated - a.updated));
   const current = computed(() => state.convs.find((c) => c.id === state.currentId) || null);
+  // La recherche : chaque mot, sans casse ni accents, dans le titre ou
+  // le texte d'un message. La conversation affichée reste listée.
+  const fold = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const filtered = computed(() => {
+    const words = fold(state.query).split(/\s+/).filter(Boolean);
+    if (!words.length) return sorted.value;
+    return sorted.value.filter((c) => {
+      if (c.id === state.currentId) return true;
+      const text = fold(c.title + "\n" + c.messages.map((m) => m.content).join("\n"));
+      return words.every((w) => text.includes(w));
+    });
+  });
 
   // La liste de cette clé. Rien n'est relu si c'est déjà elle.
   function open(client) {
@@ -140,6 +158,7 @@ window.ChatStore = (() => {
       showReasoning: true, tools: base ? [...base.tools] : fresh.tools,
       reasoning: base ? (base.reasoning || "auto") : "auto",
       imageSize: base ? base.imageSize : undefined,
+      imageCount: base ? base.imageCount || 1 : 1,
       incognito, messages: [],
     };
     state.convs.unshift(conv);
@@ -178,6 +197,35 @@ window.ChatStore = (() => {
     state.renaming = null;
   }
 
+  // Exporter : la conversation en Markdown, images comprises (data URL),
+  // téléchargée par le navigateur. Le raisonnement n'y est pas.
+  function exportMd(c) {
+    const fence = (t) => "`".repeat(Math.max(3, ...(String(t).match(/`+/g) || [""]).map((b) => b.length + 1)));
+    const out = [`# ${c.title}`, "", `*${new Date(c.created).toLocaleString("fr-FR")} · ${c.model}*`, ""];
+    if (c.system && c.system.trim()) out.push("> Prompt système : " + c.system.trim().replace(/\n/g, "\n> "), "");
+    for (const m of c.messages) {
+      out.push(m.role === "user" ? "## Vous" : `## ${m.model || "Assistant"}`, "");
+      for (const a of m.attachments || []) {
+        if (a.kind === "image" && a.data) out.push(`![${a.name}](${a.data})`, "");
+        else if (a.kind === "text") { const f = fence(a.data); out.push(`\`${a.name}\``, "", f, a.data, f, ""); }
+        else out.push(`*(${a.name} : image retirée de l'historique local)*`, "");
+      }
+      if (m.content) out.push(m.content, "");
+      if (m.error) out.push(`> Erreur : ${m.error}`, "");
+      if ((m.sources || []).length) {
+        out.push(...m.sources.map((x) => `- [${x.title || x.url}](${x.url})`), "");
+      }
+    }
+    const blob = new Blob([out.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (fold(c.title).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "conversation") + ".md";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
   const when = (ts) => {
     const d = new Date(ts), today = new Date();
     return d.toDateString() === today.toDateString()
@@ -185,8 +233,8 @@ window.ChatStore = (() => {
       : d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
   };
 
-  return { state, sorted, current, open, newConv, select, remove,
-           startRename, endRename, when, uid,
+  return { state, sorted, filtered, current, open, newConv, select, remove,
+           startRename, endRename, exportMd, when, uid,
            setDefaults(fn) { defaults = fn; } };
 })();
 
@@ -292,8 +340,10 @@ window.ChatPanel = {
       const m = c && models.value.find((x) => x.id === c.model);
       return !!(m && !m.vision && !m.image && pending.value.some((a) => a.kind === "image"));
     });
-    // Un modèle d'images ne reçoit que le texte du dernier message.
-    const unsent = computed(() => imageMode.value && pending.value.length > 0);
+    // Un modèle d'images ne reçoit qu'UNE image (à retoucher) : ni fichier
+    // texte, ni seconde image.
+    const unsent = computed(() => imageMode.value && (pending.value.some((a) => a.kind !== "image")
+      || pending.value.filter((a) => a.kind === "image").length > 1));
 
     async function loadModels() {
       try {
@@ -487,7 +537,8 @@ window.ChatPanel = {
       try {
         const r = await fetch(API, {
           method: "POST", signal: controller.signal,
-          headers: { "content-type": "application/json", accept: "text/event-stream" },
+          headers: { "content-type": "application/json", accept: "text/event-stream",
+                     ...(conv.incognito ? { "x-incognito": "1" } : {}) },
           body: JSON.stringify(body),
         });
         if (r.status === 401) { live.error = "Session expirée : reconnectez-vous."; emit("unauthorized"); return; }
@@ -536,58 +587,103 @@ window.ChatPanel = {
         : b64.startsWith("UklGR") ? "image/webp" : "image/png";
     }
 
-    // Un modèle d'images : le texte du dernier message → une image, pièce
-    // jointe de la réponse.
+    // Le prompt d'une image, avec le CONTEXTE de la conversation : les
+    // demandes précédentes de la même suite d'images (chaque message
+    // auquel un modèle d'images a répondu, en remontant jusqu'à une
+    // réponse de conversation), puis la dernière. « Plus sombre » suit
+    // donc « un phare au coucher du soleil ». Une retouche n'en a pas
+    // besoin : l'image porte le contexte.
+    const MAX_PROMPT = 4000;
+    function imagePrompt(conv, edit) {
+      const msgs = conv.messages;
+      const parts = [];
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m.role === "assistant" && !m.image) break;
+        if (m.role === "user" && m.content.trim()) parts.unshift(m.content.trim());
+        if (edit) break;
+      }
+      const text = parts.join("\n");
+      return text.length > MAX_PROMPT ? text.slice(-MAX_PROMPT) : text;
+    }
+
+    // Une requête d'image : génération, ou retouche d'`image` (data URL).
+    async function oneImage(conv, body, signal) {
+      const r = await fetch(body.image ? "/ui/images/edits" : "/ui/images/generations", {
+        method: "POST", signal,
+        headers: { "content-type": "application/json", accept: "application/json",
+                   ...(conv.incognito ? { "x-incognito": "1" } : {}) },
+        body: JSON.stringify(body),
+      });
+      if (r.status === 401) { emit("unauthorized"); throw new Error("Session expirée : reconnectez-vous."); }
+      let j = null;
+      try { j = await r.json(); } catch { /* corps illisible */ }
+      if (!r.ok) throw new Error((j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`);
+      const item = ((j && j.data) || [])[0] || {};
+      const tag = Date.now().toString(36);
+      if (item.b64_json) {
+        const type = b64Type(item.b64_json);
+        return { kind: "image", type, size: Math.round(item.b64_json.length * 3 / 4),
+                 name: `image-${tag}.${type.split("/")[1].replace("jpeg", "jpg")}`,
+                 data: `data:${type};base64,${item.b64_json}`, revised: item.revised_prompt || "" };
+      }
+      if (/^https?:\/\//.test(item.url || "")) {
+        return { kind: "image", type: "", size: 0, name: `image-${tag}`, data: item.url,
+                 revised: item.revised_prompt || "" };
+      }
+      throw new Error("Le modèle n'a pas rendu d'image lisible.");
+    }
+
+    // Un modèle d'images : le dernier message (avec son contexte) → une ou
+    // plusieurs images, pièces jointes de la réponse. Une image jointe au
+    // message est RETOUCHÉE (/ui/images/edits). Les images partent une à
+    // une (n = 1 chacune : plus d'un serveur ignore `n`), et s'affichent
+    // à mesure.
     async function generate(conv) {
       const msg = { id: uid(), role: "assistant", content: "", reasoning: "",
-                    tools: [], sources: [], attachments: [], image: true,
+                    tools: [], sources: [], attachments: [], image: true, prompt: "",
                     model: conv.model, usage: null, error: "",
                     started: Date.now(), duration: 0 };
       const ask = [...conv.messages].reverse().find((m) => m.role === "user");
+      const source = ask && (ask.attachments || []).find((a) => a.kind === "image" && a.data);
+      const prompt = imagePrompt(conv, !!source);
       conv.messages.push(msg);
       conv.updated = Date.now();
       const live = conv.messages[conv.messages.length - 1];
+      live.prompt = prompt;
       streaming.value = true;
       status.value = "";
       const ctrl = controller = new AbortController();
       const size = imageSizes.value.includes(conv.imageSize) ? conv.imageSize
         : (chat.value.image_size || imageSizes.value[0]);
+      const count = Math.min(Math.max(Number(conv.imageCount) || 1, 1), 4);
       try {
-        const prompt = ask && ask.content.trim();
-        if (!prompt) { live.error = "Décrire l'image à générer."; return; }
-        const r = await fetch("/ui/images/generations", {
-          method: "POST", signal: ctrl.signal,
-          headers: { "content-type": "application/json", accept: "application/json" },
-          body: JSON.stringify({ model: conv.model, prompt, size, n: 1 }),
-        });
-        if (r.status === 401) { live.error = "Session expirée : reconnectez-vous."; emit("unauthorized"); return; }
-        let j = null;
-        try { j = await r.json(); } catch { /* corps illisible */ }
-        if (!r.ok) {
-          live.error = (j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`;
-          return;
+        if (!ask || !ask.content.trim()) { live.error = "Décrire l'image à générer."; return; }
+        for (let k = 0; k < count && !ctrl.signal.aborted; k++) {
+          const got = await oneImage(conv, { model: conv.model, prompt, size, n: 1,
+            ...(source ? { image: source.data } : {}) }, ctrl.signal);
+          const { revised, ...image } = got;
+          live.attachments.push(image);
+          if (revised && !live.content) live.content = "*" + revised + "*";
         }
-        const item = ((j && j.data) || [])[0] || {};
-        const tag = Date.now().toString(36);
-        if (item.b64_json) {
-          const type = b64Type(item.b64_json);
-          live.attachments.push({ kind: "image", type, size: Math.round(item.b64_json.length * 3 / 4),
-            name: `image-${tag}.${type.split("/")[1].replace("jpeg", "jpg")}`,
-            data: `data:${type};base64,${item.b64_json}` });
-        } else if (/^https?:\/\//.test(item.url || "")) {
-          live.attachments.push({ kind: "image", type: "", size: 0,
-                                  name: `image-${tag}`, data: item.url });
-        } else {
-          live.error = "Le modèle n'a pas rendu d'image lisible.";
-          return;
-        }
-        if (item.revised_prompt) live.content = "*" + item.revised_prompt + "*";
       } catch (e) {
-        live.error = e.name === "AbortError" ? "Arrêté." : "Connexion interrompue : " + e.message;
+        live.error = e.name === "AbortError" ? (live.attachments.length ? "" : "Arrêté.") : e.message;
       } finally {
         done(conv, live, ctrl);
       }
     }
+
+    // L'image agrandie (clic sur une image rendue), et la retouche : l'image
+    // rejoint les pièces jointes du message en cours.
+    const zoom = ref(null);
+    function retouch(a) {
+      pending.value = [...pending.value.filter((p) => p.kind !== "image"),
+        { kind: "image", name: a.name, type: a.type, size: a.size, data: a.data }];
+      zoom.value = null;
+      nextTick(() => { if (input.value) input.value.focus(); });
+    }
+    function onZoomKey(e) { if (e.key === "Escape" && zoom.value) zoom.value = null; }
+    window.addEventListener("keydown", onZoomKey);
 
     async function readStream(stream, live) {
       const reader = stream.getReader();
@@ -775,7 +871,7 @@ window.ChatPanel = {
         if (text && (!s || s.text !== text)) shown[m.id] = { text, n: (s ? s.n : 0) + 1 };
       }, REASON_PACE);
     });
-    onUnmounted(() => clearInterval(pace));
+    onUnmounted(() => { clearInterval(pace); window.removeEventListener("keydown", onZoomKey); });
 
     // Ce que l'appel d'outil cherchait, en une ligne.
     function argSummary(t) {
@@ -805,6 +901,7 @@ window.ChatPanel = {
       for (const c of S.state.convs) {
         if (!c.model) c.model = defaultModel();
         if (!c.imageSize) c.imageSize = chat.value.image_size;
+        if (!c.imageCount) c.imageCount = 1;
         if (!c.reasoning) c.reasoning = "auto";
       }
       nextTick(() => {
@@ -814,7 +911,7 @@ window.ChatPanel = {
     });
 
     return { chat, toolGroups, available, current, currentId,
-             models, modelsError, blind, unsent, imageMode, imageSizes, toggleIncognito, draft, pending, streaming, status,
+             models, modelsError, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick,
@@ -888,10 +985,15 @@ window.ChatPanel = {
           <label class="check"><input type="checkbox" v-model="current.showReasoning">
             montrer le raisonnement du modèle</label>
         </div>
+        <div class="field">
+          <span>Conversation</span>
+          <div><button type="button" class="btn ghost" :disabled="!current.messages.length"
+                       @click="exportMd(current)">Exporter en Markdown</button></div>
+        </div>
       </div>
-      <p class="chat-incognito" v-if="current.incognito">Incognito : cette conversation n'est
-        pas enregistrée dans le navigateur ni dans la mémoire du modèle, et disparaît dès que
-        vous la quittez ou rechargez la page.</p>
+      <p class="chat-incognito" v-if="current.incognito">Incognito : rien n'est gardé, ni dans
+        ce navigateur ni par le proxy (ni mémoire, ni cache), et la conversation disparaît dès
+        que vous la quittez ou rechargez la page.</p>
       <p class="chat-warn" v-if="modelsError">{{ modelsError }}</p>
       <p class="chat-warn" v-if="storageWarning">{{ storageWarning }}</p>
 
@@ -945,17 +1047,21 @@ window.ChatPanel = {
                 <pre v-if="t.preview">{{ t.preview }}{{ t.chars > t.preview.length ? "\\n…" : "" }}</pre>
               </details>
             </div>
-            <div class="gen-images" v-if="m.attachments && m.attachments.length">
+            <div class="gen-images" :class="{ multi: m.attachments.length > 1 }" v-if="m.attachments && m.attachments.length">
               <template v-for="a in m.attachments" :key="a.name">
-                <a v-if="a.data" :href="a.data" :download="a.name" title="Télécharger">
-                  <img :src="a.data" :alt="a.name" @load="onImageLoad"></a>
+                <button v-if="a.data" type="button" class="gen-image" title="Agrandir"
+                        @click="zoom = a"><img :src="a.data" :alt="a.name" @load="onImageLoad"></button>
                 <span v-else class="chip file">{{ a.name }}<span class="dim">
                   · image retirée de l'historique local</span></span>
               </template>
             </div>
+            <details class="gen-prompt" v-if="m.image && m.prompt && m.prompt.includes('\\n')">
+              <summary>prompt envoyé (avec le contexte)</summary><pre>{{ m.prompt }}</pre></details>
             <div class="md" v-html="html(m)"></div>
-            <div class="typing" v-if="streaming && i === current.messages.length - 1 && !m.content && !m.error && !(m.attachments || []).length">
-              <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image…</span></div>
+            <div class="typing" v-if="streaming && i === current.messages.length - 1 && !m.error
+                 && (m.image ? (m.attachments || []).length < (current.imageCount || 1) : !m.content)">
+              <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ (current.imageCount || 1) > 1
+                ? " " + ((m.attachments || []).length + 1) + " / " + current.imageCount : "" }}…</span></div>
             <p class="msg-error" v-if="m.error">{{ m.error }}</p>
             <div class="sources" v-if="m.sources.length">
               <a v-for="s in m.sources" :key="s.url" :href="s.url" target="_blank"
@@ -967,8 +1073,13 @@ window.ChatPanel = {
               <span v-if="m.usage">{{ num(m.usage.prompt_tokens) }} → {{ num(m.usage.completion_tokens) }} tokens</span>
               <span v-if="m.duration">{{ m.duration.toFixed(1) }} s</span>
               <button type="button" class="link" v-if="m.content" @click="copyText(m.content, $event.target)">Copier</button>
-              <a class="link" v-for="a in (m.attachments || []).filter((a) => a.data)" :key="a.name"
-                 :href="a.data" :download="a.name">Télécharger</a>
+              <!-- Une image : ses actions ici ; plusieurs : dans l'image agrandie. -->
+              <template v-if="m.image && m.attachments.length === 1 && m.attachments[0].data">
+                <a class="link" :href="m.attachments[0].data" :download="m.attachments[0].name">Télécharger</a>
+                <button type="button" class="link" v-if="m.attachments[0].data.startsWith('data:')"
+                        :disabled="streaming" @click="retouch(m.attachments[0])">Retoucher</button>
+              </template>
+              <span v-else-if="m.image && m.attachments.length > 1">cliquer une image pour la télécharger ou la retoucher</span>
               <button type="button" class="link" v-if="i === current.messages.length - 1"
                       @click="regenerate">Régénérer</button>
             </div>
@@ -1009,13 +1120,19 @@ window.ChatPanel = {
           <label class="btn ghost attach ico-btn" title="Joindre : images ou fichiers texte (ou glisser-déposer, ou coller)">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4L14.6 7.5"/></svg>
             <span class="lbl">Joindre</span><input type="file" multiple hidden @change="onPick"></label>
+          <label class="effort" v-if="imageMode" title="Nombre d'images par demande">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
+            <select v-model.number="current.imageCount" :disabled="streaming" aria-label="Nombre d'images">
+              <option v-for="k in 4" :key="k" :value="k">× {{ k }}</option>
+            </select>
+          </label>
           <label class="effort" v-if="imageMode" title="Taille de l'image (largeur × hauteur) ; plus grande, plus lente">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4"/></svg>
             <select v-model="current.imageSize" :disabled="streaming" aria-label="Taille de l'image">
               <option v-for="z in imageSizes" :key="z" :value="z">{{ z.replace("x", " × ") }}</option>
             </select>
           </label>
-          <label class="effort" v-else title="Niveau de réflexion du modèle : auto (celui du modèle), non, faible, moyenne, élevée">
+          <label class="effort" v-if="!imageMode" title="Niveau de réflexion du modèle : auto (celui du modèle), non, faible, moyenne, élevée">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>
             <select v-model="current.reasoning" :disabled="streaming" aria-label="Réflexion">
               <option value="auto">auto</option>
@@ -1036,7 +1153,7 @@ window.ChatPanel = {
           <span class="dim" v-else-if="!chat.hosted_tools" title="[chat] hosted_tools = true dans config.toml">
             outils hébergés inactifs</span>
           <span class="status" :class="{ warn: (blind || unsent) && !status }">{{ status
-            || (unsent ? "pièces jointes non envoyées à un modèle d'images"
+            || (unsent ? "seule la première image est envoyée (à retoucher)"
             : blind ? "ce modèle ne lit peut-être pas les images" : "") }}</span>
           <button type="submit" class="btn ico-btn send" :class="{ ghost: streaming }" :disabled="!canSend"
                   :title="streaming ? 'Mettre en file' : 'Envoyer'">
@@ -1050,5 +1167,17 @@ window.ChatPanel = {
     </section>
     <memory-panel v-if="memoryOpen && $props.session.memory" compact
                   :stamp="memoryStamp" @close="toggleMemory(false)"></memory-panel>
+    <teleport to="body">
+    <div class="lightbox" v-if="zoom" @click.self="zoom = null" role="dialog" aria-label="Image agrandie">
+      <img :src="zoom.data" :alt="zoom.name" @click="zoom = null">
+      <div class="lightbox-bar">
+        <span class="dim">{{ zoom.name }}</span>
+        <a class="btn ghost" :href="zoom.data" :download="zoom.name">Télécharger</a>
+        <button type="button" class="btn ghost" v-if="zoom.data.startsWith('data:')"
+                :disabled="streaming" @click="retouch(zoom)">Retoucher</button>
+        <button type="button" class="btn" @click="zoom = null">Fermer</button>
+      </div>
+    </div>
+    </teleport>
   </div>`,
 };
