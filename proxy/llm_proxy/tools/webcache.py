@@ -28,6 +28,7 @@ import time
 from collections import OrderedDict
 
 from .. import config
+from ..settings import INCOGNITO
 
 TTL = config.num("tools.web_cache_ttl", 600)
 ENTRIES = config.integer("tools.web_cache_entries", 256)
@@ -57,7 +58,8 @@ class Cache:
         return entry[2]
 
     def put(self, key, value, size: int) -> None:
-        if self.ttl <= 0 or size > self.max_bytes:
+        # Incognito : rien de la requête ne survit à la réponse.
+        if self.ttl <= 0 or size > self.max_bytes or INCOGNITO.get():
             return
         self._drop(key)
         self._data[key] = (time.monotonic(), size, value)

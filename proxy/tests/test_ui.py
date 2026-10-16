@@ -253,3 +253,85 @@ def test_cookie_is_secure_behind_a_tls_reverse_proxy(ui):
     assert "secure" in r.headers["set-cookie"].lower()
     r = ui.client.post("/ui/login", json={"key": KEY})
     assert "secure" not in r.headers["set-cookie"].lower()
+
+
+def test_incognito_chat_leaves_nothing_behind(ui, monkeypatch):
+    """`X-Incognito: 1` : l'échange d'outils n'est pas rangé dans la
+    mémoire du chat (une requête ordinaire, si) ; la requête suivante,
+    elle, n'est pas incognito."""
+    login(ui)
+    body = {"model": "essai/qwen", "stream": True,
+            "messages": [{"role": "user", "content": "Dernière version ?"}],
+            "tools": [{"type": "web_search"}]}
+    ui.replies = [FakeUpstream(stream(*SEARCH_TURN)),
+                  FakeUpstream(stream(*ANSWER_TURN))]
+    r = ui.client.post("/ui/chat/completions", json=body,
+                       headers={"x-incognito": "1"})
+    assert r.status_code == 200 and ui.hosted.runs
+    assert len(C.MEMORY) == 0
+    ui.replies = [FakeUpstream(stream(*SEARCH_TURN)),
+                  FakeUpstream(stream(*ANSWER_TURN))]
+    assert ui.client.post("/ui/chat/completions", json=body).status_code == 200
+    assert len(C.MEMORY) == 1
+
+
+def test_incognito_chat_never_declares_memory(ui, monkeypatch):
+    """L'outil `memory` (persistant) est retiré d'une requête incognito,
+    même déclaré ; une requête ordinaire le garde."""
+    login(ui)
+    monkeypatch.setattr(C, "ENABLED", False)    # relais brut : `tools` tel quel
+    for headers, kept in (({"x-incognito": "1"}, []),
+                          ({}, [{"type": "memory"}])):
+        ui.replies = [FakeUpstream(stream(*ANSWER_TURN))]
+        chat_body = {"model": "essai/qwen", "stream": True,
+                     "messages": [{"role": "user", "content": "Bonjour"}],
+                     "tools": [{"type": "memory"}]}
+        assert ui.client.post("/ui/chat/completions", json=chat_body,
+                              headers=headers).status_code == 200
+        assert ui.sent[-1]["tools"] == kept
+
+
+def test_incognito_keeps_no_web_cache_and_short_lived_files():
+    """Sous settings.INCOGNITO : le cache web ne range rien, et un fichier
+    rendu n'est gardé que files.INCOGNITO_TTL."""
+    from llm_proxy import files
+    from llm_proxy.settings import INCOGNITO
+    from llm_proxy.tools import webcache
+    cache = webcache.Cache(60, 8, 1000)
+    store = files.Store(4 * 3600, 10_000, 10_000)
+    token = INCOGNITO.set(True)
+    try:
+        cache.put("k", "v", 1)
+        short = store.put("a.png", b"\x89PNG\r\n\x1a\n" + b"0" * 20)
+    finally:
+        INCOGNITO.reset(token)
+    long = store.put("b.png", b"\x89PNG\r\n\x1a\n" + b"0" * 20)
+    assert len(cache) == 0
+    assert short.expires - long.expires < -3600
+
+
+def test_chat_edits_an_attached_image(ui, monkeypatch):
+    """/ui/images/edits : un corps JSON (image en data URL) devient le
+    formulaire de /v1/images/edits — préfixe retiré, image lue dans ses
+    octets ; refusé sans image lisible."""
+    import base64
+    from llm_proxy import multipart
+    seen = []
+
+    async def send_upstream(call, request, path, body):
+        seen.append((path, request.headers["content-type"], body))
+        return FakeUpstream(json.dumps({"data": [{"b64_json": "eA=="}]}).encode())
+
+    monkeypatch.setattr(A, "send_upstream", send_upstream)
+    login(ui)
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 30
+    body = {"model": "essai/flux", "prompt": "plus sombre", "size": "512x512",
+            "image": "data:image/png;base64," + base64.b64encode(png).decode()}
+    r = ui.client.post("/ui/images/edits", json=body)
+    assert r.status_code == 200 and r.json()["data"][0]["b64_json"] == "eA=="
+    path, ctype, raw = seen[-1]
+    assert path == "v1/images/edits" and ctype.startswith("multipart/form-data")
+    assert multipart.model_field(raw, ctype) == "flux"
+    assert b"plus sombre" in raw and png in raw and b"image/png" in raw
+    assert ui.client.post("/ui/images/edits", json={
+        **body, "image": "data:image/png;base64,AAAA"}).status_code == 400

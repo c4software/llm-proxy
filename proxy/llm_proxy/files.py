@@ -52,12 +52,16 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from . import config
+from .settings import INCOGNITO
 
 # L'adresse PUBLIQUE du proxy, celle que le navigateur du client joint
 # («https://llm.example.org»). Vide : aucun lien ne peut être écrit, donc
 # rien n'est gardé — un outil le sait par `refusal`, et le dit au modèle.
 PUBLIC_URL = config.text("files.public_url", "").rstrip("/")
 TTL = config.num("files.ttl", 4 * 3600)
+# La durée d'un fichier rendu à une requête incognito (settings.INCOGNITO) :
+# de quoi l'afficher, pas de quoi le retrouver des heures plus tard.
+INCOGNITO_TTL = min(TTL, config.num("files.incognito_ttl", 900))
 MAX_BYTES = config.integer("files.max_bytes", 128_000_000)
 MAX_FILE_BYTES = config.integer("files.max_file_bytes", 10_000_000)
 # Le chemin de la route, que app.py exempte de la clé du proxy.
@@ -179,7 +183,9 @@ class Store:
         kind = sniff(data)
         stored = Stored(secrets.token_urlsafe(24), safe_name(name),
                         kind or "application/octet-stream", kind is not None,
-                        bytes(data), time.monotonic() + self.ttl, owner)
+                        bytes(data), time.monotonic() + (
+                            min(self.ttl, INCOGNITO_TTL) if INCOGNITO.get()
+                            else self.ttl), owner)
         self._data[stored.token] = stored
         self.size += len(stored.data)
         while self.size > self.max_bytes:
@@ -198,10 +204,11 @@ class Store:
         return stored if name == stored.name else None
 
     def _sweep(self) -> None:
-        # Durée unique, ordre d'arrivée : les expirés sont en tête.
+        # Deux durées (incognito) : un fichier court peut suivre un long,
+        # tout est parcouru — le magasin tient en quelques dizaines.
         now = time.monotonic()
-        while self._data and next(iter(self._data.values())).expires < now:
-            self._drop(next(iter(self._data)))
+        for token in [t for t, s in self._data.items() if s.expires < now]:
+            self._drop(token)
 
     def _drop(self, token: str) -> None:
         stored = self._data.pop(token, None)

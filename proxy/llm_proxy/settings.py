@@ -5,9 +5,19 @@ propre module (quotas → albert.py, stats → stats.py, backends →
 backends.py) : chacun lit ce qui le regarde, personne ne centralise tout.
 """
 
+import contextvars
 import logging
 
 from . import config
+
+# Une requête INCOGNITO du chat de la page (en-tête `X-Incognito: 1` sur
+# /ui/chat/completions et /ui/images/*) : ce que le proxy garderait d'elle
+# au-delà de la réponse ne l'est pas — ni échange d'outils (chat_api), ni
+# cache web (tools/webcache.py, transcriptions comprises) ; un fichier
+# rendu par un outil n'est gardé que le temps de s'afficher
+# (files.INCOGNITO_TTL). Posé par la route, hérité de tout ce qu'elle
+# lance, comme stats.CLIENT.
+INCOGNITO = contextvars.ContextVar("incognito", default=False)
 
 TOOL_CHOICE = config.text("proxy.tool_choice", "auto")
 TIMEOUT = config.num("proxy.upstream_timeout", 600)

@@ -63,6 +63,8 @@ association routeurs ↔ modèles) vit dans albert.py.
 """
 
 import asyncio
+import base64
+import binascii
 import dataclasses
 import fnmatch
 import hashlib
@@ -101,7 +103,7 @@ from .backends import (
 )
 from .settings import (
     EXEMPT_SUFFIXES, FORWARD_POST_PATHS, HOP_BY_HOP, PROXY_API_KEYS,
-    TOOL_CHOICE, is_exempt, log,
+    INCOGNITO, TOOL_CHOICE, is_exempt, log,
 )
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -440,7 +442,7 @@ def clean_headers(request: Request, api_key: str) -> dict:
     # Authorization du client jamais relayé si le backend a sa clé, ni si
     # l'auth proxy est active (le Bearer du client est la clé DU PROXY,
     # elle ne doit pas fuiter vers l'upstream).
-    skip = HOP_BY_HOP | ANTHROPIC_HEADERS | (
+    skip = HOP_BY_HOP | ANTHROPIC_HEADERS | {"x-incognito"} | (
         {"authorization"} if api_key or PROXY_API_KEYS else set()
     )
     # Auth proxy active : le cookie posé par /ui porte la clé DU PROXY —
@@ -995,6 +997,14 @@ async def chat(request: Request, page: bool = False):
     de [chat].always, l'exécution des outils annoncée dans le flux."""
     raw = await request.body()
     payload = parse_json(raw)
+    if INCOGNITO.get() and isinstance(payload, dict) \
+            and isinstance(payload.get("tools"), list):
+        # Incognito : pas de mémoire persistante, même déclarée.
+        kept = [t for t in payload["tools"]
+                if not (isinstance(t, dict) and t.get("type") == "memory")]
+        if len(kept) != len(payload["tools"]):
+            payload["tools"] = kept
+            raw = json.dumps(payload, ensure_ascii=False).encode()
 
     # Le routage d'abord : l'injection de tool_choice dépend du backend
     # visé (chacun peut la désactiver ou choisir sa valeur).
@@ -1036,7 +1046,9 @@ async def chat(request: Request, page: bool = False):
             # de chat_api, [chat].memory) — cloisonnée par client comme
             # celle de la surface Responses : le condensé de la clé
             # présentée, «» pour un proxy ouvert.
-            found = chat_api.restore(
+            # Incognito : rien n'est réinséré ni rangé (ctx.memory reste
+            # vide).
+            found = 0 if INCOGNITO.get() else chat_api.restore(
                 payload, ctx,
                 tools.owner(client_token(request)) if PROXY_API_KEYS else "")
             if found:
@@ -2080,7 +2092,15 @@ async def ui_chat(request: Request):
                               "chat de la page désactivé ([ui].chat)")
     if (bad := json_only(request)) is not None:
         return bad
+    incognito(request)
     return await chat(request, page=True)
+
+
+def incognito(request: Request) -> None:
+    """Une requête du chat de la page marquée `X-Incognito: 1` : rien
+    d'elle n'est gardé au-delà de la réponse (settings.INCOGNITO)."""
+    if request.headers.get("x-incognito") == "1":
+        INCOGNITO.set(True)
 
 
 @app.post("/ui/images/generations")
@@ -2094,7 +2114,72 @@ async def ui_images(request: Request):
                               "chat de la page désactivé ([ui].chat)")
     if (bad := json_only(request)) is not None:
         return bad
+    incognito(request)
     return await forward_post(request, "/v1/images/generations", "openai")
+
+
+# Une image à retoucher, en data URL, du chat de la page.
+DATA_URL = re.compile(r"data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)\Z")
+
+
+@app.post("/ui/images/edits")
+async def ui_images_edits(request: Request):
+    """La retouche d'une image du chat de la page : un corps JSON
+    (`model`, `prompt`, `image` en data URL, `size` facultatif) → le
+    formulaire de /v1/images/edits, relayé comme lui (routage au préfixe,
+    quota, statistiques à la clé connectée). JSON et non formulaire : une
+    page tierce ne peut pas l'envoyer (json_only)."""
+    if not UI_CHAT:
+        return error_response("openai", 404, "unknown_route",
+                              "chat de la page désactivé ([ui].chat)")
+    if (bad := json_only(request)) is not None:
+        return bad
+    incognito(request)
+    payload = parse_json(await request.body())
+    if not isinstance(payload, dict):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps JSON attendu")
+    found = DATA_URL.match(str(payload.get("image") or ""))
+    prompt = payload.get("prompt")
+    if found is None or not isinstance(prompt, str) or not prompt.strip():
+        return error_response("openai", 400, "invalid_request_error",
+                              "`prompt` et `image` (data URL d'une image) "
+                              "attendus")
+    try:
+        image = base64.b64decode(found.group(2))
+    except (binascii.Error, ValueError):
+        return error_response("openai", 400, "invalid_request_error",
+                              "`image` illisible")
+    kind = files.sniff(image) or ("image/webp" if image[8:12] == b"WEBP"
+                                  else None)
+    if kind is None:
+        return error_response("openai", 400, "invalid_request_error",
+                              "`image` n'est ni PNG, ni JPEG, ni GIF, ni WebP")
+    model_key = str(payload.get("model") or "")
+    backend, prefixed = route_backend({"model": model_key})
+    if backend is None:
+        return error_response("openai", 400, "unknown_backend_prefix",
+                              unknown_prefix_message(model_key))
+    fields = {"model": model_key[len(backend.name) + 1:] if prefixed
+              else model_key, "prompt": prompt.strip()}
+    for name in ("size", "n"):
+        if payload.get(name) not in (None, ""):
+            fields[name] = str(payload[name])
+    form = httpx.Request("POST", "http://form.invalid", data=fields, files={
+        "image": ("image." + kind.split("/")[1], image, kind)})
+    raw = form.read()
+    # La requête relayée porte le type du formulaire, pas celui du JSON.
+    headers = [(k, v) for k, v in request.scope["headers"]
+               if k.lower() not in (b"content-type", b"content-length")]
+    headers.append((b"content-type", form.headers["content-type"].encode()))
+    relayed = Request({**request.scope, "headers": headers}, request.receive)
+    call = Call(backend, model_key, "/v1/images/edits", "openai")
+    # Le coût : le prompt, pas les octets de l'image.
+    blocked = await gate(call, relayed, payload, albert.estimate_generic_cost(
+        prompt.encode(), payload))
+    if blocked is not None:
+        return blocked
+    return await forward(call, relayed, "v1/images/edits", raw)
 
 
 @app.get("/ui/usage")
