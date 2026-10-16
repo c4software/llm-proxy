@@ -177,6 +177,21 @@ def test_models_for_chat_or_the_whole_catalogue(ui, monkeypatch):
     assert ids("?all=1") == ["essai/qwen", "essai/whisper", "essai/Qwen-Image-2.1"]
 
 
+def test_chat_passes_the_reasoning_level_through(ui):
+    """Le niveau de réflexion du chat arrive au backend tel quel, avec ou
+    sans outil hébergé : `reasoning_effort` (llama.cpp, vLLM), ou
+    `chat_template_kwargs.enable_thinking` pour la couper."""
+    login(ui)
+    for extra in ({"reasoning_effort": "high"},
+                  {"chat_template_kwargs": {"enable_thinking": False}},
+                  {"reasoning_effort": "low", "tools": [{"type": "web_search"}]}):
+        ui.replies = [FakeUpstream(stream(*ANSWER_TURN))]
+        assert chat(ui, **extra).status_code == 200
+        sent = ui.sent[-1]
+        for key in ("reasoning_effort", "chat_template_kwargs"):
+            assert sent.get(key) == extra.get(key), (key, extra)
+
+
 def test_chat_ignores_always(ui, monkeypatch):
     """Les interrupteurs de la page font foi : [chat].always ne s'ajoute
     pas à une requête qui ne déclare rien."""

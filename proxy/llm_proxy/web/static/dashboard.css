@@ -800,10 +800,13 @@ button.icon:disabled { opacity: .4; cursor: default; }
   /* La zone de saisie : [joindre] [outils, défilants] [envoyer] sur une ligne ;
      un message d'état, s'il y en a un, au-dessus. */
   .composer-bar { flex-wrap: wrap; gap: 8px; }
+  /* Deux lignes : [joindre] [réflexion] … [envoyer], puis les outils,
+     défilants, sur toute la largeur. */
   .composer-bar .tools-toggle {
-    flex: 1 1 0; min-width: 0; overflow-x: auto; flex-wrap: nowrap;
+    order: 5; flex: 1 1 100%; min-width: 0; overflow-x: auto; flex-wrap: nowrap;
     scrollbar-width: none; -webkit-overflow-scrolling: touch;
   }
+  .composer-bar .send { margin-left: auto; }
   .composer-bar .tools-toggle::-webkit-scrollbar { display: none; }
   .composer-bar .tools-toggle button { flex: none; white-space: nowrap; }
   .composer-bar .status { order: -1; flex-basis: 100%; }
@@ -826,3 +829,19 @@ button.icon:disabled { opacity: .4; cursor: default; }
   .wrap.is-chat .mobilebar { margin-bottom: 10px; }
 }
 @media (prefers-reduced-motion: reduce) { .sidenav { transition: none; } }
+
+/* Le niveau de réflexion, dans la barre de la zone de saisie. */
+.effort {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0 4px 0 9px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--track);
+  color: var(--muted); font-size: 12.5px; height: 32px; flex: none;
+}
+.effort .ico { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.effort select {
+  font: inherit; font-size: 12.5px; color: var(--ink); background: transparent;
+  border: 0; padding: 4px 2px; cursor: pointer;
+}
+.effort select:focus { outline: none; }
+.effort:focus-within { border-color: var(--accent); }
+.effort option { background: var(--panel); color: var(--ink); }

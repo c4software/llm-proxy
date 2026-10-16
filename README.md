@@ -539,6 +539,16 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   réponse, arrêter un flux en cours. Si le stockage du navigateur
   déborde, les images des autres conversations sont retirées de
   l'historique local, pas leurs messages.
+- **Niveau de réflexion**, par conversation, dans la zone de saisie :
+  *auto* (rien n'est envoyé : le comportement du modèle), *non*
+  (`chat_template_kwargs: {"enable_thinking": false}`, qui coupe la
+  réflexion d'un modèle hybride comme Qwen3 — gpt-oss, lui, réfléchit
+  toujours un peu), *faible* / *moyenne* / *élevée* (`reasoning_effort`
+  low / medium / high). Mesuré le 16/10/2026 : sur llama.cpp,
+  `reasoning_effort` ACTIVE la réflexion d'un Qwen3 (éteinte par défaut
+  sur ce déploiement) ; sur vLLM (Albert), il règle celle de gpt-oss (16
+  caractères en *faible*, 319 en *élevée* sur une multiplication). Les
+  deux champs passent tels quels au backend.
 - **File d'attente** : pendant une réponse, Entrée met le message en
   file au lieu de l'envoyer ; il part tout seul à la fin d'une réponse
   réussie, dans l'ordre d'écriture. Une réponse arrêtée ou en erreur met

@@ -120,6 +120,7 @@ window.ChatStore = (() => {
       updated: Date.now(), model: base ? base.model : fresh.model,
       system: base ? base.system : "", temperature: null,
       showReasoning: true, tools: base ? [...base.tools] : fresh.tools,
+      reasoning: base ? (base.reasoning || "auto") : "auto",
       messages: [],
     };
     state.convs.unshift(conv);
@@ -424,6 +425,14 @@ window.ChatPanel = {
       if (conv.temperature !== null && conv.temperature !== "") {
         body.temperature = Number(conv.temperature);
       }
+      // Le niveau de réflexion. `reasoning_effort` est compris de llama.cpp
+      // (il ACTIVE la réflexion d'un Qwen3, éteinte par défaut) et de vLLM
+      // (gpt-oss : courte ou longue) ; « non » coupe celle d'un modèle
+      // hybride par son gabarit (enable_thinking) — gpt-oss, lui, réfléchit
+      // toujours un peu. « auto » : rien n'est envoyé.
+      const effort = conv.reasoning || "auto";
+      if (["low", "medium", "high"].includes(effort)) body.reasoning_effort = effort;
+      else if (effort === "none") body.chat_template_kwargs = { enable_thinking: false };
       const tools = conv.tools.filter((t) => available.value.has(t));
       if (tools.length) body.tools = tools.map((type) => ({ type }));
       try {
@@ -628,7 +637,10 @@ window.ChatPanel = {
     onMounted(async () => {
       if (!S.state.convs.length) S.newConv();
       await loadModels();
-      for (const c of S.state.convs) if (!c.model) c.model = defaultModel();
+      for (const c of S.state.convs) {
+        if (!c.model) c.model = defaultModel();
+        if (!c.reasoning) c.reasoning = "auto";
+      }
       nextTick(() => {
         if (thread.value) thread.value.scrollTop = thread.value.scrollHeight;
         autosize();
@@ -791,11 +803,22 @@ window.ChatPanel = {
         <textarea ref="input" v-model="draft" rows="1" @keydown="onKey" @paste="onPaste"
                   :placeholder="narrow ? (streaming ? 'Réponse en cours… (mise en file)' : 'Écrire un message…')
                     : streaming ? 'Réponse en cours — Entrée pour mettre un message en file'
-                    : 'Écrire un message — Entrée pour envoyer, Maj+Entrée pour aller à la ligne'"></textarea>
+                    : 'Écrire un message — Entrée pour envoyer'"
+                  title="Entrée pour envoyer, Maj+Entrée pour aller à la ligne"></textarea>
         <div class="composer-bar">
           <label class="btn ghost attach ico-btn" title="Joindre : images ou fichiers texte (ou glisser-déposer, ou coller)">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4L14.6 7.5"/></svg>
             <span class="lbl">Joindre</span><input type="file" multiple hidden @change="onPick"></label>
+          <label class="effort" title="Niveau de réflexion du modèle : auto (celui du modèle), non, faible, moyenne, élevée">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>
+            <select v-model="current.reasoning" :disabled="streaming" aria-label="Réflexion">
+              <option value="auto">auto</option>
+              <option value="none">non</option>
+              <option value="low">faible</option>
+              <option value="medium">moyenne</option>
+              <option value="high">élevée</option>
+            </select>
+          </label>
           <div class="range tools-toggle" v-if="toolGroups.length" role="group" aria-label="Outils hébergés">
             <button v-for="g in toolGroups" :key="g.type" type="button"
                     :aria-pressed="String(current.tools.includes(g.type))"
