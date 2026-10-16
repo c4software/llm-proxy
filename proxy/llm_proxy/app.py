@@ -68,6 +68,7 @@ import fnmatch
 import hashlib
 import hmac
 import json
+import mimetypes
 import os
 import re
 import time
@@ -300,6 +301,9 @@ app = FastAPI(title="albert-proxy", lifespan=lifespan)
 # Feuille de style et script du tableau de bord : servis par le proxy
 # lui-même, aucun CDN. Monté AVANT le catch-all, qui sinon répondrait
 # 404. Le mount reste sous /ui : l'auth du proxy s'y applique.
+# Le manifeste de l'application installable : un type que `mimetypes` ne
+# connaît pas toujours.
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 app.mount("/ui/static", StaticFiles(directory=os.path.join(WEB_DIR, "static")),
           name="static")
 # La page du tableau de bord : du HTML statique, sans moteur de template —
@@ -334,6 +338,7 @@ UI_CHAT = config.flag("ui.chat", False)
 # Ce que /ui sert SANS clé, même l'auth active : la page (c'est elle qui
 # demande la clé quand il en faut une), ses fichiers, l'entrée et la sortie.
 UI_OPEN = {("GET", "/"), ("GET", UI_PREFIX), ("HEAD", UI_PREFIX),
+           ("GET", UI_PREFIX + "/sw.js"),
            ("POST", UI_PREFIX + "/login"), ("POST", UI_PREFIX + "/logout")}
 
 
@@ -1925,6 +1930,38 @@ def json_only(request: Request) -> JSONResponse | None:
                               "corps JSON attendu (content-type: "
                               "application/json)")
     return None
+
+
+# Le service worker de l'application installable (manifest.webmanifest).
+# Il ne garde RIEN : chaque requête va au proxy comme avant ; seule une
+# navigation qui échoue (proxy injoignable) reçoit une page « hors ligne ».
+# Servi sous /ui (pas /ui/static) avec Service-Worker-Allowed, pour que sa
+# portée couvre /ui lui-même.
+SERVICE_WORKER = """// llm-proxy : service worker de l'application installable.
+const OFFLINE = `<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>llm-proxy — hors ligne</title>
+<body style="margin:0;min-height:100vh;display:grid;place-items:center;
+font:16px system-ui,sans-serif;background:#1a1917;color:#f2efe8">
+<div style="text-align:center;padding:24px"><p style="font:28px Georgia,serif;margin:0 0 8px">
+Proxy injoignable</p><p style="color:#9c968b;margin:0 0 18px">Vérifiez la connexion, puis réessayez.</p>
+<button onclick="location.reload()" style="font:inherit;padding:8px 16px;border-radius:8px;
+border:1px solid #e08b6d;background:#e08b6d;color:#fff">Réessayer</button></div>`;
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener("fetch", (event) => {
+  if (event.request.mode !== "navigate") return;
+  event.respondWith(fetch(event.request).catch(() => new Response(OFFLINE,
+    {headers: {"content-type": "text/html; charset=utf-8"}})));
+});
+"""
+
+
+@app.get("/ui/sw.js")
+async def ui_service_worker():
+    return Response(SERVICE_WORKER, media_type="text/javascript",
+                    headers={"Service-Worker-Allowed": UI_PREFIX,
+                             "Cache-Control": "no-cache"})
 
 
 @app.post("/ui/login")

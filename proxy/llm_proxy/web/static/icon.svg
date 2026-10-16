@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- L'icône de llm-proxy : le point de la marque (terracotta, son halo)
+       sur le fond sombre du tableau de bord. Pleine page : elle sert aussi
+       d'icône « maskable » (le cercle tient dans la zone sûre). -->
+  <rect width="512" height="512" fill="#1a1917"/>
+  <circle cx="256" cy="256" r="150" fill="#3a2b24"/>
+  <circle cx="256" cy="256" r="96" fill="#e08b6d"/>
+</svg>

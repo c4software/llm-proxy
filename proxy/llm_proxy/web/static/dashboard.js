@@ -36,7 +36,7 @@
   valide (401), elle montre l'écran d'entrée — la clé saisie part à
   /ui/login, qui la garde dans le cookie HttpOnly de /ui. Une fois entrée,
   la personne ne voit que SES requêtes (le proxy filtre /ui/usage sur sa
-  clé). Trois vues, onglets en tête : « Statistiques » (tout ce qui
+  clé). Trois vues, menu latéral (tiroir sur mobile) : « Statistiques » (tout ce qui
   suit), « Chat » (chat.js, <chat-panel>) et « Configuration »
   (config.js, <config-panel> : générateurs de configuration, clients et
   proxy), mémorisées dans l'URL (#chat, #config) et le navigateur. Les statistiques ne se rafraîchissent pas tant que le
@@ -93,6 +93,7 @@ createApp({
     };
     const view = ref(storedView());
     const session = ref(null);       // /ui/session ; null tant qu'inconnu
+    const navOpen = ref(false);      // le menu latéral, sur mobile
     const needLogin = ref(false);
     const loginKey = ref("");
     const loginError = ref("");
@@ -489,6 +490,7 @@ createApp({
     function onUnauthorized() { needLogin.value = true; session.value = null; }
 
     function setView(id) {
+      navOpen.value = false;
       if (id === view.value || !views.some((v) => v.id === id)) return;
       view.value = id;
       try { localStorage.setItem(STORE_VIEW, id); } catch { /* sans stockage */ }
@@ -521,6 +523,7 @@ createApp({
     // Raccourcis A / W / D, R / T. Ignorés dès qu'un modificateur est enfoncé ou
     // qu'un champ a le focus : un raccourci ne doit jamais voler une frappe.
     function onKey(e) {
+      if (e.key === "Escape" && navOpen.value) { navOpen.value = false; return; }
       if (e.ctrlKey || e.metaKey || e.altKey || view.value !== "stats") return;
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
       const key = String(e.key || "").toUpperCase();
@@ -549,6 +552,12 @@ createApp({
     }
 
     let timers = [];
+    // L'application installable : son service worker (/ui/sw.js), qui ne
+    // garde rien. Refusé hors HTTPS (sauf localhost) : sans effet alors.
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/ui/sw.js", { scope: "/ui" }).catch(() => {});
+    }
+
     onMounted(async () => {
       // «?key=» a servi (le proxy l'a mise en cookie) : elle n'a rien à
       // faire dans la barre d'adresse ni dans l'historique.
@@ -573,7 +582,7 @@ createApp({
       document.removeEventListener("visibilitychange", onVisibility);
     });
 
-    return { views, view, setView, session, needLogin, loginKey, loginError,
+    return { views, view, setView, navOpen, session, needLogin, loginKey, loginError,
              loginBusy, login, logout, onUnauthorized,
              windows, current, metrics, metric, metricUnit, metricLabel,
              models, totals, bars, axis, peak, since, now, tools, toolCalls,

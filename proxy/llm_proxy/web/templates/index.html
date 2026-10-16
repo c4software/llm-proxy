@@ -17,12 +17,20 @@
 <head>
 <meta charset="utf-8">
 <!-- Sans viewport-fit=cover : Chrome Android dessinerait alors la page sous
-     la barre de gestes sans en dire la hauteur, et la barre d'onglets du bas
-     y passerait. resizes-content : le clavier réduit la page, la zone de
-     saisie du chat reste au-dessus. -->
+     la barre de gestes sans en dire la hauteur. resizes-content : le clavier
+     réduit la page, la zone de saisie du chat reste au-dessus. -->
 <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <meta name="robots" content="noindex">
 <title>llm-proxy</title>
+<!-- Installable (application de bureau, écran d'accueil) : manifeste,
+     icônes, couleur de la barre, service worker (/ui/sw.js). -->
+<link rel="manifest" href="/ui/static/manifest.webmanifest">
+<link rel="icon" href="/ui/static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/ui/static/icon-192.png">
+<meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a1917" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="llm-proxy">
 <link rel="stylesheet" href="/ui/static/dashboard.css">
 <script src="/ui/static/vue.global.prod.js"></script>
 </head>
@@ -30,26 +38,37 @@
 <!-- Vue compile le CONTENU de #app, pas ses propres attributs : la classe
      qui suit la vue est donc sur l'enveloppe intérieure. -->
 <div id="app" v-cloak>
+<div class="shell" :class="{ 'has-nav': session, 'nav-open': navOpen }">
+  <!-- Le menu latéral : une colonne fixe sur grand écran, un tiroir ouvert
+       par ☰ sur mobile. Les vues, puis la clé connectée en bas. -->
+  <aside class="sidenav" v-if="session" aria-label="Navigation">
+    <div class="brand"><span class="dot"></span> llm-proxy</div>
+    <nav class="nav-items">
+      <button v-for="v in views" :key="v.id" type="button" class="nav-item"
+              :aria-current="v.id === view ? 'page' : null" @click="setView(v.id)">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+          <path v-if="v.id === 'stats'" d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>
+          <path v-else-if="v.id === 'chat'" d="M4 5h16v11H9l-5 4z"/>
+          <path v-else d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M16 4v4M10 10v4M18 16v4"/>
+        </svg>
+        <span>{{ v.label }}</span></button>
+    </nav>
+    <div class="nav-foot" v-if="session.auth_required">
+      <span>clé <code title="condensé de la clé connectée">{{ session.client }}</code></span>
+      <button type="button" class="link" @click="logout">Se déconnecter</button>
+    </div>
+  </aside>
+  <div class="scrim" v-if="navOpen" @click="navOpen = false"></div>
+
 <div class="wrap" :class="{ 'is-chat': session && view === 'chat' }">
   <header>
-    <div class="topbar">
+    <!-- Sur mobile (et sans session) : la marque, et ☰ pour le menu. -->
+    <div class="mobilebar">
+      <button type="button" class="icon menu-btn" v-if="session" @click="navOpen = true"
+              aria-label="Menu" title="Menu">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
       <div class="brand"><span class="dot"></span> llm-proxy</div>
-      <!-- Les vues : une pastille en tête sur grand écran ; sur mobile, une
-           barre d'onglets fixée en bas, icône et libellé (dashboard.css). -->
-      <nav class="range views" v-if="session" aria-label="Vue">
-        <button v-for="v in views" :key="v.id" type="button"
-                :aria-pressed="String(v.id === view)" @click="setView(v.id)">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-            <path v-if="v.id === 'stats'" d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>
-            <path v-else-if="v.id === 'chat'" d="M4 5h16v11H9l-5 4z"/>
-            <path v-else d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M16 4v4M10 10v4M18 16v4"/>
-          </svg>
-          <span>{{ v.label }}</span></button>
-      </nav>
-      <div class="who" v-if="session && session.auth_required">
-        clé <code :title="'condensé de la clé connectée'">{{ session.client }}</code>
-        <button type="button" class="link" @click="logout">Se déconnecter</button>
-      </div>
     </div>
     <h1 v-if="needLogin">Connexion</h1>
     <h1 v-else-if="view === 'stats'">Statistiques d'usage</h1>
@@ -342,6 +361,7 @@
     pi / omp ou le serveur MCP : onglet
     <button type="button" class="link" @click="setView('config')">Configuration</button>.</footer>
   </div>
+</div>
 </div>
 </div>
 <script src="/ui/static/markdown.js"></script>

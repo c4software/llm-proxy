@@ -57,6 +57,18 @@ def test_page_opens_without_key_and_session_asks_for_one(ui):
     assert ui.client.get("/ui/usage?start_time=0").status_code == 401
 
 
+def test_installable_app_is_served_without_key(ui):
+    """Manifeste, icônes et service worker : servis sans clé (le navigateur
+    les demande sans cookie), le service worker avec la portée de /ui."""
+    r = ui.client.get("/ui/static/manifest.webmanifest")
+    assert r.status_code == 200 and r.json()["start_url"] == "/ui"
+    assert "manifest+json" in r.headers["content-type"]
+    assert ui.client.get("/ui/static/icon-192.png").status_code == 200
+    r = ui.client.get("/ui/sw.js")
+    assert r.status_code == 200 and "javascript" in r.headers["content-type"]
+    assert r.headers["service-worker-allowed"] == "/ui"
+
+
 def test_login_checks_the_key_and_sets_the_cookie(ui):
     r = login(ui, "sk-mallory")
     assert r.status_code == 401 and A.UI_COOKIE not in r.cookies

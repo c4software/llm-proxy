@@ -266,10 +266,14 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
 
 /* Infobulle : plus de positionnement en JavaScript, chaque barre porte
    la sienne et le survol suffit. */
+/* Cachée, l'infobulle n'occupe PAS de place (display) : une infobulle
+   large, au bord d'un petit écran, ferait déborder la page. */
+.bars .tip { display: none; }
+.bars > i:hover .tip { display: block; }
 .bars .tip {
   position: absolute; bottom: 100%; left: 50%; z-index: 3;
   transform: translateX(-50%); margin-bottom: 8px;
-  display: block; opacity: 0; pointer-events: none;
+  opacity: 0; pointer-events: none;
   transition: opacity .15s ease;
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 10px; padding: 9px 12px; font-size: 12.5px;
@@ -355,15 +359,44 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
   .memory-list ul { max-height: 220px; }
 }
 
-/* ── Barre du haut, entrée ───────────────────────────────────────────── */
-.topbar {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px;
-  margin-bottom: 18px;
+/* ── Coquille : menu latéral et contenu ──────────────────────────────── */
+/* Rien ne doit faire glisser la page latéralement : Chrome Android laisse
+   « panner » une page à peine plus large que l'écran. */
+html { overflow-x: clip; }
+.shell.has-nav {
+  display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100dvh;
 }
-.topbar .brand { margin: 0; }
-.topbar .views { margin-left: auto; }
-.who { font-size: 12.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
-.who code { font-size: 12px; }
+.sidenav {
+  position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column;
+  gap: 18px; padding: 28px 12px 18px; border-right: 1px solid var(--line);
+  background: var(--panel); min-width: 0;
+}
+.sidenav .brand { margin: 0 0 6px 10px; }
+.nav-items { display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 10px;
+  border: 0; border-radius: 9px; background: none; color: var(--muted);
+  font: inherit; font-size: 14.5px; text-align: left; cursor: pointer;
+}
+.nav-item:hover { background: var(--track); color: var(--ink); }
+.nav-item[aria-current="page"] { background: var(--accent-soft); color: var(--ink); }
+.nav-item[aria-current="page"] .ico { color: var(--accent); }
+.nav-item .ico, .menu-btn .ico {
+  width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; flex: none;
+}
+.nav-foot {
+  margin-top: auto; padding: 0 10px; display: flex; flex-direction: column; gap: 6px;
+  font-size: 12.5px; color: var(--muted);
+}
+.nav-foot code { font-size: 12px; }
+.nav-foot .link { align-self: flex-start; }
+/* La barre du haut : la marque (et ☰) sur mobile, ou sans session. */
+.mobilebar { display: none; align-items: center; gap: 8px; margin-bottom: 18px; }
+.mobilebar .brand { margin: 0; }
+.shell:not(.has-nav) .mobilebar { display: flex; }
+.menu-btn { color: var(--ink); padding: 6px; margin-left: -6px; }
+.scrim { display: none; }
 /* Vue chat : la page tient dans la fenêtre, le chat en prend le reste
    (quelle que soit la hauteur de la barre, sur une ligne ou deux). */
 .wrap.is-chat {
@@ -646,7 +679,6 @@ button.icon:disabled { opacity: .4; cursor: default; }
   .msg.user { max-width: 92%; }
   .msg.user .msg-meta { opacity: 1; }
   .composer { padding: 10px 12px 12px; }
-  .topbar .views { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-side, .tool.running .state, .typing i { transition: none; animation: none; }
@@ -753,39 +785,6 @@ button.icon:disabled { opacity: .4; cursor: default; }
 .queue li .dim { font-size: 12px; margin-right: 8px; }
 .queue li .link { font-size: 12.5px; margin-right: 4px; }
 
-/* ── Navigation mobile : une barre d'onglets en bas ──────────────────── */
-/* Sur grand écran, les vues restent une pastille dans la barre du haut ;
-   leurs icônes n'y apparaissent pas. */
-.views .ico { display: none; }
-@media (max-width: 760px) {
-  .topbar .views {
-    position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; margin: 0;
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0;
-    padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
-    border-radius: 0; border: 0; border-top: 1px solid var(--line);
-    background: color-mix(in srgb, var(--panel) 92%, transparent);
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-  }
-  .topbar .views button {
-    display: flex; flex-direction: column; align-items: center; gap: 3px;
-    padding: 7px 4px 6px; border-radius: 10px; font-size: 11.5px; line-height: 1.1;
-    background: none; box-shadow: none;
-  }
-  .topbar .views button[aria-pressed="true"] {
-    background: none; box-shadow: none; color: var(--accent);
-  }
-  .topbar .views button[aria-pressed="true"]:focus,
-  .topbar .views button[aria-pressed="true"]:focus-visible { box-shadow: none; }
-  .views .ico {
-    display: block; width: 22px; height: 22px; fill: none; stroke: currentColor;
-    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-  }
-  /* La place de la barre, sous le contenu de chaque vue. */
-  .wrap { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
-  .wrap.is-chat { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
-  .who { margin-left: auto; }
-}
-
 /* Boutons à icône : l'icône seule sur mobile, le libellé sur grand écran. */
 .ico-btn { display: inline-flex; align-items: center; gap: 6px; }
 .ico-btn .ico { display: none; width: 18px; height: 18px; fill: none; stroke: currentColor;
@@ -808,3 +807,19 @@ button.icon:disabled { opacity: .4; cursor: default; }
   .composer-bar .status:empty { display: none; }
   .composer textarea { font-size: 16px; }   /* pas de zoom au focus (iOS) */
 }
+
+@media (max-width: 760px) {
+  /* Le menu latéral devient un tiroir, ouvert par ☰. */
+  .shell.has-nav { display: block; }
+  .sidenav {
+    position: fixed; z-index: 30; left: 0; top: 0; bottom: 0; height: auto;
+    width: min(80vw, 280px); padding-top: 22px;
+    transform: translateX(-102%); transition: transform .2s ease;
+    box-shadow: 0 10px 40px rgb(0 0 0 / .25);
+  }
+  .shell.nav-open .sidenav { transform: none; }
+  .scrim { display: block; position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / .4); }
+  .mobilebar { display: flex; }
+  .wrap.is-chat .mobilebar { margin-bottom: 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .sidenav { transition: none; } }

@@ -629,9 +629,21 @@ depuis son cache de préfixe, quand il le remonte (llama.cpp, vLLM) ;
 Claude Code, un second tour qui rejoue les ~20 k tokens du prompt
 système doit approcher 100 %.
 
-Sur mobile (moins de 760 px), les vues Statistiques / Chat /
-Configuration passent dans une barre d'onglets fixée en bas de l'écran,
-icône et libellé, comme une application.
+Les vues Statistiques / Chat / Configuration sont dans un **menu
+latéral** : une colonne fixe sur grand écran (la clé connectée et *Se
+déconnecter* en bas), un tiroir ouvert par ☰ sur mobile (moins de
+760 px).
+
+**Installable** comme une application (bureau, écran d'accueil) : la page
+porte un manifeste (`/ui/static/manifest.webmanifest`, icônes, couleur de
+thème, raccourcis vers les trois vues) et un service worker (`/ui/sw.js`),
+servis sans clé comme la page elle-même. Le service worker ne garde rien :
+toute requête va au proxy, seule une page « hors ligne » s'affiche s'il
+est injoignable. Les navigateurs n'installent une application, et
+n'acceptent un service worker, qu'en **HTTPS** (ou sur `localhost`) :
+derrière Nginx Proxy Manager, un certificat sur l'hôte du proxy ; sur un
+tailnet, `tailscale serve` ou `tailscale cert`. En HTTP, « Ajouter à
+l'écran d'accueil » reste possible, mais ouvre un onglet du navigateur.
 
 Pour brancher un client (Claude Code, Codex, pi / omp, SDK, le serveur
 MCP…), le pied de page renvoie à l'onglet
