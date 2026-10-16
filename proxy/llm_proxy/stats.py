@@ -42,9 +42,19 @@ Comptage des tokens, par ordre de préférence :
 Les deux sont comptés séparément (`num_estimated_requests` dans la
 réponse) pour que le chiffre affiché reste honnête.
 
+PAR CLÉ : chaque ligne porte `api_key_id`, le condensé de la clé du proxy
+que le client a présentée (tools.owner : jamais la clé elle-même), «» pour
+un proxy ouvert. Il n'est passé à aucune fonction : la requête le pose
+dans CLIENT (une variable de contexte, app.require_proxy_key), record()
+et record_tool() l'y lisent — l'enregistrement se fait loin de la route,
+dans le relais ou un outil, et tout ce qui y mène hérite du contexte. Le
+tableau de bord ne montre ainsi à chacun que SES requêtes ; l'Usage API
+filtre (`api_key_ids`) et groupe (`group_by=api_key_id`) dessus.
+
 Ce module ne connaît ni FastAPI ni httpx.
 """
 
+import contextvars
 import json
 import logging
 import os
@@ -57,6 +67,11 @@ import time
 from . import config
 
 log = logging.getLogger("albert-proxy")
+
+# Le client de la requête en cours : condensé de sa clé (tools.owner), «»
+# pour un proxy ouvert. Posé par l'application à l'entrée de chaque requête.
+CLIENT: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "stats_client", default="")
 
 DB_PATH = config.resolve(config.text("stats.database", "stats.db"))
 # Purge des lignes plus vieilles que N jours (0 = conservation illimitée).
@@ -248,7 +263,8 @@ CREATE TABLE IF NOT EXISTS requests (
   completion_tokens INTEGER NOT NULL,
   exact             INTEGER NOT NULL,
   streamed          INTEGER NOT NULL,
-  cached_tokens     INTEGER NOT NULL DEFAULT 0
+  cached_tokens     INTEGER NOT NULL DEFAULT 0,
+  api_key_id        TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS requests_ts       ON requests(ts);
 CREATE INDEX IF NOT EXISTS requests_ts_model ON requests(ts, model_key);
@@ -257,8 +273,8 @@ CREATE INDEX IF NOT EXISTS requests_ts_model ON requests(ts, model_key);
 INSERT = """
 INSERT INTO requests (ts, model_key, backend, model, endpoint, status,
                       latency, prompt_tokens, completion_tokens, exact,
-                      streamed, cached_tokens)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      streamed, cached_tokens, api_key_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 # Une ligne par exécution d'outil hébergé. Table à part, créée par le même
@@ -271,7 +287,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 #   outcome    «ok», «error» (le résultat est un texte «Error: …») ou
 #              «limit» (refus par limite d'appels : rien n'a été exécuté) ;
 #   duration   secondes d'exécution (0 pour un refus) ;
-#   result_chars  caractères du résultat rendu au modèle.
+#   result_chars  caractères du résultat rendu au modèle ;
+#   api_key_id le client (CLIENT, en tête de module).
 # Volontairement AUCUNE colonne de contenu (arguments, requête, URL,
 # résultat) : le journal applicatif les montre, les statistiques non.
 TOOLS_SCHEMA = """
@@ -283,15 +300,16 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   model_key    TEXT    NOT NULL DEFAULT '',
   outcome      TEXT    NOT NULL,
   duration     REAL    NOT NULL,
-  result_chars INTEGER NOT NULL
+  result_chars INTEGER NOT NULL,
+  api_key_id   TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS tool_calls_ts ON tool_calls(ts);
 """
 
 INSERT_TOOL = """
 INSERT INTO tool_calls (ts, tool, endpoint, model_key, outcome, duration,
-                        result_chars)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+                        result_chars, api_key_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 TOOL_OUTCOMES = ("ok", "error", "limit")
@@ -300,18 +318,30 @@ TABLES = ("requests", "tool_calls")
 
 # Colonnes ajoutées après coup : une base existante les reçoit par ALTER
 # TABLE au démarrage, avec leur défaut — aucune migration à jouer à la
-# main. (nom, définition)
+# main. Les lignes d'avant `api_key_id` n'appartiennent à aucune clé («»).
+# (table, nom, définition)
 ADDED_COLUMNS = (
-    ("cached_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("requests", "cached_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("requests", "api_key_id", "TEXT NOT NULL DEFAULT ''"),
+    ("tool_calls", "api_key_id", "TEXT NOT NULL DEFAULT ''"),
 )
+# Index sur des colonnes ajoutées : créés APRÈS la migration (le schéma
+# initial les nommerait avant qu'une vieille base ait la colonne).
+ADDED_INDEXES = """
+CREATE INDEX IF NOT EXISTS requests_key_ts   ON requests(api_key_id, ts);
+CREATE INDEX IF NOT EXISTS tool_calls_key_ts ON tool_calls(api_key_id, ts);
+"""
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    present = {row[1] for row in conn.execute("PRAGMA table_info(requests)")}
-    for name, ddl in ADDED_COLUMNS:
+    for table, name, ddl in ADDED_COLUMNS:
+        present = {row[1] for row in
+                   conn.execute(f"PRAGMA table_info({table})")}
         if name not in present:
-            conn.execute(f"ALTER TABLE requests ADD COLUMN {name} {ddl}")
-            log.info("stats : colonne %s ajoutée à la base existante", name)
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+            log.info("stats : colonne %s.%s ajoutée à la base existante",
+                     table, name)
+    conn.executescript(ADDED_INDEXES)
     conn.commit()
 
 
@@ -453,7 +483,7 @@ def record(model_key: str, backend: str, model: str, endpoint: str,
     row = (time.time(), model_key, backend, model, "/" + endpoint.strip("/"),
            int(status), max(float(latency), 0.0), max(int(prompt_tokens), 0),
            max(int(completion_tokens), 0), int(bool(exact)),
-           int(bool(streamed)), max(int(cached_tokens), 0))
+           int(bool(streamed)), max(int(cached_tokens), 0), CLIENT.get())
     _enqueue(INSERT, row)
 
 
@@ -471,7 +501,8 @@ def record_tool(tool: str, endpoint: str, model_key: str, outcome: str,
         return
     _enqueue(INSERT_TOOL, (
         time.time(), tool, "/" + endpoint.strip("/"), model_key or "",
-        outcome, max(float(duration), 0.0), max(int(result_chars), 0)))
+        outcome, max(float(duration), 0.0), max(int(result_chars), 0),
+        CLIENT.get()))
 
 
 def _enqueue(sql: str, row: tuple) -> None:
@@ -506,9 +537,10 @@ BUCKET_WIDTHS = {"1m": 60, "1h": 3600, "1d": 86_400}
 # semaine de jours.
 DEFAULT_LIMITS = {"1m": 60, "1h": 24, "1d": 7, "all": 1}
 MAX_LIMIT = 180
-# Le proxy n'a ni projets, ni comptes utilisateurs, ni clés nommées :
-# seul `model` porte de l'information. Les autres sont acceptés — pour ne
-# pas casser un client — mais rendent une valeur nulle.
+# Le proxy n'a ni projets, ni comptes utilisateurs : `model` et
+# `api_key_id` (le condensé de la clé, «» sur un proxy ouvert) portent de
+# l'information. Les autres sont acceptés — pour ne pas casser un client —
+# mais rendent une valeur nulle.
 GROUP_FIELDS = ("model", "project_id", "user_id", "api_key_id", "batch",
                 "service_tier")
 
@@ -517,6 +549,7 @@ GROUP_FIELDS = ("model", "project_id", "user_id", "api_key_id", "batch",
 _AGG = """
 SELECT CAST((ts - ?) / ? AS INTEGER)      AS b,
        {model}                            AS mk,
+       {key}                              AS k,
        SUM(prompt_tokens),
        SUM(completion_tokens),
        COUNT(*),
@@ -530,8 +563,8 @@ SELECT CAST((ts - ?) / ? AS INTEGER)      AS b,
        MIN(ts),
        MAX(ts)
 FROM requests WHERE ts >= ? AND ts < ?{filter}
-GROUP BY b, mk
-ORDER BY b, mk
+GROUP BY b, mk, k
+ORDER BY b, mk, k
 """
 
 def parse_group_by(values, fields=GROUP_FIELDS) -> list[str]:
@@ -554,10 +587,13 @@ def parse_group_by(values, fields=GROUP_FIELDS) -> list[str]:
     return out
 
 
-def recording_since() -> float:
-    """Horodatage de la plus ancienne requête connue (0 si base vide)."""
+def recording_since(keys=None) -> float:
+    """Horodatage de la plus ancienne requête connue (0 si base vide) ;
+    celles des clés `keys` seulement, si elles sont données."""
+    where, tail = _key_filter(keys)
     with _reader() as conn:
-        return conn.execute("SELECT MIN(ts) FROM requests").fetchone()[0] or 0.0
+        return conn.execute("SELECT MIN(ts) FROM requests WHERE 1" + where,
+                            tail).fetchone()[0] or 0.0
 
 
 def default_limit(bucket_width: str) -> int:
@@ -577,6 +613,17 @@ def _model_filter(models) -> tuple[str, tuple]:
         return "", ()
     return (" AND model_key IN (%s)" % ", ".join("?" * len(models)),
             tuple(models))
+
+
+def _key_filter(keys) -> tuple[str, tuple]:
+    """Filtre `api_key_ids` : None = toutes les clés ; une liste = celles-là
+    seulement («» : les requêtes sans clé, celles d'un proxy ouvert)."""
+    if keys is None:
+        return "", ()
+    keys = tuple(str(k) for k in keys)
+    if not keys:
+        return " AND 0", ()
+    return (" AND api_key_id IN (%s)" % ", ".join("?" * len(keys)), keys)
 
 
 def _usage_page(start_time: int, end_time: int | None, bucket_width: str,
@@ -658,18 +705,23 @@ def _usage_page(start_time: int, end_time: int | None, bucket_width: str,
 def usage_completions(start_time: int, end_time: int | None = None,
                       bucket_width: str = "1d", group_by=(),
                       limit: int | None = None, page: str | None = None,
-                      models=(), empty: bool = False) -> dict:
+                      models=(), empty: bool = False, keys=None) -> dict:
     """`/v1/organization/usage/completions` : les requêtes relayées, par
-    seau et — avec group_by=model — par modèle. Fenêtre, seaux et
+    seau et — avec group_by=model / api_key_id — par modèle, par clé.
+    `keys` : les seules clés comptées (None : toutes). Fenêtre, seaux et
     pagination : _usage_page."""
     model_expr = "model_key" if "model" in list(group_by) else "NULL"
+    key_expr = "api_key_id" if "api_key_id" in list(group_by) else "NULL"
     where, tail = _model_filter(models)
+    kwhere, ktail = _key_filter(keys)
+    where, tail = where + kwhere, tail + ktail
 
     def results(origin, width, lo, hi):
         with _reader() as conn:
-            rows = conn.execute(_AGG.format(model=model_expr, filter=where),
+            rows = conn.execute(_AGG.format(model=model_expr, key=key_expr,
+                                            filter=where),
                                 (origin, width, lo, hi) + tail).fetchall()
-        for (b, mk, prompt, completion, requests, errors, streamed,
+        for (b, mk, key, prompt, completion, requests, errors, streamed,
              estimated, anthropic, cached, latency_sum, latency_max,
              first_ts, last_ts) in rows:
             yield b, first_ts, {
@@ -687,7 +739,7 @@ def usage_completions(start_time: int, end_time: int | None = None,
                 "num_model_requests": requests,
                 "project_id": None,
                 "user_id": None,
-                "api_key_id": None,
+                "api_key_id": key,
                 "model": mk,
                 "batch": None,
                 # ── extensions du proxy (hors schéma OpenAI) ──
@@ -736,6 +788,7 @@ SELECT CAST((ts - ?) / ? AS INTEGER)      AS b,
        {tool}                             AS t,
        {endpoint}                         AS e,
        {model}                            AS mk,
+       {key}                              AS k,
        COUNT(*),
        SUM(outcome = 'error'),
        SUM(outcome = 'limit'),
@@ -745,32 +798,35 @@ SELECT CAST((ts - ?) / ? AS INTEGER)      AS b,
        MIN(ts),
        MAX(ts)
 FROM tool_calls WHERE ts >= ? AND ts < ?{filter}
-GROUP BY b, t, e, mk
-ORDER BY b, t, e, mk
+GROUP BY b, t, e, mk, k
+ORDER BY b, t, e, mk, k
 """
 
 
 def usage_tools(start_time: int, end_time: int | None = None,
                 bucket_width: str = "1d", group_by=(),
                 limit: int | None = None, page: str | None = None,
-                models=(), empty: bool = False) -> dict:
+                models=(), empty: bool = False, keys=None) -> dict:
     """`/v1/organization/usage/tools` : les exécutions d'outils hébergés,
     par seau et — selon group_by — par outil, par route d'appel, par
-    modèle. Mêmes paramètres et même page que usage_completions."""
+    modèle, par clé. Mêmes paramètres et même page que usage_completions."""
     group_by = list(group_by)
     exprs = {
         "tool": "tool" if "tool" in group_by else "NULL",
         "endpoint": "endpoint" if "endpoint" in group_by else "NULL",
         # Appel direct (/v1/tools) : pas de modèle, donc null — pas «».
         "model": "NULLIF(model_key, '')" if "model" in group_by else "NULL",
+        "key": "api_key_id" if "api_key_id" in group_by else "NULL",
     }
     where, tail = _model_filter(models)
+    kwhere, ktail = _key_filter(keys)
+    where, tail = where + kwhere, tail + ktail
 
     def results(origin, width, lo, hi):
         with _reader() as conn:
             rows = conn.execute(_TOOL_AGG.format(filter=where, **exprs),
                                 (origin, width, lo, hi) + tail).fetchall()
-        for (b, tool, endpoint, mk, calls, errors, limited, duration_sum,
+        for (b, tool, endpoint, mk, key, calls, errors, limited, duration_sum,
              duration_max, chars, first_ts, last_ts) in rows:
             # Un refus par limite n'exécute rien (durée 0) : la moyenne
             # porte sur les appels réellement lancés.
@@ -780,7 +836,7 @@ def usage_tools(start_time: int, end_time: int | None = None,
                 "num_requests": calls,
                 "project_id": None,
                 "user_id": None,
-                "api_key_id": None,
+                "api_key_id": key,
                 "model": mk,
                 # ── dimensions et mesures du proxy ──
                 "tool": tool,

@@ -31,6 +31,16 @@
 
   Rien n'est demandé tant que l'onglet est masqué.
 
+  SESSION ET VUES. La page lit d'abord /ui/session : auth active sans clé
+  valide (401), elle montre l'écran d'entrée — la clé saisie part à
+  /ui/login, qui la garde dans le cookie HttpOnly de /ui. Une fois entrée,
+  la personne ne voit que SES requêtes (le proxy filtre /ui/usage sur sa
+  clé). Deux vues, onglets en tête : « Statistiques » (tout ce qui suit)
+  et « Chat » (chat.js, <chat-panel>), mémorisées dans l'URL (#chat) et
+  le navigateur. Les statistiques ne se rafraîchissent pas tant que le
+  chat est affiché ; le chat, lui, reste monté — une réponse en cours
+  continue pendant qu'on regarde les chiffres.
+
   Le rafraîchissement ne clignote pas : Vue rapproche les listes par leur
   clé et ne réécrit que ce qui a changé. Les nœuds survivants gardent donc
   leurs transitions, le survol et la sélection de texte.
@@ -44,6 +54,7 @@ createApp({
     const REFRESH = 5000;
     const STORE = "llm-proxy-window";
     const STORE_METRIC = "llm-proxy-metric";
+    const STORE_VIEW = "llm-proxy-view";
     // Tons chauds lisibles sur les deux thèmes, cyclés au-delà de six modèles.
     const COLORS = ["#d97757", "#e0a458", "#7d9b76", "#6b8fa3", "#a37ba0",
                     "#c08552"];
@@ -68,6 +79,20 @@ createApp({
         pick: (r) => r.input_tokens + r.output_tokens },
     ];
     const metricById = Object.fromEntries(metrics.map((m) => [m.id, m]));
+
+    // ── session et vues ─────────────────────────────────────────────────
+    const views = [{ id: "stats", label: "Statistiques" }, { id: "chat", label: "Chat" }];
+    const storedView = () => {
+      if (location.hash === "#chat" || location.hash === "#stats") return location.hash.slice(1);
+      try { return localStorage.getItem(STORE_VIEW) === "chat" ? "chat" : "stats"; }
+      catch { return "stats"; }
+    };
+    const view = ref(storedView());
+    const session = ref(null);       // /ui/session ; null tant qu'inconnu
+    const needLogin = ref(false);
+    const loginKey = ref("");
+    const loginError = ref("");
+    const loginBusy = ref(false);
 
     // ── état ────────────────────────────────────────────────────────────
     const current = ref(byId[localStorage.getItem(STORE)] ? localStorage
@@ -441,6 +466,7 @@ pi --model albert/${model}`,
     }
 
     async function poll() {
+      if (needLogin.value || !session.value || view.value !== "stats") return;
       const win = current.value;
       const span = byId[win].span;
       const stamp = Math.floor(Date.now() / 1000);
@@ -480,8 +506,69 @@ pi --model albert/${model}`,
         // Base vide au départ, puis du trafic arrive : on rattrape.
         if (!since.value && totals.value.requests) refreshSince();
       } catch (e) {
-        /* proxy injoignable : on retentera dans 5 s */
+        // Clé révoquée ou cookie expiré : retour à l'écran d'entrée.
+        if (e === 401) needLogin.value = true;
+        /* sinon proxy injoignable : on retentera dans 5 s */
       }
+    }
+
+    async function loadSession() {
+      try {
+        const r = await fetch("/ui/session", { headers: { accept: "application/json" } });
+        if (r.status === 401) { needLogin.value = true; session.value = null; return; }
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        session.value = await r.json();
+        needLogin.value = false;
+      } catch (e) {
+        // Proxy injoignable : réessayé dans 5 s, par la boucle.
+        setTimeout(loadSession, REFRESH);
+      }
+    }
+
+    async function login() {
+      if (!loginKey.value.trim() || loginBusy.value) return;
+      loginBusy.value = true;
+      loginError.value = "";
+      try {
+        const r = await fetch("/ui/login", {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ key: loginKey.value.trim() }),
+        });
+        if (r.status === 401) { loginError.value = "Clé refusée."; return; }
+        if (!r.ok) { loginError.value = "Le proxy a répondu " + r.status + "."; return; }
+        loginKey.value = "";
+        await loadSession();
+        since.value = 0;
+        poll();
+      } catch (e) {
+        loginError.value = "Proxy injoignable.";
+      } finally {
+        loginBusy.value = false;
+      }
+    }
+
+    async function logout() {
+      try {
+        await fetch("/ui/logout", { method: "POST",
+          headers: { "content-type": "application/json" }, body: "{}" });
+      } catch { /* le cookie partira au prochain 401 */ }
+      session.value = null;
+      buckets.value = [];
+      toolResults.value = [];
+      loaded.value = false;
+      needLogin.value = true;
+    }
+
+    // Le chat dit qu'il a reçu un 401 : même chose qu'ici.
+    function onUnauthorized() { needLogin.value = true; session.value = null; }
+
+    function setView(id) {
+      if (id === view.value || !views.some((v) => v.id === id)) return;
+      view.value = id;
+      try { localStorage.setItem(STORE_VIEW, id); } catch { /* sans stockage */ }
+      history.replaceState(null, "", location.pathname + location.search + "#" + id);
+      if (id === "stats") poll();
     }
 
     function select(id) {
@@ -509,7 +596,7 @@ pi --model albert/${model}`,
     // Raccourcis A / W / D, R / T. Ignorés dès qu'un modificateur est enfoncé ou
     // qu'un champ a le focus : un raccourci ne doit jamais voler une frappe.
     function onKey(e) {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || view.value !== "stats") return;
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
       const key = String(e.key || "").toUpperCase();
       const hit = windows.find((w) => w.key === key);
@@ -537,9 +624,15 @@ pi --model albert/${model}`,
     }
 
     let timers = [];
-    onMounted(() => {
-      poll();
+    onMounted(async () => {
+      // «?key=» a servi (le proxy l'a mise en cookie) : elle n'a rien à
+      // faire dans la barre d'adresse ni dans l'historique.
+      if (new URLSearchParams(location.search).has("key")) {
+        history.replaceState(null, "", location.pathname + location.hash);
+      }
       loadHealth();
+      await loadSession();
+      poll();
       timers = [
         setInterval(() => { if (!document.hidden) poll(); }, REFRESH),
         setInterval(() => { now.value = Date.now() / 1000; }, 1000),
@@ -555,7 +648,9 @@ pi --model albert/${model}`,
       document.removeEventListener("visibilitychange", onVisibility);
     });
 
-    return { windows, current, metrics, metric, metricUnit, metricLabel,
+    return { views, view, setView, session, needLogin, loginKey, loginError,
+             loginBusy, login, logout, onUnauthorized,
+             windows, current, metrics, metric, metricUnit, metricLabel,
              models, totals, bars, axis, peak, since, now, tools, toolCalls,
              loaded, entering, anthropic, responses, hostedTools, webCache,
              mcpServers,
@@ -565,4 +660,5 @@ pi --model albert/${model}`,
              selectMetric };
   },
 // La section Mémoire : un composant à part (memory.js), ses propres appels.
-}).component("memory-panel", window.MemoryPanel).mount("#app");
+}).component("memory-panel", window.MemoryPanel)
+  .component("chat-panel", window.ChatPanel).mount("#app");

@@ -327,6 +327,30 @@ UI_VERSION = _static_version()
 
 UI_PREFIX = "/ui"
 UI_COOKIE = "proxy_key"
+# Le chat du tableau de bord (POST /ui/chat/completions) : le cookie de la
+# page y DÉPENSE des tokens. Absent du TOML = inactif — sans lui, le cookie
+# ne sert qu'à lire (statistiques, mémoire).
+UI_CHAT = config.flag("ui.chat", False)
+# Ce que /ui sert SANS clé, même l'auth active : la page (c'est elle qui
+# demande la clé quand il en faut une), ses fichiers, l'entrée et la sortie.
+UI_OPEN = {("GET", "/"), ("GET", UI_PREFIX), ("HEAD", UI_PREFIX),
+           ("POST", UI_PREFIX + "/login"), ("POST", UI_PREFIX + "/logout")}
+
+
+def ui_open(request: Request) -> bool:
+    path = request.url.path
+    return (request.method, path) in UI_OPEN or (
+        request.method in ("GET", "HEAD")
+        and path.startswith(UI_PREFIX + "/static/"))
+
+
+def valid_key(token: str) -> bool:
+    """La clé présentée est-elle une de proxy.api_keys ?"""
+    # En octets : compare_digest refuse une chaîne non ASCII (TypeError),
+    # et un jeton accentué ferait tomber la requête en 500.
+    presented = token.encode("utf-8", "surrogatepass")
+    return any(hmac.compare_digest(presented, k.encode("utf-8"))
+               for k in PROXY_API_KEYS)
 
 
 def is_ui_path(path: str) -> bool:
@@ -382,13 +406,10 @@ async def require_proxy_key(request: Request, call_next):
     # la clé du proxy. Le jeton du chemin vaut droit d'accès (files.py).
     served = request.method in ("GET", "HEAD") \
         and files.is_link(request.url.path)
-    if PROXY_API_KEYS and request.url.path != "/healthz" and not served:
+    if PROXY_API_KEYS and request.url.path != "/healthz" and not served \
+            and not ui_open(request):
         token = client_token(request)
-        # En octets : compare_digest refuse une chaîne non ASCII (TypeError),
-        # et un jeton accentué ferait tomber la requête en 500.
-        presented = token.encode("utf-8", "surrogatepass")
-        if not any(hmac.compare_digest(presented, k.encode("utf-8"))
-                   for k in PROXY_API_KEYS):
+        if not valid_key(token):
             log.warning(
                 "clé proxy absente ou invalide : %s %s → 401",
                 request.method, request.url.path,
@@ -398,6 +419,9 @@ async def require_proxy_key(request: Request, call_next):
                 "clé API du proxy absente ou invalide (en-tête "
                 "«Authorization: Bearer <clé>» ou «x-api-key: <clé>» attendu)",
             )
+        # Le client de la requête, pour ses lignes de statistiques
+        # (stats.CLIENT) : tout ce que la route lance hérite du contexte.
+        stats.CLIENT.set(tools.owner(token))
     return await call_next(request)
 
 
@@ -957,6 +981,12 @@ def parse_json(raw: bytes):
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
+    return await chat(request)
+
+
+async def chat(request: Request, page: bool = False):
+    """/v1/chat/completions, et le chat du tableau de bord (`page`) : pas
+    de [chat].always, l'exécution des outils annoncée dans le flux."""
     raw = await request.body()
     payload = parse_json(raw)
 
@@ -981,8 +1011,8 @@ async def chat_completions(request: Request):
     if chat_api.ENABLED and isinstance(payload, dict):
         declared = chat_api.declares(payload, tools.kinds())
         model = str(payload.get("model") or "")
-        always = chat_api.unasked(payload) and _converses(backend, model) \
-            and not _spares(backend, model)
+        always = not page and chat_api.unasked(payload) \
+            and _converses(backend, model) and not _spares(backend, model)
     if declared or always:
         hosted = tools.Hosted()
         try:
@@ -992,6 +1022,7 @@ async def chat_completions(request: Request):
         except chat_api.Refused as exc:
             return error_response("openai", 400, "invalid_request_error",
                                   str(exc))
+        ctx.progress = page
         modified = declared or bool(ctx.hosted)
         if ctx.hosted:
             # Les échanges cachés des réponses précédentes, que le client
@@ -1564,6 +1595,11 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                     # atteinte.
                     count, cap = (used, None) if used >= hosted.cap() \
                         else (spent.get(name, 0), limits.get(name))
+                # Un robinet qui annonce l'exécution (le chat de la page).
+                begin = getattr(robinet, "start", None)
+                out = begin(pending) if begin else b""
+                if out:
+                    yield out
                 task = asyncio.ensure_future(hosted.run(
                     name, pending["arguments"], count, cap,
                     options, endpoint=call.endpoint, model=call.model_key,
@@ -1717,28 +1753,34 @@ def usage_query(request: Request,
     # Filtres portant sur des dimensions que le proxy n'a pas : aucune
     # ligne ne peut y répondre. On le dit en rendant une page vide plutôt
     # qu'en ignorant le filtre — sur-déclarer l'usage serait pire.
-    absent = any(repeated(name) for name in
-                 ("project_ids", "user_ids", "api_key_ids")) \
+    absent = any(repeated(name) for name in ("project_ids", "user_ids")) \
         or q.get("batch") == "true"
+    # Les clés : leurs condensés, tels que group_by=api_key_id les rend.
+    keys = [k.strip() for value in repeated("api_key_ids")
+            for k in str(value).split(",") if k.strip()] or None
     return {
         "start_time": start_time, "end_time": end_time,
         "bucket_width": width, "group_by": group_by,
         "limit": limit, "page": q.get("page"),
-        "models": models, "empty": absent,
+        "models": models, "empty": absent, "keys": keys,
     }
 
 
 async def usage_page(request: Request, read=stats.usage_completions,
-                     group_fields=stats.GROUP_FIELDS):
+                     group_fields=stats.GROUP_FIELDS, own: bool = False):
     """Forme de l'Usage API OpenAI, page → buckets → results. Un modèle
     n'apparaît que s'il a servi au moins une requête dans le seau
     concerné. Les agrégats sortent de SQLite : la lecture part dans le
     pool de threads pour ne pas bloquer la boucle d'événements.
     `read` / `group_fields` : la lecture et les champs de `group_by` de la
-    route — les requêtes par défaut, les outils pour usage_tools."""
+    route — les requêtes par défaut, les outils pour usage_tools. `own` :
+    les seules lignes de la clé présentée (le tableau de bord, auth
+    active), quel que soit le filtre demandé."""
     params = usage_query(request, group_fields)
     if isinstance(params, JSONResponse):
         return params
+    if own and PROXY_API_KEYS:
+        params["keys"] = [ui_client(request)]
     return await run_in_threadpool(read, **params)
 
 
@@ -1770,26 +1812,144 @@ async def ui_page(request: Request):
     # suivants (sans en-tête possible depuis le navigateur) restent
     # authentifiés.
     key = request.query_params.get("key", "")
-    if PROXY_API_KEYS and key:
-        response.set_cookie(
-            UI_COOKIE, key, httponly=True, samesite="strict",
-            secure=request.url.scheme == "https", max_age=30 * 86400,
-        )
+    if PROXY_API_KEYS and key and valid_key(key):
+        set_ui_cookie(response, request, key)
     return response
+
+
+def set_ui_cookie(response: Response, request: Request, key: str) -> None:
+    response.set_cookie(
+        UI_COOKIE, key, httponly=True, samesite="strict",
+        secure=request.url.scheme == "https", max_age=30 * 86400,
+    )
+
+
+def json_only(request: Request) -> JSONResponse | None:
+    """Une route /ui qui ÉCRIT ou DÉPENSE exige un corps JSON : un
+    formulaire d'une page tierce ne peut pas en envoyer sans requête
+    préliminaire CORS, que le proxy ne sert pas. Avec le cookie
+    SameSite=Strict, c'est ce qui la ferme aux autres sites."""
+    ct = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if ct != "application/json":
+        return error_response("openai", 415, "invalid_request_error",
+                              "corps JSON attendu (content-type: "
+                              "application/json)")
+    return None
+
+
+@app.post("/ui/login")
+async def ui_login(request: Request):
+    """La clé saisie dans la page : vérifiée, puis mémorisée dans le
+    cookie de /ui — la même chose que «?key=», sans la clé dans l'URL."""
+    if (bad := json_only(request)) is not None:
+        return bad
+    body = parse_json(await request.body())
+    key = body.get("key") if isinstance(body, dict) else None
+    if not PROXY_API_KEYS:
+        return {"ok": True}
+    if not isinstance(key, str) or not key or not valid_key(key):
+        log.warning("/ui/login : clé invalide → 401")
+        return error_response("openai", 401, "invalid_api_key",
+                              "clé du proxy invalide")
+    response = JSONResponse({"ok": True})
+    set_ui_cookie(response, request, key)
+    return response
+
+
+@app.post("/ui/logout")
+async def ui_logout(request: Request):
+    if (bad := json_only(request)) is not None:
+        return bad
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(UI_COOKIE, httponly=True, samesite="strict",
+                           secure=request.url.scheme == "https")
+    return response
+
+
+def chat_tool_groups() -> list[dict]:
+    """Ce que le chat de la page peut déclarer : un type par groupe
+    (`{"type": "web_search"}` présente web_search, web_fetch et
+    web_grep), avec les outils actifs qu'il présente. Relu à chaque
+    appel : un serveur MCP découvert depuis y entre."""
+    groups: dict[str, list[str]] = {}
+    for tool in tools.Hosted().tools:
+        if tool.kinds:
+            groups.setdefault(tool.kinds[0], []).append(tool.name)
+    return [{"type": kind, "tools": names} for kind, names in groups.items()]
+
+
+@app.get("/ui/session")
+async def ui_session(request: Request):
+    """Ce que la page doit savoir de qui la regarde et de ce qui lui est
+    ouvert. Auth active sans clé valide : 401 (le middleware), et la page
+    demande la clé."""
+    chat_tools = UI_CHAT and chat_api.ENABLED
+    return {
+        "auth_required": bool(PROXY_API_KEYS),
+        # Un fragment du condensé, pour dire «c'est bien vous» sans rien
+        # dire de la clé.
+        "client": ui_client(request)[:8] or None,
+        "chat": {
+            "enabled": UI_CHAT,
+            "hosted_tools": chat_tools,
+            "tools": chat_tool_groups() if chat_tools else [],
+            "always": always_shown() if chat_tools else [],
+        },
+    }
+
+
+@app.get("/ui/models")
+async def ui_models(request: Request):
+    """Les modèles de CONVERSATION du catalogue (ni image, ni voix, ni
+    embeddings — CHAT_TYPES), sous /ui pour le cookie ; `vision` : le
+    catalogue le dit capable de lire une image."""
+    if not UI_CHAT:
+        return error_response("openai", 404, "unknown_route",
+                              "chat de la page désactivé ([ui].chat)")
+    entries = await merged_models(request)
+    if entries is None:
+        return error_response("openai", 502, "proxy_error",
+                              "aucun backend joignable pour /v1/models")
+    data = []
+    for entry in entries:
+        name, _, plain = str(entry.get("id", "")).partition("/")
+        b = BACKENDS.get(name)
+        kind = b.model_types.get(plain, "text-generation") if b else ""
+        if kind in CHAT_TYPES:
+            data.append({"id": entry["id"],
+                         "vision": kind == "image-text-to-text"})
+    return {"object": "list", "data": data}
+
+
+@app.post("/ui/chat/completions")
+async def ui_chat(request: Request):
+    """Le chat de la page : /v1/chat/completions, sous /ui pour le cookie
+    — donc compté à la clé de la personne connectée. Les outils hébergés
+    y sont ceux que la page DÉCLARE ([chat].always ne s'y ajoute pas :
+    les interrupteurs de la page font foi), et leur exécution est
+    annoncée dans le flux (chat_api.Context.progress)."""
+    if not UI_CHAT:
+        return error_response("openai", 404, "unknown_route",
+                              "chat de la page désactivé ([ui].chat)")
+    if (bad := json_only(request)) is not None:
+        return bad
+    return await chat(request, page=True)
 
 
 @app.get("/ui/usage")
 async def ui_usage(request: Request):
-    """Exactement la route d'Usage API ci-dessus, mais sous /ui : le
-    cookie posé par la page y suffit comme authentification (un fetch de
-    navigateur ne peut pas porter le Bearer)."""
-    return await usage_page(request)
+    """La route d'Usage API ci-dessus, mais sous /ui : le cookie posé par
+    la page y suffit comme authentification (un fetch de navigateur ne
+    peut pas porter le Bearer). Auth active : les seules requêtes de la
+    clé connectée."""
+    return await usage_page(request, own=True)
 
 
 @app.get("/ui/usage/tools")
 async def ui_usage_tools(request: Request):
     """La route d'usage des outils, sous /ui pour la même raison."""
-    return await usage_tools(request)
+    return await usage_page(request, stats.usage_tools,
+                            stats.TOOL_GROUP_FIELDS, own=True)
 
 
 # ── Mémoire, sous /ui ───────────────────────────────────────────────────

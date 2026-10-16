@@ -9,23 +9,63 @@
   proxy (/v1/organization/usage/completions) servie sous /ui pour que le
   cookie de la page suffise à s'authentifier ; ceux de la section Outils,
   de sa route sœur /ui/usage/tools (/v1/organization/usage/tools).
+
+  Deux vues sous la même barre : les statistiques et le chat (chat.js).
+  Auth active sans clé valide : l'écran d'entrée, à la place des deux.
 -->
 <html lang="fr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>llm-proxy — statistiques</title>
+<title>llm-proxy</title>
 <link rel="stylesheet" href="/ui/static/dashboard.css">
 <script src="/ui/static/vue.global.prod.js"></script>
 </head>
 <body>
-<div class="wrap" id="app" v-cloak>
+<!-- Vue compile le CONTENU de #app, pas ses propres attributs : la classe
+     qui suit la vue est donc sur l'enveloppe intérieure. -->
+<div id="app" v-cloak>
+<div class="wrap" :class="{ 'is-chat': session && view === 'chat' }">
   <header>
-    <div class="brand"><span class="dot"></span> llm-proxy</div>
-    <h1>Statistiques d'usage</h1>
+    <div class="topbar">
+      <div class="brand"><span class="dot"></span> llm-proxy</div>
+      <nav class="range views" v-if="session" aria-label="Vue">
+        <button v-for="v in views" :key="v.id" type="button"
+                :aria-pressed="String(v.id === view)" @click="setView(v.id)">{{ v.label }}</button>
+      </nav>
+      <div class="who" v-if="session && session.auth_required">
+        clé <code :title="'condensé de la clé connectée'">{{ session.client }}</code>
+        <button type="button" class="link" @click="logout">Se déconnecter</button>
+      </div>
+    </div>
+    <h1 v-if="needLogin">Connexion</h1>
+    <h1 v-else-if="view === 'stats'">Statistiques d'usage</h1>
   </header>
 
+  <!-- Auth active, pas de clé valide : on la demande. Elle part à
+       /ui/login, qui la garde dans un cookie HttpOnly de /ui. -->
+  <form class="panel login" v-if="needLogin" @submit.prevent="login">
+    <p>Ce proxy demande une clé. Elle reste dans un cookie de ce navigateur,
+      illisible par la page ; vous ne verrez que <b>vos</b> statistiques
+      et <b>vos</b> conversations.</p>
+    <label class="field">
+      <span>Clé du proxy</span>
+      <input type="password" v-model="loginKey" autocomplete="current-password"
+             spellcheck="false" placeholder="sk-…" autofocus>
+    </label>
+    <div class="login-bar">
+      <button type="submit" class="btn" :disabled="loginBusy || !loginKey.trim()">Entrer</button>
+      <span class="err" role="status">{{ loginError }}</span>
+    </div>
+  </form>
+
+  <!-- Le chat reste monté d'une vue à l'autre : une réponse en cours
+       continue pendant qu'on regarde les chiffres. -->
+  <chat-panel v-if="session" v-show="view === 'chat'" :session="session"
+              :key="session.client || 'open'" @unauthorized="onUnauthorized"></chat-panel>
+
+  <div class="stats" v-if="session" v-show="view === 'stats'">
   <div class="toolbar">
     <div class="range" role="group" aria-label="Période">
       <button v-for="w in windows" :key="w.id" type="button"
@@ -39,7 +79,8 @@
               :aria-pressed="String(m.id === metric)"
               @click="selectMetric(m.id)">{{ m.label }}</button>
     </div>
-    <span class="range-note">{{ note }} · raccourcis {{ shortcuts }}</span>
+    <span class="range-note">{{ note }}<template v-if="session.auth_required">
+      · vos requêtes seulement</template> · raccourcis {{ shortcuts }}</span>
   </div>
 
   <div class="cards">
@@ -384,8 +425,12 @@
   </details>
 
   <footer>Rafraîchissement toutes les 5 s.</footer>
+  </div>
 </div>
+</div>
+<script src="/ui/static/markdown.js"></script>
 <script src="/ui/static/memory.js"></script>
+<script src="/ui/static/chat.js"></script>
 <script src="/ui/static/dashboard.js"></script>
 </body>
 </html>

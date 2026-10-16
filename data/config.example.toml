@@ -771,6 +771,16 @@ enabled = false
 allowed_origins = []
 
 
+# ── Tableau de bord (/ui) ───────────────────────────────────────────────
+# L'onglet « Chat » du tableau de bord : une interface de conversation sur
+# les backends du proxy, outils hébergés compris (ceux de [chat], si
+# hosted_tools est vrai). Le cookie de /ui y DÉPENSE des tokens — comptés
+# à la clé connectée, comme toute requête. false = l'onglet le dit, et
+# POST /ui/chat/completions rend 404 : le cookie ne sert qu'à lire.
+[ui]
+chat = false
+
+
 # ── Fichiers rendus par les outils ──────────────────────────────────────
 # Un outil peut produire des fichiers (le graphique ou le tableur d'une
 # exécution de code). Le proxy les garde quelques heures et écrit leurs

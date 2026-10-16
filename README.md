@@ -103,6 +103,10 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
   octet (`proxy/llm_proxy/multipart.py`) ; sans cela ils partaient vers le
   backend de repli. `GET /v1/audio/voices?model=<backend>/<modèle>` liste
   les voix du modèle de synthèse.
+- **Tableau de bord et chat** — `/ui` : statistiques d'usage et, si
+  `[ui] chat = true`, une interface de chat (outils hébergés, pièces
+  jointes, Markdown), chacune réservée à la clé connectée. Voir
+  [Tableau de bord](#tableau-de-bord).
 - **Compatible Claude Code** — si `[anthropic].enabled`, le proxy parle
   aussi l'**API Messages d'Anthropic** : `POST /v1/messages` (JSON et
   flux SSE, outils compris), `/v1/messages/count_tokens`, et
@@ -301,11 +305,17 @@ volontairement **pas de percentile** : un p95 n'a pas cette propriété,
 il imposerait un appel séparé et une requête de tri par partition.
 
 Le champ `model` est le nom **préfixé** (`albert/openweight-large`),
-donc directement réutilisable comme `model` d'une requête. Les
-dimensions que le proxy ne possède pas (`project_id`, `user_id`,
-`api_key_id`, `batch`) valent `null` ; **filtrer** dessus rend une page
+donc directement réutilisable comme `model` d'une requête.
+`api_key_id` est le **condensé** de la clé du proxy qu'a présentée le
+client (jamais la clé ; le même que celui de la mémoire persistante,
+stable d'un démarrage à l'autre grâce à `data/client.secret`), `""` sur
+un proxy ouvert et pour les lignes d'avant cette colonne :
+`group_by[]=api_key_id` sépare l'usage par clé, `api_key_ids[]=<condensé>`
+le filtre. Les dimensions que le proxy ne possède pas (`project_id`,
+`user_id`, `batch`) valent `null` ; **filtrer** dessus rend une page
 vide, plutôt que d'ignorer le filtre en silence et de sur-déclarer
-l'usage.
+l'usage. Toute clé valide lit l'usage de toutes les clés par cette
+route ; seul le tableau de bord se restreint à la clé connectée.
 
 Comptage des tokens : le bloc `usage` de l'upstream quand il existe —
 streaming SSE compris —, sinon une estimation à ~4 caractères par
@@ -422,7 +432,7 @@ embarqué localement (`/ui/static/vue.global.prod.js`), donc **aucun CDN et
 aucune étape de compilation**. `dashboard.js` ne contient que l'état et
 les valeurs dérivées ; rien n'y touche au DOM.
 
-Trois vues, sélecteur en haut de page :
+Trois périodes, sélecteur en haut de la vue *Statistiques* :
 
 | Vue | Période | Découpage | Raccourci |
 |---|---|---|---|
@@ -490,9 +500,73 @@ Les chiffres sont lus sur `/ui/usage`, qui est la même route que
 `/v1/organization/usage/tools`). Ce doublon n'existe que pour l'auth :
 un `fetch` de navigateur ne peut pas porter l'en-tête `Authorization`,
 alors que le cookie posé par `/ui` vaut pour tout ce qui est sous `/ui` —
-et pour rien d'autre, si bien qu'il ne peut jamais servir à dépenser des
-tokens. Si `proxy.api_keys` est renseigné, ouvrir `/ui?key=<clé>` une
-fois : la clé est ensuite mémorisée dans un cookie `HttpOnly`.
+et pour rien d'autre. Il ne dépense des tokens que si le
+[chat](#le-chat) est ouvert (`[ui] chat = true`).
+
+**Une clé, une personne.** Si `proxy.api_keys` est renseigné, la page
+demande la clé à l'entrée (`POST /ui/login`, qui la vérifie et la garde
+dans un cookie `HttpOnly`, `SameSite=Strict`, 30 jours ; *Se
+déconnecter* l'efface par `POST /ui/logout`). `/ui?key=<clé>` marche
+toujours, et la clé est aussitôt retirée de la barre d'adresse. Ensuite
+la page ne montre que **les requêtes et les outils de cette clé** :
+`/ui/usage` et `/ui/usage/tools` y filtrent d'office, quoi que demande
+la page. La page elle-même, ses fichiers, l'entrée et la sortie se
+servent sans clé ; `GET /ui/session` dit qui est connecté (un fragment
+du condensé de la clé) et ce que le chat peut faire, ou `401`.
+
+### Le chat
+
+Second onglet en tête de page (<kbd>#chat</kbd> dans l'URL) : une
+interface de conversation sur les backends du proxy, au même dessin que
+le reste. **Fermée par défaut** — `[ui] chat = true` dans
+`config.toml` l'ouvre ; fermée, l'onglet le dit et `POST
+/ui/chat/completions` rend `404`.
+
+- **Routes** : `GET /ui/models` (les modèles de conversation du
+  catalogue — ni image, ni voix, ni embeddings —, avec `vision` quand le
+  catalogue les dit capables de lire une image) et `POST
+  /ui/chat/completions`, qui **est** `/v1/chat/completions` sous le
+  cookie : routage au préfixe, quotas, statistiques — comptées à la clé
+  connectée, comme toute requête de l'API. Corps JSON exigé (`415`
+  sinon) : avec le cookie `SameSite=Strict`, une page tierce ne peut pas
+  la déclencher.
+- **Conversations** : dans le navigateur (`localStorage`), une liste par
+  clé connectée ; rien n'est gardé côté proxy. Chacune garde son modèle,
+  son prompt système, sa température et ses outils. Renommer, supprimer,
+  modifier une question (la suite repart d'elle), régénérer la dernière
+  réponse, arrêter un flux en cours. Si le stockage du navigateur
+  déborde, les images des autres conversations sont retirées de
+  l'historique local, pas leurs messages.
+- **Outils hébergés** (avec `[chat] hosted_tools = true`) : un
+  interrupteur par type déclarable — *Web* déclare `{"type":
+  "web_search"}` (donc `web_search`, `web_fetch`, `web_grep`), *Code*,
+  *Images*, *Mémoire*, un serveur MCP… Les interrupteurs **font foi** :
+  `[chat].always` ne s'ajoute pas aux requêtes du chat. Chaque appel
+  s'affiche pendant qu'il tourne puis, replié, avec le début de son
+  résultat : le proxy l'annonce dans le flux par un champ hors schéma,
+  `delta.x_hosted_tool` (`running`, puis `done` ou `error`, avec
+  `preview` et `chars`), envoyé **au seul chat de la page** — un client
+  de l'API ne le reçoit jamais. Les sources citées
+  (`annotations`) s'affichent en pastilles sous la réponse. L'échange
+  caché (appels et résultats) n'est pas dans l'historique de la page :
+  c'est la [mémoire des résultats](#mémoire-des-résultats) du proxy qui
+  le réinsère au tour suivant.
+- **Pièces jointes** (bouton, glisser-déposer ou coller) : les images
+  partent en `image_url` (data URL, 8 Mo au plus) — au modèle de savoir
+  les lire, la page prévient si le catalogue ne le dit pas ; les
+  fichiers texte (256 Ko au plus) sont joints au message entre balises
+  `<file name="…">`. Le reste est refusé.
+- **Rendu** : Markdown écrit pour la page (`markdown.js`, aucune
+  dépendance) — titres, listes, tableaux, citations, code avec bouton
+  *Copier*, liens et images. Tout le texte est échappé avant analyse :
+  aucun HTML du modèle ne passe, et seuls `http(s)`, `mailto` et les
+  chemins du proxy (`/v1/files/…`) font un lien. Le raisonnement
+  (`reasoning_content`) se replie au-dessus de la réponse ; tokens et
+  durée en dessous.
+
+Pendant le chat, les statistiques ne se rafraîchissent pas ; le chat,
+lui, reste monté : une réponse en cours continue pendant qu'on regarde
+les chiffres.
 
 Le badge **exact / estimé** de la colonne *Comptage* dit d'où viennent les
 tokens : le bloc `usage` de l'upstream, ou l'estimation de repli
@@ -2175,7 +2249,7 @@ Sans liaison de protocole : présentée sur `/v1/chat/completions`
 `/v1/tools` et par le [serveur MCP](#serveur-mcp--mcp). L'outil memory
 d'Anthropic, lui, est exécuté par le client : rien à remplacer sur
 `/v1/messages`. Dans le **tableau de bord**, la section *Mémoire* montre
-les fichiers de la clé connectée (celle du cookie de `/ui?key=…`) :
+les fichiers de la clé connectée (celle saisie à l'entrée de `/ui`) :
 lecture, édition, renommage, suppression — jamais la mémoire d'une autre
 clé. Routes, sous le même cookie : `GET /ui/memory`, `GET|PUT|DELETE
 /ui/memory/file`, `POST /ui/memory/rename`.
@@ -2366,7 +2440,7 @@ url = "http://bigchuck:8009"
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `api_keys` | `[]` | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>` à la OpenAI, ou `x-api-key: <clé>` à l'Anthropic). Liste vide = proxy ouvert ; 401 sinon, `/healthz` exempté ; `/ui` accepte aussi `?key=<clé>` (puis cookie) |
+| `api_keys` | `[]` | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>` à la OpenAI, ou `x-api-key: <clé>` à l'Anthropic). Liste vide = proxy ouvert ; 401 sinon, `/healthz` exempté ; `/ui` la demande à l'entrée (ou `?key=<clé>`), puis la garde en cookie |
 | `upstream_timeout` | `600` | Secondes ; large pour les longues générations |
 | `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info` — court, un backend lent ne doit pas bloquer le catalogue |
 | `tool_choice` | `"auto"` | Valeur injectée quand `tools` est présent sans `tool_choice`, pour les backends ayant `force_tool_choice = true`. L'injection est désactivée par défaut : elle s'active par backend |
@@ -2547,6 +2621,12 @@ défauts), qu'il applique sans croire le proxy : à monter avec celles-ci.
 | `max_file_chars` | `100000` | Caractères d'un fichier |
 | `max_total_chars` | `2000000` | Caractères par clé, tous fichiers confondus |
 
+### `[ui]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `chat` | `false` | Ouvre l'onglet *Chat* du tableau de bord (`POST /ui/chat/completions`, `GET /ui/models`) : le cookie de `/ui` y dépense des tokens, comptés à la clé connectée. Voir [Le chat](#le-chat) |
+
 ### `[mcp_server]`
 
 | Clé | Défaut | Rôle |
@@ -2634,8 +2714,11 @@ cumulables :
   cookies ne sont relayés aux backends (c'est la clé du proxy, pas de
   l'upstream) ; `x-api-key` ne l'est jamais. Le tableau de bord `/ui` est
   soumis à la même clé : un navigateur ne pouvant pas poser d'en-tête,
-  elle s'y passe une fois en `?key=<clé>` puis est mémorisée dans un
-  cookie `HttpOnly` (`SameSite=Strict`).
+  la page la demande à l'entrée (ou `?key=<clé>`), la vérifie et la
+  mémorise dans un cookie `HttpOnly` (`SameSite=Strict`). Ce cookie ne
+  vaut que sous `/ui` ; il ne dépense des tokens que par le chat, et
+  seulement si `[ui] chat = true`. Les routes `/ui` qui écrivent ou
+  dépensent exigent un corps JSON.
 - **Le réseau** : Nginx Proxy Manager, Tailscale, réseau Docker partagé.
 
 Avec les [outils hébergés](#outils-hébergés) activés, s'y ajoute que le
@@ -2656,8 +2739,8 @@ tourne sur la machine : lire
     curl -s http://localhost:8000/v1/models | jq '.data[].id'
 
     # tableau de bord : http://localhost:8000/ui
-    # (si proxy.api_keys est renseigné : http://localhost:8000/ui?key=<clé>,
-    #  la clé est ensuite mémorisée en cookie ; D / W / A changent de vue)
+    # (si proxy.api_keys est renseigné, la page demande la clé, puis la
+    #  garde en cookie ; D / W / A changent de période)
 
     # usage par modèle, tout l'historique (Usage API OpenAI)
     curl -s "http://localhost:8000/v1/organization/usage/completions\

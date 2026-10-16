@@ -200,6 +200,8 @@ MEMORY_CHARS = config.integer("chat.memory_chars", 8_000_000)
 CHARS_PER_TOKEN = 4
 # Entre les textes de deux tours, que le client reçoit comme UN message.
 GAP = "\n\n"
+# Début du résultat d'un outil annoncé au chat de la page (Translator.start).
+PREVIEW_CHARS = 600
 
 
 class Refused(Exception):
@@ -228,6 +230,9 @@ class Context:
         # restore() le remplace par celui du dernier échange caché que la
         # mémoire reconnaît — la conversation continue dans son bac.
         self.session = uuid.uuid4().hex
+        # Annoncer l'exécution des outils hébergés dans le flux (le chat
+        # du tableau de bord, app.ui_chat) : voir Translator.start.
+        self.progress = False
 
 
 def declares(payload: dict, kinds) -> bool:
@@ -635,6 +640,26 @@ class Translator:
         self._reasoning: dict[str, list[str]] = {}
 
     # ── interface robinet ──
+    def start(self, call: dict) -> bytes:
+        """L'appel hébergé que la boucle va exécuter. Rien pour un client
+        ordinaire (il n'a pas à savoir qu'un outil tourne) ; avec
+        `ctx.progress` — le chat de la page, qui l'affiche —, un bloc
+        dont le delta porte `x_hosted_tool` : un champ hors schéma, que
+        seule la page demande et lit."""
+        return self._progress(call, "running")
+
+    def _progress(self, call: dict, status: str, result=None) -> bytes:
+        if not (self.ctx.progress and self.sse) or self._finished:
+            return b""
+        event = {"id": call["id"], "name": call["name"],
+                 "arguments": call["arguments"] or "{}", "status": status}
+        if result is not None:
+            event["chars"] = len(result.text)
+            event["preview"] = result.text[:PREVIEW_CHARS]
+            if result.error:
+                event["status"] = "error"
+        return self._block({"x_hosted_tool": event})
+
     def feed(self, chunk: bytes) -> bytes:
         self._buf += chunk
         if not self.sse:
@@ -725,7 +750,7 @@ class Translator:
         la boucle : son TEXTE est gardé pour le tour suivant, ses sources
         notées pour les annotations, ses FICHIERS rangés au magasin
         (files.py) — leurs liens partiront à la fin de la réponse. Le
-        client n'en voit rien d'autre."""
+        client n'en voit rien d'autre, sauf le chat de la page (start)."""
         self.pending = [c for c in self.pending if c is not call]
         self._done.append((call, result.text))
         self._links += [stored.markdown for stored in
@@ -733,7 +758,7 @@ class Translator:
         for source in result.sources:
             if source.url:
                 self._sources.setdefault(source.url, source.title)
-        return b""
+        return self._progress(call, "done", result)
 
     def next_turn(self) -> None:
         """Avant de recevoir le flux upstream suivant : l'état propre au

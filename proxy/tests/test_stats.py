@@ -45,13 +45,16 @@ def db(tmp_path, monkeypatch):
 
 
 def test_migration_adds_cached_column_to_old_base(tmp_path, monkeypatch):
-    """Une base d'avant la colonne cached_tokens est complétée au
-    démarrage — aucune migration à jouer à la main."""
+    """Une base d'avant les colonnes cached_tokens et api_key_id est
+    complétée au démarrage — aucune migration à jouer à la main."""
     import sqlite3
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
     conn.executescript(stats.SCHEMA.replace(
-        ",\n  cached_tokens     INTEGER NOT NULL DEFAULT 0", ""))
+        ",\n  cached_tokens     INTEGER NOT NULL DEFAULT 0", "").replace(
+        ",\n  api_key_id        TEXT    NOT NULL DEFAULT ''", ""))
+    conn.executescript(stats.TOOLS_SCHEMA.replace(
+        ",\n  api_key_id   TEXT    NOT NULL DEFAULT ''", ""))
     conn.execute("INSERT INTO requests VALUES (NULL, ?, 'a/m', 'a', 'm', "
                  "'/v1/chat/completions', 200, 1.0, 10, 2, 1, 0)", (time.time(),))
     conn.commit(); conn.close()
@@ -60,10 +63,44 @@ def test_migration_adds_cached_column_to_old_base(tmp_path, monkeypatch):
     try:
         with stats._reader() as r:
             cols = {row[1] for row in r.execute("PRAGMA table_info(requests)")}
-            assert "cached_tokens" in cols
-            assert r.execute("SELECT cached_tokens FROM requests").fetchone()[0] == 0
+            assert {"cached_tokens", "api_key_id"} <= cols
+            assert r.execute("SELECT cached_tokens, api_key_id FROM requests"
+                             ).fetchone() == (0, "")
+            cols = {row[1] for row in r.execute("PRAGMA table_info(tool_calls)")}
+            assert "api_key_id" in cols
     finally:
         stats.close()
+
+
+def test_rows_carry_the_client_and_filter_by_key(db):
+    """La ligne porte le client du contexte (stats.CLIENT) ; `keys` ne
+    compte que les siennes, group_by=api_key_id les sépare."""
+    token = stats.CLIENT.set("k1")
+    try:
+        stats.record("a/m", "a", "m", "/v1/chat/completions", 200, 0.5, 10, 2,
+                     True, False)
+        stats.record_tool("web_search", "/v1/chat/completions", "a/m", "ok",
+                          0.1, 50)
+    finally:
+        stats.CLIENT.reset(token)
+    stats.record("a/m", "a", "m", "/v1/chat/completions", 200, 0.5, 30, 4,
+                 True, False)
+    stats.close()
+    stats.init()
+    end = int(time.time()) + 60
+    mine = stats.usage_completions(0, end, "all", keys=["k1"])
+    assert mine["data"][0]["results"][0]["input_tokens"] == 10
+    assert stats.usage_completions(0, end, "all", keys=["autre"]
+                                   )["data"][0]["results"] == []
+    split = stats.usage_completions(0, end, "all", group_by=["api_key_id"])
+    assert {r["api_key_id"]: r["input_tokens"]
+            for r in split["data"][0]["results"]} == {"k1": 10, "": 30}
+    tools_ = stats.usage_tools(0, end, "all", keys=["k1"])
+    assert tools_["data"][0]["results"][0]["num_requests"] == 1
+    assert stats.usage_tools(0, end, "all", keys=[""]
+                             )["data"][0]["results"] == []
+    assert stats.recording_since(["autre"]) == 0.0
+    assert stats.recording_since(["k1"]) > 0
 
 
 def test_usage_api_exposes_input_cached_tokens(db):
@@ -209,7 +246,7 @@ def test_usage_tools_route_buckets_group_by_window_and_pagination(proxy, db):
         (t0 + 3 * day, "web_fetch", "/v1/tools", "", "ok", 9.0, 9),  # hors fenêtre
     ]
     with stats._reader() as conn:
-        conn.executemany(stats.INSERT_TOOL, rows)
+        conn.executemany(stats.INSERT_TOOL, [row + ("",) for row in rows])
         conn.commit()
 
     def get(path="/v1/organization/usage/tools", **params):
@@ -278,7 +315,8 @@ def test_migration_adds_tool_calls_to_a_base_with_requests_only(tmp_path, monkey
     conn = sqlite3.connect(path)
     conn.executescript(stats.SCHEMA)
     conn.execute(stats.INSERT, (time.time(), "a/m", "a", "m",
-                                "/v1/chat/completions", 200, 1.0, 10, 2, 1, 0, 0))
+                                "/v1/chat/completions", 200, 1.0, 10, 2, 1, 0, 0,
+                                ""))
     conn.commit(); conn.close()
     monkeypatch.setattr(stats, "DB_PATH", str(path))
     stats.init()
@@ -299,9 +337,9 @@ def test_purge_drops_old_tool_calls_with_old_requests(db, monkeypatch):
     with stats._reader() as conn:
         for ts in (old, recent):
             conn.execute(stats.INSERT_TOOL,
-                         (ts, "web_search", "/v1/tools", "", "ok", 0.1, 1))
+                         (ts, "web_search", "/v1/tools", "", "ok", 0.1, 1, ""))
             conn.execute(stats.INSERT, (ts, "a/m", "a", "m", "/v1/messages",
-                                        200, 1.0, 1, 1, 1, 0, 0))
+                                        200, 1.0, 1, 1, 1, 0, 0, ""))
         conn.commit()
         count = lambda: [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
                          for t in stats.TABLES]

@@ -1,0 +1,715 @@
+/*
+  L'onglet « Chat » du tableau de bord : un composant à part, enregistré
+  par dashboard.js sous <chat-panel>, comme la section Mémoire. Il a ses
+  propres appels et ne touche pas aux statistiques.
+
+  Routes (même cookie que /ui/usage — la clé de la personne connectée) :
+    GET  /ui/models             le catalogue (/v1/models)
+    POST /ui/chat/completions   /v1/chat/completions, en flux ; ouvert par
+                                [ui] chat = true dans config.toml
+  Ce que la page sait du proxy (chat ouvert, outils hébergés déclarables)
+  lui vient de /ui/session, par la prop `session`.
+
+  CONVERSATIONS : dans CE navigateur (localStorage), une liste par clé
+  connectée — rien n'est gardé côté proxy. Chacune garde son modèle, son
+  prompt système, sa température et ses outils. Si le stockage déborde
+  (des images jointes), les images des autres conversations sont
+  retirées de l'historique local, pas leurs messages.
+
+  OUTILS HÉBERGÉS : un interrupteur par TYPE déclarable
+  (`{"type": "web_search"}` présente web_search, web_fetch, web_grep). Le
+  proxy exécute les appels et les annonce dans le flux (`x_hosted_tool`,
+  propre au chat de la page) : lancé, puis fini avec le début du résultat.
+  L'échange caché (appels et résultats) n'est jamais dans l'historique de
+  la page : c'est la mémoire du proxy ([chat].memory) qui le réinsère,
+  tant que la réponse est renvoyée telle qu'elle a été reçue.
+
+  PIÈCES JOINTES : les images partent en `image_url` (data URL) — au
+  modèle de les lire ; les fichiers texte sont joints au message, entre
+  balises <file name="…">. Le reste est refusé.
+*/
+window.ChatPanel = {
+  props: { session: { type: Object, required: true } },
+  emits: ["unauthorized"],
+  setup(props, { emit }) {
+    const { ref, computed, watch, nextTick, onMounted, onUpdated, toRaw } = Vue;
+    const API = "/ui/chat/completions";
+    const STORE = "llm-proxy-chats:" + (props.session.client || "open");
+    const LAST_MODEL = "llm-proxy-chat-model";
+    const MAX_TEXT_FILE = 256 * 1024;
+    const MAX_IMAGE = 8 * 1024 * 1024;
+    const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|ya?ml|toml|ini|cfg|conf|log|xml|html?|css|js|mjs|ts|tsx|jsx|py|rb|go|rs|java|kt|c|h|cc|cpp|hpp|cs|php|sh|bash|zsh|sql|r|lua|swift|vue|svelte|tex|env|dockerfile|makefile)$/i;
+    // Noms lisibles des types d'outils ; un type inconnu garde le sien.
+    const TOOL_LABELS = {
+      web_search: "Web", code_execution: "Code", code_interpreter: "Code",
+      image_generation: "Images", memory: "Mémoire", ocr: "OCR",
+      transcribe: "Transcription",
+    };
+
+    const chat = computed(() => props.session.chat || {});
+    const toolGroups = computed(() => (chat.value.tools || []).map((g) => ({
+      ...g,
+      label: TOOL_LABELS[g.type] || (g.type.startsWith("mcp:")
+        ? "MCP " + g.type.slice(4) : g.type),
+    })));
+    const available = computed(() => new Set(toolGroups.value.map((g) => g.type)));
+    // Les outils cochés d'office dans une conversation neuve : ceux que
+    // [chat].always présente aux autres interfaces, sinon le web.
+    function defaultTools() {
+      const always = new Set(chat.value.always || []);
+      const picked = toolGroups.value.filter((g) => g.tools.some((t) => always.has(t)))
+        .map((g) => g.type);
+      if (picked.length) return picked;
+      return available.value.has("web_search") ? ["web_search"] : [];
+    }
+
+    // ── état ────────────────────────────────────────────────────────────
+    const convs = ref(load());
+    const currentId = ref(convs.value[0] ? convs.value[0].id : null);
+    const current = computed(() => convs.value.find((c) => c.id === currentId.value) || null);
+    const models = ref([]);
+    const modelsError = ref("");
+    const draft = ref("");
+    const pending = ref([]);          // pièces jointes du message en cours
+    const streaming = ref(false);
+    const status = ref("");
+    const settingsOpen = ref(false);
+    const sideOpen = ref(false);      // liste des conversations, sur mobile
+    const confirming = ref(null);     // id de la conversation à supprimer
+    const renaming = ref(null);
+    const renameText = ref("");
+    const storageWarning = ref("");
+    const dragging = ref(false);
+    const thread = ref(null);
+    const input = ref(null);
+    let controller = null;
+    let pinned = true;                // le fil suit la fin de la réponse
+
+    function load() {
+      try {
+        const list = JSON.parse(localStorage.getItem(STORE) || "[]");
+        return Array.isArray(list) ? list : [];
+      } catch { return []; }
+    }
+
+    // Enregistrement différé : un flux modifie le message des dizaines de
+    // fois par seconde, le stockage n'a besoin que du dernier état.
+    let saveTimer = null;
+    function save() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(persist, 400);
+    }
+    function persist() {
+      const data = JSON.stringify(toRaw(convs.value));
+      try {
+        localStorage.setItem(STORE, data);
+        storageWarning.value = "";
+      } catch {
+        // Plein : on retire les images des AUTRES conversations, puis on
+        // réessaie. Leurs messages restent.
+        let dropped = 0;
+        for (const c of convs.value) {
+          if (c.id === currentId.value) continue;
+          for (const m of c.messages) {
+            for (const a of m.attachments || []) {
+              if (a.kind === "image" && a.data) { a.data = null; dropped++; }
+            }
+          }
+        }
+        try {
+          localStorage.setItem(STORE, JSON.stringify(toRaw(convs.value)));
+          storageWarning.value = dropped
+            ? `Stockage du navigateur plein : ${dropped} image(s) d'anciennes conversations retirée(s).`
+            : "";
+        } catch {
+          storageWarning.value = "Stockage du navigateur plein : cette conversation "
+            + "n'est plus enregistrée. Supprimez-en d'anciennes.";
+        }
+      }
+    }
+    watch(convs, save, { deep: true });
+
+    // ── conversations ───────────────────────────────────────────────────
+    const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const sorted = computed(() => [...convs.value].sort((a, b) => b.updated - a.updated));
+
+    function newConv() {
+      // Une conversation vide en tête est réutilisée plutôt que dupliquée.
+      const empty = convs.value.find((c) => !c.messages.length);
+      if (empty) {
+        currentId.value = empty.id;
+      } else {
+        const base = current.value;
+        const conv = {
+          id: uid(), title: "Nouvelle conversation", created: Date.now(),
+          updated: Date.now(), model: base ? base.model : defaultModel(),
+          system: base ? base.system : "", temperature: null,
+          showReasoning: true, tools: base ? [...base.tools] : defaultTools(),
+          messages: [],
+        };
+        convs.value.unshift(conv);
+        currentId.value = conv.id;
+      }
+      sideOpen.value = false;
+      nextTick(() => input.value && input.value.focus());
+    }
+
+    function select(id) {
+      if (streaming.value) return;
+      currentId.value = id;
+      sideOpen.value = false;
+      confirming.value = null;
+      pinned = true;
+    }
+
+    function remove(id) {
+      if (confirming.value !== id) { confirming.value = id; return; }
+      convs.value = convs.value.filter((c) => c.id !== id);
+      confirming.value = null;
+      if (currentId.value === id) {
+        currentId.value = sorted.value[0] ? sorted.value[0].id : null;
+        if (!currentId.value) newConv();
+      }
+    }
+
+    function startRename(c) {
+      renaming.value = c.id;
+      renameText.value = c.title;
+    }
+    function endRename(c) {
+      if (renaming.value !== c.id) return;
+      const t = renameText.value.trim();
+      if (t) c.title = t.slice(0, 120);
+      renaming.value = null;
+    }
+
+    // ── modèles ─────────────────────────────────────────────────────────
+    const modelIds = computed(() => models.value.map((m) => m.id));
+    function defaultModel() {
+      const last = localStorage.getItem(LAST_MODEL);
+      if (last && modelIds.value.includes(last)) return last;
+      return modelIds.value[0] || last || "";
+    }
+    // Des images à un modèle que le catalogue ne dit pas capable de les
+    // lire : envoyées quand même (le catalogue peut se tromper), mais dit.
+    const blind = computed(() => {
+      const c = current.value;
+      const m = c && models.value.find((x) => x.id === c.model);
+      return !!(m && !m.vision && pending.value.some((a) => a.kind === "image"));
+    });
+
+    async function loadModels() {
+      try {
+        const r = await fetch("/ui/models", { headers: { accept: "application/json" } });
+        if (r.status === 401) { emit("unauthorized"); return; }
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const j = await r.json();
+        // Le proxy ne rend que les modèles de conversation.
+        models.value = (j.data || []).filter((m) => m.id)
+          .sort((a, b) => a.id.localeCompare(b.id));
+        modelsError.value = "";
+        if (current.value && !current.value.model) current.value.model = defaultModel();
+      } catch (e) {
+        modelsError.value = "Catalogue illisible : " + e.message;
+      }
+    }
+
+    watch(() => current.value && current.value.model, (m) => {
+      if (m) localStorage.setItem(LAST_MODEL, m);
+    });
+
+    function toggleTool(type) {
+      const c = current.value;
+      if (!c) return;
+      c.tools = c.tools.includes(type) ? c.tools.filter((t) => t !== type)
+        : [...c.tools, type];
+    }
+
+    // ── pièces jointes ──────────────────────────────────────────────────
+    const readAs = (file, how) => new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      r[how](file);
+    });
+
+    async function addFiles(list) {
+      for (const file of list) {
+        try {
+          if (file.type.startsWith("image/")) {
+            if (file.size > MAX_IMAGE) throw new Error("image de plus de 8 Mo");
+            pending.value.push({ kind: "image", name: file.name, type: file.type,
+                                 size: file.size, data: await readAs(file, "readAsDataURL") });
+          } else if (file.type.startsWith("text/") || TEXT_EXT.test(file.name)
+                     || /json|xml|yaml|javascript|toml|csv/.test(file.type)) {
+            if (file.size > MAX_TEXT_FILE) throw new Error("fichier texte de plus de 256 Ko");
+            pending.value.push({ kind: "text", name: file.name, type: file.type || "text/plain",
+                                 size: file.size, data: await readAs(file, "readAsText") });
+          } else {
+            throw new Error("seuls les images et les fichiers texte sont acceptés");
+          }
+          status.value = "";
+        } catch (e) {
+          status.value = `${file.name} : ${e.message}`;
+        }
+      }
+    }
+    function onPick(e) { addFiles([...e.target.files]); e.target.value = ""; }
+    function onDrop(e) {
+      dragging.value = false;
+      if (e.dataTransfer && e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]);
+    }
+    function onPaste(e) {
+      const files = [...(e.clipboardData ? e.clipboardData.files : [])];
+      if (files.length) { e.preventDefault(); addFiles(files); }
+    }
+
+    // ── envoi ───────────────────────────────────────────────────────────
+    const canSend = computed(() => !streaming.value && current.value
+      && current.value.model && (draft.value.trim() || pending.value.length));
+
+    // Le message tel que l'API le veut : texte seul, ou parties (texte,
+    // fichiers texte, images) quand il y a des pièces jointes.
+    function apiContent(m) {
+      const files = (m.attachments || []).filter((a) => a.kind === "text");
+      const images = (m.attachments || []).filter((a) => a.kind === "image" && a.data);
+      let text = m.content || "";
+      for (const f of files) {
+        text += `\n\n<file name="${f.name.replace(/"/g, "'")}">\n${f.data}\n</file>`;
+      }
+      if (!images.length) return text;
+      return [
+        ...(text ? [{ type: "text", text }] : []),
+        ...images.map((a) => ({ type: "image_url", image_url: { url: a.data } })),
+      ];
+    }
+
+    function apiMessages(conv, upto) {
+      const out = [];
+      if (conv.system.trim()) out.push({ role: "system", content: conv.system });
+      for (const m of conv.messages.slice(0, upto)) {
+        if (m.role === "user") out.push({ role: "user", content: apiContent(m) });
+        // Une réponse en erreur ou vide n'est pas renvoyée : le modèle ne
+        // l'a jamais écrite.
+        else if (m.content) out.push({ role: "assistant", content: m.content });
+      }
+      return out;
+    }
+
+    function send() {
+      const c = current.value;
+      if (!canSend.value) return;
+      c.messages.push({ id: uid(), role: "user", content: draft.value.trim(),
+                        attachments: pending.value });
+      if (c.messages.length === 1) {
+        const first = draft.value.trim() || pending.value.map((a) => a.name).join(", ");
+        c.title = first.replace(/\s+/g, " ").slice(0, 60) + (first.length > 60 ? "…" : "");
+      }
+      draft.value = "";
+      pending.value = [];
+      pinned = true;
+      respond(c);
+    }
+
+    async function respond(conv) {
+      const msg = { id: uid(), role: "assistant", content: "", reasoning: "",
+                    tools: [], sources: [], model: conv.model, usage: null,
+                    error: "", started: Date.now(), duration: 0 };
+      const upto = conv.messages.length;
+      conv.messages.push(msg);
+      conv.updated = Date.now();
+      // Le message RÉACTIF : c'est lui que le flux modifie.
+      const live = conv.messages[conv.messages.length - 1];
+      streaming.value = true;
+      status.value = "";
+      controller = new AbortController();
+      const body = {
+        model: conv.model, stream: true, stream_options: { include_usage: true },
+        messages: apiMessages(conv, upto),
+      };
+      if (conv.temperature !== null && conv.temperature !== "") {
+        body.temperature = Number(conv.temperature);
+      }
+      const tools = conv.tools.filter((t) => available.value.has(t));
+      if (tools.length) body.tools = tools.map((type) => ({ type }));
+      try {
+        const r = await fetch(API, {
+          method: "POST", signal: controller.signal,
+          headers: { "content-type": "application/json", accept: "text/event-stream" },
+          body: JSON.stringify(body),
+        });
+        if (r.status === 401) { live.error = "Session expirée : reconnectez-vous."; emit("unauthorized"); return; }
+        if (!r.ok) {
+          let j = null;
+          try { j = await r.json(); } catch { /* corps illisible */ }
+          live.error = (j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`;
+          return;
+        }
+        if (!(r.headers.get("content-type") || "").includes("event-stream")) {
+          const j = await r.json();
+          const choice = (j.choices || [])[0] || {};
+          live.content = (choice.message || {}).content || "";
+          live.usage = j.usage || null;
+          return;
+        }
+        await readStream(r.body, live);
+      } catch (e) {
+        if (e.name !== "AbortError") live.error = "Connexion interrompue : " + e.message;
+        else if (!live.content) live.error = "Arrêté.";
+      } finally {
+        live.duration = (Date.now() - live.started) / 1000;
+        for (const t of live.tools) if (t.status === "running") t.status = "error";
+        streaming.value = false;
+        controller = null;
+        conv.updated = Date.now();
+      }
+    }
+
+    async function readStream(stream, live) {
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).replace(/\r$/, "");
+          buf = buf.slice(nl + 1);
+          if (!line.startsWith("data:")) continue;   // «: ping» et le reste
+          const data = line.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          let doc;
+          try { doc = JSON.parse(data); } catch { continue; }
+          take(doc, live);
+        }
+      }
+    }
+
+    function take(doc, live) {
+      if (doc.error) {
+        live.error = typeof doc.error === "string" ? doc.error
+          : doc.error.message || "erreur du proxy";
+        return;
+      }
+      if (doc.usage) live.usage = doc.usage;
+      for (const choice of doc.choices || []) {
+        const d = choice.delta || {};
+        if (d.content) live.content += d.content;
+        const thought = d.reasoning_content || d.reasoning;
+        if (typeof thought === "string") live.reasoning += thought;
+        if (d.x_hosted_tool) {
+          const ev = d.x_hosted_tool;
+          const known = live.tools.find((t) => t.id === ev.id);
+          if (known) Object.assign(known, ev);
+          else live.tools.push({ ...ev });
+        }
+        for (const a of d.annotations || []) {
+          const c = a.url_citation;
+          if (c && !live.sources.some((s) => s.url === c.url)) {
+            live.sources.push({ url: c.url, title: c.title || c.url });
+          }
+        }
+      }
+    }
+
+    function stop() { if (controller) controller.abort(); }
+
+    // Régénérer : la dernière réponse est remplacée, la question reste.
+    function regenerate() {
+      const c = current.value;
+      if (streaming.value || !c) return;
+      const last = c.messages[c.messages.length - 1];
+      if (last && last.role === "assistant") c.messages.pop();
+      if (c.messages.length) respond(c);
+    }
+
+    // Modifier une question : elle revient dans la zone de saisie, et la
+    // conversation reprend d'elle.
+    function edit(i) {
+      const c = current.value;
+      if (streaming.value || !c) return;
+      const m = c.messages[i];
+      draft.value = m.content;
+      pending.value = [...(m.attachments || [])].filter((a) => a.data);
+      c.messages.splice(i);
+      nextTick(() => { if (input.value) { input.value.focus(); autosize(); } });
+    }
+
+    function onKey(e) {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        send();
+      }
+    }
+    function autosize() {
+      const el = input.value;
+      if (!el) return;
+      el.style.height = "auto";
+      // scrollHeight ne compte pas la bordure (box-sizing: border-box).
+      const want = el.scrollHeight + el.offsetHeight - el.clientHeight;
+      el.style.height = Math.min(want, 260) + "px";
+      // Une barre de défilement seulement au-delà de la hauteur maximale :
+      // en deçà, un arrondi de hauteur de ligne en ferait paraître une.
+      el.style.overflowY = want > 260 ? "auto" : "hidden";
+    }
+    watch(draft, () => nextTick(autosize));
+
+    // ── rendu ───────────────────────────────────────────────────────────
+    // Le Markdown d'un message n'est recalculé que si son texte a changé :
+    // pendant un flux, seul le dernier message se réanalyse.
+    const cache = new WeakMap();
+    function html(m, field = "content") {
+      const raw = toRaw(m);
+      let entry = cache.get(raw);
+      if (!entry) cache.set(raw, entry = {});
+      const src = m[field] || "";
+      if (!entry[field] || entry[field].src !== src) {
+        entry[field] = { src, html: window.Markdown.render(src) };
+      }
+      return entry[field].html;
+    }
+
+    // Copier : le bouton des blocs de code (rendus en v-html, donc par
+    // délégation) et celui de chaque réponse.
+    async function copyText(text, button) {
+      try {
+        await navigator.clipboard.writeText(text);
+        if (button) {
+          const was = button.textContent;
+          button.textContent = "Copié";
+          setTimeout(() => { button.textContent = was; }, 1200);
+        }
+      } catch { status.value = "Copie refusée par le navigateur."; }
+    }
+    function onThreadClick(e) {
+      const b = e.target.closest("button.copy");
+      if (!b) return;
+      const code = b.closest(".code").querySelector("code");
+      copyText(code ? code.textContent : "", b);
+    }
+
+    function onScroll() {
+      const el = thread.value;
+      pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    }
+    onUpdated(() => {
+      const el = thread.value;
+      if (el && pinned) el.scrollTop = el.scrollHeight;
+    });
+
+    // Ce que l'appel d'outil cherchait, en une ligne.
+    function argSummary(t) {
+      let a = {};
+      try { a = JSON.parse(t.arguments || "{}"); } catch { return t.arguments; }
+      const v = a.query || a.queries || a.url || a.urls || a.pattern || a.prompt
+        || a.path || a.command || a.code || Object.values(a)[0];
+      const s = Array.isArray(v) ? v.join(" · ") : typeof v === "string" ? v
+        : v === undefined ? "" : JSON.stringify(v);
+      return s.length > 140 ? s.slice(0, 140) + "…" : s;
+    }
+
+    const num = (n) => Number(n || 0).toLocaleString("fr-FR");
+    const size = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace(".", ",") + " Mo"
+      : Math.max(1, Math.round(n / 1e3)) + " Ko";
+    const when = (ts) => {
+      const d = new Date(ts), today = new Date();
+      return d.toDateString() === today.toDateString()
+        ? d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+        : d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+    };
+    const host = (url) => { try { return new URL(url).host; } catch { return url; } };
+
+    onMounted(async () => {
+      if (!convs.value.length) newConv();
+      await loadModels();
+      for (const c of convs.value) if (!c.model) c.model = defaultModel();
+      nextTick(() => {
+        if (thread.value) thread.value.scrollTop = thread.value.scrollHeight;
+        autosize();
+      });
+    });
+
+    return { chat, toolGroups, available, convs, sorted, current, currentId,
+             models, modelsError, blind, draft, pending, streaming, status,
+             settingsOpen, sideOpen, confirming, renaming, renameText,
+             storageWarning, dragging, thread, input, canSend, newConv,
+             select, remove, startRename, endRename, toggleTool, onPick,
+             onDrop, onPaste, send, stop, regenerate, edit, onKey, html,
+             copyText, onThreadClick, onScroll, argSummary, num, size, when,
+             host };
+  },
+  template: `
+  <div class="panel chat-off" v-if="!chat.enabled">
+    <div class="empty">
+      <div class="big">Le chat n'est pas ouvert sur ce proxy</div>
+      <div>Ajouter <code>[ui]</code> <code>chat = true</code> dans
+        <code>config.toml</code> puis redémarrer. Les requêtes du chat sont
+        comptées à la clé connectée, comme celles de l'API.</div>
+    </div>
+  </div>
+  <div class="panel chat" v-else :class="{ 'side-open': sideOpen }">
+    <aside class="chat-side">
+      <div class="chat-side-head">
+        <button type="button" class="btn" @click="newConv">Nouvelle conversation</button>
+      </div>
+      <ul>
+        <li v-for="c in sorted" :key="c.id" :class="{ current: c.id === currentId }">
+          <input v-if="renaming === c.id" v-model="renameText" class="rename"
+                 @keydown.enter.prevent="endRename(c)" @keydown.esc="renaming = null"
+                 @blur="endRename(c)" maxlength="120" autofocus>
+          <button v-else type="button" class="conv" :aria-current="String(c.id === currentId)"
+                  :disabled="streaming && c.id !== currentId" @click="select(c.id)"
+                  @dblclick="startRename(c)">
+            <span class="title">{{ c.title }}</span>
+            <span class="dim">{{ when(c.updated) }} · {{ c.messages.length }} message{{ c.messages.length > 1 ? "s" : "" }}</span>
+          </button>
+          <span class="conv-actions" v-if="renaming !== c.id">
+            <button type="button" class="icon" title="Renommer" @click="startRename(c)">✎</button>
+            <button type="button" class="icon danger" :class="{ armed: confirming === c.id }"
+                    :title="confirming === c.id ? 'Cliquer encore pour supprimer' : 'Supprimer'"
+                    :disabled="streaming && c.id === currentId"
+                    @click="remove(c.id)">{{ confirming === c.id ? "Supprimer ?" : "×" }}</button>
+          </span>
+        </li>
+      </ul>
+      <p class="note">Conversations gardées dans ce navigateur<template
+        v-if="$props.session.client">, pour la clé <code>{{ $props.session.client }}</code></template>.
+        Double-clic pour renommer.</p>
+    </aside>
+
+    <section class="chat-main" v-if="current"
+             @dragover.prevent="dragging = true" @dragleave.self="dragging = false"
+             @drop.prevent="onDrop">
+      <header class="chat-head">
+        <button type="button" class="icon side-toggle" @click="sideOpen = !sideOpen"
+                title="Conversations">☰</button>
+        <h2 :title="current.title">{{ current.title }}</h2>
+        <label class="model-pick" title="Modèle">
+          <select v-model="current.model" :disabled="streaming">
+            <option v-if="!models.length && current.model" :value="current.model">{{ current.model }}</option>
+            <option v-if="current.model && models.length && !models.some((m) => m.id === current.model)"
+                    :value="current.model">{{ current.model }} (absent du catalogue)</option>
+            <option v-for="m in models" :key="m.id" :value="m.id">{{ m.id }}{{ m.vision ? " · images" : "" }}</option>
+          </select>
+        </label>
+        <button type="button" class="btn ghost" :aria-pressed="String(settingsOpen)"
+                @click="settingsOpen = !settingsOpen">Réglages</button>
+      </header>
+
+      <div class="chat-settings" v-if="settingsOpen">
+        <label class="field wide">
+          <span>Prompt système</span>
+          <textarea v-model="current.system" rows="3" spellcheck="false"
+                    placeholder="Instructions données au modèle avant la conversation (facultatif)."></textarea>
+        </label>
+        <div class="field">
+          <span>Température</span>
+          <div class="temp">
+            <label class="check"><input type="checkbox" :checked="current.temperature === null"
+              @change="current.temperature = $event.target.checked ? null : 0.7"> celle du modèle</label>
+            <template v-if="current.temperature !== null">
+              <input type="range" min="0" max="2" step="0.05" v-model.number="current.temperature">
+              <b>{{ Number(current.temperature).toFixed(2) }}</b>
+            </template>
+          </div>
+        </div>
+        <div class="field">
+          <span>Affichage</span>
+          <label class="check"><input type="checkbox" v-model="current.showReasoning">
+            montrer le raisonnement du modèle</label>
+        </div>
+      </div>
+      <p class="chat-warn" v-if="modelsError">{{ modelsError }}</p>
+      <p class="chat-warn" v-if="storageWarning">{{ storageWarning }}</p>
+
+      <div class="thread" ref="thread" @scroll="onScroll" @click="onThreadClick">
+        <div class="empty" v-if="!current.messages.length">
+          <div class="big">Une question ?</div>
+          <div>{{ current.model || "Choisir un modèle" }}<template v-if="current.tools.length">
+            · outils : {{ toolGroups.filter((g) => current.tools.includes(g.type)).map((g) => g.label).join(", ") }}</template></div>
+        </div>
+        <article v-for="(m, i) in current.messages" :key="m.id" class="msg" :class="m.role">
+          <template v-if="m.role === 'user'">
+            <div class="bubble">
+              <div class="attachments" v-if="m.attachments && m.attachments.length">
+                <template v-for="a in m.attachments" :key="a.name">
+                  <img v-if="a.kind === 'image' && a.data" :src="a.data" :alt="a.name">
+                  <span v-else class="chip file">{{ a.name }}<span class="dim" v-if="a.kind === 'image'">
+                    · image retirée de l'historique local</span></span>
+                </template>
+              </div>
+              <div class="text" v-if="m.content">{{ m.content }}</div>
+            </div>
+            <div class="msg-meta">
+              <button type="button" class="link" :disabled="streaming" @click="edit(i)">Modifier</button>
+            </div>
+          </template>
+          <template v-else>
+            <details class="reasoning" v-if="m.reasoning && current.showReasoning"
+                     :open="streaming && i === current.messages.length - 1 && !m.content">
+              <summary>Raisonnement</summary>
+              <div class="md" v-html="html(m, 'reasoning')"></div>
+            </details>
+            <div class="tool-calls" v-if="m.tools.length">
+              <details v-for="t in m.tools" :key="t.id" class="tool" :class="t.status">
+                <summary>
+                  <i class="state"></i><b>{{ t.name }}</b>
+                  <span class="arg">{{ argSummary(t) }}</span>
+                  <span class="dim" v-if="t.status === 'running'">en cours…</span>
+                  <span class="dim" v-else-if="t.chars !== undefined">{{ num(t.chars) }} car.</span>
+                </summary>
+                <pre v-if="t.preview">{{ t.preview }}{{ t.chars > t.preview.length ? "\\n…" : "" }}</pre>
+              </details>
+            </div>
+            <div class="md" v-html="html(m)"></div>
+            <div class="typing" v-if="streaming && i === current.messages.length - 1 && !m.content && !m.error">
+              <i></i><i></i><i></i></div>
+            <p class="msg-error" v-if="m.error">{{ m.error }}</p>
+            <div class="sources" v-if="m.sources.length">
+              <a v-for="s in m.sources" :key="s.url" :href="s.url" target="_blank"
+                 rel="noopener noreferrer" :title="s.url">{{ s.title || host(s.url) }}
+                <span class="dim">{{ host(s.url) }}</span></a>
+            </div>
+            <div class="msg-meta" v-if="!(streaming && i === current.messages.length - 1)">
+              <span>{{ m.model }}</span>
+              <span v-if="m.usage">{{ num(m.usage.prompt_tokens) }} → {{ num(m.usage.completion_tokens) }} tokens</span>
+              <span v-if="m.duration">{{ m.duration.toFixed(1) }} s</span>
+              <button type="button" class="link" v-if="m.content" @click="copyText(m.content, $event.target)">Copier</button>
+              <button type="button" class="link" v-if="i === current.messages.length - 1"
+                      @click="regenerate">Régénérer</button>
+            </div>
+          </template>
+        </article>
+      </div>
+
+      <form class="composer" :class="{ dragging }" @submit.prevent="send">
+        <div class="attachments" v-if="pending.length">
+          <span v-for="(a, k) in pending" :key="k" class="chip" :class="{ file: a.kind !== 'image' }">
+            <img v-if="a.kind === 'image'" :src="a.data" alt="">
+            {{ a.name }} <span class="dim">{{ size(a.size) }}</span>
+            <button type="button" class="icon" title="Retirer" @click="pending.splice(k, 1)">×</button>
+          </span>
+        </div>
+        <textarea ref="input" v-model="draft" rows="1" @keydown="onKey" @paste="onPaste"
+                  placeholder="Écrire un message — Entrée pour envoyer, Maj+Entrée pour aller à la ligne"></textarea>
+        <div class="composer-bar">
+          <label class="btn ghost attach" title="Images ou fichiers texte (ou glisser-déposer, ou coller)">
+            Joindre<input type="file" multiple hidden @change="onPick"></label>
+          <div class="range tools-toggle" v-if="toolGroups.length" role="group" aria-label="Outils hébergés">
+            <button v-for="g in toolGroups" :key="g.type" type="button"
+                    :aria-pressed="String(current.tools.includes(g.type))"
+                    :title="g.tools.join(', ')" @click="toggleTool(g.type)">{{ g.label }}</button>
+          </div>
+          <span class="dim" v-else-if="!chat.hosted_tools" title="[chat] hosted_tools = true dans config.toml">
+            outils hébergés inactifs</span>
+          <span class="status" :class="{ warn: blind && !status }">{{ status
+            || (blind ? "ce modèle ne lit peut-être pas les images" : "") }}</span>
+          <button v-if="!streaming" type="submit" class="btn" :disabled="!canSend">Envoyer</button>
+          <button v-else type="button" class="btn danger" @click="stop">Arrêter</button>
+        </div>
+      </form>
+    </section>
+  </div>`,
+};
