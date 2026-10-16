@@ -815,6 +815,7 @@ def _model_max_context(m: dict) -> int | None:
 # Types d'un modèle de CONVERSATION : ceux qu'on peut proposer en exemple
 # à un client de chat (tableau de bord, /healthz `chat_models`).
 CHAT_TYPES = ("text-generation", "image-text-to-text")
+IMAGE_TYPE = "text-to-image"
 
 # Un catalogue sans `type` ni `architecture` (llama-swap devant gufo ou
 # llama.cpp) : le nom est le seul indice. Sans cela un modèle d'image, de
@@ -2025,6 +2026,10 @@ async def ui_session(request: Request):
             "hosted_tools": chat_tools,
             "tools": chat_tool_groups() if chat_tools else [],
             "always": always_shown() if chat_tools else [],
+            # Les tailles qu'un modèle d'images peut recevoir du chat :
+            # celles de l'outil image_generation.
+            "image_sizes": list(tools.image_generation.SIZES),
+            "image_size": tools.image_generation.SIZE,
         },
         # La mémoire persistante (outil `memory`) : son panneau, à côté du
         # chat comme dans les statistiques.
@@ -2040,8 +2045,10 @@ async def ui_models(request: Request):
     générateur de configuration : servi même chat fermé (c'est ce que
     /v1/models dit déjà à la même clé). `?all=1` : tout le catalogue, avec
     le type de chaque modèle — le générateur y choisit le modèle de l'OCR,
-    de la transcription ou des images."""
+    de la transcription ou des images. `?images=1` : les modèles
+    d'images en plus (`image`), que le chat sait faire générer."""
     every = request.query_params.get("all") in ("1", "true")
+    images = request.query_params.get("images") in ("1", "true")
     entries = await merged_models(request)
     if entries is None:
         return error_response("openai", 502, "proxy_error",
@@ -2054,9 +2061,10 @@ async def ui_models(request: Request):
         # déduit du nom) ; à défaut, les corrections de la configuration.
         kind = entry.get("type") or (
             b.model_types.get(plain, "text-generation") if b else "")
-        if every or kind in CHAT_TYPES:
+        if every or kind in CHAT_TYPES or (images and kind == IMAGE_TYPE):
             data.append({"id": entry["id"], "type": kind,
-                         "vision": kind == "image-text-to-text"})
+                         "vision": kind == "image-text-to-text",
+                         "image": kind == IMAGE_TYPE})
     return {"object": "list", "data": data}
 
 
@@ -2073,6 +2081,20 @@ async def ui_chat(request: Request):
     if (bad := json_only(request)) is not None:
         return bad
     return await chat(request, page=True)
+
+
+@app.post("/ui/images/generations")
+async def ui_images(request: Request):
+    """Le chat de la page, quand son modèle est un modèle d'images :
+    /v1/images/generations, sous /ui pour le cookie — comptée à la clé
+    connectée, comme le chat. Relayée telle quelle : la page lit
+    `b64_json` (ou une `url` absolue)."""
+    if not UI_CHAT:
+        return error_response("openai", 404, "unknown_route",
+                              "chat de la page désactivé ([ui].chat)")
+    if (bad := json_only(request)) is not None:
+        return bad
+    return await forward_post(request, "/v1/images/generations", "openai")
 
 
 @app.get("/ui/usage")
@@ -2350,6 +2372,13 @@ async def passthrough(path: str, request: Request):
             f"route non gérée par le proxy : {request.method} {normalized}",
         )
 
+    return await forward_post(request, normalized, dialect)
+
+
+async def forward_post(request: Request, normalized: str, dialect: str):
+    """Relaie le POST de `request` vers la route `normalized` du backend
+    que nomme son modèle (JSON ou formulaire) : préfixe retiré, porte de
+    quota, flux. Le relais générique, et /ui/images/generations."""
     raw = await request.body()
     payload = parse_json(raw)
     content_type = request.headers.get("content-type", "")
@@ -2382,4 +2411,4 @@ async def passthrough(path: str, request: Request):
                          albert.estimate_generic_cost(raw, payload))
     if blocked is not None:
         return blocked
-    return await forward(call, request, path, raw)
+    return await forward(call, request, normalized.lstrip("/"), raw)

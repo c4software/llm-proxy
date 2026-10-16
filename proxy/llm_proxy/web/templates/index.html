@@ -64,7 +64,7 @@
                   :aria-current="view === 'chat' && c.id === chatState.currentId ? 'page' : null"
                   :disabled="chatState.streaming && c.id !== chatState.currentId"
                   @click="openChat(c.id)" @dblclick="chats.startRename(c)" :title="c.title">
-            <span class="title">{{ c.title }}</span>
+            <span class="title"><span class="tag-incognito" v-if="c.incognito">incognito</span>{{ c.title }}</span>
             <span class="dim">{{ chats.when(c.updated) }} · {{ c.messages.length }} msg</span>
           </button>
           <span class="conv-actions" v-if="chatState.renaming !== c.id">

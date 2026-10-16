@@ -525,12 +525,14 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
 
 - **Routes** : `GET /ui/models` (les modèles de conversation du
   catalogue — ni image, ni voix, ni embeddings —, avec `vision` quand le
-  catalogue les dit capables de lire une image) et `POST
-  /ui/chat/completions`, qui **est** `/v1/chat/completions` sous le
+  catalogue les dit capables de lire une image ; `?images=1` ajoute les
+  modèles d'images, marqués `image`), `POST /ui/chat/completions`, qui
+  **est** `/v1/chat/completions` sous le cookie, et `POST
+  /ui/images/generations`, qui **est** `/v1/images/generations` sous le
   cookie : routage au préfixe, quotas, statistiques — comptées à la clé
   connectée, comme toute requête de l'API. Corps JSON exigé (`415`
   sinon) : avec le cookie `SameSite=Strict`, une page tierce ne peut pas
-  la déclencher.
+  les déclencher.
 - **Conversations** : dans le navigateur (`localStorage`), une liste par
   clé connectée ; rien n'est gardé côté proxy. Elles sont listées dans le
   menu latéral (un magasin partagé, `ChatStore` de `chat.js`). Chacune garde son modèle,
@@ -539,6 +541,26 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   réponse, arrêter un flux en cours. Si le stockage du navigateur
   déborde, les images des autres conversations sont retirées de
   l'historique local, pas leurs messages.
+- **Incognito** (bouton de l'en-tête) : la conversation n'est **jamais
+  écrite** dans le stockage du navigateur et disparaît dès qu'on la
+  quitte ou qu'on recharge la page ; l'outil `memory` (persistant) n'y
+  est pas déclaré. Sur une conversation vide, le bouton change son
+  genre ; sur une conversation commencée, il en ouvre une neuve. Ce que
+  le proxy garde **en mémoire vive** pour toute requête reste : la
+  [mémoire des résultats](#mémoire-des-résultats) (24 h au plus), les
+  fichiers rendus par un outil (`[files].ttl`), et les statistiques — des
+  comptes, sans contenu.
+- **Modèles d'images** : le sélecteur les range à part (*Génération
+  d'images*). Choisi, un tel modèle reçoit le texte du **dernier
+  message seul** (l'API d'images n'a pas d'historique), à la taille
+  choisie dans la zone de saisie — celles de
+  `[tools.image_generation].sizes`, `size` par défaut. L'image rendue
+  (`b64_json`, ou une `url` absolue) s'affiche dans le fil, se
+  télécharge, et est gardée avec la conversation comme une pièce jointe
+  (retirée de même si le stockage déborde). Les pièces jointes ne lui
+  sont pas envoyées, et la page le dit. Pour qu'un modèle de
+  conversation fasse générer une image au fil d'une réponse, c'est
+  l'outil *Images* ([génération d'images](#génération-dimages)).
 - **Niveau de réflexion**, par conversation, dans la zone de saisie :
   *auto* (rien n'est envoyé : le comportement du modèle), *non*
   (`chat_template_kwargs: {"enable_thinking": false}`, qui coupe la

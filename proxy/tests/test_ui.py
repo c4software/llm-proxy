@@ -106,7 +106,9 @@ def test_chat_is_closed_unless_enabled(ui, monkeypatch):
     monkeypatch.setattr(A, "UI_CHAT", False)
     assert chat(ui).status_code == 404
     assert ui.client.get("/ui/session").json()["chat"] == {
-        "enabled": False, "hosted_tools": False, "tools": [], "always": []}
+        "enabled": False, "hosted_tools": False, "tools": [], "always": [],
+        "image_sizes": ["512x512", "768x768", "1024x1024"],
+        "image_size": "512x512"}
     assert not ui.sent
 
 
@@ -175,6 +177,28 @@ def test_models_for_chat_or_the_whole_catalogue(ui, monkeypatch):
     ids = lambda q: [m["id"] for m in ui.client.get("/ui/models" + q).json()["data"]]
     assert ids("") == ["essai/qwen"]
     assert ids("?all=1") == ["essai/qwen", "essai/whisper", "essai/Qwen-Image-2.1"]
+    # Le chat demande aussi les modèles d'images, qu'il fait générer.
+    assert ids("?images=1") == ["essai/qwen", "essai/Qwen-Image-2.1"]
+    assert [m["image"] for m in ui.client.get("/ui/models?images=1")
+            .json()["data"]] == [False, True]
+
+
+def test_chat_generates_an_image_with_an_image_model(ui, monkeypatch):
+    """/ui/images/generations : /v1/images/generations sous le cookie,
+    préfixe retiré, réponse relayée telle quelle ; fermée sans clé,
+    chat fermé, ou sans corps JSON."""
+    body = {"model": "essai/flux", "prompt": "un phare", "size": "512x512"}
+    assert ui.client.post("/ui/images/generations", json=body).status_code == 401
+    login(ui)
+    image = {"data": [{"b64_json": "iVBORw0KGgo="}]}
+    ui.replies = [FakeUpstream(json.dumps(image).encode())]
+    r = ui.client.post("/ui/images/generations", json=body)
+    assert r.status_code == 200 and r.json() == image
+    assert ui.sent[-1] == {**body, "model": "flux"}
+    assert ui.clients == [tools.owner(KEY)]
+    assert ui.client.post("/ui/images/generations", content="{}").status_code == 415
+    monkeypatch.setattr(A, "UI_CHAT", False)
+    assert ui.client.post("/ui/images/generations", json=body).status_code == 404
 
 
 def test_chat_passes_the_reasoning_level_through(ui):
