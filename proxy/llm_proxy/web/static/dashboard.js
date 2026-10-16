@@ -19,9 +19,10 @@
   Un second appel, léger, sert uniquement à savoir jusqu'où remonte
   l'historique — au chargement et au changement de période, jamais dans
   la boucle. La vue « Tout » en a besoin pour choisir son découpage.
-  Un troisième, UNE fois au chargement, lit /healthz pour le panneau
-  « Configuration des clients » (auth, surfaces, serveur MCP, modèles) — ce
-  n'est pas de l'usage, ça ne bouge pas, ça ne se rafraîchit pas.
+  Un troisième, au chargement puis toutes les 30 s, lit /healthz : le
+  cache web et les serveurs MCP de la section Outils, et l'état du
+  déploiement que l'onglet Configuration reprend — ce n'est pas de
+  l'usage, ça ne suit pas la période.
 
   La section « Outils » a son propre appel, à la route sœur
   (/ui/usage/tools = /v1/organization/usage/tools) : UN seau sur la même
@@ -116,20 +117,9 @@ createApp({
     // Armé au seul changement de période : c'est lui qui déclenche la
     // cascade des barres (voir .bars.entering dans la feuille de style).
     const entering = ref(false);
-    // /healthz, lu une fois : surface Anthropic, auth, modèles connus.
-    // null tant qu'il n'a pas répondu.
+    // /healthz : cache web, serveurs MCP, et l'état du déploiement pour
+    // l'onglet Configuration. null tant qu'il n'a pas répondu.
     const health = ref(null);
-    const anthropic = computed(() => health.value
-      ? !!(health.value.anthropic || {}).enabled : null);
-    const responses = computed(() => health.value
-      ? !!(health.value.responses || {}).enabled : null);
-    // Le serveur MCP du proxy (POST /mcp) : ses outils hébergés, offerts à
-    // tout client MCP.
-    const mcpServer = computed(() => health.value
-      ? !!(health.value.mcp_server || {}).enabled : null);
-    // Outils que le proxy exécute lui-même (recherche web, lecture de page…).
-    const hostedTools = computed(() =>
-      ((health.value || {}).tools || {}).enabled || []);
     // Serveurs MCP de la configuration (/healthz) : joints ou non, et
     // combien d'outils chacun apporte.
     const mcpServers = computed(() =>
@@ -374,101 +364,6 @@ createApp({
 
     const note = computed(() => byId[current.value].note);
 
-    // ── «Configuration des clients» : des exemples prêts à copier ───────
-    // Tout est dérivé : l'URL de CETTE page, l'auth et les modèles vus
-    // par /healthz, le modèle le plus actif de la période en exemple.
-    const origin = window.location.origin;
-    const authRequired = computed(() => !!(health.value || {}).auth_required);
-    const apiKey = computed(() => authRequired.value ? "<clé du proxy>" : "unused");
-    // Les exemples sont des commandes de CHAT : seuls les modèles de
-    // conversation y ont leur place — pas un modèle d'image, de voix ou
-    // d'embeddings, même s'il est le plus actif de la période. /healthz
-    // les liste par backend (`chat_models`, d'après le type au catalogue) ;
-    // tant qu'il ne les connaît pas (catalogue pas encore lu), aucun
-    // filtre : mieux vaut un exemple approximatif que pas d'exemple.
-    const chatModels = computed(() => Object.values(
-      (health.value || {}).backends || {}).flatMap((b) => b.chat_models || []));
-    const isChat = (id) => !chatModels.value.length
-      || chatModels.value.includes(String(id).toLowerCase());
-    const exampleModel = computed(() => {
-      const top = [...models.value].filter((m) => isChat(m.id))
-        .sort((a, b) => b.requests - a.requests)[0];
-      if (top) return top.id;
-      const seen = Object.values((health.value || {}).backends || {})
-        .flatMap((b) => b.last_seen_models || []).filter(isChat);
-      return chatModels.value[0] || seen[0] || "albert/deepseek-v4-flash";
-    });
-    // Un modèle d'un AUTRE backend que l'exemple, s'il y en a un : c'est
-    // l'usage typique du petit modèle rapide (local, sans quota).
-    const smallModel = computed(() => {
-      const main = exampleModel.value.split("/")[0];
-      const seen = Object.entries((health.value || {}).backends || {})
-        .filter(([name]) => name !== main)
-        .flatMap(([, b]) => b.last_seen_models || []).filter(isChat);
-      return seen[0] || "bigchuck/qwen3-8b";
-    });
-    const snippets = computed(() => {
-      const key = apiKey.value, model = exampleModel.value;
-      const smallModel_ = smallModel.value;
-      const auth = authRequired.value;
-      return {
-        curl: `curl -s ${origin}/v1/chat/completions \\
-  -H "Content-Type: application/json"${auth ? ' \\\n  -H "Authorization: Bearer ' + key + '"' : ""} \\
-  -d '{"model":"${model}","messages":[{"role":"user","content":"Bonjour"}]}'`,
-        python: `from openai import OpenAI
-client = OpenAI(base_url="${origin}/v1", api_key="${key}")
-r = client.chat.completions.create(
-    model="${model}",
-    messages=[{"role": "user", "content": "Bonjour"}],
-)
-print(r.choices[0].message.content)`,
-        models: `curl -s ${origin}/v1/models${auth ? ' -H "Authorization: Bearer ' + key + '"' : ""} | jq '.data[].id'`,
-        claude: `export ANTHROPIC_BASE_URL=${origin}
-export ANTHROPIC_API_KEY=${key}
-export ANTHROPIC_MODEL=${model}
-# tâches d'arrière-plan (titres, résumés…) sur un backend local, au choix :
-# export ANTHROPIC_SMALL_FAST_MODEL=${smallModel_}
-claude`,
-        // ~/.codex/config.toml : un provider en API Responses. `env_key`
-        // seulement si le proxy exige une clé (Codex refuse une variable vide).
-        codex: `model = "${model}"
-model_provider = "llm-proxy"
-
-[model_providers.llm-proxy]
-name = "llm-proxy"
-base_url = "${origin}/v1"
-wire_api = "responses"${auth ? '\nenv_key = "LLM_PROXY_KEY"   # export LLM_PROXY_KEY=' + key : ""}`,
-        // Le serveur MCP du proxy, déclaré chez chaque client. Sans auth,
-        // Claude Code et Codex n'ont pas besoin d'en-tête ; pi, lui, refuse
-        // un en-tête dont la variable n'existe pas — d'où «unused».
-        mcpClaude: `claude mcp add --transport http llmproxy ${origin}/mcp${auth
-          ? ' \\\n  --header "Authorization: Bearer $LLM_PROXY_API_KEY"' : ""}`,
-        mcpCodex: `# ~/.codex/config.toml
-[mcp_servers.llmproxy]
-url = "${origin}/mcp"${auth ? '\nbearer_token_env_var = "LLM_PROXY_API_KEY"' : ""}`,
-        mcpPi: `// ~/.pi/agent/mcp.json et ~/.omp/agent/mcp.json
-{
-  "mcpServers": {
-    "llmproxy": {
-      "url": "${origin}/mcp",
-      "headers": { "Authorization": "Bearer \${LLM_PROXY_API_KEY}" },
-      "exposure": "direct"
-    }
-  }
-}`,
-        mcpEnv: `export LLM_PROXY_API_KEY=${auth ? key : "unused"}`,
-        mcpTest: `curl -s ${origin}/mcp \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream"${auth ? ' \\\n  -H "Authorization: Bearer ' + key + '"' : ""} \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'`,
-        // pi et omp : l'extension du dépôt llmsetup, qui lit ces variables.
-        // Les outils web viennent du proxy, d'office ([chat].always).
-        pi: `export LLM_PROXY_URL=${origin}${auth ? "\nexport LLM_PROXY_API_KEY=" + key : ""}
-# extension à copier dans ~/.pi/agent/extensions/ (et ~/.omp/agent/extensions/) :
-#   llm-proxy.ts      le provider (modèles du proxy)
-pi --model albert/${model}`,
-      };
-    });
     const shortcuts = computed(() => windows.map((w) => w.key).join(" / ") +
       " · " + metrics.map((m) => m.key).join(" / "));
     const bucketLabel = computed(() => bucketWidth.value === "1h"
@@ -682,10 +577,8 @@ pi --model albert/${model}`,
              loginBusy, login, logout, onUnauthorized,
              windows, current, metrics, metric, metricUnit, metricLabel,
              models, totals, bars, axis, peak, since, now, tools, toolCalls,
-             loaded, entering, anthropic, responses, mcpServer, hostedTools, webCache,
-             mcpServers, health,
-             authRequired, exampleModel,
-             snippets, origin, note, shortcuts, bucketLabel, successRate,
+             loaded, entering, webCache, mcpServers, health,
+             note, shortcuts, bucketLabel, successRate,
              backendSummary, num, ms, ago, dur, moment, tickLabel, select,
              selectMetric };
   },

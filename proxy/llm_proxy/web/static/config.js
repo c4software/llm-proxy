@@ -141,7 +141,9 @@ window.ConfigPanel = {
               + "boucle principale de Claude Code.");
           }
           steps.push("Poser settings.json, ajouter les deux lignes au profil du shell, "
-            + "rouvrir le terminal.", "Lancer `claude` : `/status` doit montrer l'URL du proxy.");
+            + "rouvrir le terminal.", "Lancer `claude` : `/status` doit montrer l'URL du proxy.",
+            "Les noms claude-* que Claude Code envoie en dur (sous-agents, /model) sont "
+            + "traduits par [anthropic.model_map] du proxy.");
           if (mcp) steps.push("`/mcp` dans Claude Code doit lister le serveur llmproxy.");
           break;
         }
@@ -228,6 +230,16 @@ window.ConfigPanel = {
             + "par son backend. Le streaming passe intact.");
         }
       }
+      // Vérifier : le catalogue avec la clé, et les outils du serveur MCP.
+      const authH = auth.value ? ` \\\n  -H "Authorization: Bearer $${env}"` : "";
+      let check = `curl -s ${origin}/v1/models${authH} | jq '.data[].id'\n`;
+      if (mcp) {
+        check += `\ncurl -s ${origin}/mcp \\\n  -H "Content-Type: application/json" \\\n`
+          + `  -H "Accept: application/json, text/event-stream"${authH} \\\n`
+          + `  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'\n`;
+      }
+      shell("Vérifier", check, mcp ? "Le catalogue des modèles, puis les outils que le serveur "
+        + "MCP offre — avec la même clé." : "Le catalogue des modèles, avec la même clé.");
       return { files, steps, warn };
     });
 

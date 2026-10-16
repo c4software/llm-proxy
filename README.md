@@ -599,8 +599,9 @@ navigateur — rien n'est écrit sur le proxy.
   les clés du proxy tirées au hasard dans le navigateur. Seuls les
   réglages du formulaire sont écrits : tout autre garde son défaut.
 
-Le panneau *Configuration des clients* des statistiques reste là pour
-les exemples rapides.
+Chaque client a aussi son bloc *Vérifier* : le catalogue (`GET
+/v1/models`) avec la clé, puis, s'il prend les outils par MCP, la liste
+que le serveur offre (`tools/list`).
 
 Pendant le chat, les statistiques ne se rafraîchissent pas ; le chat,
 lui, reste monté : une réponse en cours continue pendant qu'on regarde
@@ -619,13 +620,9 @@ depuis son cache de préfixe, quand il le remonte (llama.cpp, vLLM) ;
 Claude Code, un second tour qui rejoue les ~20 k tokens du prompt
 système doit approcher 100 %.
 
-En bas de page, le panneau repliable **Configuration des clients** donne
-des exemples prêts à copier — catalogue, `curl`, SDK OpenAI, Claude Code
-et Codex (avec l'état actif / inactif de leur surface), pi / omp, et le
-**serveur MCP du proxy** (`/mcp` : déclaration pour Claude Code, Codex,
-pi et omp, et un `curl` de `tools/list` pour vérifier) — dérivés de
-l'URL de la page, de l'auth et des modèles connus (`/healthz`, lu une
-fois, jamais dans la boucle) et du modèle le plus actif de la période.
+Pour brancher un client (Claude Code, Codex, pi / omp, SDK, le serveur
+MCP…), le pied de page renvoie à l'onglet
+[Configuration](#longlet-configuration), qui produit sa configuration.
 
 ## Claude Code
 
