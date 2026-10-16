@@ -245,6 +245,27 @@ async def main() -> int:
                     and "/opt/devbox/" in out2.output, out2,
                     (out.output + " | " + out2.output).strip()
                     .replace("\n", " ; ")[:400])
+            # Go par le chemin de l'outil, dans CE bac (les cas suivants le
+            # font expirer) : le source sur l'entrée standard, compilé dans
+            # /tmp, exécuté — sous le délai de l'outil (30 s). Une seconde
+            # fois : la première paie le cache de sa bibliothèque standard.
+            hello = 'package main\nimport "fmt"\nfunc main() { fmt.Println(42) }'
+            slow = []
+            for _ in range(2):
+                out = await run("clientA", "pkg", "go", hello, t=30)
+                good = out.exit_code == 0 and out.output.strip() == "42" \
+                    and not out.files
+                verdict("6quinquies. go (installé) : compilé et exécuté en "
+                        "moins de 30 s, rien dans /work", good, out)
+                if good and out.seconds > 15:
+                    slow.append(f"go {out.seconds:.0f}s")
+            out = await run("clientA", "pkg", "sh",
+                            "du -sm /tmp /opt/devbox 2>/dev/null | cut -f1 | tr '\\n' ' '; "
+                            "df -m /tmp | tail -1")
+            print(f"   MESURES : Mo de /tmp et de /opt/devbox après Go, puis "
+                  f"df /tmp : {out.output.strip()!r}"
+                  + (f" ; LENT (plus de 15 s) : {', '.join(slow)} — monter "
+                     f"[tools.code_execution].timeout" if slow else ""))
 
         if not a.light:
             out = await run("clientA", "conv1", "python", (
@@ -327,30 +348,6 @@ async def main() -> int:
                     "commandes, Node.js, PHP, devbox dev-env", out.exit_code == 0, out,
                     out.output.strip()[-400:])
 
-            # Go par le chemin de l'outil, dans le bac où `devbox dev-env go`
-            # l'a installé (6quater) : le source sur l'entrée standard,
-            # compilé dans /tmp, exécuté — sous le délai de l'outil (30 s).
-            # Une seconde fois : la première paie le cache de sa
-            # bibliothèque standard. Sans sortie, Go n'est pas dans le bac.
-            hello = {
-                "go": 'package main\nimport "fmt"\nfunc main() { fmt.Println(42) }',
-            }
-            slow = []
-            for name in (("go", "go") if relay else ()):
-                out = await run("clientA", "pkg", name, hello[name], t=30)
-                good = out.exit_code == 0 and out.output.strip() == "42" \
-                    and not out.files
-                verdict(f"13. {name} : compilé et exécuté en moins de 30 s, "
-                        f"rien dans /work", good, out)
-                if good and out.seconds > 15:
-                    slow.append(f"{name} {out.seconds:.0f}s")
-            out = await run("clientA", "pkg", "sh",
-                            "du -sm /tmp /opt/devbox 2>/dev/null | cut -f1 | tr '\\n' ' '; "
-                            "df -m /tmp | tail -1")
-            print(f"   MESURES : /tmp après les compilations (Mo utilisés, "
-                  f"puis df) : {out.output.strip()!r}"
-                  + (f" ; LENT (plus de 15 s) : {', '.join(slow)} — monter "
-                     f"[tools.code_execution].timeout" if slow else ""))
 
             # Un processus détaché (setsid) échappe à `timeout` : il vit
             # jusqu'à la fin du bac. Borné par le bac, pas par l'appel.
