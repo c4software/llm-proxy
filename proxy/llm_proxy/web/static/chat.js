@@ -27,6 +27,14 @@
   MÉMOIRE : le panneau de la section Mémoire (memory.js, `compact`), à
   droite du fil, relu dès que le modèle a appelé l'outil `memory`.
 
+  FILE D'ATTENTE : pendant une réponse, Entrée met le message en file
+  (conv.queue, gardée avec la conversation) au lieu de l'envoyer. À la fin
+  d'une réponse RÉUSSIE, le premier message de la file part tout seul ;
+  une réponse arrêtée ou en erreur met la file en pause (« Envoyer la
+  suite » la relance) — enchaîner sur un échec n'aurait pas de sens. Un
+  message en file se modifie (il revient dans la zone de saisie) ou se
+  retire.
+
   PIÈCES JOINTES : les images partent en `image_url` (data URL) — au
   modèle de les lire ; les fichiers texte sont joints au message, entre
   balises <file name="…">. Le reste est refusé.
@@ -279,8 +287,10 @@ window.ChatPanel = {
     }
 
     // ── envoi ───────────────────────────────────────────────────────────
-    const canSend = computed(() => !streaming.value && current.value
+    // Pendant une réponse, « envoyer » met en file : seul le contenu compte.
+    const canSend = computed(() => current.value
       && current.value.model && (draft.value.trim() || pending.value.length));
+    const queue = computed(() => (current.value && current.value.queue) || []);
 
     // Le message tel que l'API le veut : texte seul, ou parties (texte,
     // fichiers texte, images) quand il y a des pièces jointes.
@@ -313,16 +323,45 @@ window.ChatPanel = {
     function send() {
       const c = current.value;
       if (!canSend.value) return;
-      c.messages.push({ id: uid(), role: "user", content: draft.value.trim(),
-                        attachments: pending.value });
-      if (c.messages.length === 1) {
-        const first = draft.value.trim() || pending.value.map((a) => a.name).join(", ");
-        c.title = first.replace(/\s+/g, " ").slice(0, 60) + (first.length > 60 ? "…" : "");
-      }
+      const item = { id: uid(), content: draft.value.trim(), attachments: pending.value };
       draft.value = "";
       pending.value = [];
+      // Une réponse en cours, ou une file en pause : à la suite de la file,
+      // dans l'ordre où les messages ont été écrits.
+      if (streaming.value || (c.queue && c.queue.length)) {
+        (c.queue || (c.queue = [])).push(item);
+        if (!streaming.value) resume();
+        return;
+      }
+      ask(c, item);
+    }
+
+    function ask(c, item) {
+      c.messages.push({ id: item.id, role: "user", content: item.content,
+                        attachments: item.attachments });
+      if (c.messages.length === 1) {
+        const first = item.content || item.attachments.map((a) => a.name).join(", ");
+        c.title = first.replace(/\s+/g, " ").slice(0, 60) + (first.length > 60 ? "…" : "");
+      }
       pinned = true;
       respond(c);
+    }
+
+    // Le premier message de la file part.
+    function resume() {
+      const c = current.value;
+      if (!c || streaming.value || !c.queue || !c.queue.length) return;
+      ask(c, c.queue.shift());
+    }
+
+    // Un message en file revient dans la zone de saisie (à la suite de ce
+    // qui y est déjà), et quitte la file.
+    function unqueue(k) {
+      const c = current.value;
+      const [item] = c.queue.splice(k, 1);
+      draft.value = draft.value.trim() ? draft.value.trim() + "\n\n" + item.content : item.content;
+      pending.value = [...pending.value, ...item.attachments];
+      nextTick(() => { if (input.value) { input.value.focus(); autosize(); } });
     }
 
     async function respond(conv) {
@@ -336,7 +375,7 @@ window.ChatPanel = {
       const live = conv.messages[conv.messages.length - 1];
       streaming.value = true;
       status.value = "";
-      controller = new AbortController();
+      const ctrl = controller = new AbortController();
       const body = {
         model: conv.model, stream: true, stream_options: { include_usage: true },
         messages: apiMessages(conv, upto),
@@ -376,6 +415,15 @@ window.ChatPanel = {
         streaming.value = false;
         controller = null;
         conv.updated = Date.now();
+        // La suite de la file : seulement après une réponse réussie, et si
+        // la conversation affichée est toujours celle-ci.
+        if (conv.queue && conv.queue.length) {
+          if (ctrl.signal.aborted || live.error) {
+            status.value = "File en pause après " + (ctrl.signal.aborted ? "l'arrêt." : "l'erreur.");
+          } else if (current.value && current.value.id === conv.id) {
+            nextTick(resume);
+          }
+        }
       }
     }
 
@@ -556,7 +604,7 @@ window.ChatPanel = {
              settingsOpen, sideOpen, confirming, renaming, renameText,
              storageWarning, dragging, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend, newConv,
              select, remove, startRename, endRename, toggleTool, onPick,
-             onDrop, onPaste, send, stop, regenerate, edit, onKey, html,
+             onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, argSummary, num, size, when,
              host };
   },
@@ -709,6 +757,21 @@ window.ChatPanel = {
       </div>
 
       <form class="composer" :class="{ dragging }" @submit.prevent="send">
+        <div class="queue" v-if="queue.length">
+          <div class="queue-head">
+            <span>En file · {{ queue.length }}</span>
+            <span class="dim" v-if="!streaming">en pause</span>
+            <button type="button" class="link" v-if="!streaming" @click="resume">Envoyer la suite</button>
+          </div>
+          <ol>
+            <li v-for="(q, k) in queue" :key="q.id">
+              <span class="text">{{ q.content || q.attachments.map((a) => a.name).join(", ") }}</span>
+              <span class="dim" v-if="q.content && q.attachments.length">+ {{ q.attachments.length }} pièce{{ q.attachments.length > 1 ? "s" : "" }}</span>
+              <button type="button" class="link" @click="unqueue(k)">Modifier</button>
+              <button type="button" class="icon" title="Retirer de la file" @click="queue.splice(k, 1)">×</button>
+            </li>
+          </ol>
+        </div>
         <div class="attachments" v-if="pending.length">
           <span v-for="(a, k) in pending" :key="k" class="chip" :class="{ file: a.kind !== 'image' }">
             <img v-if="a.kind === 'image'" :src="a.data" alt="">
@@ -717,7 +780,8 @@ window.ChatPanel = {
           </span>
         </div>
         <textarea ref="input" v-model="draft" rows="1" @keydown="onKey" @paste="onPaste"
-                  placeholder="Écrire un message — Entrée pour envoyer, Maj+Entrée pour aller à la ligne"></textarea>
+                  :placeholder="streaming ? 'Réponse en cours — Entrée pour mettre un message en file'
+                    : 'Écrire un message — Entrée pour envoyer, Maj+Entrée pour aller à la ligne'"></textarea>
         <div class="composer-bar">
           <label class="btn ghost attach" title="Images ou fichiers texte (ou glisser-déposer, ou coller)">
             Joindre<input type="file" multiple hidden @change="onPick"></label>
@@ -730,8 +794,9 @@ window.ChatPanel = {
             outils hébergés inactifs</span>
           <span class="status" :class="{ warn: blind && !status }">{{ status
             || (blind ? "ce modèle ne lit peut-être pas les images" : "") }}</span>
-          <button v-if="!streaming" type="submit" class="btn" :disabled="!canSend">Envoyer</button>
-          <button v-else type="button" class="btn danger" @click="stop">Arrêter</button>
+          <button type="submit" class="btn" :class="{ ghost: streaming }" :disabled="!canSend">{{
+            streaming ? "Mettre en file" : "Envoyer" }}</button>
+          <button v-if="streaming" type="button" class="btn danger" @click="stop">Arrêter</button>
         </div>
       </form>
     </section>

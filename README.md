@@ -538,6 +538,12 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   réponse, arrêter un flux en cours. Si le stockage du navigateur
   déborde, les images des autres conversations sont retirées de
   l'historique local, pas leurs messages.
+- **File d'attente** : pendant une réponse, Entrée met le message en
+  file au lieu de l'envoyer ; il part tout seul à la fin d'une réponse
+  réussie, dans l'ordre d'écriture. Une réponse arrêtée ou en erreur met
+  la file en pause (*Envoyer la suite* la relance). Un message en file se
+  modifie (il revient dans la zone de saisie) ou se retire ; la file est
+  gardée avec la conversation.
 - **Outils hébergés** (avec `[chat] hosted_tools = true`) : un
   interrupteur par type déclarable — *Web* déclare `{"type":
   "web_search"}` (donc `web_search`, `web_fetch`, `web_grep`), *Code*,
