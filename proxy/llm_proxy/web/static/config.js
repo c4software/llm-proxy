@@ -75,7 +75,16 @@ window.ConfigPanel = {
         if (r.ok) models.value = ((await r.json()).data || []).map((m) => m.id).sort();
       } catch { /* hors ligne : saisie libre */ }
     }
-    onMounted(loadModels);
+    // Le catalogue complet (images, voix, OCR compris) pour les outils
+    // qui visent un modèle spécialisé : /ui/models n'a que ceux de chat.
+    const allModels = ref([]);
+    async function loadAllModels() {
+      try {
+        const r = await fetch("/ui/models?all=1", { headers: { accept: "application/json" } });
+        if (r.ok) allModels.value = ((await r.json()).data || []).map((m) => m.id).sort();
+      } catch { /* les modèles de chat suffiront */ }
+    }
+    onMounted(() => { loadModels(); loadAllModels(); });
 
     const health = computed(() => props.health || {});
     const auth = computed(() => !!props.session.auth_required);
@@ -296,6 +305,15 @@ window.ConfigPanel = {
     }
     watch(() => props.health, (h) => { if (h && !prefilled.value) prefill(); }, { immediate: true });
 
+    // Les modèles d'un menu : le catalogue, et la valeur en place si elle
+    // n'y est pas (un modèle de configuration hors catalogue ne se perd
+    // pas). `all` : tous les modèles du catalogue complet — l'OCR, la
+    // transcription ou l'image visent des modèles qui ne sont pas de chat.
+    function modelChoices(current, all = false) {
+      const list = all && allModels.value.length ? allModels.value : models.value;
+      return current && !list.includes(current) ? [current, ...list] : list;
+    }
+
     const addBackend = () => px.backends.push({ name: "", url: "http://", key: false,
       quotas: false, images: false, toolChoice: "", maxTokens: "" });
     const addKey = () => px.keys.push({ name: "PROXY_API_KEY_" + (px.keys.length + 1), value: randomKey() });
@@ -380,7 +398,7 @@ window.ConfigPanel = {
     });
 
     return { part, setPart, clients, form, client, models, clientOut, auth, mcpOn,
-             TOOL_LIST, px, prefill, addBackend, addKey, randomKey, proxyOut,
+             TOOL_LIST, px, prefill, modelChoices, addBackend, addKey, randomKey, proxyOut,
              copy, download, copied };
   },
   template: `
@@ -445,7 +463,10 @@ window.ConfigPanel = {
       <form class="panel config-form" @submit.prevent>
         <div class="panel-head"><h2>Proxy</h2>
           <button type="button" class="btn ghost" @click="prefill" :disabled="!health"
-                  title="Repartir de l'état du déploiement (/healthz)">Repartir du déploiement</button></div>
+                  title="Remplace le formulaire par l'état actuel du proxy (backends, surfaces, outils actifs, limites), lu sur /healthz. Les clés saisies sont gardées.">Réinitialiser</button></div>
+        <p class="note config-intro">Prérempli d'après l'état actuel du proxy (/healthz).
+          « Réinitialiser » y ramène le formulaire après des modifications ; les clés
+          saisies sont gardées.</p>
         <div class="config-fields">
           <fieldset><legend>Accès</legend>
             <p class="note">Une clé par personne : chacune a ses statistiques, sa mémoire, ses conversations.</p>
@@ -468,9 +489,12 @@ window.ConfigPanel = {
                 <label class="check"><input type="checkbox" v-model="b.key"> clé d'API</label>
                 <label class="check"><input type="checkbox" v-model="b.quotas"> quotas (Albert)</label>
                 <label class="check"><input type="checkbox" v-model="b.images"> images</label>
-                <label class="check">tool_choice
-                  <select v-model="b.toolChoice"><option value="">—</option><option>auto</option><option>required</option></select></label>
-                <label class="check">max_tokens <input v-model="b.maxTokens" class="num" inputmode="numeric"></label>
+                <span class="check">tool_choice
+                  <select v-model="b.toolChoice" aria-label="tool_choice injecté">
+                    <option value="">jamais</option><option value="auto">auto</option>
+                    <option value="required">required</option></select></span>
+                <span class="check">max_tokens <input v-model="b.maxTokens" class="num" inputmode="numeric"
+                  aria-label="max_tokens" placeholder="—"></span>
               </div>
             </div>
             <button type="button" class="btn ghost" @click="addBackend">Ajouter un backend</button>
@@ -478,7 +502,10 @@ window.ConfigPanel = {
           <fieldset><legend>Clients</legend>
             <label class="check"><input type="checkbox" v-model="px.anthropic"> surface Anthropic (Claude Code)</label>
             <label class="field" v-if="px.anthropic"><span>Modèle par défaut de Claude Code</span>
-              <input v-model="px.defaultModel" list="config-models" spellcheck="false" class="mono"></label>
+              <select v-model="px.defaultModel" class="mono">
+                <option value="">— aucun —</option>
+                <option v-for="m in modelChoices(px.defaultModel)" :key="m" :value="m">{{ m }}</option>
+              </select></label>
             <label class="check"><input type="checkbox" v-model="px.responses"> surface Responses (Codex)</label>
             <label class="check"><input type="checkbox" v-model="px.mcpServer"> serveur MCP (/mcp)</label>
             <label class="check"><input type="checkbox" v-model="px.uiChat"> chat de /ui</label>
@@ -488,8 +515,10 @@ window.ConfigPanel = {
             <div class="tools-grid">
               <template v-for="t in TOOL_LIST" :key="t.id">
                 <label class="check"><input type="checkbox" v-model="px.tools[t.id]"> {{ t.label }}</label>
-                <input v-if="t.model && px.tools[t.id]" v-model="px.toolModels[t.id]" list="config-models"
-                       placeholder="backend/modèle" spellcheck="false" class="mono">
+                <select v-if="t.model && px.tools[t.id]" v-model="px.toolModels[t.id]" class="mono">
+                  <option value="">— choisir le modèle —</option>
+                  <option v-for="m in modelChoices(px.toolModels[t.id], true)" :key="m" :value="m">{{ m }}</option>
+                </select>
                 <input v-else-if="t.id === 'web_search' && px.tools[t.id]" v-model="px.searxng"
                        spellcheck="false" class="mono">
                 <input v-else-if="t.id === 'code_execution' && px.tools[t.id]" v-model="px.executor"
@@ -508,7 +537,6 @@ window.ConfigPanel = {
             <label class="field"><span>Rétention des statistiques (jours, 0 = illimitée)</span>
               <input v-model.number="px.retention" type="number" min="0" class="num"></label>
           </fieldset>
-          <datalist id="config-models"><option v-for="m in models" :key="m" :value="m"></option></datalist>
         </div>
       </form>
       <div class="config-out">

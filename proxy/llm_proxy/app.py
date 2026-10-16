@@ -2001,7 +2001,10 @@ async def ui_models(request: Request):
     embeddings — CHAT_TYPES), sous /ui pour le cookie ; `vision` : le
     catalogue le dit capable de lire une image. Pour le chat et pour le
     générateur de configuration : servi même chat fermé (c'est ce que
-    /v1/models dit déjà à la même clé)."""
+    /v1/models dit déjà à la même clé). `?all=1` : tout le catalogue, avec
+    le type de chaque modèle — le générateur y choisit le modèle de l'OCR,
+    de la transcription ou des images."""
+    every = request.query_params.get("all") in ("1", "true")
     entries = await merged_models(request)
     if entries is None:
         return error_response("openai", 502, "proxy_error",
@@ -2011,8 +2014,8 @@ async def ui_models(request: Request):
         name, _, plain = str(entry.get("id", "")).partition("/")
         b = BACKENDS.get(name)
         kind = b.model_types.get(plain, "text-generation") if b else ""
-        if kind in CHAT_TYPES:
-            data.append({"id": entry["id"],
+        if every or kind in CHAT_TYPES:
+            data.append({"id": entry["id"], "type": kind,
                          "vision": kind == "image-text-to-text"})
     return {"object": "list", "data": data}
 

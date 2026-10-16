@@ -594,7 +594,10 @@ navigateur — rien n'est écrit sur le proxy.
   personne), backends, surfaces, outils hébergés et leur limite, chat,
   adresse publique, rétention. Prérempli d'après `/healthz`, l'état
   public du déploiement (jamais un secret ; le nombre de clés n'y est
-  pas, la liste est à compléter). Les secrets sont des `${VAR}` dans le
+  pas, la liste est à compléter) ; *Réinitialiser* y ramène le
+  formulaire, clés saisies gardées. Les modèles se choisissent dans le
+  catalogue (`/ui/models`, `?all=1` pour l'OCR, la transcription et les
+  images, qui visent des modèles qui ne sont pas de chat). Les secrets sont des `${VAR}` dans le
   TOML, et leurs valeurs vont dans un `.env` que la page produit aussi —
   les clés du proxy tirées au hasard dans le navigateur. Seuls les
   réglages du formulaire sont écrits : tout autre garde son défaut.
