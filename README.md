@@ -1676,20 +1676,25 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
   Mettre à jour une machine : `docker compose pull executor && docker
   compose up -d executor`, puis rejouer la validation ; construire sur
   place reste possible (`docker compose build --pull executor`).
-- **Langages** (`language`) : `python` (celui d'Arch — 3.14 en
-  octobre 2026 —, avec numpy, pandas, scipy,
-  sympy, scikit-learn, networkx, matplotlib, seaborn, pillow, openpyxl,
-  python-docx, pypdf, reportlab), `bash` (les outils Unix, jq, sqlite3,
-  PHP et composer), `javascript` (Node.js), et les compilés `c`, `cpp`
-  (gcc, g++), `go`, `rust`. Un langage compilé a sa propre valeur plutôt que de passer par
+- **Le bac de base est minimal** (décision du 16/10/2026) : le shell
+  (bash, jq, sqlite3, zip, gawk…), Python **nu** (celui d'Arch — 3.14 en
+  octobre 2026 —, sa bibliothèque standard seulement), Node.js et npm,
+  PHP et composer, et mise. Tout le reste s'installe **à la demande**,
+  dans la conversation, quand la sortie vers les dépôts est ouverte :
+  `pip install pandas matplotlib`, `npm install -g …`, `devbox dev-env
+  go` (ou rust, java, ruby…). Sans sortie, le bac n'a que sa base.
+- **Langages** (`language`) : `python`, `bash`, `javascript` (Node.js),
+  `php` (le programme commence par `<?php`), et les compilés `go` et
+  `rust` — offerts seulement avec la sortie, une fois installés par
+  `devbox dev-env`. C et C++ ne le sont plus (mise n'installe pas gcc).
+  Un langage compilé a sa propre valeur plutôt que de passer par
   `bash` : le modèle donne **un fichier source**, l'exécuteur le compile
   sous `/tmp` puis l'exécute, le tout dans le délai de l'appel — ni le
   source ni le binaire ne sont pris pour des fichiers produits. `bash`
-  reste là pour un projet à plusieurs fichiers (make, `go build`, cargo).
+  reste là pour un projet à plusieurs fichiers (`go build`, cargo).
 - **Pas de réseau, rien ne s'installe** (par défaut) : ni paquet pip, ni
-  module Go, ni crate — la bibliothèque standard seulement pour les
-  compilés, et la description de l'outil le dit au modèle. Ajouter une
-  bibliothèque pour tous : `services/executor/sandbox/requirements.txt` ou
+  module npm, ni environnement — le bac de base seulement, et la
+  description de l'outil le dit au modèle. Ajouter un outil pour tous :
   `services/executor/Dockerfile`, puis reconstruire l'image de
   l'exécuteur. Ou laisser le modèle installer ce qu'il lui faut :
   [Installer des paquets](#installer-des-paquets).

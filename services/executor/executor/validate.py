@@ -170,14 +170,12 @@ async def main() -> int:
             times.append((await run("clientA", "conv1", "python",
                                     "print(1)")).seconds)
         t = time.monotonic()
-        heavy = await run("clientA", "conv1", "python", (
-            "import pandas, matplotlib.pyplot as plt\n"
-            "plt.plot([1, 2, 3]); plt.savefig('/tmp/x.png'); print('ok')\n"),
-            t=30)
+        node = await run("clientA", "conv1", "node", "console.log(6 * 7)")
+        php = await run("clientA", "conv1", "php", "<?php echo 6 * 7;")
         print(f"   MESURES : à froid {cold:.2f}s ; à chaud {warm:.2f}s ; "
               f"5 × print(1) : min {min(times):.2f}s, max {max(times):.2f}s ; "
-              f"import pandas + matplotlib et un tracé : "
-              f"{time.monotonic() - t:.2f}s (code {heavy.exit_code})")
+              f"node {node.seconds:.2f}s ({node.output.strip()}) ; "
+              f"php {php.seconds:.2f}s ({php.output.strip()})")
 
         out = await run("clientA", "conv1", "python", "print('x' * 1_000_000)")
         verdict("3. sortie trop longue : coupée",
@@ -317,31 +315,30 @@ async def main() -> int:
         if not a.light:
             out = await run("clientA", "", "python", (
                 "exec(open('/usr/local/share/sandbox/check.py').read())"), t=180)
-            verdict("12. contenu du bac (check.py) : bibliothèques, commandes, "
-                    "compilateurs hors ligne", out.exit_code == 0, out,
+            verdict("12. contenu du bac (check.py) : commandes, Python, "
+                    "Node.js, PHP, devbox dev-env", out.exit_code == 0, out,
                     out.output.strip()[-400:])
 
-            # Chaque langage compilé par le chemin de l'outil : le source
-            # sur l'entrée standard, compilé dans /tmp, exécuté — sous le
-            # délai par défaut de l'outil (30 s). Go une seconde fois : la
-            # première paie le cache de sa bibliothèque standard.
+            # Go par le chemin de l'outil, dans le bac où `devbox dev-env go`
+            # l'a installé (6quater) : le source sur l'entrée standard,
+            # compilé dans /tmp, exécuté — sous le délai de l'outil (30 s).
+            # Une seconde fois : la première paie le cache de sa
+            # bibliothèque standard. Sans sortie, Go n'est pas dans le bac.
             hello = {
-                "c": '#include <stdio.h>\nint main(void) { puts("42"); return 0; }',
-                "cpp": '#include <iostream>\nint main() { std::cout << 42 << "\\n"; }',
                 "go": 'package main\nimport "fmt"\nfunc main() { fmt.Println(42) }',
-                "rust": 'fn main() { println!("42"); }',
             }
             slow = []
-            for name in ("c", "cpp", "rust", "go", "go"):
-                out = await run("clientA", "compile", name, hello[name], t=30)
+            for name in (("go", "go") if relay else ()):
+                out = await run("clientA", "pkg", name, hello[name], t=30)
                 good = out.exit_code == 0 and out.output.strip() == "42" \
                     and not out.files
                 verdict(f"13. {name} : compilé et exécuté en moins de 30 s, "
                         f"rien dans /work", good, out)
                 if good and out.seconds > 15:
                     slow.append(f"{name} {out.seconds:.0f}s")
-            out = await run("clientA", "compile", "sh",
-                            "du -sm /tmp 2>/dev/null | cut -f1; df -m /tmp | tail -1")
+            out = await run("clientA", "pkg", "sh",
+                            "du -sm /tmp /opt/devbox 2>/dev/null | cut -f1 | tr '\\n' ' '; "
+                            "df -m /tmp | tail -1")
             print(f"   MESURES : /tmp après les compilations (Mo utilisés, "
                   f"puis df) : {out.output.strip()!r}"
                   + (f" ; LENT (plus de 15 s) : {', '.join(slow)} — monter "

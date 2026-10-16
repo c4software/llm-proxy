@@ -118,7 +118,8 @@ NAME = "code_execution"
 _READERS = ("web_fetch", "ocr")
 
 # Ce que le modèle écrit → le langage de l'exécuteur (sandbox.LANGS).
-# Les langages COMPILÉS ont leur valeur, plutôt que de passer par `bash` :
+# Les langages COMPILÉS (Go, Rust : à installer d'abord par `devbox
+# dev-env`) ont leur valeur, plutôt que de passer par `bash` :
 # le modèle donne son source comme pour Python, l'exécuteur le compile
 # hors du dossier de travail (ni le source ni le binaire ne partent chez
 # l'utilisateur) et l'exécute, dans le même délai. `bash` reste là pour un
@@ -127,12 +128,15 @@ LANGUAGES = {
     "python": "python", "python3": "python", "py": "python",
     "bash": "bash", "shell": "bash", "sh": "sh",
     "javascript": "node", "js": "node", "node": "node", "nodejs": "node",
-    "c": "c", "cpp": "cpp", "c++": "cpp", "cxx": "cpp",
+    "php": "php",
     "go": "go", "golang": "go", "rust": "rust", "rs": "rust",
 }
 # Ceux que la fonction annonce (`enum`) ; les autres écritures sont
-# acceptées sans être promises.
-OFFERED = ("python", "bash", "javascript", "c", "cpp", "go", "rust")
+# acceptées sans être promises. Go et Rust ne sont pas dans le bac de
+# base : `devbox dev-env` les installe, par la sortie vers les dépôts —
+# sans elle (`packages`), ils ne sont pas offerts.
+OFFERED = ("python", "bash", "javascript", "php") \
+    + (("go", "rust") if PACKAGES else ())
 _KILLED = {137: "killed — most likely out of memory",
            139: "segmentation fault",
            126: "command cannot be executed",
@@ -400,34 +404,30 @@ class CodeExecution(Tool):
             "code and its output (stdout and stderr). Use it to compute, "
             "analyse data, or produce a file (a chart, a spreadsheet, a "
             "document) instead of guessing a result. "
-            "Python 3 comes with numpy, pandas, scipy, sympy, "
-            "scikit-learn, networkx, matplotlib, seaborn, pillow, "
-            "openpyxl, python-docx, pypdf, reportlab; bash has the usual "
-            "tools, jq and sqlite3; Node.js has its standard library "
-            "only. C, C++ (gcc, g++), Go and Rust programs are given as "
-            "one source file, compiled, then run, all within the time "
-            "limit"
-            + (" — with their standard library only: no Go module, no "
-               "Rust crate, no other package. There is NO network: a "
-               "program cannot download anything (requests, urllib, curl "
-               "and wget all fail) and nothing can be installed. "
+            "The sandbox starts minimal: Python 3 with its standard "
+            "library only, Node.js, PHP, and bash with the usual tools, "
+            "jq and sqlite3. "
+            + ("There is NO network: a program cannot download anything "
+               "(requests, urllib, curl and wget all fail) and nothing can "
+               "be installed — no Python package (no numpy, pandas or "
+               "matplotlib), no npm module. "
                if not PACKAGES else
-               ". Packages CAN be installed from their registries, and "
-               "nothing else is reachable: in bash, `pip install <name>` "
-               "(Python) and `npm install -g <name>` (Node.js: `require` "
-               "finds it), both kept for the conversation; `cargo` crates "
-               "and Go modules from a project in bash, under /tmp. Any other "
-               "network access fails (requests, urllib, curl and wget to "
-               "a website, an API, a download): only package registries "
-               "(PyPI, npm, crates.io, Go modules, Packagist) and the "
-               "sources of language toolchains answer. PHP and composer "
-               "are there too. Another language or a newer version: "
-               "`devbox dev-env <name>` in bash installs it for the "
-               "conversation (java, go, rust, python, node, ruby, dotnet, "
-               "deno, bun, zig, scala, clojure, php; `devbox dev-env "
-               "--list`), then use it in the next calls, from bash. Install "
-               "in a separate call before the program that uses it, and "
-               "only what you need: an install can take a minute. ")
+               "Everything else is installed on demand, in bash, and kept "
+               "for the conversation: Python packages with `pip install "
+               "<names>` (numpy, pandas, matplotlib… are NOT there until "
+               "you install them), Node.js modules with `npm install -g "
+               "<name>` (`require` finds them), PHP packages with composer; "
+               "another language with `devbox dev-env <name>` (go, rust, "
+               "java, ruby, dotnet, deno, bun, zig, scala, clojure, or a "
+               "newer python or node; `devbox dev-env --list`). Go and Rust "
+               "programs are given as one source file, compiled then run, "
+               "once `devbox dev-env go` or `rust` has installed them. "
+               "Install in a SEPARATE call before the program that needs "
+               "it, only what you need — an install can take a minute — "
+               "and do not reinstall what is already there. The network is "
+               "open to package registries and language sources ONLY: any "
+               "other access (a website, an API, a download, with requests, "
+               "urllib, curl or wget) fails. ")
             + ((
                 # Dit en ordre, pas en possibilité : joué le 07/10/2026,
                 # un modèle à qui l'on disait seulement « list it in
@@ -465,7 +465,8 @@ class CodeExecution(Tool):
                     "enum": list(OFFERED),
                     "description": "The language of `code`. For a "
                                    "compiled language, `code` is the "
-                                   "whole source file, with its main."},
+                                   "whole source file, with its main. "
+                                   "PHP code starts with <?php."},
                 "code": {
                     "type": "string",
                     "description": "The complete program to run. "

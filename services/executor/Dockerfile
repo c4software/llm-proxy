@@ -2,8 +2,8 @@
 #
 # L'image de l'EXÉCUTEUR de code. Deux étapes :
 #   1. `sandbox` : le système de fichiers d'un BAC, sur la base de dev-box
-#      (Arch) : Python et ses bibliothèques, shell, Node.js, PHP,
-#      compilateurs C/C++, Go et Rust, et `devbox dev-env` ;
+#      (Arch), RÉDUIT à l'essentiel : shell, Python (nu), Node.js, PHP, et
+#      mise / `devbox dev-env` pour tout le reste, à la demande ;
 #   2. l'exécuteur : podman sans root + le serveur, et le système de
 #      fichiers de l'étape 1 DÉPLIÉ dans /opt/sandbox/rootfs.
 #
@@ -50,35 +50,27 @@ FROM base-${TARGETARCH} AS sandbox
 
 ENV LANG=C.UTF-8
 
-# Ce qu'un bac promet au modèle, en paquets Arch :
-#   * python et pip (les bibliothèques, plus bas) ; nodejs et npm ;
-#   * des COMPILATEURS (décision du 07/10/2026) : gcc, g++ et make, go,
-#     rust (rustc, cargo) — hors ligne, leur bibliothèque standard ;
-#   * php et composer (le seul environnement que dev-box tient en paquets
+# Ce qu'un bac a DE BASE (décision du 16/10/2026 : le reste à la demande),
+# en paquets Arch :
+#   * le shell : bash, et ce qu'un script appelle sans y penser — jq,
+#     sqlite, bc, file, zip/unzip, gawk ; `timeout`, `find` et `tar` (GNU)
+#     servent aussi à l'exécuteur (sandbox.py) ;
+#   * Python et pip, NUS : aucune bibliothèque — numpy, pandas, matplotlib…
+#     s'installent par pip quand il en faut (sortie ouverte). Python sert
+#     aussi au relais de la sortie (sandbox/forward.py) ;
+#   * Node.js et npm ;
+#   * PHP et composer (le seul environnement que dev-box tient en paquets
 #     plutôt que par mise : `devbox dev-env php` ne fait que vérifier) ;
-#   * jq, sqlite, bc, file, zip/unzip, gawk : ce qu'un script shell appelle
-#     sans y penser ; `timeout`, `find` et `tar` (GNU) servent aussi à
-#     l'exécuteur (sandbox.py) ;
-#   * mise, et ce dont ses installations ont besoin (git, curl, xz) : les
-#     recettes `devbox dev-env` (Java, Go, Rust, Ruby, .NET, Zig…), quand
-#     la sortie vers les dépôts est ouverte (SANDBOX_EGRESS).
+#   * mise, et ce dont ses installations ont besoin (git, curl, xz) : Go,
+#     Rust, Java, Ruby, .NET, Zig… par `devbox dev-env`, à la demande.
+# Ni gcc ni C/C++ : mise ne les installe pas, et ils ne sont plus offerts.
 RUN pacman -Syu --noconfirm --needed --disable-sandbox \
       python python-pip nodejs npm \
-      gcc make go rust \
       php composer php-sqlite \
       jq sqlite bc file zip unzip gawk which \
       mise git curl xz \
  && pacman -Scc --noconfirm --disable-sandbox \
  && rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/*
-
-COPY sandbox/requirements.txt /tmp/requirements.txt
-# Le Python d'Arch est « géré par le système » (PEP 668) : les
-# bibliothèques du bac vont dans son site-packages, à la construction.
-# pip compile le bytecode à l'installation : il le faut, la racine d'un
-# bac est en lecture seule (sans .pyc, chaque exécution recompilerait
-# pandas).
-RUN pip install --no-cache-dir --break-system-packages --prefer-binary \
-      -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 # `devbox dev-env` : le script de dev-box, sa bibliothèque, et ses recettes
 # de LANGAGE. Écartées : celles qui ne servent pas sans écran ni matériel
@@ -113,14 +105,8 @@ COPY sandbox/check.py /usr/local/share/sandbox/check.py
 # lecture seule, podman n'y crée rien.
 COPY sandbox/forward.py /usr/local/share/sandbox/forward.py
 RUN mkdir -p /run && touch /run/egress.sock
-# Sous l'environnement d'un bac pour Go (sandbox.py) : hors ligne, cache
-# dans /tmp — le contrôle dit le temps et la taille d'une première
-# compilation, à comparer à SANDBOX_TMP_SIZE et au délai de l'outil.
-RUN cd /tmp && HOME=/tmp MPLCONFIGDIR=/tmp/mpl \
-    GOCACHE=/tmp/.cache/go-build GOPATH=/tmp/go GOPROXY=off \
-    GOTOOLCHAIN=local GOFLAGS=-buildvcs=false \
-    CARGO_HOME=/tmp/.cargo CARGO_NET_OFFLINE=true \
-    python3 /usr/local/share/sandbox/check.py \
+# Le contrôle, sous l'environnement d'un bac.
+RUN cd /tmp && HOME=/tmp python3 /usr/local/share/sandbox/check.py \
  && rm -rf /tmp/* /tmp/.[!.]* /root/.cache
 
 # ── 2. L'exécuteur ──────────────────────────────────────────────────────

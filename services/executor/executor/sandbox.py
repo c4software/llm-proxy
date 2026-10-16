@@ -112,9 +112,10 @@ LANGS = {
     "bash": ("bash", "-s"),
     "sh": ("sh", "-s"),
     "node": ("node", "-"),
-    "c": _compiled("c", 'gcc -O1 -o "$d/main" "$d/main.c" -lm'),
-    "cpp": _compiled("cpp", 'g++ -std=c++20 -O1 -o "$d/main" "$d/main.cpp"'),
-    # Un seul fichier, sans module : la bibliothèque standard seulement.
+    "php": ("php",),
+    # Go et Rust ne sont pas dans l'image de base : `devbox dev-env go` ou
+    # `rust` les installe (mise, sortie ouverte), leurs shims sont dans le
+    # PATH du bac. Un seul fichier, la bibliothèque standard.
     "go": _compiled("go", '(cd "$d" && go build -o main main.go)'),
     "rust": _compiled("rs", 'rustc --edition 2021 -o "$d/main" "$d/main.rs"'),
 }

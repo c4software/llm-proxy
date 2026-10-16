@@ -128,11 +128,13 @@ def test_contrat_de_l_outil():
     fn = TOOL.spec({"code_execution"})["function"]
     assert fn["name"] == "code_execution"
     assert fn["parameters"]["required"] == ["language", "code"]
+    # Sans sortie vers les dépôts (`packages`), le bac de base seulement :
+    # ni Go ni Rust (à installer), ni bibliothèque Python.
     assert fn["parameters"]["properties"]["language"]["enum"] == [
-        "python", "bash", "javascript", "c", "cpp", "go", "rust"]
+        "python", "bash", "javascript", "php"]
     assert "NO network" in fn["description"] and "30 s" in fn["description"]
-    # Compilés : dit au modèle, avec ce que l'absence de réseau interdit.
-    assert "no Go module, no Rust crate" in fn["description"]
+    assert "standard library only" in fn["description"]
+    assert "no numpy, pandas or matplotlib" in fn["description"]
     assert TOOL.summary({"language": "bash"}) == {
         "type": "code_execution", "language": "bash"}
 
@@ -296,9 +298,9 @@ def test_requete_et_resultat():
                       "files": ["out/graphique.png", "table.csv"]}
     # Aucune URL, aucun jeton dans ce que lit (et que garde) le modèle.
     assert "http" not in r.text
-    # Les langages compilés partent sous le nom de l'exécuteur.
-    for said, sent in (("C++", "cpp"), ("c", "c"), ("golang", "go"),
-                       ("Rust", "rust")):
+    # Les langages partent sous le nom de l'exécuteur.
+    for said, sent in (("PHP", "php"), ("golang", "go"), ("Rust", "rust"),
+                       ("js", "node")):
         rendu({"language": said, "code": "x"}, seen=seen)
         assert json.loads(seen[-1].content)["language"] == sent, said
 

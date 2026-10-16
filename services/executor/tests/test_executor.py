@@ -337,13 +337,6 @@ def test_bac_disparu_recree(service):
 
 
 @pytest.mark.parametrize("language, compiler, code", [
-    ("c", "gcc", '#include <stdio.h>\n#include <math.h>\n'
-                 'int main(void) { FILE *f = fopen("r.txt", "w"); '
-                 'fprintf(f, "%.0f", sqrt(1764)); fclose(f); puts("ok"); '
-                 'return 3; }'),
-    ("cpp", "g++", '#include <iostream>\n#include <fstream>\n'
-                   'int main() { std::ofstream("r.txt") << 6 * 7; '
-                   'std::cout << "ok" << std::endl; return 3; }'),
     ("go", "go", 'package main\nimport ("fmt"; "os")\n'
                  'func main() { os.WriteFile("r.txt", []byte("42"), 0644); '
                  'fmt.Println("ok"); os.Exit(3) }'),
