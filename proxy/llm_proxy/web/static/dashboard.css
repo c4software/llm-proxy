@@ -400,7 +400,9 @@ html { overflow-x: clip; }
 /* Vue chat : la page tient dans la fenêtre, le chat en prend le reste
    (quelle que soit la hauteur de la barre, sur une ligne ou deux). */
 .wrap.is-chat {
-  max-width: 1320px; padding-top: 26px; padding-bottom: 20px;
+  /* Même largeur que les autres vues (.wrap) : rien ne bouge d'une vue
+     à l'autre. */
+  padding-top: 26px; padding-bottom: 20px;
   height: 100dvh; display: flex; flex-direction: column;
 }
 .wrap.is-chat > .chat, .wrap.is-chat > .chat-off { flex: 1; min-height: 0; }
