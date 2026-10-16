@@ -1,7 +1,7 @@
 # L'image de l'EXÉCUTEUR de code (services/executor), construite ici plutôt
 # que sur chaque machine : la sandbox part de la base de dev-box (Arch,
 # `latest`) et tire les scripts de dev-box de leur dépôt — rien n'est
-# figé, d'où une reconstruction chaque semaine en plus des changements.
+# figé, d'où une reconstruction chaque mois en plus des changements.
 # Le build exécute le contrôle du bac (sandbox/check.py) : une image qui
 # ne tient pas ses promesses n'est pas publiée. La validation de
 # l'isolation (python -m executor.validate) se joue, elle, sur la machine
@@ -19,7 +19,7 @@ on:
       - "services/executor/**"
       - ".github/workflows/executor.yml"
   schedule:
-    - cron: "17 4 * * 1"          # le lundi : Arch et dev-box ont bougé
+    - cron: "17 4 1 * *"          # le 1er du mois : Arch et dev-box ont bougé
   workflow_dispatch:
     inputs:
       devbox:
@@ -61,7 +61,7 @@ jobs:
           context: services/executor
           platforms: linux/amd64
           # La base `latest` d'Arch retirée à chaque fois, et sans cache :
-          # une reconstruction de la semaine prend vraiment les nouveautés.
+          # une reconstruction du mois prend vraiment les nouveautés.
           pull: true
           no-cache: true
           build-contexts: |
