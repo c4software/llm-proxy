@@ -677,3 +677,56 @@ button.icon:disabled { opacity: .4; cursor: default; }
 @media (max-width: 760px) {
   .chat.with-memory { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── Configuration (config.js) ───────────────────────────────────────── */
+.config-grid {
+  display: grid; grid-template-columns: minmax(300px, 440px) minmax(0, 1fr);
+  gap: 14px; align-items: start;
+}
+.config-form .panel-head { align-items: center; }
+.config-fields { padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+.config-fields fieldset {
+  border: 0; border-top: 1px solid var(--line); margin: 0; padding: 12px 0 0;
+  display: flex; flex-direction: column; gap: 10px; min-width: 0;
+}
+.config-fields fieldset:first-child { border-top: 0; padding-top: 0; }
+.config-fields legend {
+  font-size: 11.5px; letter-spacing: .11em; text-transform: uppercase; color: var(--muted);
+  padding: 0 0 6px;
+}
+.config-fields .note { font-size: 12.5px; color: var(--muted); margin: 0; }
+.config-fields input:not([type=checkbox]), .config-fields select {
+  font: inherit; font-size: 13.5px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; min-width: 0;
+}
+.config-fields .field input, .config-fields .field select { width: 100%; }
+.config-fields :is(input, select):focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.config-fields .mono { font: 12.5px ui-monospace, SFMono-Regular, monospace; }
+.config-fields .num { width: 90px; }
+.config-fields .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.config-fields .row > input { flex: 1 1 120px; }
+.config-fields .row .grow { flex: 3 1 180px; }
+.config-fields .row.checks { gap: 6px 14px; }
+.config-fields .row.checks select, .config-fields .row.checks .num { padding: 3px 6px; width: auto; }
+.config-fields .row.checks .num { width: 70px; }
+.config-fields .backend { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px;
+  border-bottom: 1px dashed var(--line); }
+.config-fields .btn { align-self: flex-start; }
+.tools-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; align-items: center; }
+.config-out { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.config-out .chat-warn { border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 10px; }
+.config-file .panel-head { align-items: center; padding: 10px 14px 10px 18px; }
+.config-file h3 { margin: 0; font: 500 13px ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
+.config-actions { display: inline-flex; gap: 6px; flex: none; }
+.config-actions .btn { padding: 5px 10px; font-size: 12.5px; }
+.config-file .note { font-size: 12.5px; color: var(--muted); margin: 10px 18px 0; }
+.config-file pre {
+  margin: 10px 14px 14px; padding: 12px 14px; border-radius: 10px; background: var(--track);
+  border: 1px solid var(--line); overflow-x: auto; white-space: pre;
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
+}
+.config-steps ol { margin: 0; padding: 12px 20px 16px 38px; font-size: 14px; }
+.config-steps li + li { margin-top: 6px; }
+@media (max-width: 900px) {
+  .config-grid { grid-template-columns: minmax(0, 1fr); }
+}

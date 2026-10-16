@@ -103,9 +103,10 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
   octet (`proxy/llm_proxy/multipart.py`) ; sans cela ils partaient vers le
   backend de repli. `GET /v1/audio/voices?model=<backend>/<modèle>` liste
   les voix du modèle de synthèse.
-- **Tableau de bord et chat** — `/ui` : statistiques d'usage et, si
-  `[ui] chat = true`, une interface de chat (outils hébergés, pièces
-  jointes, Markdown), chacune réservée à la clé connectée. Voir
+- **Tableau de bord, chat et configuration** — `/ui` : statistiques
+  d'usage, une interface de chat si `[ui] chat = true` (outils hébergés,
+  mémoire, pièces jointes, Markdown), chacune réservée à la clé
+  connectée, et des générateurs de configuration (clients, `config.toml`). Voir
   [Tableau de bord](#tableau-de-bord).
 - **Compatible Claude Code** — si `[anthropic].enabled`, le proxy parle
   aussi l'**API Messages d'Anthropic** : `POST /v1/messages` (JSON et
@@ -573,6 +574,34 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   relit dès que le modèle a appelé l'outil `memory`, et l'appel se lit
   « `create /memories/…` » plutôt qu'en arguments bruts.
 
+### L'onglet Configuration
+
+Troisième onglet (<kbd>#config</kbd>) : des **générateurs**, tout dans le
+navigateur — rien n'est écrit sur le proxy.
+
+- **Clients** : on choisit le client (Claude Code, Codex CLI, pi / omp,
+  SDK OpenAI, curl, Open WebUI, tout client OpenAI), le modèle du
+  catalogue (`GET /ui/models`, servi même chat fermé), et pour Claude
+  Code, Codex et pi / omp s'il prend aussi les outils du proxy par son
+  [serveur MCP](#serveur-mcp--mcp). La page produit les fichiers à poser,
+  avec leur chemin (`~/.claude/settings.json`, `~/.codex/config.toml`,
+  `~/.pi/agent/mcp.json`…), un bouton *Copier* et un bouton
+  *Télécharger*, et les étapes. **La clé n'y figure jamais** : elle passe
+  par une variable d'environnement (`LLM_PROXY_API_KEY` par défaut),
+  dont la page donne la ligne `export`. Elle prévient si la surface que
+  vise le client, ou le serveur MCP, est désactivée.
+- **Proxy** : un formulaire guidé pour `data/config.toml` — clés (une par
+  personne), backends, surfaces, outils hébergés et leur limite, chat,
+  adresse publique, rétention. Prérempli d'après `/healthz`, l'état
+  public du déploiement (jamais un secret ; le nombre de clés n'y est
+  pas, la liste est à compléter). Les secrets sont des `${VAR}` dans le
+  TOML, et leurs valeurs vont dans un `.env` que la page produit aussi —
+  les clés du proxy tirées au hasard dans le navigateur. Seuls les
+  réglages du formulaire sont écrits : tout autre garde son défaut.
+
+Le panneau *Configuration des clients* des statistiques reste là pour
+les exemples rapides.
+
 Pendant le chat, les statistiques ne se rafraîchissent pas ; le chat,
 lui, reste monté : une réponse en cours continue pendant qu'on regarde
 les chiffres.
@@ -590,9 +619,11 @@ depuis son cache de préfixe, quand il le remonte (llama.cpp, vLLM) ;
 Claude Code, un second tour qui rejoue les ~20 k tokens du prompt
 système doit approcher 100 %.
 
-En bas de page, le panneau repliable **Brancher un client** donne des
-commandes prêtes à coller — catalogue, `curl`, SDK OpenAI, Claude Code
-(avec l'état actif / inactif de la surface Anthropic) — dérivées de
+En bas de page, le panneau repliable **Configuration des clients** donne
+des exemples prêts à copier — catalogue, `curl`, SDK OpenAI, Claude Code
+et Codex (avec l'état actif / inactif de leur surface), pi / omp, et le
+**serveur MCP du proxy** (`/mcp` : déclaration pour Claude Code, Codex,
+pi et omp, et un `curl` de `tools/list` pour vérifier) — dérivés de
 l'URL de la page, de l'auth et des modèles connus (`/healthz`, lu une
 fois, jamais dans la boucle) et du modèle le plus actif de la période.
 
@@ -2634,7 +2665,7 @@ défauts), qu'il applique sans croire le proxy : à monter avec celles-ci.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `chat` | `false` | Ouvre l'onglet *Chat* du tableau de bord (`POST /ui/chat/completions`, `GET /ui/models`) : le cookie de `/ui` y dépense des tokens, comptés à la clé connectée. Voir [Le chat](#le-chat) |
+| `chat` | `false` | Ouvre l'onglet *Chat* du tableau de bord (`POST /ui/chat/completions`) : le cookie de `/ui` y dépense des tokens, comptés à la clé connectée. Voir [Le chat](#le-chat) |
 
 ### `[mcp_server]`
 

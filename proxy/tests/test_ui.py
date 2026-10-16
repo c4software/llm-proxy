@@ -93,7 +93,6 @@ def test_chat_is_closed_unless_enabled(ui, monkeypatch):
     login(ui)
     monkeypatch.setattr(A, "UI_CHAT", False)
     assert chat(ui).status_code == 404
-    assert ui.client.get("/ui/models").status_code == 404
     assert ui.client.get("/ui/session").json()["chat"] == {
         "enabled": False, "hosted_tools": False, "tools": [], "always": []}
     assert not ui.sent

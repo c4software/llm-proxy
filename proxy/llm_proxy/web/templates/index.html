@@ -41,6 +41,7 @@
     </div>
     <h1 v-if="needLogin">Connexion</h1>
     <h1 v-else-if="view === 'stats'">Statistiques d'usage</h1>
+    <h1 v-else-if="view === 'config'">Configuration</h1>
   </header>
 
   <!-- Auth active, pas de clé valide : on la demande. Elle part à
@@ -64,6 +65,9 @@
        continue pendant qu'on regarde les chiffres. -->
   <chat-panel v-if="session" v-show="view === 'chat'" :session="session"
               :key="session.client || 'open'" @unauthorized="onUnauthorized"></chat-panel>
+
+  <config-panel v-if="session" v-show="view === 'config'" :session="session"
+                :health="health"></config-panel>
 
   <div class="stats" v-if="session" v-show="view === 'stats'">
   <div class="toolbar">
@@ -322,13 +326,13 @@
        Absente si la mémoire est désactivée sur le proxy. -->
   <memory-panel></memory-panel>
 
-  <!-- Brancher un client : replié par défaut, tout est dérivé de l'URL
-       de la page, de /healthz et des modèles de la période. -->
+  <!-- Configuration des clients : replié par défaut, tout est dérivé de
+       l'URL de la page, de /healthz et des modèles de la période. -->
   <details class="panel howto">
     <summary>
-      <h2>Brancher un client</h2>
-      <span class="meta">OpenAI SDK, curl, Claude Code, Codex, pi / omp —
-        commandes prêtes à coller, sur <code>{{ exampleModel }}</code></span>
+      <h2>Configuration des clients</h2>
+      <span class="meta">SDK OpenAI, curl, Claude Code, Codex, pi / omp,
+        serveur MCP — exemples prêts à copier, sur <code>{{ exampleModel }}</code></span>
     </summary>
     <div class="howto-body">
       <p class="lead">Le proxy expose une API OpenAI à
@@ -409,16 +413,51 @@
           <code>albert/&lt;backend&gt;/&lt;modèle&gt;</code>.</p>
       </section>
 
+      <section>
+        <h3>Serveur MCP du proxy
+          <span class="tag" :class="mcpServer ? 'exact' : 'est'">{{
+            mcpServer === null ? "…" : mcpServer ? "actif" : "inactif" }}</span>
+        </h3>
+        <template v-if="mcpServer">
+          <p class="note">Les outils hébergés du proxy
+            <template v-if="hostedTools.length">(<code>{{ hostedTools.join(", ") }}</code>)</template>
+            offerts à tout client MCP, à l'adresse <code>{{ origin }}/mcp</code>
+            (transport HTTP « streamable », sans état). Le client garde la
+            main : ses appels apparaissent dans sa trace, et il choisit quand
+            les faire. Mêmes outils, même mémoire par clé que le chat de
+            cette page.</p>
+          <p class="note">Claude Code :</p>
+          <pre>{{ snippets.mcpClaude }}</pre>
+          <p class="note">Codex CLI :</p>
+          <pre>{{ snippets.mcpCodex }}</pre>
+          <p class="note">pi et omp (pi exige <code>"exposure": "direct"</code>
+            pour déclarer les outils au modèle, et une variable définie pour
+            l'en-tête) :</p>
+          <pre>{{ snippets.mcpEnv }}
+
+{{ snippets.mcpPi }}</pre>
+          <p class="note">Vérifier ce que le serveur offre :</p>
+          <pre>{{ snippets.mcpTest }}</pre>
+          <p class="note">Un client qui reçoit déjà les outils par
+            <code>[chat].always</code> les aurait deux fois : ne pas cumuler.</p>
+        </template>
+        <p v-else class="note">Serveur désactivé : mettre
+          <code>[mcp_server] enabled = true</code> dans
+          <code>config.toml</code> et redémarrer.</p>
+      </section>
+
       <section v-if="hostedTools.length">
         <h3>Outils hébergés
           <span class="tag exact">{{ hostedTools.join(", ") }}</span>
         </h3>
         <p class="note">Le proxy exécute ces outils lui-même. Codex et
-          Claude Code s'en servent sans réglage (leur recherche web passe
-          par le proxy) ; pi, omp et Open WebUI les reçoivent d'office si
-          <code>[chat].always</code> les nomme ; tout autre client en
-          déclarant <code>{"type": "web_search"}</code> dans
-          <code>tools</code>.
+          Claude Code s'en servent sans réglage pour leur recherche web ;
+          tous les outils passent aussi par le serveur MCP ci-dessus (pi,
+          omp, la boucle principale de Claude Code) ; le chat de cette page
+          les propose en interrupteurs ; une interface qui ne déclare rien
+          (Open WebUI) les reçoit d'office si <code>[chat].always</code> les
+          nomme ; tout autre client en déclarant
+          <code>{"type": "web_search"}</code> dans <code>tools</code>.
           Leur usage est dans le panneau <em>Outils</em>.</p>
       </section>
     </div>
@@ -431,6 +470,7 @@
 <script src="/ui/static/markdown.js"></script>
 <script src="/ui/static/memory.js"></script>
 <script src="/ui/static/chat.js"></script>
+<script src="/ui/static/config.js"></script>
 <script src="/ui/static/dashboard.js"></script>
 </body>
 </html>

@@ -20,7 +20,7 @@
   l'historique — au chargement et au changement de période, jamais dans
   la boucle. La vue « Tout » en a besoin pour choisir son découpage.
   Un troisième, UNE fois au chargement, lit /healthz pour le panneau
-  « Brancher un client » (auth, surface Anthropic, modèles connus) — ce
+  « Configuration des clients » (auth, surfaces, serveur MCP, modèles) — ce
   n'est pas de l'usage, ça ne bouge pas, ça ne se rafraîchit pas.
 
   La section « Outils » a son propre appel, à la route sœur
@@ -35,9 +35,10 @@
   valide (401), elle montre l'écran d'entrée — la clé saisie part à
   /ui/login, qui la garde dans le cookie HttpOnly de /ui. Une fois entrée,
   la personne ne voit que SES requêtes (le proxy filtre /ui/usage sur sa
-  clé). Deux vues, onglets en tête : « Statistiques » (tout ce qui suit)
-  et « Chat » (chat.js, <chat-panel>), mémorisées dans l'URL (#chat) et
-  le navigateur. Les statistiques ne se rafraîchissent pas tant que le
+  clé). Trois vues, onglets en tête : « Statistiques » (tout ce qui
+  suit), « Chat » (chat.js, <chat-panel>) et « Configuration »
+  (config.js, <config-panel> : générateurs de configuration, clients et
+  proxy), mémorisées dans l'URL (#chat, #config) et le navigateur. Les statistiques ne se rafraîchissent pas tant que le
   chat est affiché ; le chat, lui, reste monté — une réponse en cours
   continue pendant qu'on regarde les chiffres.
 
@@ -81,10 +82,12 @@ createApp({
     const metricById = Object.fromEntries(metrics.map((m) => [m.id, m]));
 
     // ── session et vues ─────────────────────────────────────────────────
-    const views = [{ id: "stats", label: "Statistiques" }, { id: "chat", label: "Chat" }];
+    const views = [{ id: "stats", label: "Statistiques" }, { id: "chat", label: "Chat" },
+                   { id: "config", label: "Configuration" }];
+    const known = (id) => views.some((v) => v.id === id);
     const storedView = () => {
-      if (location.hash === "#chat" || location.hash === "#stats") return location.hash.slice(1);
-      try { return localStorage.getItem(STORE_VIEW) === "chat" ? "chat" : "stats"; }
+      if (known(location.hash.slice(1))) return location.hash.slice(1);
+      try { const v = localStorage.getItem(STORE_VIEW); return known(v) ? v : "stats"; }
       catch { return "stats"; }
     };
     const view = ref(storedView());
@@ -120,6 +123,10 @@ createApp({
       ? !!(health.value.anthropic || {}).enabled : null);
     const responses = computed(() => health.value
       ? !!(health.value.responses || {}).enabled : null);
+    // Le serveur MCP du proxy (POST /mcp) : ses outils hébergés, offerts à
+    // tout client MCP.
+    const mcpServer = computed(() => health.value
+      ? !!(health.value.mcp_server || {}).enabled : null);
     // Outils que le proxy exécute lui-même (recherche web, lecture de page…).
     const hostedTools = computed(() =>
       ((health.value || {}).tools || {}).enabled || []);
@@ -367,7 +374,7 @@ createApp({
 
     const note = computed(() => byId[current.value].note);
 
-    // ── «Brancher un client» : des commandes prêtes à coller ──────────
+    // ── «Configuration des clients» : des exemples prêts à copier ───────
     // Tout est dérivé : l'URL de CETTE page, l'auth et les modèles vus
     // par /healthz, le modèle le plus actif de la période en exemple.
     const origin = window.location.origin;
@@ -431,6 +438,29 @@ model_provider = "llm-proxy"
 name = "llm-proxy"
 base_url = "${origin}/v1"
 wire_api = "responses"${auth ? '\nenv_key = "LLM_PROXY_KEY"   # export LLM_PROXY_KEY=' + key : ""}`,
+        // Le serveur MCP du proxy, déclaré chez chaque client. Sans auth,
+        // Claude Code et Codex n'ont pas besoin d'en-tête ; pi, lui, refuse
+        // un en-tête dont la variable n'existe pas — d'où «unused».
+        mcpClaude: `claude mcp add --transport http llmproxy ${origin}/mcp${auth
+          ? ' \\\n  --header "Authorization: Bearer $LLM_PROXY_API_KEY"' : ""}`,
+        mcpCodex: `# ~/.codex/config.toml
+[mcp_servers.llmproxy]
+url = "${origin}/mcp"${auth ? '\nbearer_token_env_var = "LLM_PROXY_API_KEY"' : ""}`,
+        mcpPi: `// ~/.pi/agent/mcp.json et ~/.omp/agent/mcp.json
+{
+  "mcpServers": {
+    "llmproxy": {
+      "url": "${origin}/mcp",
+      "headers": { "Authorization": "Bearer \${LLM_PROXY_API_KEY}" },
+      "exposure": "direct"
+    }
+  }
+}`,
+        mcpEnv: `export LLM_PROXY_API_KEY=${auth ? key : "unused"}`,
+        mcpTest: `curl -s ${origin}/mcp \\
+  -H "Content-Type: application/json" \\
+  -H "Accept: application/json, text/event-stream"${auth ? ' \\\n  -H "Authorization: Bearer ' + key + '"' : ""} \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'`,
         // pi et omp : l'extension du dépôt llmsetup, qui lit ces variables.
         // Les outils web viennent du proxy, d'office ([chat].always).
         pi: `export LLM_PROXY_URL=${origin}${auth ? "\nexport LLM_PROXY_API_KEY=" + key : ""}
@@ -652,8 +682,8 @@ pi --model albert/${model}`,
              loginBusy, login, logout, onUnauthorized,
              windows, current, metrics, metric, metricUnit, metricLabel,
              models, totals, bars, axis, peak, since, now, tools, toolCalls,
-             loaded, entering, anthropic, responses, hostedTools, webCache,
-             mcpServers,
+             loaded, entering, anthropic, responses, mcpServer, hostedTools, webCache,
+             mcpServers, health,
              authRequired, exampleModel,
              snippets, origin, note, shortcuts, bucketLabel, successRate,
              backendSummary, num, ms, ago, dur, moment, tickLabel, select,
@@ -661,4 +691,5 @@ pi --model albert/${model}`,
   },
 // La section Mémoire : un composant à part (memory.js), ses propres appels.
 }).component("memory-panel", window.MemoryPanel)
-  .component("chat-panel", window.ChatPanel).mount("#app");
+  .component("chat-panel", window.ChatPanel)
+  .component("config-panel", window.ConfigPanel).mount("#app");

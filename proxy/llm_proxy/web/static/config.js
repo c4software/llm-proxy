@@ -1,0 +1,518 @@
+/*
+  L'onglet « Configuration » : des GÉNÉRATEURS de configuration, tout dans
+  le navigateur — rien n'est écrit sur le proxy. Un composant à part,
+  enregistré par dashboard.js sous <config-panel>.
+
+  CLIENTS. On choisit le client (Claude Code, Codex, pi / omp, SDK OpenAI,
+  curl, Open WebUI, tout client OpenAI), le modèle du catalogue
+  (/ui/models), et s'il prend aussi les outils du proxy par son serveur
+  MCP (/mcp). La page produit les fichiers à poser, avec leur chemin, et
+  les étapes. La CLÉ n'y figure jamais : elle passe par une variable
+  d'environnement (LLM_PROXY_API_KEY par défaut), dont la page donne la
+  ligne `export`.
+
+  PROXY. Un formulaire guidé pour data/config.toml : accès, backends,
+  surfaces, outils, chat. Prérempli d'après /healthz (l'état public du
+  déploiement : backends, outils actifs, surfaces — jamais un secret).
+  Les secrets sont des «${VAR}» dans le TOML ; leurs valeurs vont dans un
+  .env à part, que la page produit aussi (clés du proxy tirées au hasard
+  dans le navigateur, à la demande). Seuls les réglages du formulaire sont
+  écrits : tout autre garde son défaut (voir config.example.toml).
+*/
+window.ConfigPanel = {
+  props: {
+    session: { type: Object, required: true },
+    health: { type: Object, default: null },
+  },
+  setup(props) {
+    const { ref, reactive, computed, watch, onMounted } = Vue;
+    const origin = window.location.origin;
+    const STORE_PART = "llm-proxy-config-part";
+
+    const part = ref((() => {
+      try { return localStorage.getItem(STORE_PART) === "proxy" ? "proxy" : "clients"; }
+      catch { return "clients"; }
+    })());
+    function setPart(p) {
+      part.value = p;
+      try { localStorage.setItem(STORE_PART, p); } catch { /* sans stockage */ }
+    }
+
+    // ── utilitaires ─────────────────────────────────────────────────────
+    // Une chaîne TOML « basique » : les échappements de JSON en sont un
+    // sous-ensemble valide.
+    const q = (s) => JSON.stringify(String(s ?? ""));
+    const list = (xs) => "[" + xs.map(q).join(", ") + "]";
+    const envName = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9_]/g, "_")
+      .replace(/^(\d)/, "_$1");
+    function randomKey() {
+      const b = new Uint8Array(24);
+      crypto.getRandomValues(b);
+      return "sk-" + [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+    }
+    const copied = ref("");
+    async function copy(file) {
+      try {
+        await navigator.clipboard.writeText(file.content);
+        copied.value = file.name;
+        setTimeout(() => { if (copied.value === file.name) copied.value = ""; }, 1400);
+      } catch { /* refusé par le navigateur : le texte reste sélectionnable */ }
+    }
+    function download(file) {
+      const blob = new Blob([file.content], { type: "text/plain;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = file.download || file.name.split("/").pop();
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+
+    // ── catalogue ───────────────────────────────────────────────────────
+    const models = ref([]);
+    async function loadModels() {
+      try {
+        const r = await fetch("/ui/models", { headers: { accept: "application/json" } });
+        if (r.ok) models.value = ((await r.json()).data || []).map((m) => m.id).sort();
+      } catch { /* hors ligne : saisie libre */ }
+    }
+    onMounted(loadModels);
+
+    const health = computed(() => props.health || {});
+    const auth = computed(() => !!props.session.auth_required);
+    const anthropicOn = computed(() => !!(health.value.anthropic || {}).enabled);
+    const responsesOn = computed(() => !!(health.value.responses || {}).enabled);
+    const mcpOn = computed(() => !!(health.value.mcp_server || {}).enabled);
+
+    // ══ CLIENTS ═════════════════════════════════════════════════════════
+    const clients = [
+      { id: "claude", label: "Claude Code", mcp: true },
+      { id: "codex", label: "Codex CLI", mcp: true },
+      { id: "pi", label: "pi / omp", mcp: true, mcpOnly: true },
+      { id: "python", label: "SDK OpenAI (Python)" },
+      { id: "curl", label: "curl" },
+      { id: "openwebui", label: "Open WebUI" },
+      { id: "generic", label: "Autre client OpenAI" },
+    ];
+    const form = reactive({
+      client: "claude", model: "", small: "", mcp: true, env: "LLM_PROXY_API_KEY",
+    });
+    watch(models, (ms) => {
+      if (!form.model && ms.length) form.model = ms[0];
+      if (!form.small && ms.length) form.small = ms[ms.length > 1 ? 1 : 0];
+    });
+    const client = computed(() => clients.find((c) => c.id === form.client));
+
+    const clientOut = computed(() => {
+      const model = form.model || "<backend>/<modèle>";
+      const env = envName(form.env) || "LLM_PROXY_API_KEY";
+      const keyValue = auth.value ? "<votre clé du proxy>" : "unused";
+      const exportLine = `export ${env}=${keyValue}`;
+      const files = [];
+      const steps = [];
+      const warn = [];
+      const mcp = client.value.mcp && form.mcp;
+      if (mcp && !mcpOn.value) {
+        warn.push("Le serveur MCP du proxy est désactivé ([mcp_server] enabled = false) : "
+          + "les outils ne seront pas joignables.");
+      }
+      const shell = (name, content, note) => files.push({ name, content, note, lang: "sh" });
+
+      switch (form.client) {
+        case "claude": {
+          if (!anthropicOn.value) warn.push("La surface Anthropic est désactivée sur ce proxy "
+            + "([anthropic] enabled = false) : Claude Code ne pourra pas s'y connecter.");
+          files.push({
+            name: "~/.claude/settings.json", download: "settings.json", lang: "json",
+            note: "Les réglages de Claude Code (à fusionner si le fichier existe). "
+              + "La clé n'y est pas : Claude Code la lit dans l'environnement.",
+            content: JSON.stringify({ env: {
+              ANTHROPIC_BASE_URL: origin,
+              ANTHROPIC_MODEL: model,
+              ...(form.small ? { ANTHROPIC_SMALL_FAST_MODEL: form.small } : {}),
+            } }, null, 2) + "\n",
+          });
+          shell("~/.bashrc (ou ~/.zshrc)",
+            `${exportLine}\nexport ANTHROPIC_API_KEY="$${env}"\n`,
+            "La clé, par l'environnement.");
+          if (mcp) {
+            shell("Commande, une fois", `claude mcp add --transport http --scope user llmproxy ${origin}/mcp`
+              + (auth.value ? ` \\\n  --header "Authorization: Bearer $${env}"` : "") + "\n",
+              "Les outils du proxy (recherche web, lecture de pages, code, mémoire…) dans la "
+              + "boucle principale de Claude Code.");
+          }
+          steps.push("Poser settings.json, ajouter les deux lignes au profil du shell, "
+            + "rouvrir le terminal.", "Lancer `claude` : `/status` doit montrer l'URL du proxy.");
+          if (mcp) steps.push("`/mcp` dans Claude Code doit lister le serveur llmproxy.");
+          break;
+        }
+        case "codex": {
+          if (!responsesOn.value) warn.push("La surface Responses est désactivée sur ce proxy "
+            + "([responses] enabled = false) : Codex ne pourra pas s'y connecter.");
+          let toml = `model = ${q(model)}\nmodel_provider = "llm-proxy"\n\n`
+            + `[model_providers.llm-proxy]\nname = "llm-proxy"\nbase_url = ${q(origin + "/v1")}\n`
+            + `wire_api = "responses"\n` + (auth.value ? `env_key = ${q(env)}\n` : "");
+          if (mcp) {
+            toml += `\n[mcp_servers.llmproxy]\nurl = ${q(origin + "/mcp")}\n`
+              + (auth.value ? `bearer_token_env_var = ${q(env)}\n` : "");
+          }
+          files.push({ name: "~/.codex/config.toml", download: "config.toml", lang: "toml",
+            note: "À fusionner si le fichier existe déjà.", content: toml });
+          if (auth.value) shell("~/.bashrc (ou ~/.zshrc)", exportLine + "\n", "La clé, par l'environnement.");
+          steps.push("Poser config.toml" + (auth.value ? ", exporter la clé" : "") + ", lancer `codex`.");
+          if (!mcp) steps.push("La recherche web de Codex passe déjà par le proxy, sans MCP.");
+          break;
+        }
+        case "pi": {
+          const json = JSON.stringify({ mcpServers: { llmproxy: {
+            url: origin + "/mcp",
+            headers: { Authorization: "Bearer ${" + env + "}" },
+            exposure: "direct",
+          } } }, null, 2) + "\n";
+          if (mcp) {
+            files.push({ name: "~/.pi/agent/mcp.json", download: "mcp.json", lang: "json",
+              note: "pi exige \"exposure\": \"direct\" pour déclarer les outils au modèle.",
+              content: json });
+            files.push({ name: "~/.omp/agent/mcp.json", download: "mcp.json", lang: "json",
+              note: "Le même fichier pour omp (il ignore exposure). Désactiver son web_search "
+                + "intégré pour que la recherche soit celle du proxy.", content: json });
+          }
+          shell("~/.bashrc (ou ~/.zshrc)",
+            `export LLM_PROXY_URL=${origin}\n${exportLine}\n`
+            + (env !== "LLM_PROXY_API_KEY" ? `export LLM_PROXY_API_KEY="$${env}"\n` : ""),
+            "Lus par l'extension llm-proxy.ts (dépôt llmsetup) et par l'en-tête du mcp.json ; "
+            + "pi refuse un en-tête dont la variable n'est pas définie.");
+          shell("Lancer", `pi --model albert/${model}\n`,
+            "Avec l'extension llm-proxy.ts, les modèles se nomment albert/<backend>/<modèle>.");
+          steps.push("Copier llm-proxy.ts (dépôt llmsetup, tools/) dans ~/.pi/agent/extensions/ "
+            + "et ~/.omp/agent/extensions/.");
+          if (mcp) steps.push("Les outils apparaissent comme mcp__llmproxy__web_search (pi) "
+            + "ou mcp__llmproxy_web_search (omp).");
+          break;
+        }
+        case "python": {
+          files.push({ name: "exemple.py", lang: "python", note: "pip install openai",
+            content: `import os\n\nfrom openai import OpenAI\n\nclient = OpenAI(\n`
+              + `    base_url=${q(origin + "/v1")},\n    api_key=os.environ.get(${q(env)}, "unused"),\n)\n`
+              + `r = client.chat.completions.create(\n    model=${q(model)},\n`
+              + `    messages=[{"role": "user", "content": "Bonjour"}],\n`
+              + (form.mcp ? `    # Outils exécutés par le proxy : déclarés par leur type.\n`
+                + `    tools=[{"type": "web_search"}],\n` : "")
+              + `)\nprint(r.choices[0].message.content)\n` });
+          if (auth.value) shell("Environnement", exportLine + "\n", "La clé, par l'environnement.");
+          break;
+        }
+        case "curl": {
+          shell("Requête", (auth.value ? exportLine + "\n" : "")
+            + `curl -s ${origin}/v1/chat/completions \\\n  -H "Content-Type: application/json"`
+            + (auth.value ? ` \\\n  -H "Authorization: Bearer $${env}"` : "")
+            + ` \\\n  -d '${JSON.stringify({ model, messages: [{ role: "user", content: "Bonjour" }],
+              ...(form.mcp ? { tools: [{ type: "web_search" }] } : {}) })}'\n`,
+            form.mcp ? "Avec {\"type\": \"web_search\"} : la recherche est exécutée par le proxy." : "");
+          break;
+        }
+        case "openwebui": {
+          files.push({ name: "Réglages › Connexions › API OpenAI", lang: "text",
+            note: "Dans l'interface d'administration d'Open WebUI.",
+            content: `URL : ${origin}/v1\nClé : ${auth.value ? "<votre clé du proxy>" : "unused"}\n` });
+          files.push({ name: "Ou par l'environnement du conteneur", download: "openwebui.env", lang: "sh",
+            content: `OPENAI_API_BASE_URL=${origin}/v1\nOPENAI_API_KEY=${auth.value ? "<votre clé du proxy>" : "unused"}\n` });
+          steps.push("Open WebUI ne déclare jamais d'outils : pour qu'il ait la recherche web, "
+            + "les nommer dans [chat].always du proxy (onglet Proxy ci-contre).");
+          break;
+        }
+        default: {
+          files.push({ name: "Paramètres du client", lang: "text",
+            content: `Base URL : ${origin}/v1\nClé       : ${auth.value ? "$" + env : "unused (le proxy est ouvert)"}\n`
+              + `Modèle    : ${model}\n` });
+          steps.push("Tout client OpenAI-compatible : base URL, clé, nom de modèle préfixé "
+            + "par son backend. Le streaming passe intact.");
+        }
+      }
+      return { files, steps, warn };
+    });
+
+    // ══ PROXY (config.toml) ═════════════════════════════════════════════
+    const TOOL_LIST = [
+      { id: "web_search", label: "Recherche web (SearXNG)" },
+      { id: "web_fetch", label: "Lecture de pages" },
+      { id: "web_grep", label: "Recherche dans une page" },
+      { id: "code_execution", label: "Exécution de code" },
+      { id: "image_generation", label: "Génération d'images", model: true },
+      { id: "ocr", label: "OCR", model: true },
+      { id: "transcribe", label: "Transcription", model: true },
+      { id: "memory", label: "Mémoire persistante" },
+    ];
+    const px = reactive({
+      keys: [],                  // [{ name, value }] : name = variable d'env
+      backends: [],              // [{ name, url, key, quotas, images, toolChoice, maxTokens }]
+      anthropic: true, defaultModel: "", responses: true,
+      hostedTools: true, always: "", alwaysExcept: "",
+      tools: Object.fromEntries(TOOL_LIST.map((t) => [t.id, false])),
+      toolModels: { image_generation: "", ocr: "", transcribe: "" },
+      searxng: "http://searxng:8080", executor: "http://executor:8080",
+      maxCalls: 16, mcpServer: true, uiChat: false, publicUrl: "",
+      retention: 90, logLevel: "INFO",
+    });
+    const prefilled = ref(false);
+
+    // Préremplissage depuis /healthz : ce que le déploiement dit de lui.
+    function prefill() {
+      const h = props.health;
+      if (!h) return;
+      px.backends = Object.entries(h.backends || {}).map(([name, b]) => ({
+        name, url: b.url || "", key: !!b.key_injection, quotas: !!b.quotas,
+        images: !!b.images, toolChoice: typeof b.tool_choice === "string" ? b.tool_choice : "",
+        maxTokens: b.max_tokens || "",
+      }));
+      px.anthropic = !!(h.anthropic || {}).enabled;
+      px.defaultModel = ((h.anthropic || {}).model_map || {}).default || "";
+      px.responses = !!(h.responses || {}).enabled;
+      const chat = h.chat || {};
+      px.hostedTools = !!chat.hosted_tools;
+      px.always = (chat.always || []).join(", ");
+      px.alwaysExcept = (chat.always_except || []).join(", ");
+      const on = new Set(((h.tools || {}).enabled) || []);
+      for (const t of TOOL_LIST) px.tools[t.id] = on.has(t.id);
+      px.maxCalls = (h.tools || {}).max_calls || 8;
+      px.mcpServer = !!(h.mcp_server || {}).enabled;
+      px.uiChat = !!(props.session.chat || {}).enabled;
+      if ((h.files || {}).public_url) px.publicUrl = origin;
+      if (!px.keys.length && h.auth_required) {
+        px.keys = [{ name: "PROXY_API_KEY", value: "" }];
+      }
+      prefilled.value = true;
+    }
+    watch(() => props.health, (h) => { if (h && !prefilled.value) prefill(); }, { immediate: true });
+
+    const addBackend = () => px.backends.push({ name: "", url: "http://", key: false,
+      quotas: false, images: false, toolChoice: "", maxTokens: "" });
+    const addKey = () => px.keys.push({ name: "PROXY_API_KEY_" + (px.keys.length + 1), value: randomKey() });
+    const csv = (s) => String(s || "").split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+
+    const proxyOut = computed(() => {
+      const warn = [];
+      const env = [];
+      const L = [];
+      const keyVars = px.keys.map((k) => envName(k.name)).filter(Boolean);
+      L.push("# data/config.toml — généré par l'onglet Configuration de /ui.",
+             "# Seuls ces réglages sont écrits ; tout autre garde son défaut",
+             "# (voir data/config.example.toml).", "");
+      L.push("[proxy]", `log_level = ${q(px.logLevel)}`,
+             `api_keys = ${list(keyVars.map((v) => "${" + v + "}"))}`, "");
+      for (const k of px.keys) {
+        const v = envName(k.name);
+        if (v) env.push(`${v}=${k.value || ""}`);
+      }
+      if (!keyVars.length) warn.push("Aucune clé : le proxy est ouvert à quiconque l'atteint "
+        + (px.uiChat ? "— chat de /ui compris, qui dépense des tokens." : "."));
+
+      L.push("[anthropic]", `enabled = ${px.anthropic}`);
+      if (px.anthropic && px.defaultModel) L.push("", "[anthropic.model_map]", `default = ${q(px.defaultModel)}`);
+      L.push("", "[responses]", `enabled = ${px.responses}`, "");
+      L.push("[chat]", `hosted_tools = ${px.hostedTools}`,
+             `always = ${list(csv(px.always))}`, `always_except = ${list(csv(px.alwaysExcept))}`, "");
+      L.push("[tools]", `max_calls = ${Math.max(1, Number(px.maxCalls) || 8)}`, "");
+      for (const t of TOOL_LIST) {
+        L.push(`[tools.${t.id}]`, `enabled = ${!!px.tools[t.id]}`);
+        if (t.id === "web_search") L.push(`searxng_url = ${q(px.searxng)}`);
+        if (t.id === "code_execution") {
+          L.push(`url = ${q(px.executor)}`, 'token = "${EXECUTOR_TOKEN}"');
+          if (px.tools[t.id]) env.push("EXECUTOR_TOKEN=");
+        }
+        if (t.model) {
+          const m = px.toolModels[t.id];
+          L.push(m ? `model = ${q(m)}` : `# model = "<backend>/<modèle>"`);
+          if (px.tools[t.id] && !m) warn.push(`${t.label} : un modèle est requis.`);
+        }
+        L.push("");
+      }
+      L.push("[mcp_server]", `enabled = ${px.mcpServer}`, "");
+      L.push("[ui]", `chat = ${px.uiChat}`, "");
+      L.push("[files]", `public_url = ${q(px.publicUrl.replace(/\/+$/, ""))}`, "");
+      L.push("[stats]", `retention_days = ${Number(px.retention) || 0}`, "");
+      const names = new Set();
+      for (const b of px.backends) {
+        const name = String(b.name || "").trim();
+        if (!/^[a-z0-9][a-z0-9_-]*$/i.test(name)) {
+          warn.push(`Backend « ${name || "sans nom"} » : nom invalide (lettres, chiffres, - et _).`);
+          continue;
+        }
+        if (names.has(name)) { warn.push(`Backend « ${name} » : nom en double.`); continue; }
+        names.add(name);
+        L.push(`[backends.${name}]`, `url = ${q(b.url)}`);
+        if (b.key) {
+          const v = envName(name) + "_API_KEY";
+          L.push(`api_key = "\${${v}}"`);
+          env.push(`${v}=`);
+        }
+        if (b.quotas) L.push("quotas = true");
+        if (b.images) L.push("images = true");
+        if (b.toolChoice) L.push(`force_tool_choice = ${q(b.toolChoice)}`);
+        if (Number(b.maxTokens) > 0) L.push(`max_tokens = ${Number(b.maxTokens)}`);
+        L.push("");
+      }
+      if (!names.size) warn.push("Aucun backend : le proxy n'aurait rien à servir.");
+      if (px.always && !px.hostedTools) warn.push("[chat].always est sans effet sans hosted_tools.");
+      return {
+        warn,
+        files: [
+          { name: "data/config.toml", download: "config.toml", lang: "toml",
+            note: "À poser à la place de data/config.toml (garder l'ancien en .bak), puis redémarrer le proxy.",
+            content: L.join("\n").replace(/\n{3,}/g, "\n\n") },
+          { name: ".env", download: "llm-proxy.env", lang: "sh",
+            note: "Les secrets que le TOML référence par ${VAR} : à côté du docker-compose.yml, "
+              + "jamais dans le dépôt. À compléter là où la valeur est vide.",
+            content: env.length ? env.join("\n") + "\n" : "# aucun secret référencé\n" },
+        ],
+      };
+    });
+
+    return { part, setPart, clients, form, client, models, clientOut, auth, mcpOn,
+             TOOL_LIST, px, prefill, addBackend, addKey, randomKey, proxyOut,
+             copy, download, copied };
+  },
+  template: `
+  <div class="config-view">
+    <div class="toolbar">
+      <div class="range" role="group" aria-label="Générateur">
+        <button type="button" :aria-pressed="String(part === 'clients')" @click="setPart('clients')">Clients</button>
+        <button type="button" :aria-pressed="String(part === 'proxy')" @click="setPart('proxy')">Proxy</button>
+      </div>
+      <span class="range-note" v-if="part === 'clients'">la configuration d'un client, la clé par variable d'environnement</span>
+      <span class="range-note" v-else>data/config.toml et son .env, préremplis d'après ce déploiement</span>
+    </div>
+
+    <div class="config-grid" v-if="part === 'clients'">
+      <form class="panel config-form" @submit.prevent>
+        <div class="panel-head"><h2>Client</h2></div>
+        <div class="config-fields">
+          <label class="field"><span>Client</span>
+            <select v-model="form.client">
+              <option v-for="c in clients" :key="c.id" :value="c.id">{{ c.label }}</option>
+            </select></label>
+          <label class="field"><span>Modèle</span>
+            <select v-if="models.length" v-model="form.model">
+              <option v-for="m in models" :key="m" :value="m">{{ m }}</option></select>
+            <input v-else v-model="form.model" placeholder="backend/modèle" spellcheck="false"></label>
+          <label class="field" v-if="form.client === 'claude'"><span>Modèle des tâches de fond</span>
+            <select v-if="models.length" v-model="form.small">
+              <option value="">— aucun —</option>
+              <option v-for="m in models" :key="m" :value="m">{{ m }}</option></select>
+            <input v-else v-model="form.small" spellcheck="false"></label>
+          <label class="check" v-if="client.mcp || ['python', 'curl'].includes(form.client)">
+            <input type="checkbox" v-model="form.mcp">
+            <template v-if="client.mcp">les outils du proxy par son serveur MCP</template>
+            <template v-else>déclarer la recherche web du proxy</template></label>
+          <label class="field"><span>Variable de la clé</span>
+            <input v-model="form.env" spellcheck="false"></label>
+          <p class="note" v-if="!auth">Le proxy est ouvert : la clé est libre, la variable vaut
+            <code>unused</code>.</p>
+        </div>
+      </form>
+      <div class="config-out">
+        <p class="chat-warn panel" v-for="w in clientOut.warn" :key="w">{{ w }}</p>
+        <section class="panel config-file" v-for="f in clientOut.files" :key="f.name">
+          <header class="panel-head">
+            <h3>{{ f.name }}</h3>
+            <span class="config-actions">
+              <button type="button" class="btn ghost" @click="copy(f)">{{ copied === f.name ? "Copié" : "Copier" }}</button>
+              <button type="button" class="btn ghost" @click="download(f)">Télécharger</button>
+            </span>
+          </header>
+          <p class="note" v-if="f.note">{{ f.note }}</p>
+          <pre>{{ f.content }}</pre>
+        </section>
+        <section class="panel config-steps" v-if="clientOut.steps.length">
+          <div class="panel-head"><h2>Étapes</h2></div>
+          <ol><li v-for="s in clientOut.steps" :key="s">{{ s }}</li></ol>
+        </section>
+      </div>
+    </div>
+
+    <div class="config-grid" v-else>
+      <form class="panel config-form" @submit.prevent>
+        <div class="panel-head"><h2>Proxy</h2>
+          <button type="button" class="btn ghost" @click="prefill" :disabled="!health"
+                  title="Repartir de l'état du déploiement (/healthz)">Repartir du déploiement</button></div>
+        <div class="config-fields">
+          <fieldset><legend>Accès</legend>
+            <p class="note">Une clé par personne : chacune a ses statistiques, sa mémoire, ses conversations.</p>
+            <div class="row" v-for="(k, i) in px.keys" :key="i">
+              <input v-model="k.name" spellcheck="false" placeholder="VARIABLE" class="mono">
+              <input v-model="k.value" spellcheck="false" placeholder="valeur (dans le .env)" class="mono">
+              <button type="button" class="icon" title="Nouvelle valeur" @click="k.value = randomKey()">↻</button>
+              <button type="button" class="icon danger" title="Retirer" @click="px.keys.splice(i, 1)">×</button>
+            </div>
+            <button type="button" class="btn ghost" @click="addKey">Ajouter une clé</button>
+          </fieldset>
+          <fieldset><legend>Backends</legend>
+            <div class="backend" v-for="(b, i) in px.backends" :key="i">
+              <div class="row">
+                <input v-model="b.name" placeholder="nom (préfixe)" spellcheck="false" class="mono">
+                <input v-model="b.url" placeholder="http://hôte:port" spellcheck="false" class="mono grow">
+                <button type="button" class="icon danger" title="Retirer" @click="px.backends.splice(i, 1)">×</button>
+              </div>
+              <div class="row checks">
+                <label class="check"><input type="checkbox" v-model="b.key"> clé d'API</label>
+                <label class="check"><input type="checkbox" v-model="b.quotas"> quotas (Albert)</label>
+                <label class="check"><input type="checkbox" v-model="b.images"> images</label>
+                <label class="check">tool_choice
+                  <select v-model="b.toolChoice"><option value="">—</option><option>auto</option><option>required</option></select></label>
+                <label class="check">max_tokens <input v-model="b.maxTokens" class="num" inputmode="numeric"></label>
+              </div>
+            </div>
+            <button type="button" class="btn ghost" @click="addBackend">Ajouter un backend</button>
+          </fieldset>
+          <fieldset><legend>Clients</legend>
+            <label class="check"><input type="checkbox" v-model="px.anthropic"> surface Anthropic (Claude Code)</label>
+            <label class="field" v-if="px.anthropic"><span>Modèle par défaut de Claude Code</span>
+              <input v-model="px.defaultModel" list="config-models" spellcheck="false" class="mono"></label>
+            <label class="check"><input type="checkbox" v-model="px.responses"> surface Responses (Codex)</label>
+            <label class="check"><input type="checkbox" v-model="px.mcpServer"> serveur MCP (/mcp)</label>
+            <label class="check"><input type="checkbox" v-model="px.uiChat"> chat de /ui</label>
+          </fieldset>
+          <fieldset><legend>Outils hébergés</legend>
+            <label class="check"><input type="checkbox" v-model="px.hostedTools"> sur /v1/chat/completions</label>
+            <div class="tools-grid">
+              <template v-for="t in TOOL_LIST" :key="t.id">
+                <label class="check"><input type="checkbox" v-model="px.tools[t.id]"> {{ t.label }}</label>
+                <input v-if="t.model && px.tools[t.id]" v-model="px.toolModels[t.id]" list="config-models"
+                       placeholder="backend/modèle" spellcheck="false" class="mono">
+                <input v-else-if="t.id === 'web_search' && px.tools[t.id]" v-model="px.searxng"
+                       spellcheck="false" class="mono">
+                <input v-else-if="t.id === 'code_execution' && px.tools[t.id]" v-model="px.executor"
+                       spellcheck="false" class="mono">
+                <span v-else></span>
+              </template>
+            </div>
+            <label class="field"><span>Appels d'outils par réponse</span>
+              <input v-model.number="px.maxCalls" type="number" min="1" max="64" class="num"></label>
+            <label class="field"><span>Présentés d'office ([chat].always)</span>
+              <input v-model="px.always" placeholder="web_search, web_fetch" spellcheck="false" class="mono"></label>
+          </fieldset>
+          <fieldset><legend>Divers</legend>
+            <label class="field"><span>Adresse publique (liens des fichiers)</span>
+              <input v-model="px.publicUrl" placeholder="https://llm.example.org" spellcheck="false" class="mono"></label>
+            <label class="field"><span>Rétention des statistiques (jours, 0 = illimitée)</span>
+              <input v-model.number="px.retention" type="number" min="0" class="num"></label>
+          </fieldset>
+          <datalist id="config-models"><option v-for="m in models" :key="m" :value="m"></option></datalist>
+        </div>
+      </form>
+      <div class="config-out">
+        <p class="chat-warn panel" v-for="w in proxyOut.warn" :key="w">{{ w }}</p>
+        <section class="panel config-file" v-for="f in proxyOut.files" :key="f.name">
+          <header class="panel-head">
+            <h3>{{ f.name }}</h3>
+            <span class="config-actions">
+              <button type="button" class="btn ghost" @click="copy(f)">{{ copied === f.name ? "Copié" : "Copier" }}</button>
+              <button type="button" class="btn ghost" @click="download(f)">Télécharger</button>
+            </span>
+          </header>
+          <p class="note" v-if="f.note">{{ f.note }}</p>
+          <pre>{{ f.content }}</pre>
+        </section>
+      </div>
+    </div>
+  </div>`,
+};

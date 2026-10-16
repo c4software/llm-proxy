@@ -1999,10 +1999,9 @@ async def ui_session(request: Request):
 async def ui_models(request: Request):
     """Les modèles de CONVERSATION du catalogue (ni image, ni voix, ni
     embeddings — CHAT_TYPES), sous /ui pour le cookie ; `vision` : le
-    catalogue le dit capable de lire une image."""
-    if not UI_CHAT:
-        return error_response("openai", 404, "unknown_route",
-                              "chat de la page désactivé ([ui].chat)")
+    catalogue le dit capable de lire une image. Pour le chat et pour le
+    générateur de configuration : servi même chat fermé (c'est ce que
+    /v1/models dit déjà à la même clé)."""
     entries = await merged_models(request)
     if entries is None:
         return error_response("openai", 502, "proxy_error",
