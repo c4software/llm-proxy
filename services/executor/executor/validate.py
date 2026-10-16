@@ -229,11 +229,14 @@ async def main() -> int:
             # `devbox dev-env` : un environnement léger, par mise, dans le
             # tmpfs /opt/devbox du bac ; il sert dans l'appel suivant.
             out = await run("clientA", "pkg", "bash",
-                            "devbox dev-env zig >/tmp/devenv.log 2>&1; "
+                            "devbox dev-env go >/tmp/devenv.log 2>&1; "
                             "echo code=$?; tail -3 /tmp/devenv.log", t=180)
-            out2 = await run("clientA", "pkg", "bash", "zig version", t=30)
-            verdict("6quater. devbox dev-env zig : installé par mise, puis lancé",
-                    "code=0" in out.output and out2.exit_code == 0, out2,
+            # Le Go de mise (/opt/devbox), pas celui de l'image.
+            out2 = await run("clientA", "pkg", "bash",
+                             "command -v go; go version", t=30)
+            verdict("6quater. devbox dev-env go : installé par mise, puis lancé",
+                    "code=0" in out.output and out2.exit_code == 0
+                    and "/opt/devbox/" in out2.output, out2,
                     (out.output + " | " + out2.output).strip()
                     .replace("\n", " ; ")[:400])
 

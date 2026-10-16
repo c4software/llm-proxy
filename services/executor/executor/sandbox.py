@@ -463,6 +463,9 @@ class Sandboxes:
             "MISE_DATA_DIR": "/opt/devbox/mise", "MISE_CACHE_DIR": "/opt/devbox/cache",
             "MISE_STATE_DIR": "/opt/devbox/state", "MISE_YES": "1",
             "MISE_COLOR": "0",
+            # Zig : sa source officielle seulement, pas les miroirs de la
+            # communauté (hors liste : 17 essais refusés avant elle).
+            "MISE_ZIG_USE_COMMUNITY_MIRRORS": "false",
         })
         env["PATH"] = "/opt/devbox/mise/shims:" + env["PATH"]
         return ("--volume", f"{sock}:/run/egress.sock",

@@ -1668,8 +1668,14 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
   ce qui sert à un bac (ni Tailscale, ni sshd, ni podman, ni éditeurs).
   Rien n'est figé : `archlinux:latest`, et les scripts de dev-box tirés
   de son dépôt à chaque construction (contexte `devbox` du compose,
-  `additional_contexts`). Mettre à jour : `docker compose build --pull
-  executor`, puis rejouer la validation.
+  `additional_contexts`). L'image est construite par la **CI du dépôt**
+  (`.github/workflows/executor.yml`) — à chaque changement de
+  `services/executor/`, chaque lundi pour prendre les nouveautés d'Arch et
+  de dev-box, ou à la demande — et publiée en
+  `ghcr.io/c4software/llm-proxy-executor` (`latest`, la date, le commit).
+  Mettre à jour une machine : `docker compose pull executor && docker
+  compose up -d executor`, puis rejouer la validation ; construire sur
+  place reste possible (`docker compose build --pull executor`).
 - **Langages** (`language`) : `python` (celui d'Arch — 3.14 en
   octobre 2026 —, avec numpy, pandas, scipy,
   sympy, scikit-learn, networkx, matplotlib, seaborn, pillow, openpyxl,

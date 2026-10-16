@@ -48,6 +48,11 @@ services:
   # et n'activer l'outil que sur un verdict « activable » (README,
   # « Exécution de code »).
   executor:
+    # L'image construite par la CI du dépôt (.github/workflows/executor.yml),
+    # chaque semaine et à chaque changement : `docker compose pull executor`
+    # la met à jour, sans construire ici. `build:` reste pour construire
+    # sur place (`docker compose build executor`, une version modifiée).
+    image: ghcr.io/c4software/llm-proxy-executor:latest
     build:
       context: ./services/executor
       # Les scripts de dev-box (`devbox dev-env`, ses recettes) : tirés de

@@ -1,0 +1,77 @@
+# L'image de l'EXÉCUTEUR de code (services/executor), construite ici plutôt
+# que sur chaque machine : la sandbox part de la base de dev-box (Arch,
+# `latest`) et tire les scripts de dev-box de leur dépôt — rien n'est
+# figé, d'où une reconstruction chaque semaine en plus des changements.
+# Le build exécute le contrôle du bac (sandbox/check.py) : une image qui
+# ne tient pas ses promesses n'est pas publiée. La validation de
+# l'isolation (python -m executor.validate) se joue, elle, sur la machine
+# qui l'exécute : elle dépend de son noyau et de son Docker.
+#
+# Publiée : ghcr.io/c4software/llm-proxy-executor — `latest`, la date
+# (AAAAMMJJ) et le commit (sha-xxxxxxx). Sur la machine :
+#   docker compose pull executor && docker compose up -d executor
+name: Image de l'exécuteur
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "services/executor/**"
+      - ".github/workflows/executor.yml"
+  schedule:
+    - cron: "17 4 * * 1"          # le lundi : Arch et dev-box ont bougé
+  workflow_dispatch:
+    inputs:
+      devbox:
+        description: "Dépôt et branche de dev-box (contexte « devbox »)"
+        default: "https://github.com/c4software/dev-box.git#main"
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/llm-proxy-executor
+
+concurrency:
+  group: executor-image
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Construire et publier (amd64)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Étiquettes
+        id: tags
+        run: |
+          {
+            echo "date=$(date -u +%Y%m%d)"
+            echo "sha=sha-${GITHUB_SHA::7}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Construire et publier
+        uses: docker/build-push-action@v7
+        with:
+          context: services/executor
+          platforms: linux/amd64
+          # La base `latest` d'Arch retirée à chaque fois, et sans cache :
+          # une reconstruction de la semaine prend vraiment les nouveautés.
+          pull: true
+          no-cache: true
+          build-contexts: |
+            devbox=${{ inputs.devbox || 'https://github.com/c4software/dev-box.git#main' }}
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.tags.outputs.date }}
+            ${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=Exécuteur de code de llm-proxy (bacs podman sur la base de dev-box)
+            org.opencontainers.image.revision=${{ github.sha }}
