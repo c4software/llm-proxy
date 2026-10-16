@@ -88,6 +88,13 @@ def verdict(title: str, ok: bool, out=None, detail: str = "",
             "\n", "\n           "))
 
 
+def _bytes(size: str) -> int:
+    """Une taille à la podman (512m, 1.5g, 1536m, 1000000) en octets."""
+    size = size.strip().lower()
+    unit = {"k": 2**10, "m": 2**20, "g": 2**30}.get(size[-1:], 1)
+    return int(float(size.rstrip("kmgb") or 0) * unit)
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--podman", default="podman")
@@ -247,11 +254,15 @@ async def main() -> int:
             # et le cas 9 n'a plus de quoi lancer une commande.
             await asyncio.sleep(2.5)
 
+            # Le DOUBLE de la borne du bac (SANDBOX_MEMORY), quelle qu'elle
+            # soit : demander moins ne prouverait rien.
+            ask = 2 * _bytes(limits.memory)
             out = await run("clientA", "conv1", "python", (
-                "b = bytearray(b'\\x01') * 1_000_000_000\n"
+                f"b = bytearray(b'\\x01') * {ask}\n"
                 "print('ALLOUE', len(b))\n"))
             bounded = "ALLOUE" not in out.output
-            verdict(f"8. mémoire : 1 Go demandé, bac borné à {limits.memory}",
+            verdict(f"8. mémoire : {ask / 1e9:.1f} Go demandés, bac borné à "
+                    f"{limits.memory}",
                     bounded, out,
                     "" if bounded else "podman ne tient PAS --memory ici "
                     "(cgroups non délégués) : mem_limit du conteneur "
