@@ -611,10 +611,14 @@ button.icon:disabled { opacity: .4; cursor: default; }
 .reasoning { margin-bottom: 10px; font-size: 13.5px; color: var(--muted); }
 .reasoning summary, .tool summary { cursor: pointer; list-style: none; }
 .reasoning summary::-webkit-details-marker, .tool summary::-webkit-details-marker { display: none; }
+/* Le libellé (capitales) et l'aperçu (italique) sur la MÊME ligne de base :
+   centrés, les capitales paraissaient plus hautes. La flèche, elle, au
+   milieu de la ligne. */
 .reasoning summary {
-  display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0;
+  display: flex; align-items: baseline; gap: 8px; font-size: 12px; min-width: 0;
   line-height: 20px;
 }
+.reasoning summary::before { align-self: center; }
 .reasoning .r-label { letter-spacing: .08em; text-transform: uppercase; flex: none; }
 /* Plié : la dernière ligne du raisonnement, sur une ligne. Elle glisse en
    place à chaque NOUVELLE ligne (la clé change), et un reflet la parcourt
