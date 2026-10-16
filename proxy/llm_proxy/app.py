@@ -2013,7 +2013,10 @@ async def ui_models(request: Request):
     for entry in entries:
         name, _, plain = str(entry.get("id", "")).partition("/")
         b = BACKENDS.get(name)
-        kind = b.model_types.get(plain, "text-generation") if b else ""
+        # Le type que le catalogue normalisé publie (celui du backend, sinon
+        # déduit du nom) ; à défaut, les corrections de la configuration.
+        kind = entry.get("type") or (
+            b.model_types.get(plain, "text-generation") if b else "")
         if every or kind in CHAT_TYPES:
             data.append({"id": entry["id"], "type": kind,
                          "vision": kind == "image-text-to-text"})

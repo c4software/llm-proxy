@@ -16,7 +16,11 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Sans viewport-fit=cover : Chrome Android dessinerait alors la page sous
+     la barre de gestes sans en dire la hauteur, et la barre d'onglets du bas
+     y passerait. resizes-content : le clavier réduit la page, la zone de
+     saisie du chat reste au-dessus. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <meta name="robots" content="noindex">
 <title>llm-proxy</title>
 <link rel="stylesheet" href="/ui/static/dashboard.css">

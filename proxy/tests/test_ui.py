@@ -152,14 +152,17 @@ def test_models_for_chat_or_the_whole_catalogue(ui, monkeypatch):
     """/ui/models : les modèles de conversation ; `?all=1` : tout le
     catalogue, chacun avec son type (le générateur de configuration)."""
     async def merged(request):
-        return [{"id": "essai/qwen"}, {"id": "essai/whisper"}]
+        return [{"id": "essai/qwen"}, {"id": "essai/whisper"},
+                # Le type du catalogue fait foi : un modèle d'image n'est
+                # pas proposé au chat.
+                {"id": "essai/Qwen-Image-2.1", "type": "text-to-image"}]
     monkeypatch.setattr(A, "merged_models", merged)
     monkeypatch.setitem(A.BACKENDS["essai"].model_types, "whisper",
                         "automatic-speech-recognition")
     login(ui)
     ids = lambda q: [m["id"] for m in ui.client.get("/ui/models" + q).json()["data"]]
     assert ids("") == ["essai/qwen"]
-    assert ids("?all=1") == ["essai/qwen", "essai/whisper"]
+    assert ids("?all=1") == ["essai/qwen", "essai/whisper", "essai/Qwen-Image-2.1"]
 
 
 def test_chat_ignores_always(ui, monkeypatch):

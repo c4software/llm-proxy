@@ -785,3 +785,26 @@ button.icon:disabled { opacity: .4; cursor: default; }
   .wrap.is-chat { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
   .who { margin-left: auto; }
 }
+
+/* Boutons à icône : l'icône seule sur mobile, le libellé sur grand écran. */
+.ico-btn { display: inline-flex; align-items: center; gap: 6px; }
+.ico-btn .ico { display: none; width: 18px; height: 18px; fill: none; stroke: currentColor;
+  stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+@media (max-width: 760px) {
+  .ico-btn .ico { display: block; }
+  .ico-btn .lbl { display: none; }
+  .ico-btn { padding: 8px 10px; }
+  .chat-head .model-pick { flex: 1; min-width: 0; }
+  /* La zone de saisie : [joindre] [outils, défilants] [envoyer] sur une ligne ;
+     un message d'état, s'il y en a un, au-dessus. */
+  .composer-bar { flex-wrap: wrap; gap: 8px; }
+  .composer-bar .tools-toggle {
+    flex: 1 1 0; min-width: 0; overflow-x: auto; flex-wrap: nowrap;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .composer-bar .tools-toggle::-webkit-scrollbar { display: none; }
+  .composer-bar .tools-toggle button { flex: none; white-space: nowrap; }
+  .composer-bar .status { order: -1; flex-basis: 100%; }
+  .composer-bar .status:empty { display: none; }
+  .composer textarea { font-size: 16px; }   /* pas de zoom au focus (iOS) */
+}

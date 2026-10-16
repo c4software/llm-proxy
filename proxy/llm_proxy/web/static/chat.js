@@ -103,6 +103,10 @@ window.ChatPanel = {
       try { localStorage.setItem(MEMORY_OPEN, open ? "1" : "0"); } catch { /* sans stockage */ }
     }
     const thread = ref(null);
+    // Écran étroit : textes courts (la zone de saisie, sur mobile).
+    const narrowQuery = window.matchMedia ? window.matchMedia("(max-width: 760px)") : null;
+    const narrow = ref(!!(narrowQuery && narrowQuery.matches));
+    if (narrowQuery) narrowQuery.addEventListener("change", (e) => { narrow.value = e.matches; });
     const input = ref(null);
     let controller = null;
     let pinned = true;                // le fil suit la fin de la réponse
@@ -602,7 +606,7 @@ window.ChatPanel = {
     return { chat, toolGroups, available, convs, sorted, current, currentId,
              models, modelsError, blind, draft, pending, streaming, status,
              settingsOpen, sideOpen, confirming, renaming, renameText,
-             storageWarning, dragging, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend, newConv,
+             storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend, newConv,
              select, remove, startRename, endRename, toggleTool, onPick,
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, argSummary, num, size, when,
@@ -663,10 +667,14 @@ window.ChatPanel = {
             <option v-for="m in models" :key="m.id" :value="m.id">{{ m.id }}{{ m.vision ? " · images" : "" }}</option>
           </select>
         </label>
-        <button type="button" class="btn ghost" v-if="$props.session.memory"
-                :aria-pressed="String(memoryOpen)" @click="toggleMemory()">Mémoire</button>
-        <button type="button" class="btn ghost" :aria-pressed="String(settingsOpen)"
-                @click="settingsOpen = !settingsOpen">Réglages</button>
+        <button type="button" class="btn ghost ico-btn" v-if="$props.session.memory"
+                :aria-pressed="String(memoryOpen)" @click="toggleMemory()" title="Mémoire">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6zM9 9h6M9 13h6M9 17h4"/></svg>
+          <span class="lbl">Mémoire</span></button>
+        <button type="button" class="btn ghost ico-btn" :aria-pressed="String(settingsOpen)"
+                @click="settingsOpen = !settingsOpen" title="Réglages">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M16 5v4M10 15v4"/></svg>
+          <span class="lbl">Réglages</span></button>
       </header>
 
       <div class="chat-settings" v-if="settingsOpen">
@@ -780,11 +788,13 @@ window.ChatPanel = {
           </span>
         </div>
         <textarea ref="input" v-model="draft" rows="1" @keydown="onKey" @paste="onPaste"
-                  :placeholder="streaming ? 'Réponse en cours — Entrée pour mettre un message en file'
+                  :placeholder="narrow ? (streaming ? 'Réponse en cours… (mise en file)' : 'Écrire un message…')
+                    : streaming ? 'Réponse en cours — Entrée pour mettre un message en file'
                     : 'Écrire un message — Entrée pour envoyer, Maj+Entrée pour aller à la ligne'"></textarea>
         <div class="composer-bar">
-          <label class="btn ghost attach" title="Images ou fichiers texte (ou glisser-déposer, ou coller)">
-            Joindre<input type="file" multiple hidden @change="onPick"></label>
+          <label class="btn ghost attach ico-btn" title="Joindre : images ou fichiers texte (ou glisser-déposer, ou coller)">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4L14.6 7.5"/></svg>
+            <span class="lbl">Joindre</span><input type="file" multiple hidden @change="onPick"></label>
           <div class="range tools-toggle" v-if="toolGroups.length" role="group" aria-label="Outils hébergés">
             <button v-for="g in toolGroups" :key="g.type" type="button"
                     :aria-pressed="String(current.tools.includes(g.type))"
@@ -794,9 +804,13 @@ window.ChatPanel = {
             outils hébergés inactifs</span>
           <span class="status" :class="{ warn: blind && !status }">{{ status
             || (blind ? "ce modèle ne lit peut-être pas les images" : "") }}</span>
-          <button type="submit" class="btn" :class="{ ghost: streaming }" :disabled="!canSend">{{
-            streaming ? "Mettre en file" : "Envoyer" }}</button>
-          <button v-if="streaming" type="button" class="btn danger" @click="stop">Arrêter</button>
+          <button type="submit" class="btn ico-btn send" :class="{ ghost: streaming }" :disabled="!canSend"
+                  :title="streaming ? 'Mettre en file' : 'Envoyer'">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            <span class="lbl">{{ streaming ? "Mettre en file" : "Envoyer" }}</span></button>
+          <button v-if="streaming" type="button" class="btn danger ico-btn" @click="stop" title="Arrêter">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>
+            <span class="lbl">Arrêter</span></button>
         </div>
       </form>
     </section>
