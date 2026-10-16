@@ -43,19 +43,53 @@
        par ☰ sur mobile. Les vues, puis la clé connectée en bas. -->
   <aside class="sidenav" v-if="session" aria-label="Navigation">
     <div class="brand"><span class="dot"></span> llm-proxy</div>
-    <nav class="nav-items">
-      <button v-for="v in views" :key="v.id" type="button" class="nav-item"
-              :aria-current="v.id === view ? 'page' : null" @click="setView(v.id)">
-        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-          <path v-if="v.id === 'stats'" d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>
-          <path v-else-if="v.id === 'chat'" d="M4 5h16v11H9l-5 4z"/>
-          <path v-else d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M16 4v4M10 10v4M18 16v4"/>
-        </svg>
-        <span>{{ v.label }}</span></button>
-    </nav>
-    <div class="nav-foot" v-if="session.auth_required">
-      <span>clé <code title="condensé de la clé connectée">{{ session.client }}</code></span>
-      <button type="button" class="link" @click="logout">Se déconnecter</button>
+    <!-- En haut : le chat et ses conversations (le magasin ChatStore de
+         chat.js), la liste défile ; en bas, fixés : Statistiques,
+         Configuration, la clé connectée. -->
+    <button type="button" class="nav-item" :aria-current="view === 'chat' ? 'page' : null"
+            @click="setView('chat')">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>
+      <span>Chat</span></button>
+    <div class="nav-chats" v-if="session.chat && session.chat.enabled">
+      <button type="button" class="nav-new" :disabled="chatState.streaming" @click="newChat">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span>Nouvelle conversation</span></button>
+      <ul>
+        <li v-for="c in chatList" :key="c.id"
+            :class="{ current: view === 'chat' && c.id === chatState.currentId }">
+          <input v-if="chatState.renaming === c.id" v-model="chatState.renameText" class="rename"
+                 @keydown.enter.prevent="chats.endRename(c)" @keydown.esc="chatState.renaming = null"
+                 @blur="chats.endRename(c)" maxlength="120">
+          <button v-else type="button" class="conv"
+                  :aria-current="view === 'chat' && c.id === chatState.currentId ? 'page' : null"
+                  :disabled="chatState.streaming && c.id !== chatState.currentId"
+                  @click="openChat(c.id)" @dblclick="chats.startRename(c)" :title="c.title">
+            <span class="title">{{ c.title }}</span>
+            <span class="dim">{{ chats.when(c.updated) }} · {{ c.messages.length }} msg</span>
+          </button>
+          <span class="conv-actions" v-if="chatState.renaming !== c.id">
+            <button type="button" class="icon" title="Renommer" @click="chats.startRename(c)">✎</button>
+            <button type="button" class="icon danger" :class="{ armed: chatState.confirming === c.id }"
+                    :title="chatState.confirming === c.id ? 'Cliquer encore pour supprimer' : 'Supprimer'"
+                    :disabled="chatState.streaming && c.id === chatState.currentId"
+                    @click="chats.remove(c.id)">{{ chatState.confirming === c.id ? "Supprimer ?" : "×" }}</button>
+          </span>
+        </li>
+      </ul>
+    </div>
+    <div class="nav-bottom">
+      <button type="button" class="nav-item" :aria-current="view === 'stats' ? 'page' : null"
+              @click="setView('stats')">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+        <span>Statistiques</span></button>
+      <button type="button" class="nav-item" :aria-current="view === 'config' ? 'page' : null"
+              @click="setView('config')">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M16 4v4M10 10v4M18 16v4"/></svg>
+        <span>Configuration</span></button>
+      <div class="nav-foot" v-if="session.auth_required">
+        <span>clé <code title="condensé de la clé connectée">{{ session.client }}</code></span>
+        <button type="button" class="link" @click="logout">Se déconnecter</button>
+      </div>
     </div>
   </aside>
   <div class="scrim" v-if="navOpen" @click="navOpen = false"></div>

@@ -94,6 +94,12 @@ createApp({
     const view = ref(storedView());
     const session = ref(null);       // /ui/session ; null tant qu'inconnu
     const navOpen = ref(false);      // le menu latéral, sur mobile
+    // Les conversations du chat (chat.js), listées dans le menu latéral.
+    const chats = window.ChatStore;
+    const chatState = chats.state;
+    const chatList = chats.sorted;
+    function openChat(id) { chats.select(id); setView("chat"); navOpen.value = false; }
+    function newChat() { chats.newConv(); setView("chat"); navOpen.value = false; }
     const needLogin = ref(false);
     const loginKey = ref("");
     const loginError = ref("");
@@ -582,7 +588,8 @@ createApp({
       document.removeEventListener("visibilitychange", onVisibility);
     });
 
-    return { views, view, setView, navOpen, session, needLogin, loginKey, loginError,
+    return { views, view, setView, navOpen, chats, chatState, chatList, openChat,
+             newChat, session, needLogin, loginKey, loginError,
              loginBusy, login, logout, onUnauthorized,
              windows, current, metrics, metric, metricUnit, metricLabel,
              models, totals, bars, axis, peak, since, now, tools, toolCalls,

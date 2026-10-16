@@ -532,7 +532,8 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   sinon) : avec le cookie `SameSite=Strict`, une page tierce ne peut pas
   la déclencher.
 - **Conversations** : dans le navigateur (`localStorage`), une liste par
-  clé connectée ; rien n'est gardé côté proxy. Chacune garde son modèle,
+  clé connectée ; rien n'est gardé côté proxy. Elles sont listées dans le
+  menu latéral (un magasin partagé, `ChatStore` de `chat.js`). Chacune garde son modèle,
   son prompt système, sa température et ses outils. Renommer, supprimer,
   modifier une question (la suite repart d'elle), régénérer la dernière
   réponse, arrêter un flux en cours. Si le stockage du navigateur
@@ -629,10 +630,12 @@ depuis son cache de préfixe, quand il le remonte (llama.cpp, vLLM) ;
 Claude Code, un second tour qui rejoue les ~20 k tokens du prompt
 système doit approcher 100 %.
 
-Les vues Statistiques / Chat / Configuration sont dans un **menu
-latéral** : une colonne fixe sur grand écran (la clé connectée et *Se
-déconnecter* en bas), un tiroir ouvert par ☰ sur mobile (moins de
-760 px).
+Tout passe par un **menu latéral** — une colonne fixe sur grand écran,
+un tiroir ouvert par ☰ sur mobile (moins de 760 px) : en haut, *Chat*
+et la liste des conversations (*Nouvelle conversation*, renommer,
+supprimer ; elle défile) ; en bas, toujours visibles, *Statistiques*,
+*Configuration*, la clé connectée et *Se déconnecter*. Le chat n'a plus
+de liste à lui : il prend toute la largeur.
 
 **Installable** comme une application (bureau, écran d'accueil) : la page
 porte un manifeste (`/ui/static/manifest.webmanifest`, icônes, couleur de

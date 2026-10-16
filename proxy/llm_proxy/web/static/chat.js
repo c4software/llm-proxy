@@ -39,13 +39,135 @@
   modèle de les lire ; les fichiers texte sont joints au message, entre
   balises <file name="…">. Le reste est refusé.
 */
+// Les CONVERSATIONS : un magasin partagé, lu par le chat (ChatPanel) ET par
+// le menu latéral de la page (dashboard.js), qui en affiche la liste. Dans
+// ce navigateur (localStorage), une liste par clé connectée.
+window.ChatStore = (() => {
+  const { reactive, computed, watch, toRaw } = Vue;
+  const state = reactive({
+    key: "", convs: [], currentId: null,
+    streaming: false,               // une réponse en cours : pas de changement
+    confirming: null,               // id de la conversation à supprimer
+    renaming: null, renameText: "",
+    storageWarning: "",
+  });
+  // Ce qu'une conversation neuve reçoit (modèle, outils) : posé par le chat,
+  // qui connaît le catalogue et la session.
+  let defaults = () => ({ model: "", tools: [] });
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const sorted = computed(() => [...state.convs].sort((a, b) => b.updated - a.updated));
+  const current = computed(() => state.convs.find((c) => c.id === state.currentId) || null);
+
+  // La liste de cette clé. Rien n'est relu si c'est déjà elle.
+  function open(client) {
+    const key = "llm-proxy-chats:" + (client || "open");
+    if (state.key === key) return;
+    state.key = key;
+    let list = [];
+    try {
+      list = JSON.parse(localStorage.getItem(key) || "[]");
+      if (!Array.isArray(list)) list = [];
+    } catch { list = []; }
+    state.convs = list;
+    state.currentId = list[0] ? list[0].id : null;
+  }
+
+  // Enregistrement différé : un flux modifie le message des dizaines de
+  // fois par seconde, le stockage n'a besoin que du dernier état.
+  let saveTimer = null;
+  function persist() {
+    if (!state.key) return;
+    try {
+      localStorage.setItem(state.key, JSON.stringify(toRaw(state.convs)));
+      state.storageWarning = "";
+    } catch {
+      // Plein : on retire les images des AUTRES conversations, puis on
+      // réessaie. Leurs messages restent.
+      let dropped = 0;
+      for (const c of state.convs) {
+        if (c.id === state.currentId) continue;
+        for (const m of c.messages) {
+          for (const a of m.attachments || []) {
+            if (a.kind === "image" && a.data) { a.data = null; dropped++; }
+          }
+        }
+      }
+      try {
+        localStorage.setItem(state.key, JSON.stringify(toRaw(state.convs)));
+        state.storageWarning = dropped
+          ? `Stockage du navigateur plein : ${dropped} image(s) d'anciennes conversations retirée(s).`
+          : "";
+      } catch {
+        state.storageWarning = "Stockage du navigateur plein : cette conversation "
+          + "n'est plus enregistrée. Supprimez-en d'anciennes.";
+      }
+    }
+  }
+  watch(() => state.convs, () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(persist, 400);
+  }, { deep: true });
+
+  function newConv() {
+    if (state.streaming) return;
+    // Une conversation vide est réutilisée plutôt que dupliquée.
+    const empty = state.convs.find((c) => !c.messages.length);
+    if (empty) { state.currentId = empty.id; return; }
+    const base = current.value;
+    const fresh = defaults();
+    const conv = {
+      id: uid(), title: "Nouvelle conversation", created: Date.now(),
+      updated: Date.now(), model: base ? base.model : fresh.model,
+      system: base ? base.system : "", temperature: null,
+      showReasoning: true, tools: base ? [...base.tools] : fresh.tools,
+      messages: [],
+    };
+    state.convs.unshift(conv);
+    state.currentId = conv.id;
+  }
+
+  function select(id) {
+    if (state.streaming && id !== state.currentId) return;
+    state.currentId = id;
+    state.confirming = null;
+  }
+
+  function remove(id) {
+    if (state.confirming !== id) { state.confirming = id; return; }
+    state.convs = state.convs.filter((c) => c.id !== id);
+    state.confirming = null;
+    if (state.currentId === id) {
+      state.currentId = sorted.value[0] ? sorted.value[0].id : null;
+      if (!state.currentId) newConv();
+    }
+  }
+
+  function startRename(c) { state.renaming = c.id; state.renameText = c.title; }
+  function endRename(c) {
+    if (state.renaming !== c.id) return;
+    const t = state.renameText.trim();
+    if (t) c.title = t.slice(0, 120);
+    state.renaming = null;
+  }
+
+  const when = (ts) => {
+    const d = new Date(ts), today = new Date();
+    return d.toDateString() === today.toDateString()
+      ? d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+      : d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+  };
+
+  return { state, sorted, current, open, newConv, select, remove,
+           startRename, endRename, when, uid,
+           setDefaults(fn) { defaults = fn; } };
+})();
+
 window.ChatPanel = {
   props: { session: { type: Object, required: true } },
   emits: ["unauthorized"],
   setup(props, { emit }) {
     const { ref, computed, watch, nextTick, onMounted, onUpdated, toRaw } = Vue;
     const API = "/ui/chat/completions";
-    const STORE = "llm-proxy-chats:" + (props.session.client || "open");
     const LAST_MODEL = "llm-proxy-chat-model";
     const MEMORY_OPEN = "llm-proxy-chat-memory";
     const MAX_TEXT_FILE = 256 * 1024;
@@ -76,9 +198,11 @@ window.ChatPanel = {
     }
 
     // ── état ────────────────────────────────────────────────────────────
-    const convs = ref(load());
-    const currentId = ref(convs.value[0] ? convs.value[0].id : null);
-    const current = computed(() => convs.value.find((c) => c.id === currentId.value) || null);
+    // Les conversations : le magasin partagé avec le menu latéral.
+    const S = window.ChatStore;
+    S.open(props.session.client);
+    const current = S.current;
+    const currentId = computed(() => S.state.currentId);
     const models = ref([]);
     const modelsError = ref("");
     const draft = ref("");
@@ -86,11 +210,7 @@ window.ChatPanel = {
     const streaming = ref(false);
     const status = ref("");
     const settingsOpen = ref(false);
-    const sideOpen = ref(false);      // liste des conversations, sur mobile
-    const confirming = ref(null);     // id de la conversation à supprimer
-    const renaming = ref(null);
-    const renameText = ref("");
-    const storageWarning = ref("");
+    const storageWarning = computed(() => S.state.storageWarning);
     const dragging = ref(false);
     // Panneau mémoire : ouvert ou non (préférence de ce navigateur), et
     // un compteur qui le fait se relire après un appel de l'outil.
@@ -111,103 +231,20 @@ window.ChatPanel = {
     let controller = null;
     let pinned = true;                // le fil suit la fin de la réponse
 
-    function load() {
-      try {
-        const list = JSON.parse(localStorage.getItem(STORE) || "[]");
-        return Array.isArray(list) ? list : [];
-      } catch { return []; }
-    }
-
-    // Enregistrement différé : un flux modifie le message des dizaines de
-    // fois par seconde, le stockage n'a besoin que du dernier état.
-    let saveTimer = null;
-    function save() {
-      clearTimeout(saveTimer);
-      saveTimer = setTimeout(persist, 400);
-    }
-    function persist() {
-      const data = JSON.stringify(toRaw(convs.value));
-      try {
-        localStorage.setItem(STORE, data);
-        storageWarning.value = "";
-      } catch {
-        // Plein : on retire les images des AUTRES conversations, puis on
-        // réessaie. Leurs messages restent.
-        let dropped = 0;
-        for (const c of convs.value) {
-          if (c.id === currentId.value) continue;
-          for (const m of c.messages) {
-            for (const a of m.attachments || []) {
-              if (a.kind === "image" && a.data) { a.data = null; dropped++; }
-            }
-          }
-        }
-        try {
-          localStorage.setItem(STORE, JSON.stringify(toRaw(convs.value)));
-          storageWarning.value = dropped
-            ? `Stockage du navigateur plein : ${dropped} image(s) d'anciennes conversations retirée(s).`
-            : "";
-        } catch {
-          storageWarning.value = "Stockage du navigateur plein : cette conversation "
-            + "n'est plus enregistrée. Supprimez-en d'anciennes.";
-        }
-      }
-    }
-    watch(convs, save, { deep: true });
-
-    // ── conversations ───────────────────────────────────────────────────
-    const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    const sorted = computed(() => [...convs.value].sort((a, b) => b.updated - a.updated));
-
-    function newConv() {
-      // Une conversation vide en tête est réutilisée plutôt que dupliquée.
-      const empty = convs.value.find((c) => !c.messages.length);
-      if (empty) {
-        currentId.value = empty.id;
-      } else {
-        const base = current.value;
-        const conv = {
-          id: uid(), title: "Nouvelle conversation", created: Date.now(),
-          updated: Date.now(), model: base ? base.model : defaultModel(),
-          system: base ? base.system : "", temperature: null,
-          showReasoning: true, tools: base ? [...base.tools] : defaultTools(),
-          messages: [],
-        };
-        convs.value.unshift(conv);
-        currentId.value = conv.id;
-      }
-      sideOpen.value = false;
-      nextTick(() => input.value && input.value.focus());
-    }
-
-    function select(id) {
-      if (streaming.value) return;
-      currentId.value = id;
-      sideOpen.value = false;
-      confirming.value = null;
+    // Une réponse en cours : le menu ne change pas de conversation.
+    watch(streaming, (v) => { S.state.streaming = v; });
+    // Ce qu'une conversation neuve reçoit, et ce que fait le chat quand la
+    // conversation change (le menu la choisit) : suivre la fin du fil, et
+    // la zone de saisie prête pour une conversation neuve.
+    S.setDefaults(() => ({ model: defaultModel(), tools: defaultTools() }));
+    watch(() => S.state.currentId, () => {
       pinned = true;
-    }
-
-    function remove(id) {
-      if (confirming.value !== id) { confirming.value = id; return; }
-      convs.value = convs.value.filter((c) => c.id !== id);
-      confirming.value = null;
-      if (currentId.value === id) {
-        currentId.value = sorted.value[0] ? sorted.value[0].id : null;
-        if (!currentId.value) newConv();
-      }
-    }
-
-    function startRename(c) {
-      renaming.value = c.id;
-      renameText.value = c.title;
-    }
-    function endRename(c) {
-      if (renaming.value !== c.id) return;
-      const t = renameText.value.trim();
-      if (t) c.title = t.slice(0, 120);
-      renaming.value = null;
-    }
+      nextTick(() => {
+        if (thread.value) thread.value.scrollTop = thread.value.scrollHeight;
+        if (current.value && !current.value.messages.length && input.value) input.value.focus();
+      });
+    });
+    const uid = S.uid;
 
     // ── modèles ─────────────────────────────────────────────────────────
     const modelIds = computed(() => models.value.map((m) => m.id));
@@ -585,29 +622,24 @@ window.ChatPanel = {
     const num = (n) => Number(n || 0).toLocaleString("fr-FR");
     const size = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace(".", ",") + " Mo"
       : Math.max(1, Math.round(n / 1e3)) + " Ko";
-    const when = (ts) => {
-      const d = new Date(ts), today = new Date();
-      return d.toDateString() === today.toDateString()
-        ? d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
-        : d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
-    };
+    const when = S.when;
     const host = (url) => { try { return new URL(url).host; } catch { return url; } };
 
     onMounted(async () => {
-      if (!convs.value.length) newConv();
+      if (!S.state.convs.length) S.newConv();
       await loadModels();
-      for (const c of convs.value) if (!c.model) c.model = defaultModel();
+      for (const c of S.state.convs) if (!c.model) c.model = defaultModel();
       nextTick(() => {
         if (thread.value) thread.value.scrollTop = thread.value.scrollHeight;
         autosize();
       });
     });
 
-    return { chat, toolGroups, available, convs, sorted, current, currentId,
+    return { chat, toolGroups, available, current, currentId,
              models, modelsError, blind, draft, pending, streaming, status,
-             settingsOpen, sideOpen, confirming, renaming, renameText,
-             storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend, newConv,
-             select, remove, startRename, endRename, toggleTool, onPick,
+             settingsOpen,
+             storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
+             toggleTool, onPick,
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, argSummary, num, size, when,
              host };
@@ -622,42 +654,11 @@ window.ChatPanel = {
     </div>
   </div>
   <div class="panel chat" v-else
-       :class="{ 'side-open': sideOpen, 'with-memory': memoryOpen && $props.session.memory }">
-    <aside class="chat-side">
-      <div class="chat-side-head">
-        <button type="button" class="btn" @click="newConv">Nouvelle conversation</button>
-      </div>
-      <ul>
-        <li v-for="c in sorted" :key="c.id" :class="{ current: c.id === currentId }">
-          <input v-if="renaming === c.id" v-model="renameText" class="rename"
-                 @keydown.enter.prevent="endRename(c)" @keydown.esc="renaming = null"
-                 @blur="endRename(c)" maxlength="120" autofocus>
-          <button v-else type="button" class="conv" :aria-current="String(c.id === currentId)"
-                  :disabled="streaming && c.id !== currentId" @click="select(c.id)"
-                  @dblclick="startRename(c)">
-            <span class="title">{{ c.title }}</span>
-            <span class="dim">{{ when(c.updated) }} · {{ c.messages.length }} message{{ c.messages.length > 1 ? "s" : "" }}</span>
-          </button>
-          <span class="conv-actions" v-if="renaming !== c.id">
-            <button type="button" class="icon" title="Renommer" @click="startRename(c)">✎</button>
-            <button type="button" class="icon danger" :class="{ armed: confirming === c.id }"
-                    :title="confirming === c.id ? 'Cliquer encore pour supprimer' : 'Supprimer'"
-                    :disabled="streaming && c.id === currentId"
-                    @click="remove(c.id)">{{ confirming === c.id ? "Supprimer ?" : "×" }}</button>
-          </span>
-        </li>
-      </ul>
-      <p class="note">Conversations gardées dans ce navigateur<template
-        v-if="$props.session.client">, pour la clé <code>{{ $props.session.client }}</code></template>.
-        Double-clic pour renommer.</p>
-    </aside>
-
+       :class="{ 'with-memory': memoryOpen && $props.session.memory }">
     <section class="chat-main" v-if="current"
              @dragover.prevent="dragging = true" @dragleave.self="dragging = false"
              @drop.prevent="onDrop">
       <header class="chat-head">
-        <button type="button" class="icon side-toggle" @click="sideOpen = !sideOpen"
-                title="Conversations">☰</button>
         <h2 :title="current.title">{{ current.title }}</h2>
         <label class="model-pick" title="Modèle">
           <select v-model="current.model" :disabled="streaming">
