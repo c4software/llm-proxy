@@ -22,7 +22,8 @@ MODULES = ("numpy", "pandas", "scipy", "sympy", "sklearn", "networkx",
 COMMANDS = ("sh", "bash", "timeout", "touch", "find", "tar", "sleep",
             "cat", "mkdir", "rm",
             "node", "jq", "sqlite3", "bc", "file", "zip", "unzip", "gawk",
-            "gcc", "g++", "make", "go", "rustc", "cargo")
+            "gcc", "g++", "make", "go", "rustc", "cargo",
+            "npm", "php", "composer", "mise", "devbox", "dev-box-dev-env")
 # Un programme par langage compilé : il doit se compiler HORS LIGNE, avec
 # la bibliothèque standard seule, et afficher 42. La commande est celle de
 # l'exécuteur (sandbox.LANGS), écrite ici une seconde fois : ce fichier
@@ -67,6 +68,15 @@ if shutil.which("node"):
                          capture_output=True)
     if out.stdout.strip() != b"42":
         failed.append(f"node sur l'entrée standard: {out.stderr[-200:]!r}")
+
+# `devbox dev-env` : le script de dev-box, sa bibliothèque et ses recettes
+# se chargent (la liste ne télécharge rien).
+if shutil.which("devbox"):
+    out = subprocess.run(["devbox", "dev-env", "--list"], capture_output=True,
+                         env={**os.environ, "HOME": "/tmp", "NO_COLOR": "1"})
+    if out.returncode != 0 or b"java" not in out.stdout:
+        failed.append(f"devbox dev-env --list: code {out.returncode}, "
+                      f"{(out.stderr or out.stdout)[-300:]!r}")
 
 built = []
 for name, (source, build, program) in COMPILED.items():

@@ -1663,11 +1663,19 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
   `docker-compose.override.yml`), 4 h au plus, ou quand il faut de la
   place (8 bacs, 4 par clé) : le modèle est prévenu que le suivant est
   vide.
-- **Langages** (`language`) : `python` (3.13, avec numpy, pandas, scipy,
+- **Le système d'un bac : la base de [dev-box](https://github.com/c4software/dev-box)**
+  — Arch Linux, la même image de départ que son Dockerfile, et seulement
+  ce qui sert à un bac (ni Tailscale, ni sshd, ni podman, ni éditeurs).
+  Rien n'est figé : `archlinux:latest`, et les scripts de dev-box tirés
+  de son dépôt à chaque construction (contexte `devbox` du compose,
+  `additional_contexts`). Mettre à jour : `docker compose build --pull
+  executor`, puis rejouer la validation.
+- **Langages** (`language`) : `python` (celui d'Arch — 3.14 en
+  octobre 2026 —, avec numpy, pandas, scipy,
   sympy, scikit-learn, networkx, matplotlib, seaborn, pillow, openpyxl,
-  python-docx, pypdf, reportlab), `bash` (les outils Unix, jq, sqlite3),
-  `javascript` (Node.js), et les compilés `c`, `cpp` (gcc, g++), `go`,
-  `rust`. Un langage compilé a sa propre valeur plutôt que de passer par
+  python-docx, pypdf, reportlab), `bash` (les outils Unix, jq, sqlite3,
+  PHP et composer), `javascript` (Node.js), et les compilés `c`, `cpp`
+  (gcc, g++), `go`, `rust`. Un langage compilé a sa propre valeur plutôt que de passer par
   `bash` : le modèle donne **un fichier source**, l'exécuteur le compile
   sous `/tmp` puis l'exécute, le tout dans le délai de l'appel — ni le
   source ni le binaire ne sont pris pour des fichiers produits. `bash`
@@ -1782,13 +1790,27 @@ dépendances — et **rien d'autre** : le bac reste sans réseau.
   port 443 seulement (ni HTTP en clair, ni autre port), vers un hôte de la
   liste — par défaut `pypi.org`, `files.pythonhosted.org`,
   `registry.npmjs.org`, `index.crates.io`, `static.crates.io`,
-  `crates.io`, `proxy.golang.org`, `sum.golang.org`
-  (`SANDBOX_EGRESS_HOSTS` pour la changer, `*.domaine` pour des
-  sous-domaines) ; le nom est résolu par l'exécuteur et toutes ses
+  `crates.io`, `proxy.golang.org`, `sum.golang.org`, Packagist, et les
+  sources de `devbox dev-env` ci-dessous (`SANDBOX_EGRESS_HOSTS` pour la
+  changer, `*.domaine` pour des sous-domaines) ; le nom est résolu par l'exécuteur et toutes ses
   adresses doivent être publiques. Bornes par bac : 500 Mo dans les deux
   sens (`SANDBOX_EGRESS_MAX_BYTES`), 16 connexions simultanées, 60 s
   d'inactivité. Chaque refus est journalisé, et le bilan de chaque bac
   (tunnels, refus, octets, hôtes) à sa destruction.
+- **`devbox dev-env <nom>`** : les recettes de LANGAGE de dev-box
+  (java, go, rust, python, node, ruby, dotnet, deno, bun, zig, scala,
+  clojure, php), par mise, dans un tmpfs `/opt/devbox` du bac
+  (`SANDBOX_DEVBOX_SIZE`, 2 Go), shims dans le `PATH`. Écartées : ce qui
+  ne sert pas sans écran ni matériel (android, ios, desktop, gpu,
+  browser, media, network, flutter), ce qui passe par pacman (swift,
+  db-clients), les cadriciels (laravel, symfony, phoenix, ansible) et
+  elixir (Erlang se compile). `devbox` dans un bac ne connaît que
+  `dev-env`. Les sources de mise s'ajoutent à la liste du relais —
+  ses listes de versions, **GitHub** (releases), nodejs.org,
+  static.rust-lang.org, dl.google.com, Adoptium, Deno, Zig, .NET, Ruby,
+  Clojure, Maven : GitHub sert n'importe quoi, c'est le prix de ces
+  installations. Une installation dure jusqu'à une minute : monter
+  `SANDBOX_TIMEOUT` et `[tools.code_execution].timeout` ensemble.
 - **Où vont les paquets** : sous `/tmp` (pip pour l'utilisateur,
   `npm -g` avec `NODE_PATH`, caches cargo et Go), jamais dans `/work` —
   un paquet n'est pas un fichier produit. Ils restent pour la

@@ -133,6 +133,9 @@ def test_un_bac_avec_sortie_recoit_la_prise_et_le_proxy(tmp_path, monkeypatch):
     assert out.exit_code == 0 and opened and not left
     for wanted in ("--network none", "--env HTTPS_PROXY=http://127.0.0.1:3128",
                    "--env PIP_USER=1", "--env GOPROXY=https://proxy.golang.org",
+                   "--tmpfs /opt/devbox:rw,exec,size=2g,mode=1777",
+                   "--env MISE_DATA_DIR=/opt/devbox/mise",
+                   "--env PIP_BREAK_SYSTEM_PACKAGES=1",
                    f"--volume {relay.path(args[args.index('--name') + 1])}:/run/egress.sock"):
         assert wanted in line, wanted
     assert "GOPROXY=off" not in line and "CARGO_NET_OFFLINE" not in line

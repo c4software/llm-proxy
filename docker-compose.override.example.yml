@@ -48,7 +48,13 @@ services:
   # et n'activer l'outil que sur un verdict « activable » (README,
   # « Exécution de code »).
   executor:
-    build: ./services/executor
+    build:
+      context: ./services/executor
+      # Les scripts de dev-box (`devbox dev-env`, ses recettes) : tirés de
+      # son dépôt à CHAQUE construction, sans version figée. Un fork ou une
+      # branche : changer l'URL (…/dev-box.git#ma-branche).
+      additional_contexts:
+        devbox: https://github.com/c4software/dev-box.git#main
     restart: unless-stopped
     # PAS de `ports:`, PAS de `volumes:` — volontaire. Ni secret, ni
     # dossier du proxy, ni socket Docker : ce conteneur ne voit rien de
@@ -104,7 +110,13 @@ services:
       # Les paquets s'installent dans /tmp, un tmpfs compté dans la mémoire
       # du bac : agrandir les deux ensemble.
       # SANDBOX_TMP_SIZE: 768m
-      # SANDBOX_MEMORY: 1536m
+      # Ce que `devbox dev-env` installe (mise : un JDK, une toolchain) va
+      # dans un tmpfs /opt/devbox du bac, compté lui aussi dans sa mémoire.
+      # Une installation dure jusqu'à une minute : monter le délai d'un
+      # programme ici ET dans [tools.code_execution].timeout.
+      # SANDBOX_DEVBOX_SIZE: 2g
+      # SANDBOX_MEMORY: 3g
+      # SANDBOX_TIMEOUT: "300"
     security_opt:
       # La recette de dev-box (compose.override.example.yaml), trouvée par
       # essais ; sans --privileged ni CAP_SYS_ADMIN. Le prix : l'isolation

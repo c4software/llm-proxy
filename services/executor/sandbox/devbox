@@ -1,0 +1,14 @@
+#!/bin/sh
+# `devbox` dans un bac à sable : la seule commande de dev-box qui y a un
+# sens, `devbox dev-env` (installer un environnement de langage par mise,
+# par la sortie vers les dépôts). Le reste de dev-box (Tailscale, agents,
+# bases de données, paquets pacman…) n'est pas dans le bac.
+case "${1:-}" in
+  dev-env) shift; exec dev-box-dev-env "$@" ;;
+  ""|help|-h|--help)
+    echo "devbox dev-env <nom>...   installe un environnement (devbox dev-env --list)"
+    exit 0 ;;
+  *)
+    echo "devbox $1 : indisponible dans le bac à sable — seul « devbox dev-env » l'est." >&2
+    exit 2 ;;
+esac

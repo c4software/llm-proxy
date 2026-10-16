@@ -147,6 +147,9 @@ class Limits:
     egress: bool = False
     egress_hosts: str = ""          # vide : egress.DEFAULT_HOSTS
     egress_max_bytes: int = 500_000_000     # par bac, dans les deux sens
+    # tmpfs /opt/devbox d'un bac à sortie ouverte : ce que `devbox dev-env`
+    # (mise) y installe — un JDK, une toolchain. Compté dans sa mémoire.
+    devbox_size: str = "2g"
 
     @classmethod
     def from_env(cls, env=os.environ) -> "Limits":
@@ -451,7 +454,19 @@ class Sandboxes:
             "PATH": "/tmp/.local/bin:/tmp/.npm-global/bin:/tmp/.cargo/bin:"
                     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         }
+        env.update({
+            # Le Python du bac est celui d'Arch, « géré par le système »
+            # (PEP 668) : pip pour l'utilisateur, sous /tmp, quand même.
+            "PIP_BREAK_SYSTEM_PACKAGES": "1",
+            # mise (`devbox dev-env`) : ce qu'il installe dans /opt/devbox,
+            # sa configuration globale sous HOME, sans question.
+            "MISE_DATA_DIR": "/opt/devbox/mise", "MISE_CACHE_DIR": "/opt/devbox/cache",
+            "MISE_STATE_DIR": "/opt/devbox/state", "MISE_YES": "1",
+            "MISE_COLOR": "0",
+        })
+        env["PATH"] = "/opt/devbox/mise/shims:" + env["PATH"]
         return ("--volume", f"{sock}:/run/egress.sock",
+                "--tmpfs", f"/opt/devbox:rw,exec,size={self.limits.devbox_size},mode=1777",
                 *(arg for k, v in env.items() for arg in ("--env", f"{k}={v}")))
 
     async def _alive(self, name: str) -> bool:

@@ -419,9 +419,15 @@ class CodeExecution(Tool):
                "and Go modules from a project in bash, under /tmp. Any other "
                "network access fails (requests, urllib, curl and wget to "
                "a website, an API, a download): only package registries "
-               "(PyPI, npm, crates.io, Go modules) answer. Install in a "
-               "separate call before the program that uses the package, "
-               "and only what you need. ")
+               "(PyPI, npm, crates.io, Go modules, Packagist) and the "
+               "sources of language toolchains answer. PHP and composer "
+               "are there too. Another language or a newer version: "
+               "`devbox dev-env <name>` in bash installs it for the "
+               "conversation (java, go, rust, python, node, ruby, dotnet, "
+               "deno, bun, zig, scala, clojure, php; `devbox dev-env "
+               "--list`), then use it in the next calls, from bash. Install "
+               "in a separate call before the program that uses it, and "
+               "only what you need: an install can take a minute. ")
             + ((
                 # Dit en ordre, pas en possibilité : joué le 07/10/2026,
                 # un modèle à qui l'on disait seulement « list it in

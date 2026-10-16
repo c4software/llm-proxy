@@ -1,63 +1,102 @@
 # syntax=docker/dockerfile:1
 #
 # L'image de l'EXÉCUTEUR de code. Deux étapes :
-#   1. `sandbox` : le système de fichiers d'un BAC (Python et ses
-#      bibliothèques, shell, Node.js, compilateurs C/C++, Go et Rust) ;
+#   1. `sandbox` : le système de fichiers d'un BAC, sur la base de dev-box
+#      (Arch) : Python et ses bibliothèques, shell, Node.js, PHP,
+#      compilateurs C/C++, Go et Rust, et `devbox dev-env` ;
 #   2. l'exécuteur : podman sans root + le serveur, et le système de
 #      fichiers de l'étape 1 DÉPLIÉ dans /opt/sandbox/rootfs.
 #
-# QUAND ET COMMENT L'IMAGE D'UN BAC ARRIVE : ici, à `docker compose build`
-# — le seul moment où il y a du réseau. En service l'exécuteur n'a aucune
-# sortie : il ne tire rien, ne charge rien. Un bac démarre par `podman run
+# QUAND ET COMMENT L'IMAGE D'UN BAC ARRIVE : ici, à `docker compose build`.
+# En service l'exécuteur ne tire ni ne charge aucune image (sa seule
+# sortie, s'il en a une, est le relais des dépôts de paquets des bacs). Un bac démarre par `podman run
 # --rootfs /opt/sandbox/rootfs`, en lecture seule, partagé par tous les
 # bacs ; il n'y a pas d'image dans le magasin de podman, donc ni pull, ni
 # `podman load` au démarrage, ni volume à garder.
 # Mettre à jour un bac (une bibliothèque de plus) = reconstruire cette image.
 #
-# Base : python:3.13-slim-trixie, pour les deux étapes.
+# Bases : Arch (celle de dev-box) pour le BAC ; python:3.13-slim-trixie
+# pour l'EXÉCUTEUR —
 #   * la même que le proxy (proxy/Dockerfile) : une seule base à
 #     suivre, et ses couches sont déjà sur la machine ;
 #   * Debian 13 a podman 5.4, crun, uidmap et catatonit en paquets : la
 #     recette de dev-box (podman sans root dans un conteneur Docker, sans
-#     --privileged) s'y transpose paquet pour paquet. Arch, la base de
-#     dev-box, n'est pas reprise : image glissante, et ses binaires
-#     newuidmap perdent leurs capacités de fichier dans l'image (dev-box
-#     les repose par setcap). Ceux de Debian sont setuid, et NE MARCHENT
-#     PAS ici : setcap les remplace aussi, plus bas.
+#     --privileged) s'y transpose paquet pour paquet. Arch n'y est pas
+#     reprise : ses binaires newuidmap perdent leurs capacités de fichier
+#     dans l'image (dev-box les repose par setcap). Ceux de Debian sont
+#     setuid, et NE MARCHENT PAS ici : setcap les remplace aussi, plus
+#     bas. Un bac, lui, n'a besoin d'aucun binaire privilégié.
 
 # ── 1. Le système de fichiers d'un bac ──────────────────────────────────
-FROM python:3.13-slim-trixie AS sandbox
+# La BASE de dev-box (github.com/c4software/dev-box) : Arch Linux, la même
+# image de départ que son Dockerfile, et SEULEMENT ce qui sert à un bac —
+# ni Tailscale, ni sshd, ni podman, ni éditeurs, ni shell interactif.
+# Rien n'est figé : `latest` d'Arch, et les scripts de dev-box tels qu'ils
+# sont sur leur branche au moment du build (contexte `devbox`, plus bas).
+# Mettre à jour un bac = reconstruire (`docker compose build --pull
+# executor`), puis rejouer `python -m executor.validate`.
 
-ENV PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+# Les scripts de dev-box : le contexte NOMMÉ `devbox`, que le compose pose
+# sur le dépôt (additional_contexts, docker-compose.override.example.yml)
+# — un fork, une branche s'y choisissent. Sans lui, ce stage le tire
+# lui-même de la branche principale.
+FROM scratch AS devbox
+ADD https://github.com/c4software/dev-box.git#main /
 
-# Les autres langages, et pourquoi ceux-là :
-#   * bash, sh et les outils GNU sont dans la base ; `timeout`, `find` et
-#     `tar` servent aussi à l'exécuteur (sandbox.py) ;
-#   * nodejs (Debian : 20 LTS) : le second langage que les modèles
-#     écrivent le plus, sans rien à compiler ; ~150 Mo. Et npm (un paquet
-#     à part chez Debian), pour `npm install -g` quand la sortie vers les
-#     dépôts est ouverte (SANDBOX_EGRESS) ;
-#   * jq, sqlite3, bc, file, zip/unzip, gawk : ce qu'un script shell
-#     appelle sans y penser ; quelques Mo ;
-#   * des COMPILATEURS (décision du 07/10/2026) : gcc et g++ avec la libc
-#     de développement et make, Go (golang-go) et Rust (rustc, cargo),
-#     ceux de Debian 13. Lourds — l'image entière, bac compris, pèse
-#     2,09 Go — et bornés à leur BIBLIOTHÈQUE STANDARD : le bac n'a pas de
-#     réseau, donc ni module Go, ni crate, ni paquet à chercher. cargo et
-#     `go build` marchent hors ligne pour un projet sans dépendance.
-# Ni Java, ni curl, ni git, ni pip utile : pas de réseau.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      nodejs npm jq sqlite3 bc file zip unzip gawk \
-      gcc g++ libc6-dev make golang-go rustc cargo \
- && rm -rf /var/lib/apt/lists/*
+FROM ghcr.io/archlinux/archlinux:latest AS base-amd64
+FROM menci/archlinuxarm:base AS base-arm64
+ARG TARGETARCH
+FROM base-${TARGETARCH} AS sandbox
+
+ENV LANG=C.UTF-8
+
+# Ce qu'un bac promet au modèle, en paquets Arch :
+#   * python et pip (les bibliothèques, plus bas) ; nodejs et npm ;
+#   * des COMPILATEURS (décision du 07/10/2026) : gcc, g++ et make, go,
+#     rust (rustc, cargo) — hors ligne, leur bibliothèque standard ;
+#   * php et composer (le seul environnement que dev-box tient en paquets
+#     plutôt que par mise : `devbox dev-env php` ne fait que vérifier) ;
+#   * jq, sqlite, bc, file, zip/unzip, gawk : ce qu'un script shell appelle
+#     sans y penser ; `timeout`, `find` et `tar` (GNU) servent aussi à
+#     l'exécuteur (sandbox.py) ;
+#   * mise, et ce dont ses installations ont besoin (git, curl, xz) : les
+#     recettes `devbox dev-env` (Java, Go, Rust, Ruby, .NET, Zig…), quand
+#     la sortie vers les dépôts est ouverte (SANDBOX_EGRESS).
+RUN pacman -Syu --noconfirm --needed --disable-sandbox \
+      python python-pip nodejs npm \
+      gcc make go rust \
+      php composer php-sqlite \
+      jq sqlite bc file zip unzip gawk which \
+      mise git curl xz \
+ && pacman -Scc --noconfirm --disable-sandbox \
+ && rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/*
 
 COPY sandbox/requirements.txt /tmp/requirements.txt
+# Le Python d'Arch est « géré par le système » (PEP 668) : les
+# bibliothèques du bac vont dans son site-packages, à la construction.
 # pip compile le bytecode à l'installation : il le faut, la racine d'un
 # bac est en lecture seule (sans .pyc, chaque exécution recompilerait
 # pandas).
-RUN pip install -r /tmp/requirements.txt && rm /tmp/requirements.txt
+RUN pip install --no-cache-dir --break-system-packages --prefer-binary \
+      -r /tmp/requirements.txt && rm /tmp/requirements.txt
+
+# `devbox dev-env` : le script de dev-box, sa bibliothèque, et ses recettes
+# de LANGAGE. Écartées : celles qui ne servent pas sans écran ni matériel
+# (android, ios, desktop, gpu, browser, media, network, flutter), celles
+# qui passent par `dev-box-pkg` (pacman, absent d'un bac : swift,
+# db-clients), les cadriciels qui tirent d'autres dépôts (laravel,
+# symfony, phoenix, ansible), et elixir (Erlang se compile : trop long).
+COPY --from=devbox rootfs/usr/local/bin/dev-box-dev-env /usr/local/bin/
+COPY --from=devbox rootfs/usr/share/devbox/lib/dev-env.sh /usr/share/devbox/lib/
+COPY --from=devbox rootfs/usr/share/devbox/dev-envs/ /usr/share/devbox/dev-envs/
+RUN cd /usr/share/devbox/dev-envs \
+ && rm -f android.sh android-sdk.sh ios.sh desktop.sh gpu.sh browser.sh \
+          media.sh network.sh flutter.sh swift.sh db-clients.sh laravel.sh \
+          symfony.sh phoenix.sh ansible.sh elixir.sh
+# `devbox` dans un bac : `dev-env` seulement.
+COPY sandbox/devbox /usr/local/bin/devbox
+RUN chmod 755 /usr/local/bin/devbox /usr/local/bin/dev-box-dev-env \
+ && mkdir -p /opt/devbox
 
 # Aucun binaire setuid/setgid : un bac tourne sans capacité et sous
 # no-new-privileges, ils n'y serviraient à rien — autant qu'ils n'y

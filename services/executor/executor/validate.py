@@ -226,6 +226,16 @@ async def main() -> int:
             verdict("6ter. sortie ouverte : un site ordinaire est refusé",
                     "SITE OUVERT" not in out.output and "403" in out.output, out,
                     out.output.strip()[:300])
+            # `devbox dev-env` : un environnement léger, par mise, dans le
+            # tmpfs /opt/devbox du bac ; il sert dans l'appel suivant.
+            out = await run("clientA", "pkg", "bash",
+                            "devbox dev-env zig >/tmp/devenv.log 2>&1; "
+                            "echo code=$?; tail -3 /tmp/devenv.log", t=180)
+            out2 = await run("clientA", "pkg", "bash", "zig version", t=30)
+            verdict("6quater. devbox dev-env zig : installé par mise, puis lancé",
+                    "code=0" in out.output and out2.exit_code == 0, out2,
+                    (out.output + " | " + out2.output).strip()
+                    .replace("\n", " ; ")[:400])
 
         if not a.light:
             out = await run("clientA", "conv1", "python", (

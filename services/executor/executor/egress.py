@@ -38,13 +38,33 @@ import socket
 log = logging.getLogger("executor")
 
 # Les dépôts de paquets des langages du bac : Python (pip), Node.js (npm),
-# Rust (cargo, index « sparse »), Go (proxy de modules et base de sommes).
-DEFAULT_HOSTS = (
+# Rust (cargo, index « sparse »), Go (proxy de modules et base de sommes),
+# PHP (composer).
+PACKAGE_HOSTS = (
     "pypi.org", "files.pythonhosted.org",
     "registry.npmjs.org",
     "index.crates.io", "static.crates.io", "crates.io",
     "proxy.golang.org", "sum.golang.org",
+    "repo.packagist.org", "packagist.org",
 )
+# Les sources des outils que `devbox dev-env` installe par mise : ses
+# listes de versions, les publications GitHub (Python, Bun, Zig, Scala…),
+# et les sites des langages (Node.js, Rust, Go, Java, Deno, .NET, Ruby,
+# Clojure, Maven). GitHub y est : on y héberge n'importe quoi — c'est le
+# prix de ces installations, la liste reste réglable (SANDBOX_EGRESS_HOSTS).
+DEVBOX_HOSTS = (
+    "mise-versions.jdx.dev", "mise.jdx.dev", "mise-java.jdx.dev",
+    "github.com", "api.github.com", "codeload.github.com",
+    "objects.githubusercontent.com", "release-assets.githubusercontent.com",
+    "raw.githubusercontent.com",
+    "nodejs.org", "static.rust-lang.org", "dl.google.com", "go.dev",
+    "api.adoptium.net", "download.java.net",
+    "dl.deno.land", "ziglang.org",
+    "builds.dotnet.microsoft.com", "dotnetcli.azureedge.net",
+    "cache.ruby-lang.org", "rubygems.org", "index.rubygems.org",
+    "download.clojure.org", "repo1.maven.org", "repo.clojars.org",
+)
+DEFAULT_HOSTS = PACKAGE_HOSTS + DEVBOX_HOSTS
 PORT = 443
 HEAD_MAX = 8192                     # la requête CONNECT et ses en-têtes
 
