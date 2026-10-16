@@ -16,7 +16,7 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>llm-proxy</title>
 <link rel="stylesheet" href="/ui/static/dashboard.css">
@@ -30,9 +30,17 @@
   <header>
     <div class="topbar">
       <div class="brand"><span class="dot"></span> llm-proxy</div>
+      <!-- Les vues : une pastille en tête sur grand écran ; sur mobile, une
+           barre d'onglets fixée en bas, icône et libellé (dashboard.css). -->
       <nav class="range views" v-if="session" aria-label="Vue">
         <button v-for="v in views" :key="v.id" type="button"
-                :aria-pressed="String(v.id === view)" @click="setView(v.id)">{{ v.label }}</button>
+                :aria-pressed="String(v.id === view)" @click="setView(v.id)">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+            <path v-if="v.id === 'stats'" d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>
+            <path v-else-if="v.id === 'chat'" d="M4 5h16v11H9l-5 4z"/>
+            <path v-else d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M16 4v4M10 10v4M18 16v4"/>
+          </svg>
+          <span>{{ v.label }}</span></button>
       </nav>
       <div class="who" v-if="session && session.auth_required">
         clé <code :title="'condensé de la clé connectée'">{{ session.client }}</code>

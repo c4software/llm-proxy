@@ -629,6 +629,10 @@ depuis son cache de préfixe, quand il le remonte (llama.cpp, vLLM) ;
 Claude Code, un second tour qui rejoue les ~20 k tokens du prompt
 système doit approcher 100 %.
 
+Sur mobile (moins de 760 px), les vues Statistiques / Chat /
+Configuration passent dans une barre d'onglets fixée en bas de l'écran,
+icône et libellé, comme une application.
+
 Pour brancher un client (Claude Code, Codex, pi / omp, SDK, le serveur
 MCP…), le pied de page renvoie à l'onglet
 [Configuration](#longlet-configuration), qui produit sa configuration.
