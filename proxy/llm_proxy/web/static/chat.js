@@ -615,31 +615,34 @@ window.ChatPanel = {
     // La dernière ligne non vide d'un raisonnement, sans les marques de
     // Markdown, et son rang (la clé de l'animation : elle ne se rejoue qu'à
     // une NOUVELLE ligne, pas à chaque mot).
-    // L'aperçu d'un raisonnement plié : une PHRASE entière à la fois, jamais
-    // un texte en train de s'écrire (il défilerait, illisible). Pendant le
-    // flux, la dernière phrase COMPLÈTE, remplacée au plus toutes les
-    // REASON_PACE ms — à son rythme, pas à celui du modèle : les phrases
-    // écrites entre deux sont sautées. Le flux fini, la dernière phrase,
-    // même inachevée. `n` change à chaque remplacement : la transition.
+    // L'aperçu d'un raisonnement plié : UNE ligne lisible, remplacée au plus
+    // toutes les REASON_PACE ms (à son rythme, pas à celui du modèle).
+    // `n` change à chaque remplacement : c'est la clé de la transition.
     const REASON_PACE = 1800;
+    const REASON_TAIL = 70;          // au-delà, une phrase en cours montre sa fin
     const shown = reactive({});      // id du message → { text, n }
-    function phrases(text) {
-      const clean = String(text || "").replace(/[*_`]/g, "")
+    function cleanMd(text) {
+      return String(text || "").replace(/[*_`]/g, "")
         .replace(/^\s*(#+|[-*>]|\d+[.)])\s+/gm, "");
-      const parts = clean.split(/(?<=[.!?:;…])\s+|\n+/).map((p) => p.trim()).filter(Boolean);
-      const done = /[.!?:;…]\s*$|\n\s*$/.test(clean);
-      return { parts, complete: done ? parts : parts.slice(0, -1) };
+    }
+    // La ligne à montrer : la dernière phrase finie ; si la phrase en cours
+    // est courte, la précédente (finie) ; si elle est longue, ses derniers
+    // mots, précédés de « … ». Même règle pour une ligne courte ou longue.
+    function candidate(text) {
+      const t = cleanMd(text);
+      const parts = t.split(/(?<=[.!?:;…])\s+|\n+/).map((p) => p.trim()).filter(Boolean);
+      if (!parts.length) return "";
+      const last = parts[parts.length - 1];
+      if (/[.!?:;…]\s*$|\n\s*$/.test(t)) return last;
+      if (last.length <= REASON_TAIL) return parts[parts.length - 2] || last;
+      // Le dernier mot, encore en train de s'écrire, est retiré.
+      const cut = last.slice(-REASON_TAIL).replace(/\s+\S*$/, "");
+      return "… " + cut.slice(cut.indexOf(" ") + 1);
     }
     function preview(m, i) {
       const live = streaming.value && i === current.value.messages.length - 1 && !m.content;
-      const { parts, complete } = phrases(m.reasoning);
-      if (!live) return { text: parts[parts.length - 1] || "", n: "fin" };
-      const s = shown[m.id];
-      // Avant le premier pas : la PREMIÈRE phrase (elle grandit vers la
-      // droite tant qu'elle s'écrit), jamais la dernière — elle changerait
-      // au rythme du modèle.
-      if (!s) return { text: parts[0] || "", n: 0 };
-      return s;
+      if (!live) return { text: candidate(m.reasoning), n: "fin" };
+      return shown[m.id] || { text: "", n: 0 };
     }
     // Le pas de l'aperçu, tant qu'une réponse réfléchit.
     let pace = null;
@@ -650,25 +653,9 @@ window.ChatPanel = {
         const msgs = current.value ? current.value.messages : [];
         const m = msgs[msgs.length - 1];
         if (!m || m.role !== "assistant" || m.content || !m.reasoning) return;
-        const { parts, complete } = phrases(m.reasoning);
-        const next = complete[complete.length - 1];
+        const text = candidate(m.reasoning);
         const s = shown[m.id];
-        const size = (m.reasoning || "").length;
-        if (next && (!s || (s.text !== next && s.phrase !== next))) {
-          shown[m.id] = { text: next, phrase: next, n: (s ? s.n : 0) + 1, size };
-          return;
-        }
-        // Une longue phrase qui s'écrit encore : sans relais, l'aperçu
-        // resterait figé sur son début. Ses derniers mots, dès qu'elle a
-        // bien avancé depuis le dernier remplacement.
-        const writing = parts.length > complete.length ? parts[parts.length - 1] : "";
-        if (writing.length > 60 && size - (s ? s.size : 0) > 60) {
-          const words = writing.split(/\s+/);
-          let tail = "";
-          while (words.length && (tail.length < 70)) tail = words.pop() + (tail ? " " + tail : "");
-          shown[m.id] = { text: "… " + tail, phrase: s ? s.phrase : "",
-                          n: (s ? s.n : 0) + 1, size };
-        }
+        if (text && (!s || s.text !== text)) shown[m.id] = { text, n: (s ? s.n : 0) + 1 };
       }, REASON_PACE);
     });
     onUnmounted(() => clearInterval(pace));
@@ -800,17 +787,15 @@ window.ChatPanel = {
             </div>
           </template>
           <template v-else>
-            <!-- Plié de base, même pendant le flux : plié, sa DERNIÈRE ligne,
-                 qui glisse en place à chaque nouvelle ligne (clé = rang de
-                 la ligne), et miroite tant que le modèle réfléchit. -->
+            <!-- Plié de base : une ligne d'aperçu, remplacée à son rythme
+                 (clé = n), et le CONTENEUR miroite tant que le modèle
+                 réfléchit (jamais le span coupé par « … », qui transite). -->
             <details class="reasoning" v-if="m.reasoning && current.showReasoning">
               <summary>
                 <span class="r-label">Raisonnement</span>
                 <span class="r-last"
                       :class="{ live: streaming && i === current.messages.length - 1 && !m.content }">
-                  <!-- Durée FIXE : le reflet est une animation infinie sur le
-                       même élément, Vue attendrait sa fin pour toujours. -->
-                  <transition name="r-swap" mode="out-in" type="transition" :duration="280">
+                  <transition name="r-swap" mode="out-in">
                     <span :key="preview(m, i).n">{{ preview(m, i).text }}</span>
                   </transition></span>
               </summary>

@@ -623,26 +623,28 @@ button.icon:disabled { opacity: .4; cursor: default; }
 /* Plié : la dernière ligne du raisonnement, sur une ligne. Elle glisse en
    place à chaque NOUVELLE ligne (la clé change), et un reflet la parcourt
    tant que le modèle réfléchit. Déplié : le texte entier, sans elle. */
+/* Plié : une ligne d'aperçu. Le reflet est sur le CONTENEUR (largeur fixe,
+   jamais coupé, jamais transité) ; le span enfant ne fait que la coupure
+   « … » et le remplacement. Ne jamais cumuler masque + ellipsis +
+   transition sur un même élément (bugs Chrome). */
 .reasoning .r-last {
   flex: 1; min-width: 0; overflow: hidden;
   font-size: 13px; font-style: italic; line-height: 20px;
 }
-/* Une phrase entière, sur UNE ligne : « … » si elle dépasse. */
 .reasoning .r-last > span {
   display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .reasoning[open] .r-last { display: none; }
-/* Le remplacement : l'ancienne phrase monte et s'efface, la nouvelle
+/* Le remplacement : l'ancienne ligne monte et s'efface, la nouvelle
    arrive d'en dessous. */
 .r-swap-enter-active, .r-swap-leave-active {
   transition: opacity .28s ease, transform .28s cubic-bezier(.22, .61, .36, 1);
 }
 .r-swap-enter-from { opacity: 0; transform: translateY(6px); }
 .r-swap-leave-to { opacity: 0; transform: translateY(-6px); }
-/* Le reflet, par un MASQUE qui parcourt le texte (sa couleur reste la
-   sienne) : un dégradé en `background-clip: text`, combiné à la coupure
-   « … », rend sous Chrome une longue ligne invisible. */
-.reasoning .r-last.live > span {
+/* Le reflet, tant que le modèle réfléchit : un masque qui parcourt le
+   conteneur. */
+.reasoning .r-last.live {
   color: var(--ink);
   -webkit-mask-image: linear-gradient(90deg, rgb(0 0 0 / .5) 0%, rgb(0 0 0 / .5) 38%,
                       #000 50%, rgb(0 0 0 / .5) 62%, rgb(0 0 0 / .5) 100%);
@@ -656,7 +658,7 @@ button.icon:disabled { opacity: .4; cursor: default; }
   to { -webkit-mask-position: -150% 0; mask-position: -150% 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .reasoning .r-last.live > span { animation: none; }
+  .reasoning .r-last.live { animation: none; }
   .r-swap-enter-active, .r-swap-leave-active { transition: none; }
 }
 .reasoning summary::before, .tool summary::before {
