@@ -2715,7 +2715,10 @@ cumulables :
   l'upstream) ; `x-api-key` ne l'est jamais. Le tableau de bord `/ui` est
   soumis à la même clé : un navigateur ne pouvant pas poser d'en-tête,
   la page la demande à l'entrée (ou `?key=<clé>`), la vérifie et la
-  mémorise dans un cookie `HttpOnly` (`SameSite=Strict`). Ce cookie ne
+  mémorise dans un cookie `HttpOnly` (`SameSite=Strict`, et `Secure`
+  quand le navigateur parle HTTPS — directement, ou derrière un reverse
+  proxy qui le dit par `X-Forwarded-Proto: https`, comme Nginx Proxy
+  Manager). Ce cookie ne
   vaut que sous `/ui` ; il ne dépense des tokens que par le chat, et
   seulement si `[ui] chat = true`. Les routes `/ui` qui écrivent ou
   dépensent exigent un corps JSON.

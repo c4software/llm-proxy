@@ -1817,10 +1817,23 @@ async def ui_page(request: Request):
     return response
 
 
+def browser_https(request: Request) -> bool:
+    """Le navigateur parle-t-il HTTPS ? Directement, ou derrière un reverse
+    proxy qui termine le TLS (Nginx Proxy Manager) et le dit par
+    `X-Forwarded-Proto` — uvicorn ne le croit que de 127.0.0.1, et NPM est
+    un autre conteneur. L'en-tête ne sert QU'À cela : poser `Secure` sur le
+    cookie de /ui. Un client qui le falsifie ne peut que rendre son propre
+    cookie plus strict ; ni l'adresse du client ni le schéma de la requête
+    n'en dépendent."""
+    proto = request.headers.get("x-forwarded-proto", "")
+    return request.url.scheme == "https" \
+        or proto.split(",")[0].strip().lower() == "https"
+
+
 def set_ui_cookie(response: Response, request: Request, key: str) -> None:
     response.set_cookie(
         UI_COOKIE, key, httponly=True, samesite="strict",
-        secure=request.url.scheme == "https", max_age=30 * 86400,
+        secure=browser_https(request), max_age=30 * 86400,
     )
 
 
@@ -1862,7 +1875,7 @@ async def ui_logout(request: Request):
         return bad
     response = JSONResponse({"ok": True})
     response.delete_cookie(UI_COOKIE, httponly=True, samesite="strict",
-                           secure=request.url.scheme == "https")
+                           secure=browser_https(request))
     return response
 
 

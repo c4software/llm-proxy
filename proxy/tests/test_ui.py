@@ -161,3 +161,13 @@ def test_dashboard_reads_only_the_connected_key(ui, monkeypatch):
     ui.client.get("/v1/organization/usage/completions?start_time=0"
                   "&api_key_ids=a,b", headers={"Authorization": f"Bearer {KEY}"})
     assert seen == [[tools.owner(KEY)], None, ["a", "b"]]
+
+
+def test_cookie_is_secure_behind_a_tls_reverse_proxy(ui):
+    """NPM termine le TLS et le dit par X-Forwarded-Proto : le cookie est
+    `Secure`. En HTTP direct, non — sinon il ne servirait plus."""
+    r = ui.client.post("/ui/login", json={"key": KEY},
+                       headers={"x-forwarded-proto": "https"})
+    assert "secure" in r.headers["set-cookie"].lower()
+    r = ui.client.post("/ui/login", json={"key": KEY})
+    assert "secure" not in r.headers["set-cookie"].lower()
