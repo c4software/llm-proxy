@@ -167,7 +167,7 @@ window.ChatPanel = {
   props: { session: { type: Object, required: true } },
   emits: ["unauthorized"],
   setup(props, { emit }) {
-    const { ref, computed, watch, nextTick, onMounted, onUpdated, toRaw } = Vue;
+    const { ref, reactive, computed, watch, nextTick, onMounted, onUpdated, onUnmounted, toRaw } = Vue;
     const API = "/ui/chat/completions";
     const LAST_MODEL = "llm-proxy-chat-model";
     const MEMORY_OPEN = "llm-proxy-chat-memory";
@@ -610,24 +610,53 @@ window.ChatPanel = {
     onUpdated(() => {
       const el = thread.value;
       if (el && pinned) el.scrollTop = el.scrollHeight;
-      // L'aperçu du raisonnement : une ligne trop longue montre sa FIN (ce
-      // que le modèle écrit), estompée à gauche ; une ligne courte reste à
-      // gauche. Mesuré ici : le CSS seul ne sait pas faire les deux.
-      if (el) for (const box of el.querySelectorAll(".r-last")) {
-        const text = box.firstElementChild;
-        box.classList.toggle("long", !!text && text.scrollWidth > box.clientWidth + 1);
-      }
     });
 
     // La dernière ligne non vide d'un raisonnement, sans les marques de
     // Markdown, et son rang (la clé de l'animation : elle ne se rejoue qu'à
     // une NOUVELLE ligne, pas à chaque mot).
-    function thought(text) {
-      const lines = String(text || "").split("\n").map((l) => l.trim()).filter(Boolean);
-      const line = (lines[lines.length - 1] || "")
-        .replace(/^#+\s*|^[-*>]\s+|^\d+[.)]\s+/, "").replace(/[*_`]/g, "");
-      return { line, n: lines.length };
+    // L'aperçu d'un raisonnement plié : une PHRASE entière à la fois, jamais
+    // un texte en train de s'écrire (il défilerait, illisible). Pendant le
+    // flux, la dernière phrase COMPLÈTE, remplacée au plus toutes les
+    // REASON_PACE ms — à son rythme, pas à celui du modèle : les phrases
+    // écrites entre deux sont sautées. Le flux fini, la dernière phrase,
+    // même inachevée. `n` change à chaque remplacement : la transition.
+    const REASON_PACE = 1800;
+    const shown = reactive({});      // id du message → { text, n }
+    function phrases(text) {
+      const clean = String(text || "").replace(/[*_`]/g, "")
+        .replace(/^\s*(#+|[-*>]|\d+[.)])\s+/gm, "");
+      const parts = clean.split(/(?<=[.!?:;…])\s+|\n+/).map((p) => p.trim()).filter(Boolean);
+      const done = /[.!?:;…]\s*$|\n\s*$/.test(clean);
+      return { parts, complete: done ? parts : parts.slice(0, -1) };
     }
+    function preview(m, i) {
+      const live = streaming.value && i === current.value.messages.length - 1 && !m.content;
+      const { parts, complete } = phrases(m.reasoning);
+      if (!live) return { text: parts[parts.length - 1] || "", n: "fin" };
+      const s = shown[m.id];
+      // Avant le premier pas : la PREMIÈRE phrase (elle grandit vers la
+      // droite tant qu'elle s'écrit), jamais la dernière — elle changerait
+      // au rythme du modèle.
+      if (!s) return { text: parts[0] || "", n: 0 };
+      return s;
+    }
+    // Le pas de l'aperçu, tant qu'une réponse réfléchit.
+    let pace = null;
+    watch(streaming, (on) => {
+      clearInterval(pace);
+      if (!on) { for (const k in shown) delete shown[k]; return; }
+      pace = setInterval(() => {
+        const msgs = current.value ? current.value.messages : [];
+        const m = msgs[msgs.length - 1];
+        if (!m || m.role !== "assistant" || m.content || !m.reasoning) return;
+        const { complete } = phrases(m.reasoning);
+        const next = complete[complete.length - 1];
+        const s = shown[m.id];
+        if (next && (!s || s.text !== next)) shown[m.id] = { text: next, n: (s ? s.n : 0) + 1 };
+      }, REASON_PACE);
+    });
+    onUnmounted(() => clearInterval(pace));
 
     // Ce que l'appel d'outil cherchait, en une ligne.
     function argSummary(t) {
@@ -670,7 +699,7 @@ window.ChatPanel = {
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick,
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
-             copyText, onThreadClick, onScroll, argSummary, thought, num, size, when,
+             copyText, onThreadClick, onScroll, argSummary, preview, num, size, when,
              host };
   },
   template: `
@@ -762,9 +791,13 @@ window.ChatPanel = {
             <details class="reasoning" v-if="m.reasoning && current.showReasoning">
               <summary>
                 <span class="r-label">Raisonnement</span>
-                <span class="r-last" :key="thought(m.reasoning).n"
-                      :class="{ live: streaming && i === current.messages.length - 1 && !m.content }"><span>{{
-                  thought(m.reasoning).line }}</span></span>
+                <span class="r-last"
+                      :class="{ live: streaming && i === current.messages.length - 1 && !m.content }">
+                  <!-- Durée FIXE : le reflet est une animation infinie sur le
+                       même élément, Vue attendrait sa fin pour toujours. -->
+                  <transition name="r-swap" mode="out-in" type="transition" :duration="280">
+                    <span :key="preview(m, i).n">{{ preview(m, i).text }}</span>
+                  </transition></span>
               </summary>
               <div class="md" v-html="html(m, 'reasoning')"></div>
             </details>

@@ -612,26 +612,30 @@ button.icon:disabled { opacity: .4; cursor: default; }
 .reasoning summary, .tool summary { cursor: pointer; list-style: none; }
 .reasoning summary::-webkit-details-marker, .tool summary::-webkit-details-marker { display: none; }
 .reasoning summary {
-  display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0;
+  display: flex; align-items: flex-start; gap: 8px; font-size: 12px; min-width: 0;
 }
+.reasoning summary::before, .reasoning .r-label { margin-top: 3px; }
 .reasoning .r-label { letter-spacing: .08em; text-transform: uppercase; flex: none; }
 /* Plié : la dernière ligne du raisonnement, sur une ligne. Elle glisse en
    place à chaque NOUVELLE ligne (la clé change), et un reflet la parcourt
    tant que le modèle réfléchit. Déplié : le texte entier, sans elle. */
 .reasoning .r-last {
-  flex: 1; min-width: 0; display: flex; overflow: hidden;
-  font-size: 13px; font-style: italic; opacity: .85;
-  animation: r-in .35s cubic-bezier(.22, .61, .36, 1);
+  flex: 1; min-width: 0; overflow: hidden;
+  font-size: 13px; font-style: italic; opacity: .85; line-height: 1.4;
 }
-.reasoning .r-last > span { flex: none; white-space: nowrap; }
-/* Trop longue : on en voit la fin, le début s'estompe à gauche. */
-.reasoning .r-last.long {
-  justify-content: flex-end;
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 32px);
-  mask-image: linear-gradient(to right, transparent, #000 32px);
+/* Une phrase entière, sur deux lignes au plus : lisible, sans défilement. */
+.reasoning .r-last > span {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
 }
 .reasoning[open] .r-last { display: none; }
-@keyframes r-in { from { opacity: 0; transform: translateY(5px); } }
+/* Le remplacement : l'ancienne phrase monte et s'efface, la nouvelle
+   arrive d'en dessous. */
+.r-swap-enter-active, .r-swap-leave-active {
+  transition: opacity .28s ease, transform .28s cubic-bezier(.22, .61, .36, 1);
+}
+.r-swap-enter-from { opacity: 0; transform: translateY(8px); }
+.r-swap-leave-to { opacity: 0; transform: translateY(-8px); }
 .reasoning .r-last.live > span {
   background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--ink) 50%,
               var(--muted) 60%, var(--muted) 100%);
@@ -641,7 +645,8 @@ button.icon:disabled { opacity: .4; cursor: default; }
 }
 @keyframes r-shine { from { background-position: 100% 0; } to { background-position: -150% 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .reasoning .r-last, .reasoning .r-last.live > span { animation: none; }
+  .reasoning .r-last.live > span { animation: none; }
+  .r-swap-enter-active, .r-swap-leave-active { transition: none; }
 }
 .reasoning summary::before, .tool summary::before {
   content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted);

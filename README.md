@@ -583,9 +583,13 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   aucun HTML du modèle ne passe, et seuls `http(s)`, `mailto` et les
   chemins du proxy (`/v1/files/…`) font un lien. Le raisonnement
   (`reasoning_content`) est **plié de base**, même pendant le flux, au-dessus
-  de la réponse : plié, il montre sa dernière ligne — sa FIN si elle est trop
-  longue, le début estompé —, qui glisse en place à chaque nouvelle ligne
-  et miroite tant que le modèle réfléchit ; tokens
+  de la réponse : plié, il montre UNE phrase entière (deux lignes au plus),
+  jamais un texte en train de s'écrire : pendant le flux, la dernière
+  phrase complète, remplacée au plus toutes les 1,8 s — à son rythme, pas
+  à celui du modèle, les phrases intermédiaires sautées — par une courte
+  transition (l'ancienne monte et s'efface, la nouvelle arrive d'en
+  dessous), avec un reflet tant que le modèle réfléchit ; le flux fini, la
+  dernière phrase ; tokens
   et durée sous la réponse.
 
 - **Mémoire** (si `[tools.memory]` est actif) : le bouton *Mémoire* de
