@@ -58,6 +58,11 @@ services:
       # Le réseau INTERNE seul (plus bas) : aucune route vers l'extérieur,
       # ni vers searxng, ni vers les autres piles de l'hôte.
       - sandbox
+      # La sortie du RELAIS vers les dépôts de paquets (SANDBOX_EGRESS) :
+      # les bacs, eux, n'ont toujours aucune interface. Le prix : un
+      # programme qui s'évaderait d'un bac serait dans un conteneur AVEC
+      # sortie. Ne décommenter qu'avec SANDBOX_EGRESS.
+      # - sandbox-egress
     environment:
       # Le jeton partagé avec le proxy, exigé sur toute l'API. Sans `:?` :
       # absent, le service démarre et REFUSE tout (503, « unhealthy »), il
@@ -86,6 +91,20 @@ services:
       # SANDBOX_MAX_INPUTS: "8"
       # SANDBOX_MAX_INPUT_BYTES: "20000000"
       # SANDBOX_MAX_INPUT_TOTAL_BYTES: "40000000"
+      #
+      # Installer des paquets depuis un bac (pip, npm, cargo, Go) : la
+      # SORTIE vers les dépôts, fermée par défaut. Le bac reste sans réseau ;
+      # l'exécuteur lui passe une prise vers un relais qui n'ouvre que des
+      # tunnels HTTPS vers la liste (executor/egress.py). Va avec
+      # [tools.code_execution] packages = true côté proxy, et le réseau
+      # `sandbox-egress` ci-dessous (décommenter les deux).
+      # SANDBOX_EGRESS: "true"
+      # SANDBOX_EGRESS_HOSTS: ""    # vide : PyPI, npm, crates.io, modules Go
+      # SANDBOX_EGRESS_MAX_BYTES: "500000000"   # par bac, dans les deux sens
+      # Les paquets s'installent dans /tmp, un tmpfs compté dans la mémoire
+      # du bac : agrandir les deux ensemble.
+      # SANDBOX_TMP_SIZE: 768m
+      # SANDBOX_MEMORY: 1536m
     security_opt:
       # La recette de dev-box (compose.override.example.yaml), trouvée par
       # essais ; sans --privileged ni CAP_SYS_ADMIN. Le prix : l'isolation
@@ -181,3 +200,7 @@ networks:
   # sortie.
   sandbox:
     internal: true
+  # La sortie de l'exécuteur, pour le seul relais des dépôts de paquets
+  # (SANDBOX_EGRESS). Un réseau à lui : il ne joint pas le proxy ni
+  # searxng par là.
+  # sandbox-egress: {}

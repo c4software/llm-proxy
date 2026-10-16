@@ -629,6 +629,13 @@ timeout = 30
 # [tools].max_calls : un modèle qui corrige son programme en consomme
 # plusieurs.
 max_calls = 8
+# Le bac peut-il INSTALLER des paquets (pip, npm -g, cargo, modules Go) ?
+# Ce que l'outil dit au modèle : la sortie elle-même s'ouvre côté
+# exécuteur (SANDBOX_EGRESS et le réseau `sandbox-egress`, voir
+# docker-compose.override.example.yml) — les deux vont ensemble. Le bac
+# reste sans réseau : seuls les dépôts de paquets répondent, par un relais
+# de l'exécuteur. false : « no network, nothing can be installed ».
+packages = false
 # Caractères de sortie rendus au modèle par appel ; au-delà, le début et
 # la fin sont gardés (une trace d'erreur est à la fin).
 max_output_chars = 12000

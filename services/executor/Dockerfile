@@ -66,6 +66,12 @@ RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 # Le build ÉCHOUE sinon. Laissé dans l'image, pour le relancer dans un
 # vrai bac (procédure de validation).
 COPY sandbox/check.py /usr/local/share/sandbox/check.py
+# Le relais de la sortie vers les dépôts de paquets (SANDBOX_EGRESS,
+# executor/egress.py) : lancé au démarrage du bac quand la sortie est
+# ouverte. Et le point de montage de sa prise : la racine d'un bac est en
+# lecture seule, podman n'y crée rien.
+COPY sandbox/forward.py /usr/local/share/sandbox/forward.py
+RUN mkdir -p /run && touch /run/egress.sock
 # Sous l'environnement d'un bac pour Go (sandbox.py) : hors ligne, cache
 # dans /tmp — le contrôle dit le temps et la taille d'une première
 # compilation, à comparer à SANDBOX_TMP_SIZE et au délai de l'outil.

@@ -43,6 +43,7 @@ import shlex
 import sys
 import time
 
+from .egress import Egress, parse_hosts
 from .sandbox import UID_BASE, File, Limits, SandboxError, Sandboxes
 
 # Les uid des bacs d'ici, à l'écart de ceux du serveur.
@@ -102,8 +103,12 @@ async def main() -> int:
     image = os.environ.get("SANDBOX_IMAGE", "").strip()
     rootfs = "" if image else os.environ.get(
         "SANDBOX_ROOTFS", "/opt/sandbox/rootfs").strip()
+    # La sortie vers les dépôts de paquets, si l'exécuteur l'ouvre : ses
+    # prises dans un dossier à part de celui du serveur.
+    relay = Egress("/tmp/sbx-egress-validate", parse_hosts(base.egress_hosts),
+                   max_bytes=base.egress_max_bytes) if base.egress else None
     box = Sandboxes(rootfs, image, limits, podman=shlex.split(a.podman),
-                    uid_base=UID)
+                    uid_base=UID, egress=relay)
 
     code, out, _ = await box._run(
         "info", "--format",
@@ -194,6 +199,26 @@ async def main() -> int:
                 "RESEAU OUVERT" not in out.output
                 and (a.light or "interfaces ['lo']" in out.output), out,
                 out.output.strip().replace("\n", " ; "))
+
+        if relay:
+            # La sortie ouverte : un paquet s'installe par le relais, un site
+            # ordinaire est refusé PAR LE RELAIS, et le bac n'a toujours ni
+            # route ni interface (le cas 6 vient de le dire).
+            out = await run("clientA", "pkg", "bash",
+                            "pip install --quiet cowsay && python3 -c "
+                            "'import cowsay; print(\"PAQUET\", cowsay.__name__)'",
+                            t=120)
+            verdict("6bis. sortie ouverte : pip installe un paquet (PyPI)",
+                    out.exit_code == 0 and "PAQUET cowsay" in out.output, out)
+            out = await run("clientA", "pkg", "python", (
+                "import urllib.request\n"
+                "try:\n"
+                "    urllib.request.urlopen('https://example.com', timeout=10); print('SITE OUVERT')\n"
+                "except Exception as e:\n"
+                "    print('refusé :', e)\n"), t=30)
+            verdict("6ter. sortie ouverte : un site ordinaire est refusé",
+                    "SITE OUVERT" not in out.output and "403" in out.output, out,
+                    out.output.strip()[:300])
 
         if not a.light:
             out = await run("clientA", "conv1", "python", (

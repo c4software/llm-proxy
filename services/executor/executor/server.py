@@ -65,6 +65,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .sandbox import LANGS, Busy, File, Limits, SandboxError, Sandboxes
+from .egress import Egress, parse_hosts
 
 log = logging.getLogger("executor")
 
@@ -115,6 +116,11 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
                     "bornes NON tenues par bac (cgroups non délégués) : %s — "
                     "seul le plafond du conteneur exécuteur les borne",
                     ", ".join(sorted(missing)))
+            if box.egress:
+                log.info("sortie des bacs OUVERTE vers les dépôts de "
+                         "paquets : %s", ", ".join(box.egress.hosts))
+            else:
+                log.info("sortie des bacs fermée (SANDBOX_EGRESS)")
             if token:
                 state["ready"], state["error"] = True, ""
         except SandboxError as exc:
@@ -170,6 +176,9 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
             "cgroup": {name: name in box.cgroup
                        for name in ("memory", "cpu", "pids")},
             "limits": {f: getattr(lim, f) for f in lim.__dataclass_fields__},
+            # La sortie vers les dépôts de paquets : ouverte ou non, et où.
+            "egress": {"enabled": bool(box.egress),
+                       "hosts": list(box.egress.hosts) if box.egress else []},
         }
 
     async def body(request: Request) -> dict | JSONResponse:
@@ -271,5 +280,12 @@ def from_env() -> FastAPI:
     image = os.environ.get("SANDBOX_IMAGE", "").strip()
     rootfs = "" if image else os.environ.get(
         "SANDBOX_ROOTFS", "/opt/sandbox/rootfs").strip()
-    return create_app(Sandboxes(rootfs, image, Limits.from_env()),
+    limits = Limits.from_env()
+    # La sortie des bacs vers les dépôts de paquets (egress.py) : ses
+    # prises dans un dossier propre à l'exécuteur, que rien d'autre ne lit.
+    relay = Egress(
+        os.environ.get("SANDBOX_EGRESS_DIR", "/tmp/sbx-egress").strip(),
+        parse_hosts(limits.egress_hosts),
+        max_bytes=limits.egress_max_bytes) if limits.egress else None
+    return create_app(Sandboxes(rootfs, image, limits, egress=relay),
                       os.environ.get("EXECUTOR_TOKEN", "").strip())

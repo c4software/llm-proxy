@@ -1672,11 +1672,13 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
   sous `/tmp` puis l'exécute, le tout dans le délai de l'appel — ni le
   source ni le binaire ne sont pris pour des fichiers produits. `bash`
   reste là pour un projet à plusieurs fichiers (make, `go build`, cargo).
-- **Pas de réseau, rien ne s'installe** : ni paquet pip, ni module Go, ni
-  crate — la bibliothèque standard seulement pour les compilés, et la
-  description de l'outil le dit au modèle. Ajouter une bibliothèque :
-  `services/executor/sandbox/requirements.txt` ou `services/executor/Dockerfile`, puis
-  reconstruire l'image de l'exécuteur.
+- **Pas de réseau, rien ne s'installe** (par défaut) : ni paquet pip, ni
+  module Go, ni crate — la bibliothèque standard seulement pour les
+  compilés, et la description de l'outil le dit au modèle. Ajouter une
+  bibliothèque pour tous : `services/executor/sandbox/requirements.txt` ou
+  `services/executor/Dockerfile`, puis reconstruire l'image de
+  l'exécuteur. Ou laisser le modèle installer ce qu'il lui faut :
+  [Installer des paquets](#installer-des-paquets).
 - **Délai** : `[tools.code_execution].timeout`, 30 s par programme,
   **compilation comprise**. Une première compilation Go dans un bac paie
   le cache de sa bibliothèque standard : 8,6 s mesurées sur le
@@ -1759,6 +1761,56 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
   `/v1/chat/completions`, ou `always = ["code_execution"]` ; appel direct
   par `POST /v1/tools/code_execution` (un bac par appel, les fichiers en
   liens dans `files`). Pas sur `/v1/responses` ni `/v1/messages`.
+
+#### Installer des paquets
+
+Fermé par défaut. Ouvert, le modèle peut lancer `pip install <nom>`,
+`npm install -g <nom>`, et un projet cargo ou Go peut tirer ses
+dépendances — et **rien d'autre** : le bac reste sans réseau.
+
+    programme du bac ──127.0.0.1:3128──▶ relais du bac (forward.py)
+          (sans réseau)                      │ prise Unix /run/egress.sock
+                                             ▼
+                          exécuteur : relais CONNECT (egress.py) ──HTTPS──▶ PyPI, npm,
+                          juge l'hôte, l'adresse, le volume                crates.io, Go
+
+- **Le bac n'a toujours aucune interface** (`--network none`) : ni DNS,
+  ni route. L'exécuteur lui monte UNE prise Unix ; dans le bac, un relais
+  lancé à sa création l'expose sur `127.0.0.1:3128`, l'adresse de
+  `HTTPS_PROXY` — pip, npm, cargo et go y passent d'eux-mêmes.
+- **Ce qui est jugé hors du bac**, par l'exécuteur : `CONNECT` vers le
+  port 443 seulement (ni HTTP en clair, ni autre port), vers un hôte de la
+  liste — par défaut `pypi.org`, `files.pythonhosted.org`,
+  `registry.npmjs.org`, `index.crates.io`, `static.crates.io`,
+  `crates.io`, `proxy.golang.org`, `sum.golang.org`
+  (`SANDBOX_EGRESS_HOSTS` pour la changer, `*.domaine` pour des
+  sous-domaines) ; le nom est résolu par l'exécuteur et toutes ses
+  adresses doivent être publiques. Bornes par bac : 500 Mo dans les deux
+  sens (`SANDBOX_EGRESS_MAX_BYTES`), 16 connexions simultanées, 60 s
+  d'inactivité. Chaque refus est journalisé, et le bilan de chaque bac
+  (tunnels, refus, octets, hôtes) à sa destruction.
+- **Où vont les paquets** : sous `/tmp` (pip pour l'utilisateur,
+  `npm -g` avec `NODE_PATH`, caches cargo et Go), jamais dans `/work` —
+  un paquet n'est pas un fichier produit. Ils restent pour la
+  conversation, et partent avec le bac. `/tmp` est un tmpfs compté dans
+  la mémoire du bac : agrandir `SANDBOX_TMP_SIZE` et `SANDBOX_MEMORY`
+  ensemble (768m et 1536m suggérés).
+- **Mise en route**, trois réglages qui vont ensemble : dans
+  `docker-compose.override.yml`, `SANDBOX_EGRESS: "true"` et le réseau
+  `sandbox-egress` de l'exécuteur (blocs commentés de
+  `docker-compose.override.example.yml`) ; dans `config.toml`,
+  `[tools.code_execution] packages = true`, pour que le modèle le sache.
+  `GET /v1/status` de l'exécuteur dit `egress.enabled` et la liste.
+
+Ce que cela coûte : l'exécuteur a désormais une sortie — un programme qui
+s'évaderait d'un bac serait dans un conteneur connecté. Et un dépôt de
+paquets sert n'importe quoi : un modèle mal guidé (ou une page qu'il a
+lue) peut installer un paquet malveillant, qui ne sort pas du bac mais y
+tourne avec ce que le bac contient. Le contenu des tunnels est chiffré de
+bout en bout : le relais ne voit que l'hôte. Une publication vers un
+dépôt exige un jeton que le bac n'a pas — sauf s'il l'a reçu dans le
+prompt : ne pas ouvrir cette sortie à un modèle à qui l'on confie des
+secrets.
 
 #### Ce que le bac à sable vaut
 
@@ -2633,6 +2685,7 @@ dans `data/config.example.toml` et
 | `enabled` | `false` | Active l'outil `code_execution` (`/v1/chat/completions` et `/v1/tools`). Activé sans exécuteur joignable, l'outil rend `unavailable` au modèle ; rien d'autre ne change |
 | `url` | `""` (`"http://executor:8080"` dans l'exemple) | Base du service exécuteur ; vide → « non configuré ». Adresse de configuration, privée : `[tools.net]` ne s'y applique pas |
 | `token` | `""` (`"${EXECUTOR_TOKEN}"` dans l'exemple) | Le jeton partagé avec l'exécuteur ; vide → « non configuré » |
+| `packages` | `false` | Le bac peut installer des paquets (pip, `npm install -g`, cargo, modules Go) : ce que l'outil dit au modèle. Va avec `SANDBOX_EGRESS` côté exécuteur. Voir [Installer des paquets](#installer-des-paquets) |
 | `timeout` | `30` | Secondes pour un programme, compilation comprise ; dit au modèle. Le délai de l'outil est `timeout` + 120 s + `download_timeout` + 45 s, à la place de `[tools].run_timeout` |
 | `max_calls` | `8` | Appels par réponse, comptés à part de `[tools].max_calls` |
 | `max_output_chars` | `12000` | Caractères de sortie rendus par appel ; au-delà, le début et la fin |

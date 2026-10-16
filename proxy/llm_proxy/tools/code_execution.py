@@ -75,6 +75,10 @@ TOKEN = config.text("tools.code_execution.token", "")
 # Délai (s) d'UN programme, demandé à l'exécuteur — qui a le sien, plus
 # haut (SANDBOX_TIMEOUT), et ne va jamais au-delà.
 TIMEOUT = config.num("tools.code_execution.timeout", 30)
+# Le bac peut-il installer des paquets ? Ce que l'outil DIT au modèle ; la
+# sortie elle-même s'ouvre côté exécuteur (SANDBOX_EGRESS, egress.py) :
+# les deux vont ensemble.
+PACKAGES = config.flag("tools.code_execution.packages", False)
 # Appels par réponse, comptés à part des outils web (Tool.max_calls).
 MAX_CALLS = config.integer("tools.code_execution.max_calls", 8)
 # Caractères de sortie rendus au modèle : le début et la fin.
@@ -402,10 +406,22 @@ class CodeExecution(Tool):
             "tools, jq and sqlite3; Node.js has its standard library "
             "only. C, C++ (gcc, g++), Go and Rust programs are given as "
             "one source file, compiled, then run, all within the time "
-            "limit — with their standard library only: no Go module, no "
-            "Rust crate, no other package. There is NO network: a "
-            "program cannot download anything (requests, urllib, curl "
-            "and wget all fail) and nothing can be installed. "
+            "limit"
+            + (" — with their standard library only: no Go module, no "
+               "Rust crate, no other package. There is NO network: a "
+               "program cannot download anything (requests, urllib, curl "
+               "and wget all fail) and nothing can be installed. "
+               if not PACKAGES else
+               ". Packages CAN be installed from their registries, and "
+               "nothing else is reachable: in bash, `pip install <name>` "
+               "(Python) and `npm install -g <name>` (Node.js: `require` "
+               "finds it), both kept for the conversation; `cargo` crates "
+               "and Go modules from a project in bash, under /tmp. Any other "
+               "network access fails (requests, urllib, curl and wget to "
+               "a website, an API, a download): only package registries "
+               "(PyPI, npm, crates.io, Go modules) answer. Install in a "
+               "separate call before the program that uses the package, "
+               "and only what you need. ")
             + ((
                 # Dit en ordre, pas en possibilité : joué le 07/10/2026,
                 # un modèle à qui l'on disait seulement « list it in
@@ -446,8 +462,12 @@ class CodeExecution(Tool):
                                    "whole source file, with its main."},
                 "code": {
                     "type": "string",
-                    "description": "The complete program to run. It "
-                                   "has no network access."},
+                    "description": "The complete program to run. "
+                                   + ("It has no network access."
+                                      if not PACKAGES else
+                                      "Its only network access is to "
+                                      "package registries (pip, npm, "
+                                      "cargo, Go modules).")},
                 **({"files": {
                     "type": "array",
                     "description": (

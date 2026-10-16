@@ -16,7 +16,10 @@ Aucun volume, aucun montage de l'extérieur.
 Ce qui borne un bac, du plus sûr au moins sûr ICI (podman imbriqué dans
 un conteneur Docker, sans systemd : le cgroup n'y est délégué que si le
 point d'entrée a pu le faire, `writable-cgroups=true`) :
-  * toujours : pas de réseau (--network none), racine en lecture seule,
+  * toujours : pas de réseau (--network none : ni interface ni DNS —
+    la sortie vers les dépôts de paquets, quand SANDBOX_EGRESS l'ouvre,
+    passe par UNE prise Unix jugée hors du bac, egress.py), racine en
+    lecture seule,
     aucune capacité, no-new-privileges, un uid sans droit PROPRE au bac,
     /work et /tmp en tmpfs de taille fixe, RLIMIT_NPROC et RLIMIT_NOFILE,
     la durée d'une exécution (`timeout` DANS le bac, puis un délai de
@@ -54,6 +57,10 @@ import uuid
 from dataclasses import dataclass, field, fields
 
 LABEL = "llm-proxy.sandbox"
+# Le relais de la sortie DANS le bac (sandbox/forward.py, dans l'image) et
+# l'adresse où il écoute : celle de HTTPS_PROXY.
+FORWARD = "/usr/local/share/sandbox/forward.py"
+FORWARD_ADDR = "127.0.0.1:3128"
 WORKDIR = "/work"
 STAMP = ".sbx_stamp"            # dans /work : repère « avant l'exécution »
 # Premier uid des bacs, DANS l'espace d'utilisateurs de podman : le bac
@@ -136,6 +143,10 @@ class Limits:
     max_input_total_bytes: int = 40_000_000
     max_sessions: int = 8           # bacs ouverts, tous clients confondus
     max_sessions_per_client: int = 4
+    # La sortie vers les dépôts de paquets (egress.py) : fermée par défaut.
+    egress: bool = False
+    egress_hosts: str = ""          # vide : egress.DEFAULT_HOSTS
+    egress_max_bytes: int = 500_000_000     # par bac, dans les deux sens
 
     @classmethod
     def from_env(cls, env=os.environ) -> "Limits":
@@ -144,6 +155,12 @@ class Limits:
             raw = env.get("SANDBOX_" + f.name.upper(), "").strip()
             if raw:
                 try:
+                    if isinstance(f.default, bool):
+                        if raw.lower() not in ("1", "true", "yes", "on",
+                                               "0", "false", "no", "off"):
+                            raise ValueError(raw)
+                        values[f.name] = raw.lower() in ("1", "true", "yes", "on")
+                        continue
                     values[f.name] = type(f.default)(raw)
                 except ValueError:
                     raise SystemExit(f"SANDBOX_{f.name.upper()} : valeur "
@@ -209,8 +226,10 @@ class Sandboxes:
 
     def __init__(self, rootfs: str = "", image: str = "",
                  limits: Limits = Limits(), podman=("podman",),
-                 uid_base: int = UID_BASE):
+                 uid_base: int = UID_BASE, egress=None):
         self.rootfs, self.image, self.limits = rootfs, image, limits
+        # Les relais de sortie (egress.Egress), ou None : pas de sortie.
+        self.egress = egress
         self.podman = tuple(podman)
         # Premier uid de SES bacs : deux jeux de bacs sur le même podman
         # (le serveur, et validate.py à côté de lui) ne partagent pas
@@ -343,6 +362,9 @@ class Sandboxes:
 
     async def _create(self, slot: int) -> str:
         lim, name = self.limits, "sbx-" + uuid.uuid4().hex[:16]
+        # La prise de sa sortie, ouverte AVANT le bac : elle doit exister
+        # pour être montée.
+        sock = await self.egress.open(name) if self.egress else ""
         uid = str(self.uid_base + slot)
         # Fils d'exécution des bibliothèques et des compilateurs : sans
         # cgroup de CPU un bac VOIT tous les cœurs de l'hôte, et OpenBLAS
@@ -380,21 +402,57 @@ class Sandboxes:
                                "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS",
                                "GOMAXPROCS", "CARGO_BUILD_JOBS")
               for arg in ("--env", f"{name}={jobs}")),
-            # Go et cargo sans réseau : ni module ni crate à chercher, ni
-            # chaîne d'outils à télécharger ; leurs caches dans /tmp.
+            # Go et cargo : leurs caches dans /tmp ; sans sortie, ni module
+            # ni crate à chercher (GOPROXY=off, CARGO_NET_OFFLINE), jamais
+            # de chaîne d'outils à télécharger (GOTOOLCHAIN=local).
             "--env", "GOCACHE=/tmp/.cache/go-build", "--env", "GOPATH=/tmp/go",
-            "--env", "GOPROXY=off", "--env", "GOTOOLCHAIN=local",
+            "--env", "GOTOOLCHAIN=local",
             "--env", "GOFLAGS=-buildvcs=false",
             "--env", "CARGO_HOME=/tmp/.cargo",
-            "--env", "CARGO_NET_OFFLINE=true",
+            *(self._egress_flags(sock) if sock else (
+                "--env", "GOPROXY=off", "--env", "CARGO_NET_OFFLINE=true")),
             "--log-driver", "none",
             "--init", "--stop-timeout", "1",
             "--timeout", str(lim.lifetime),
-            *self._source(), "sleep", "infinity",
+            *self._source(),
+            *(("sh", "-c", f"python3 {FORWARD} >/dev/null 2>&1 & "
+               "exec sleep infinity") if sock else ("sleep", "infinity")),
             timeout=60)
         if code != 0:
+            if sock:
+                await self.egress.close(name)
             raise SandboxError("podman run a échoué : " + _tail(out))
         return name
+
+    def _egress_flags(self, sock: str) -> tuple:
+        """La sortie vers les dépôts de paquets : la prise du relais montée
+        dans le bac, et ce qu'il faut pour que pip, npm, cargo et go y
+        passent — par le relais local du bac (sandbox/forward.py), sous
+        /tmp pour ce qu'ils installent (HOME, hors de /work : un paquet
+        n'est pas un fichier produit)."""
+        proxy = f"http://{FORWARD_ADDR}"
+        env = {
+            "HTTPS_PROXY": proxy, "https_proxy": proxy,
+            "HTTP_PROXY": proxy, "http_proxy": proxy,
+            "NO_PROXY": "localhost,127.0.0.1", "no_proxy": "localhost,127.0.0.1",
+            # pip : pour l'utilisateur (la racine est en lecture seule),
+            # sans cache (/tmp est petit).
+            "PIP_USER": "1", "PIP_NO_CACHE_DIR": "1",
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PIP_PROGRESS_BAR": "off",
+            "PYTHONUSERBASE": "/tmp/.local",
+            # npm : `npm install -g`, sous /tmp — un `npm install` local
+            # écrirait package.json dans /work, donc chez l'utilisateur.
+            "NPM_CONFIG_CACHE": "/tmp/.npm", "NPM_CONFIG_PREFIX": "/tmp/.npm-global",
+            "NODE_PATH": "/tmp/.npm-global/lib/node_modules",
+            "NPM_CONFIG_PROXY": proxy, "NPM_CONFIG_HTTPS_PROXY": proxy,
+            "NPM_CONFIG_UPDATE_NOTIFIER": "false", "NPM_CONFIG_FUND": "false",
+            "NPM_CONFIG_AUDIT": "false",
+            "GOPROXY": "https://proxy.golang.org",
+            "PATH": "/tmp/.local/bin:/tmp/.npm-global/bin:/tmp/.cargo/bin:"
+                    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        }
+        return ("--volume", f"{sock}:/run/egress.sock",
+                *(arg for k, v in env.items() for arg in ("--env", f"{k}={v}")))
 
     async def _alive(self, name: str) -> bool:
         try:
@@ -409,6 +467,9 @@ class Sandboxes:
             await self._run("rm", "--force", "--time", "0", *names, timeout=30)
         except (TimeoutError, SandboxError):
             pass
+        if self.egress:
+            for name in names:
+                await self.egress.close(name)
 
     # ── sessions ────────────────────────────────────────────────────────
     def _expired(self, s: _Session, now: float) -> bool:
