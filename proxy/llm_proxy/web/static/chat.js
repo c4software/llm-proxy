@@ -811,19 +811,24 @@ window.ChatPanel = {
       copyText(code ? code.textContent : "", b);
     }
 
+    // Le défilement que la page fait elle-même (`autoTop`) ne décroche pas
+    // le fil : son évènement `scroll` arrive APRÈS coup, quand une image
+    // a pu allonger le fil entre-temps — il se croirait loin de la fin.
+    let autoTop = -1;
+    function toEnd() {
+      const el = thread.value;
+      if (!el || !pinned) return;
+      el.scrollTop = el.scrollHeight;
+      autoTop = el.scrollTop;
+    }
     function onScroll() {
       const el = thread.value;
+      if (el.scrollTop === autoTop) return;
       pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     }
-    onUpdated(() => {
-      const el = thread.value;
-      if (el && pinned) el.scrollTop = el.scrollHeight;
-    });
+    onUpdated(toEnd);
     // Une image chargée après le rendu allonge le fil : il la suit aussi.
-    function onImageLoad() {
-      const el = thread.value;
-      if (el && pinned) el.scrollTop = el.scrollHeight;
-    }
+    const onImageLoad = toEnd;
 
     // La dernière ligne non vide d'un raisonnement, sans les marques de
     // Markdown, et son rang (la clé de l'animation : elle ne se rejoue qu'à
