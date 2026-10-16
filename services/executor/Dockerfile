@@ -35,7 +35,9 @@ ENV PIP_NO_CACHE_DIR=1 \
 #   * bash, sh et les outils GNU sont dans la base ; `timeout`, `find` et
 #     `tar` servent aussi à l'exécuteur (sandbox.py) ;
 #   * nodejs (Debian : 20 LTS) : le second langage que les modèles
-#     écrivent le plus, sans rien à compiler ; ~150 Mo ;
+#     écrivent le plus, sans rien à compiler ; ~150 Mo. Et npm (un paquet
+#     à part chez Debian), pour `npm install -g` quand la sortie vers les
+#     dépôts est ouverte (SANDBOX_EGRESS) ;
 #   * jq, sqlite3, bc, file, zip/unzip, gawk : ce qu'un script shell
 #     appelle sans y penser ; quelques Mo ;
 #   * des COMPILATEURS (décision du 07/10/2026) : gcc et g++ avec la libc
@@ -47,7 +49,7 @@ ENV PIP_NO_CACHE_DIR=1 \
 # Ni Java, ni curl, ni git, ni pip utile : pas de réseau.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      nodejs jq sqlite3 bc file zip unzip gawk \
+      nodejs npm jq sqlite3 bc file zip unzip gawk \
       gcc g++ libc6-dev make golang-go rustc cargo \
  && rm -rf /var/lib/apt/lists/*
 
