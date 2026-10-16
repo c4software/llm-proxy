@@ -133,8 +133,8 @@ def test_contrat_de_l_outil():
     assert fn["parameters"]["properties"]["language"]["enum"] == [
         "python", "bash", "javascript", "php"]
     assert "NO network" in fn["description"] and "30 s" in fn["description"]
-    assert "standard library only" in fn["description"]
-    assert "no numpy, pandas or matplotlib" in fn["description"]
+    assert "numpy, pandas" in fn["description"]
+    assert "no other Python package" in fn["description"]
     assert TOOL.summary({"language": "bash"}) == {
         "type": "code_execution", "language": "bash"}
 

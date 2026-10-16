@@ -2,8 +2,9 @@
 #
 # L'image de l'EXÉCUTEUR de code. Deux étapes :
 #   1. `sandbox` : le système de fichiers d'un BAC, sur la base de dev-box
-#      (Arch), RÉDUIT à l'essentiel : shell, Python (nu), Node.js, PHP, et
-#      mise / `devbox dev-env` pour tout le reste, à la demande ;
+#      (Arch), RÉDUIT à l'essentiel : shell, Python et ses bibliothèques de
+#      données, Node.js, PHP, et mise / `devbox dev-env` pour le reste, à
+#      la demande ;
 #   2. l'exécuteur : podman sans root + le serveur, et le système de
 #      fichiers de l'étape 1 DÉPLIÉ dans /opt/sandbox/rootfs.
 #
@@ -55,9 +56,9 @@ ENV LANG=C.UTF-8
 #   * le shell : bash, et ce qu'un script appelle sans y penser — jq,
 #     sqlite, bc, file, zip/unzip, gawk ; `timeout`, `find` et `tar` (GNU)
 #     servent aussi à l'exécuteur (sandbox.py) ;
-#   * Python et pip, NUS : aucune bibliothèque — numpy, pandas, matplotlib…
-#     s'installent par pip quand il en faut (sortie ouverte). Python sert
-#     aussi au relais de la sortie (sandbox/forward.py) ;
+#   * Python et pip, avec les bibliothèques de DONNÉES (plus bas) : un
+#     graphique ou un tableau sans `pip install` d'abord. Python sert aussi
+#     au relais de la sortie (sandbox/forward.py) ;
 #   * Node.js et npm ;
 #   * PHP et composer (le seul environnement que dev-box tient en paquets
 #     plutôt que par mise : `devbox dev-env php` ne fait que vérifier) ;
@@ -71,6 +72,15 @@ RUN pacman -Syu --noconfirm --needed --disable-sandbox \
       mise git curl xz \
  && pacman -Scc --noconfirm --disable-sandbox \
  && rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/*
+
+COPY sandbox/requirements.txt /tmp/requirements.txt
+# Les bibliothèques de données (numpy, pandas, matplotlib…), dans le
+# site-packages du Python d'Arch, « géré par le système » (PEP 668) : à la
+# construction seulement. pip compile le bytecode à l'installation : il le
+# faut, la racine d'un bac est en lecture seule (sans .pyc, chaque
+# exécution recompilerait pandas). Le reste : pip, à la demande.
+RUN pip install --no-cache-dir --break-system-packages --prefer-binary \
+      -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 # `devbox dev-env` : le script de dev-box, sa bibliothèque, et ses recettes
 # de LANGAGE. Écartées : celles qui ne servent pas sans écran ni matériel

@@ -170,10 +170,18 @@ async def main() -> int:
             times.append((await run("clientA", "conv1", "python",
                                     "print(1)")).seconds)
         t = time.monotonic()
+        t = time.monotonic()
+        heavy = await run("clientA", "conv1", "python", (
+            "import pandas, matplotlib.pyplot as plt\n"
+            "plt.plot([1, 2, 3]); plt.savefig('/tmp/x.png'); print('ok')\n"),
+            t=30)
+        heavy_s = time.monotonic() - t
         node = await run("clientA", "conv1", "node", "console.log(6 * 7)")
         php = await run("clientA", "conv1", "php", "<?php echo 6 * 7;")
         print(f"   MESURES : à froid {cold:.2f}s ; à chaud {warm:.2f}s ; "
               f"5 × print(1) : min {min(times):.2f}s, max {max(times):.2f}s ; "
+              f"import pandas + matplotlib et un tracé : {heavy_s:.2f}s "
+              f"(code {heavy.exit_code}) ; "
               f"node {node.seconds:.2f}s ({node.output.strip()}) ; "
               f"php {php.seconds:.2f}s ({php.output.strip()})")
 
@@ -315,8 +323,8 @@ async def main() -> int:
         if not a.light:
             out = await run("clientA", "", "python", (
                 "exec(open('/usr/local/share/sandbox/check.py').read())"), t=180)
-            verdict("12. contenu du bac (check.py) : commandes, Python, "
-                    "Node.js, PHP, devbox dev-env", out.exit_code == 0, out,
+            verdict("12. contenu du bac (check.py) : bibliothèques Python, "
+                    "commandes, Node.js, PHP, devbox dev-env", out.exit_code == 0, out,
                     out.output.strip()[-400:])
 
             # Go par le chemin de l'outil, dans le bac où `devbox dev-env go`

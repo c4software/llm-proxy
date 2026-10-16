@@ -6,16 +6,21 @@ build échoue sinon), et relançable dans un vrai bac :
 
 N'écrit que dans le dossier courant et /tmp, comme un programme du modèle.
 
-Le bac de base est réduit (décision du 16/10/2026) : le shell, Python NU,
-Node.js, PHP, et mise / `devbox dev-env` pour le reste — qui s'installe à
+Le bac de base est réduit (décision du 16/10/2026) : le shell, Python et
+ses bibliothèques de données, Node.js, PHP, et mise / `devbox dev-env`
+pour le reste — qui s'installe à
 la demande, quand la sortie vers les dépôts est ouverte : rien de cela
 n'est contrôlé ici (pas de réseau au contrôle).
 """
+import importlib
 import os
 import shutil
 import subprocess
 import sys
 
+MODULES = ("numpy", "pandas", "scipy", "sympy", "sklearn", "networkx",
+           "matplotlib", "seaborn", "PIL", "openpyxl", "docx", "pypdf",
+           "reportlab", "tabulate", "yaml")
 COMMANDS = ("sh", "bash", "timeout", "touch", "find", "tar", "sleep",
             "cat", "mkdir", "rm",
             "python3", "pip", "node", "npm", "php", "composer",
@@ -32,6 +37,21 @@ PROGRAMS = {
 }
 
 failed = []
+for name in MODULES:
+    try:
+        importlib.import_module(name)
+    except Exception as exc:
+        failed.append(f"module {name}: {type(exc).__name__}: {exc}")
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    plt.plot([0, 1, 2], [0, 1, 4])
+    plt.savefig("/tmp/_check.png")
+    with open("/tmp/_check.png", "rb") as fh:
+        assert fh.read(8) == b"\x89PNG\r\n\x1a\n"
+except Exception as exc:
+    failed.append(f"matplotlib → PNG: {type(exc).__name__}: {exc}")
 for name in COMMANDS:
     if shutil.which(name) is None:
         failed.append(f"commande {name}: absente")
@@ -55,6 +75,6 @@ if shutil.which("devbox"):
 
 if failed:
     sys.exit("bac à sable INCOMPLET :\n  " + "\n  ".join(failed))
-print(f"bac à sable complet : Python {sys.version.split()[0]} (nu), "
-      f"{len(COMMANDS)} commandes, {', '.join(PROGRAMS)} sur l'entrée "
+print(f"bac à sable complet : Python {sys.version.split()[0]}, "
+      f"{len(MODULES)} modules, {len(COMMANDS)} commandes, {', '.join(PROGRAMS)} sur l'entrée "
       f"standard, devbox dev-env prêt")

@@ -1677,12 +1677,15 @@ démarre et sert sans lui. Avant de l'activer sur une machine : la
   compose up -d executor`, puis rejouer la validation ; construire sur
   place reste possible (`docker compose build --pull executor`).
 - **Le bac de base est minimal** (décision du 16/10/2026) : le shell
-  (bash, jq, sqlite3, zip, gawk…), Python **nu** (celui d'Arch — 3.14 en
-  octobre 2026 —, sa bibliothèque standard seulement), Node.js et npm,
-  PHP et composer, et mise. Tout le reste s'installe **à la demande**,
-  dans la conversation, quand la sortie vers les dépôts est ouverte :
-  `pip install pandas matplotlib`, `npm install -g …`, `devbox dev-env
-  go` (ou rust, java, ruby…). Sans sortie, le bac n'a que sa base.
+  (bash, jq, sqlite3, zip, gawk…), Python (celui d'Arch — 3.14 en
+  octobre 2026 —) avec ses bibliothèques de **données**, préinstallées
+  pour qu'un graphique ou un tableau n'attende pas (numpy, pandas, scipy,
+  sympy, scikit-learn, networkx, matplotlib, seaborn, pillow, openpyxl,
+  python-docx, pypdf, reportlab — `services/executor/sandbox/requirements.txt`),
+  Node.js et npm, PHP et composer, et mise. Tout le reste s'installe **à
+  la demande**, dans la conversation, quand la sortie vers les dépôts est
+  ouverte : `pip install …`, `npm install -g …`, `devbox dev-env go` (ou
+  rust, java, ruby…). Sans sortie, le bac n'a que sa base.
 - **Langages** (`language`) : `python`, `bash`, `javascript` (Node.js),
   `php` (le programme commence par `<?php`), et les compilés `go` et
   `rust` — offerts seulement avec la sortie, une fois installés par
