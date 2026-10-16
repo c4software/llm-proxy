@@ -20,7 +20,10 @@ body {
   font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-.wrap { max-width: 1180px; margin: 0 auto; padding: 48px 28px 72px; }
+/* width: 100 % — dans la grille du menu latéral, des marges `auto`
+   réduiraient sinon le bloc à la largeur de son contenu : chaque vue, et
+   chaque conversation, aurait la sienne. */
+.wrap { width: 100%; max-width: 1180px; margin: 0 auto; padding: 48px 28px 72px; }
 header { margin-bottom: 34px; }
 .brand {
   display: inline-flex; align-items: center; gap: 9px;
@@ -363,6 +366,11 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
 /* Rien ne doit faire glisser la page latéralement : Chrome Android laisse
    « panner » une page à peine plus large que l'écran. */
 html { overflow-x: clip; }
+/* La place de la barre de défilement est TOUJOURS réservée — dans la page
+   (les statistiques défilent, le chat non) comme dans le fil du chat (une
+   conversation vide n'en a pas) : passer d'une vue ou d'une conversation à
+   l'autre ne décale rien. */
+html, .thread, .nav-chats ul, .memory-side { scrollbar-gutter: stable; }
 .shell.has-nav {
   display: grid; grid-template-columns: 256px minmax(0, 1fr); min-height: 100dvh;
 }
