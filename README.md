@@ -582,8 +582,10 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   *Copier*, liens et images. Tout le texte est échappé avant analyse :
   aucun HTML du modèle ne passe, et seuls `http(s)`, `mailto` et les
   chemins du proxy (`/v1/files/…`) font un lien. Le raisonnement
-  (`reasoning_content`) se replie au-dessus de la réponse ; tokens et
-  durée en dessous.
+  (`reasoning_content`) est **plié de base**, même pendant le flux, au-dessus
+  de la réponse : plié, il montre sa dernière ligne, qui glisse en place à
+  chaque nouvelle ligne et miroite tant que le modèle réfléchit ; tokens
+  et durée sous la réponse.
 
 - **Mémoire** (si `[tools.memory]` est actif) : le bouton *Mémoire* de
   l'en-tête ouvre, à droite du fil, le panneau de la section Mémoire —

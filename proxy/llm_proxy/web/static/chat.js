@@ -612,6 +612,16 @@ window.ChatPanel = {
       if (el && pinned) el.scrollTop = el.scrollHeight;
     });
 
+    // La dernière ligne non vide d'un raisonnement, sans les marques de
+    // Markdown, et son rang (la clé de l'animation : elle ne se rejoue qu'à
+    // une NOUVELLE ligne, pas à chaque mot).
+    function thought(text) {
+      const lines = String(text || "").split("\n").map((l) => l.trim()).filter(Boolean);
+      const line = (lines[lines.length - 1] || "")
+        .replace(/^#+\s*|^[-*>]\s+|^\d+[.)]\s+/, "").replace(/[*_`]/g, "");
+      return { line, n: lines.length };
+    }
+
     // Ce que l'appel d'outil cherchait, en une ligne.
     function argSummary(t) {
       let a = {};
@@ -653,7 +663,7 @@ window.ChatPanel = {
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick,
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
-             copyText, onThreadClick, onScroll, argSummary, num, size, when,
+             copyText, onThreadClick, onScroll, argSummary, thought, num, size, when,
              host };
   },
   template: `
@@ -739,9 +749,16 @@ window.ChatPanel = {
             </div>
           </template>
           <template v-else>
-            <details class="reasoning" v-if="m.reasoning && current.showReasoning"
-                     :open="streaming && i === current.messages.length - 1 && !m.content">
-              <summary>Raisonnement</summary>
+            <!-- Plié de base, même pendant le flux : plié, sa DERNIÈRE ligne,
+                 qui glisse en place à chaque nouvelle ligne (clé = rang de
+                 la ligne), et miroite tant que le modèle réfléchit. -->
+            <details class="reasoning" v-if="m.reasoning && current.showReasoning">
+              <summary>
+                <span class="r-label">Raisonnement</span>
+                <span class="r-last" :key="thought(m.reasoning).n"
+                      :class="{ live: streaming && i === current.messages.length - 1 && !m.content }">{{
+                  thought(m.reasoning).line }}</span>
+              </summary>
               <div class="md" v-html="html(m, 'reasoning')"></div>
             </details>
             <div class="tool-calls" v-if="m.tools.length">
