@@ -302,6 +302,11 @@ def test_exhausted_tools_are_withdrawn_for_a_final_answer(chat, monkeypatch):
     assert len(chat.hosted.runs) == 2 and len(chat.sent) == 3
     assert all("tools" in s for s in chat.sent[:2])
     assert "tools" not in chat.sent[2] and "tool_choice" not in chat.sent[2]
+    # Le dernier appel a RÉUSSI (aucun refus lu) : le modèle apprend que
+    # ses outils sont partis, sinon il écrirait l'appel en texte.
+    last = chat.sent[2]["messages"][-1]
+    assert last["role"] == "tool" and last["content"].endswith(A.BUDGET_SPENT)
+    assert A.BUDGET_SPENT not in chat.sent[1]["messages"][-1]["content"]
     text = "".join(d.get("content") or "" for d in deltas(docs))
     assert text.endswith("Voilà.")
 
