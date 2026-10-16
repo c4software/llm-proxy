@@ -918,5 +918,9 @@ button.icon:disabled { opacity: .4; cursor: default; }
   border: 0; padding: 4px 2px; cursor: pointer;
 }
 .effort select:focus { outline: none; }
+/* Pendant une réponse (ou une génération), le réglage est figé : qu'il le
+   paraisse. */
+.effort:has(select:disabled) { opacity: .55; }
+.effort select:disabled { cursor: not-allowed; }
 .effort:focus-within { border-color: var(--accent); }
 .effort option { background: var(--panel); color: var(--ink); }

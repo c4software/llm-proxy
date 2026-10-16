@@ -854,7 +854,7 @@ window.ChatPanel = {
         <button type="button" class="btn ghost ico-btn incognito-btn" :disabled="streaming"
                 :aria-pressed="String(!!current.incognito)" @click="toggleIncognito"
                 :title="current.incognito ? 'Quitter le mode incognito' : 'Conversation incognito : rien n’est gardé'">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11h18M6 11l2-6h8l2 6M7 18a3 3 0 1 0 0-.01M17 18a3 3 0 1 0 0-.01M10 17.5c1.3-.7 2.7-.7 4 0"/></svg>
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 11h20M5 11l2.5-6h9l2.5 6M10 16.5c1.3-.8 2.7-.8 4 0"/><circle cx="7" cy="16.5" r="3"/><circle cx="17" cy="16.5" r="3"/></svg>
           <span class="lbl">Incognito</span></button>
         <button type="button" class="btn ghost ico-btn" v-if="$props.session.memory"
                 :aria-pressed="String(memoryOpen)" @click="toggleMemory()" title="Mémoire">
