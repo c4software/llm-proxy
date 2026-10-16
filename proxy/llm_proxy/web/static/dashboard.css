@@ -612,21 +612,20 @@ button.icon:disabled { opacity: .4; cursor: default; }
 .reasoning summary, .tool summary { cursor: pointer; list-style: none; }
 .reasoning summary::-webkit-details-marker, .tool summary::-webkit-details-marker { display: none; }
 .reasoning summary {
-  display: flex; align-items: flex-start; gap: 8px; font-size: 12px; min-width: 0;
+  display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0;
+  line-height: 20px;
 }
-.reasoning summary::before, .reasoning .r-label { margin-top: 3px; }
 .reasoning .r-label { letter-spacing: .08em; text-transform: uppercase; flex: none; }
 /* Plié : la dernière ligne du raisonnement, sur une ligne. Elle glisse en
    place à chaque NOUVELLE ligne (la clé change), et un reflet la parcourt
    tant que le modèle réfléchit. Déplié : le texte entier, sans elle. */
 .reasoning .r-last {
   flex: 1; min-width: 0; overflow: hidden;
-  font-size: 13px; font-style: italic; opacity: .85; line-height: 1.4;
+  font-size: 13px; font-style: italic; line-height: 20px;
 }
-/* Une phrase entière, sur deux lignes au plus : lisible, sans défilement. */
+/* Une phrase entière, sur UNE ligne : « … » si elle dépasse. */
 .reasoning .r-last > span {
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
-  line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .reasoning[open] .r-last { display: none; }
 /* Le remplacement : l'ancienne phrase monte et s'efface, la nouvelle
@@ -634,11 +633,11 @@ button.icon:disabled { opacity: .4; cursor: default; }
 .r-swap-enter-active, .r-swap-leave-active {
   transition: opacity .28s ease, transform .28s cubic-bezier(.22, .61, .36, 1);
 }
-.r-swap-enter-from { opacity: 0; transform: translateY(8px); }
-.r-swap-leave-to { opacity: 0; transform: translateY(-8px); }
+.r-swap-enter-from { opacity: 0; transform: translateY(6px); }
+.r-swap-leave-to { opacity: 0; transform: translateY(-6px); }
 .reasoning .r-last.live > span {
-  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--ink) 50%,
-              var(--muted) 60%, var(--muted) 100%);
+  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 38%, var(--ink) 50%,
+              var(--muted) 62%, var(--muted) 100%);
   background-size: 250% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent;
   animation: r-shine 2.2s linear infinite;
