@@ -650,10 +650,25 @@ window.ChatPanel = {
         const msgs = current.value ? current.value.messages : [];
         const m = msgs[msgs.length - 1];
         if (!m || m.role !== "assistant" || m.content || !m.reasoning) return;
-        const { complete } = phrases(m.reasoning);
+        const { parts, complete } = phrases(m.reasoning);
         const next = complete[complete.length - 1];
         const s = shown[m.id];
-        if (next && (!s || s.text !== next)) shown[m.id] = { text: next, n: (s ? s.n : 0) + 1 };
+        const size = (m.reasoning || "").length;
+        if (next && (!s || (s.text !== next && s.phrase !== next))) {
+          shown[m.id] = { text: next, phrase: next, n: (s ? s.n : 0) + 1, size };
+          return;
+        }
+        // Une longue phrase qui s'écrit encore : sans relais, l'aperçu
+        // resterait figé sur son début. Ses derniers mots, dès qu'elle a
+        // bien avancé depuis le dernier remplacement.
+        const writing = parts.length > complete.length ? parts[parts.length - 1] : "";
+        if (writing.length > 60 && size - (s ? s.size : 0) > 60) {
+          const words = writing.split(/\s+/);
+          let tail = "";
+          while (words.length && (tail.length < 70)) tail = words.pop() + (tail ? " " + tail : "");
+          shown[m.id] = { text: "… " + tail, phrase: s ? s.phrase : "",
+                          n: (s ? s.n : 0) + 1, size };
+        }
       }, REASON_PACE);
     });
     onUnmounted(() => clearInterval(pace));

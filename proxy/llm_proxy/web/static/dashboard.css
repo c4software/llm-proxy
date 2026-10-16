@@ -639,14 +639,22 @@ button.icon:disabled { opacity: .4; cursor: default; }
 }
 .r-swap-enter-from { opacity: 0; transform: translateY(6px); }
 .r-swap-leave-to { opacity: 0; transform: translateY(-6px); }
+/* Le reflet, par un MASQUE qui parcourt le texte (sa couleur reste la
+   sienne) : un dégradé en `background-clip: text`, combiné à la coupure
+   « … », rend sous Chrome une longue ligne invisible. */
 .reasoning .r-last.live > span {
-  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 38%, var(--ink) 50%,
-              var(--muted) 62%, var(--muted) 100%);
-  background-size: 250% 100%;
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+  color: var(--ink);
+  -webkit-mask-image: linear-gradient(90deg, rgb(0 0 0 / .5) 0%, rgb(0 0 0 / .5) 38%,
+                      #000 50%, rgb(0 0 0 / .5) 62%, rgb(0 0 0 / .5) 100%);
+  mask-image: linear-gradient(90deg, rgb(0 0 0 / .5) 0%, rgb(0 0 0 / .5) 38%,
+              #000 50%, rgb(0 0 0 / .5) 62%, rgb(0 0 0 / .5) 100%);
+  -webkit-mask-size: 250% 100%; mask-size: 250% 100%;
   animation: r-shine 2.2s linear infinite;
 }
-@keyframes r-shine { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+@keyframes r-shine {
+  from { -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+  to { -webkit-mask-position: -150% 0; mask-position: -150% 0; }
+}
 @media (prefers-reduced-motion: reduce) {
   .reasoning .r-last.live > span { animation: none; }
   .r-swap-enter-active, .r-swap-leave-active { transition: none; }
