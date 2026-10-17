@@ -74,7 +74,9 @@ import mimetypes
 import os
 import re
 import time
+import uuid
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, Request, Response
@@ -84,7 +86,9 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.sessions import SessionMiddleware
 
+from . import accounts
 from . import albert
 from . import anthropic_api
 from . import chat_api
@@ -93,6 +97,7 @@ from . import files
 from . import mcp_server
 from . import memories
 from . import multipart
+from . import oidc
 from . import responses_api
 from . import stats
 from . import tools
@@ -140,8 +145,11 @@ async def lifespan(app: FastAPI):
             "auth proxy ACTIVE : %d clé(s) acceptée(s), /healthz exempté",
             len(PROXY_API_KEYS),
         )
-    else:
+    elif not oidc.ENABLED:
         log.info("auth proxy inactive (proxy.api_keys vide) : proxy ouvert")
+    if oidc.ENABLED:
+        log.info("comptes OIDC ACTIFS (%s) : /ui par session OIDC seulement, "
+                 "clés gérées par compte (%s)", oidc.ISSUER, accounts.DB_PATH)
     if anthropic_api.ENABLED:
         log.info(
             "surface Anthropic ACTIVE : POST /v1/messages, "
@@ -341,7 +349,9 @@ UI_CHAT = config.flag("ui.chat", False)
 # demande la clé quand il en faut une), ses fichiers, l'entrée et la sortie.
 UI_OPEN = {("GET", "/"), ("GET", UI_PREFIX), ("HEAD", UI_PREFIX),
            ("GET", UI_PREFIX + "/sw.js"),
-           ("POST", UI_PREFIX + "/login"), ("POST", UI_PREFIX + "/logout")}
+           ("POST", UI_PREFIX + "/login"), ("POST", UI_PREFIX + "/logout"),
+           ("GET", UI_PREFIX + "/auth"), ("GET", UI_PREFIX + "/auth/login"),
+           ("GET", oidc.CALLBACK_PATH)}
 
 
 def ui_open(request: Request) -> bool:
@@ -349,6 +359,33 @@ def ui_open(request: Request) -> bool:
     return (request.method, path) in UI_OPEN or (
         request.method in ("GET", "HEAD")
         and path.startswith(UI_PREFIX + "/static/"))
+
+
+def auth_required() -> bool:
+    """Faut-il une clé ? Oui dès que proxy.api_keys en nomme une, ou que
+    les comptes OIDC existent (leurs clés valent alors à côté de celles
+    du TOML)."""
+    return bool(PROXY_API_KEYS) or oidc.ENABLED
+
+
+def account_owner(uid: int) -> str:
+    """Le client d'un COMPTE : ce que partagent toutes ses clés et la page
+    connectée (mémoire, échanges d'outils), et le api_key_id des requêtes
+    du chat de la page. Un condensé comme tools.owner d'une clé — «\\0»
+    ne peut pas commencer une clé reçue dans un en-tête."""
+    return tools.owner(f"\0account:{uid}")
+
+
+def request_owner(request: Request) -> str:
+    """Le client de la requête, posé par le middleware : condensé de la clé
+    du TOML, compte d'une clé gérée ou de la session de la page ; «» pour
+    un proxy ouvert (ou sans requête : une boucle lancée en direct)."""
+    return getattr(getattr(request, "state", None), "owner", "")
+
+
+def request_user(request: Request) -> dict | None:
+    """Le compte de la session OIDC de la page, None sinon."""
+    return getattr(getattr(request, "state", None), "user", None)
 
 
 def valid_key(token: str) -> bool:
@@ -407,29 +444,112 @@ def error_response(dialect: str, status: int, type_: str, message: str,
     return JSONResponse(body, status_code=status, headers=headers)
 
 
+async def key_client(token: str) -> tuple[str, str] | None:
+    """La clé présentée → (api_key_id, client), None si elle ne vaut rien.
+    Une clé du TOML est son propre client ; une clé gérée (accounts.py)
+    a pour client son COMPTE — toutes ses clés partagent sa mémoire — et
+    garde son propre api_key_id dans les statistiques."""
+    if not token:
+        return None
+    digest = tools.owner(token)
+    if valid_key(token):
+        return digest, digest
+    if not oidc.ENABLED:
+        return None
+    hit = await asyncio.to_thread(accounts.resolve, digest)
+    if hit is None:
+        return None
+    if accounts.touch_due(hit["id"]):
+        await asyncio.to_thread(accounts.touch, hit["id"])
+    return digest, account_owner(hit["user_id"])
+
+
+# Ce qu'un compte en attente ou bloqué peut encore voir de /ui : de quoi
+# savoir où il en est (le reste de UI_OPEN est déjà ouvert à tous).
+UI_INACTIVE = {("GET", UI_PREFIX + "/session")}
+
+
+async def ui_account(request: Request) -> JSONResponse | None:
+    """/ui avec les comptes OIDC : la session de la page, et elle seule —
+    une clé du proxy n'ouvre pas la page. Pose le compte et son client
+    sur la requête ; rend la réponse de refus s'il n'y en a pas."""
+    uid = request.session.get("uid")
+    user = await asyncio.to_thread(accounts.user, uid) \
+        if isinstance(uid, int) else None
+    if user is None:
+        request.session.pop("uid", None)
+        return error_response("openai", 401, "login_required",
+                              "connexion requise (GET /ui/auth/login)")
+    request.state.user = user
+    if user["role"] not in accounts.ACTIVE \
+            and (request.method, request.url.path) not in UI_INACTIVE:
+        return error_response(
+            "openai", 403, "account_inactive",
+            "compte en attente de validation par un admin"
+            if user["role"] == "pending" else "compte bloqué")
+    request.state.owner = account_owner(user["id"])
+    stats.CLIENT.set(request.state.owner)
+    return None
+
+
 @app.middleware("http")
 async def require_proxy_key(request: Request, call_next):
     # /v1/files/<jeton>/<nom> : ouvert par un NAVIGATEUR, qui n'envoie pas
     # la clé du proxy. Le jeton du chemin vaut droit d'accès (files.py).
     served = request.method in ("GET", "HEAD") \
         and files.is_link(request.url.path)
-    if PROXY_API_KEYS and request.url.path != "/healthz" and not served \
-            and not ui_open(request):
-        token = client_token(request)
-        if not valid_key(token):
-            log.warning(
-                "clé proxy absente ou invalide : %s %s → 401",
-                request.method, request.url.path,
-            )
-            return error_response(
-                dialect_of(request), 401, "invalid_api_key",
-                "clé API du proxy absente ou invalide (en-tête "
-                "«Authorization: Bearer <clé>» ou «x-api-key: <clé>» attendu)",
-            )
-        # Le client de la requête, pour ses lignes de statistiques
-        # (stats.CLIENT) : tout ce que la route lance hérite du contexte.
-        stats.CLIENT.set(tools.owner(token))
+    if not auth_required() or request.url.path == "/healthz" or served \
+            or ui_open(request):
+        return await call_next(request)
+    if oidc.ENABLED and is_ui_path(request.url.path):
+        if (denied := await ui_account(request)) is not None:
+            return denied
+        return await call_next(request)
+    who = await key_client(client_token(request))
+    if who is None:
+        log.warning(
+            "clé proxy absente ou invalide : %s %s → 401",
+            request.method, request.url.path,
+        )
+        return error_response(
+            dialect_of(request), 401, "invalid_api_key",
+            "clé API du proxy absente ou invalide (en-tête "
+            "«Authorization: Bearer <clé>» ou «x-api-key: <clé>» attendu)",
+        )
+    # Le client de la requête, pour ses lignes de statistiques
+    # (stats.CLIENT) et pour ce que ses outils gardent (request_owner) :
+    # tout ce que la route lance hérite du contexte.
+    stats.CLIENT.set(who[0])
+    request.state.owner = who[1]
     return await call_next(request)
+
+
+class UISession:
+    """La session de la page quand les comptes OIDC sont actifs : le
+    SessionMiddleware de Starlette (cookie signé, oidc.SESSION_COOKIE),
+    construit à la première requête — sa clé dérive du secret des
+    condensés (data/client.secret), qu'on ne lit pas à l'import. Sans
+    OIDC, rien : ni cookie, ni request.session. Ajouté APRÈS le middleware
+    d'auth, donc autour de lui : la session y est déjà lue."""
+
+    def __init__(self, app):
+        self.app = app
+        self.inner = None
+
+    async def __call__(self, scope, receive, send):
+        if not oidc.ENABLED or scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        if self.inner is None:
+            self.inner = SessionMiddleware(
+                self.app,
+                secret_key=oidc.session_secret(tools.owner_secret()),
+                session_cookie=oidc.SESSION_COOKIE,
+                max_age=int(oidc.SESSION_DAYS * 86400),
+                same_site="lax", https_only=oidc.secure_cookie())
+        return await self.inner(scope, receive, send)
+
+
+app.add_middleware(UISession)
 
 
 # En-têtes du dialecte Anthropic : sans sens pour un backend OpenAI, et
@@ -443,11 +563,12 @@ def clean_headers(request: Request, api_key: str) -> dict:
     # l'auth proxy est active (le Bearer du client est la clé DU PROXY,
     # elle ne doit pas fuiter vers l'upstream).
     skip = HOP_BY_HOP | ANTHROPIC_HEADERS | {"x-incognito"} | (
-        {"authorization"} if api_key or PROXY_API_KEYS else set()
+        {"authorization"} if api_key or auth_required() else set()
     )
-    # Auth proxy active : le cookie posé par /ui porte la clé DU PROXY —
-    # même raison que l'Authorization, il ne doit pas fuiter en amont.
-    if PROXY_API_KEYS:
+    # Auth proxy active : le cookie posé par /ui porte la clé DU PROXY, ou
+    # la session OIDC de la page — même raison que l'Authorization, il ne
+    # doit pas fuiter en amont.
+    if auth_required():
         skip = skip | {"cookie"}
     headers = {
         k: v for k, v in request.headers.items()
@@ -723,7 +844,10 @@ async def healthz():
     return {
         "status": "ok",
         "tool_choice": TOOL_CHOICE,
-        "auth_required": bool(PROXY_API_KEYS),
+        "auth_required": auth_required(),
+        # Comment la page s'ouvre : «oidc» (comptes), «key» (une clé du
+        # TOML), None (proxy ouvert).
+        "ui_login": ui_login_mode(),
         "anthropic": {
             "enabled": anthropic_api.ENABLED,
             "model_map": anthropic_api.MODEL_MAP,
@@ -1049,8 +1173,7 @@ async def chat(request: Request, page: bool = False):
             # Incognito : rien n'est réinséré ni rangé (ctx.memory reste
             # vide).
             found = 0 if INCOGNITO.get() else chat_api.restore(
-                payload, ctx,
-                tools.owner(client_token(request)) if PROXY_API_KEYS else "")
+                payload, ctx, request_owner(request))
             if found:
                 log.info("chat/completions : %d échange(s) d'outils hébergés "
                          "réinséré(s) depuis la mémoire (model=%s)", found,
@@ -1412,10 +1535,10 @@ async def responses(request: Request):
     # Les outils que le proxy exécute lui-même (aucun = None : le client
     # qui déclare `web_search` le voit ignoré, comme avant).
     hosted = tools.Hosted() or None
-    # À qui appartiendront les résultats gardés en mémoire : le condensé de
-    # la clé présentée (jamais la clé). Proxy ouvert = un seul client, quel
-    # que soit le Bearer — personne ne l'a vérifié.
-    client = tools.owner(client_token(request)) if PROXY_API_KEYS else ""
+    # À qui appartiendront les résultats gardés en mémoire : le client de
+    # la requête (request_owner — jamais la clé). Proxy ouvert = un seul
+    # client, quel que soit le Bearer — personne ne l'a vérifié.
+    client = request_owner(request)
     try:
         chat_payload, ctx = responses_api.to_chat(payload, images=images,
                                                   hosted=hosted, client=client)
@@ -1639,7 +1762,7 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
     ran = 0                           # tous les appels exécutés
     spent: dict[str, int] = {}        # appels exécutés, par fonction
     # Le client, pour l'outil (tools.Call) : le condensé de sa clé.
-    client = tools.owner(client_token(request)) if PROXY_API_KEYS else ""
+    client = request_owner(request)
     # L'attente en cours (exécution d'un outil, ou porte de quota + envoi
     # du tour suivant) : une tâche, pour pouvoir émettre des pings pendant
     # qu'elle dure, et l'annuler si le client raccroche.
@@ -1874,9 +1997,24 @@ async def usage_page(request: Request, read=stats.usage_completions,
     params = usage_query(request, group_fields)
     if isinstance(params, JSONResponse):
         return params
-    if own and PROXY_API_KEYS:
-        params["keys"] = [ui_client(request)]
+    if own and (keys := await own_keys(request)) is not None:
+        params["keys"] = keys
     return await run_in_threadpool(read, **params)
+
+
+async def own_keys(request: Request) -> list[str] | None:
+    """Les api_key_id que la page connectée peut voir ; None = tous (proxy
+    ouvert, ou un admin). Un compte voit ses clés, révoquées comprises, et
+    le chat de sa page."""
+    if not auth_required():
+        return None
+    user = request_user(request)
+    if user is None:
+        return [ui_client(request)]
+    if user["role"] == "admin":
+        return None
+    return [account_owner(user["id"])] + await asyncio.to_thread(
+        accounts.digests, user["id"])
 
 
 @app.get(USAGE_PATH)
@@ -1907,7 +2045,7 @@ async def ui_page(request: Request):
     # suivants (sans en-tête possible depuis le navigateur) restent
     # authentifiés.
     key = request.query_params.get("key", "")
-    if PROXY_API_KEYS and key and valid_key(key):
+    if PROXY_API_KEYS and not oidc.ENABLED and key and valid_key(key):
         set_ui_cookie(response, request, key)
     return response
 
@@ -1983,6 +2121,9 @@ async def ui_login(request: Request):
     cookie de /ui — la même chose que «?key=», sans la clé dans l'URL."""
     if (bad := json_only(request)) is not None:
         return bad
+    if oidc.ENABLED:
+        return error_response("openai", 404, "unknown_route",
+                              "la page s'ouvre par OIDC (GET /ui/auth/login)")
     body = parse_json(await request.body())
     key = body.get("key") if isinstance(body, dict) else None
     if not PROXY_API_KEYS:
@@ -2003,7 +2144,166 @@ async def ui_logout(request: Request):
     response = JSONResponse({"ok": True})
     response.delete_cookie(UI_COOKIE, httponly=True, samesite="strict",
                            secure=browser_https(request))
+    if oidc.ENABLED:
+        request.session.clear()
     return response
+
+
+# ── Comptes OIDC (oidc.py, accounts.py) ─────────────────────────────────
+
+def ui_login_mode() -> str | None:
+    if oidc.ENABLED:
+        return "oidc"
+    return "key" if PROXY_API_KEYS else None
+
+
+@app.get("/ui/auth")
+async def ui_auth():
+    """Ce que la page doit proposer pour entrer, sans clé ni session."""
+    return {"mode": ui_login_mode(),
+            "label": oidc.LABEL if oidc.ENABLED else None}
+
+
+@app.get("/ui/auth/login")
+async def ui_auth_login(request: Request):
+    """Vers le fournisseur OIDC (Authlib : découverte, PKCE, state,
+    nonce, gardés dans la session jusqu'au retour)."""
+    if not oidc.ENABLED:
+        return error_response("openai", 404, "unknown_route",
+                              "OIDC inactif ([oidc].issuer, client_id)")
+    try:
+        return await oidc.client().authorize_redirect(
+            request, oidc.redirect_uri(str(request.base_url)))
+    except Exception as exc:          # fournisseur injoignable, découverte
+        log.warning("OIDC : connexion impossible : %s", exc)
+        return RedirectResponse(
+            "/ui?auth_error=" + quote("fournisseur OIDC injoignable"), 303)
+
+
+@app.get(oidc.CALLBACK_PATH)
+async def ui_auth_callback(request: Request):
+    """Le retour du fournisseur : Authlib échange le code et valide
+    l'id_token ; le compte (iss, sub) est créé ou retrouvé, et la session
+    ne porte plus que lui."""
+    if not oidc.ENABLED:
+        return error_response("openai", 404, "unknown_route", "OIDC inactif")
+    try:
+        token = await oidc.client().authorize_access_token(request)
+        info = token.get("userinfo") or {}
+        user = await asyncio.to_thread(
+            accounts.login, info.get("iss", ""), info.get("sub", ""),
+            info.get("email") or "",
+            info.get("name") or info.get("preferred_username") or "")
+    except (oidc.OAuthError, accounts.AccountError) as exc:
+        log.warning("OIDC : retour refusé : %s", exc)
+        return RedirectResponse(
+            "/ui?auth_error=" + quote(f"connexion refusée ({exc})"), 303)
+    except Exception as exc:          # jeton invalide, fournisseur muet
+        log.warning("OIDC : retour en échec : %r", exc)
+        return RedirectResponse(
+            "/ui?auth_error=" + quote("connexion impossible"), 303)
+    request.session.clear()
+    request.session["uid"] = user["id"]
+    log.info("OIDC : connexion du compte %d (%s, %s)", user["id"],
+             user["email"] or user["name"], user["role"])
+    return RedirectResponse("/ui", 303)
+
+
+def accounts_off() -> JSONResponse | None:
+    if not oidc.ENABLED:
+        return error_response("openai", 404, "unknown_route",
+                              "comptes inactifs ([oidc] dans config.toml)")
+    return None
+
+
+def admin_only(request: Request) -> JSONResponse | None:
+    if (off := accounts_off()) is not None:
+        return off
+    if (request_user(request) or {}).get("role") != "admin":
+        return error_response("openai", 403, "forbidden", "réservé aux admins")
+    return None
+
+
+def account_error(exc: accounts.AccountError) -> JSONResponse:
+    return error_response("openai", exc.status, "invalid_request_error",
+                          str(exc))
+
+
+@app.get("/ui/keys")
+async def ui_keys(request: Request, all: int = 0):
+    """Les clés du compte connecté ; `?all=1` (admin) : celles de tous, et
+    celles du TOML — leur seul condensé, en lecture seule."""
+    if (off := accounts_off()) is not None:
+        return off
+    user = request_user(request)
+    if all and (bad := admin_only(request)) is not None:
+        return bad
+    data = await asyncio.to_thread(accounts.keys, None if all else user["id"])
+    out = {"object": "list", "data": data}
+    if all:
+        out["toml"] = [{"api_key_id": d, "hint": d[:8]}
+                       for d in sorted(tools.owner(k) for k in PROXY_API_KEYS)]
+    return out
+
+
+@app.post("/ui/keys")
+async def ui_key_create(request: Request):
+    """Une nouvelle clé pour le compte connecté : un uuid4, rendu ICI
+    seulement (`key`) — le proxy n'en garde que le condensé."""
+    if (off := accounts_off()) is not None:
+        return off
+    if (bad := json_only(request)) is not None:
+        return bad
+    body = parse_json(await request.body())
+    label = body.get("label", "") if isinstance(body, dict) else ""
+    if not isinstance(label, str):
+        return error_response("openai", 400, "invalid_request_error",
+                              "label : une chaîne")
+    key = str(uuid.uuid4())
+    try:
+        record = await asyncio.to_thread(
+            accounts.create_key, request_user(request)["id"], key,
+            tools.owner(key), label)
+    except accounts.AccountError as exc:
+        return account_error(exc)
+    return record | {"key": key}
+
+
+@app.delete("/ui/keys/{kid}")
+async def ui_key_revoke(request: Request, kid: str):
+    """Révoque une clé : du compte connecté, ou de n'importe qui (admin)."""
+    if (off := accounts_off()) is not None:
+        return off
+    user = request_user(request)
+    try:
+        return await asyncio.to_thread(
+            accounts.revoke_key, kid,
+            None if user["role"] == "admin" else user["id"])
+    except accounts.AccountError as exc:
+        return account_error(exc)
+
+
+@app.get("/ui/users")
+async def ui_users(request: Request):
+    if (bad := admin_only(request)) is not None:
+        return bad
+    return {"object": "list", "data": await asyncio.to_thread(accounts.users)}
+
+
+@app.patch("/ui/users/{uid}")
+async def ui_user_update(request: Request, uid: int):
+    """Le rôle d'un compte (admin) : accepter un compte en attente, le
+    bloquer, le promouvoir. Le dernier admin garde le sien."""
+    if (bad := admin_only(request)) is not None:
+        return bad
+    if (bad := json_only(request)) is not None:
+        return bad
+    body = parse_json(await request.body())
+    role = body.get("role") if isinstance(body, dict) else None
+    try:
+        return await asyncio.to_thread(accounts.set_role, uid, role)
+    except accounts.AccountError as exc:
+        return account_error(exc)
 
 
 def chat_tool_groups() -> list[dict]:
@@ -2028,8 +2328,16 @@ async def ui_session(request: Request):
     ouvert. Auth active sans clé valide : 401 (le middleware), et la page
     demande la clé."""
     chat_tools = UI_CHAT and chat_api.ENABLED
+    user = request_user(request)
+    if user is not None and user["role"] not in accounts.ACTIVE:
+        # En attente ou bloqué : qui il est, rien de plus.
+        return {"auth_required": True, "login": "oidc", "account": user,
+                "client": None, "chat": {"enabled": False}, "memory": False}
     return {
-        "auth_required": bool(PROXY_API_KEYS),
+        "auth_required": auth_required(),
+        "login": ui_login_mode(),
+        # Le compte OIDC connecté (rôle compris), None sans comptes.
+        "account": user,
         # Un fragment du condensé, pour dire «c'est bien vous» sans rien
         # dire de la clé.
         "client": ui_client(request)[:8] or None,
@@ -2206,10 +2514,10 @@ async def ui_usage_tools(request: Request):
 # ne peut pas les déclencher.
 
 def ui_client(request: Request) -> str:
-    """Le client de la page : tools.owner de la clé du cookie (ou de
-    l'en-tête), «» pour un proxy ouvert — celui que reçoit l'outil
-    `memory` d'un appel fait avec la même clé."""
-    return tools.owner(client_token(request)) if PROXY_API_KEYS else ""
+    """Le client de la page : celui de la clé du cookie (ou de l'en-tête),
+    ou du compte OIDC connecté ; «» pour un proxy ouvert — celui que
+    reçoit l'outil `memory` d'un appel fait avec la même clé."""
+    return request_owner(request)
 
 
 def memory_disabled() -> JSONResponse | None:
@@ -2345,7 +2653,7 @@ async def tools_run(name: str, request: Request):
         return error_response("openai", 400, "invalid_request_error",
                               "corps attendu : les arguments de l'outil, "
                               "en objet JSON")
-    client = tools.owner(client_token(request)) if PROXY_API_KEYS else ""
+    client = request_owner(request)
     result = await hosted.run(
         name, json.dumps(args, ensure_ascii=False), 0, endpoint="/v1/tools",
         client=client)
@@ -2398,7 +2706,7 @@ async def mcp_post(request: Request):
     if body is None:
         return JSONResponse(mcp_server.error(None, mcp_server.PARSE_ERROR,
                                           "invalid JSON"), status_code=400)
-    client = tools.owner(client_token(request)) if PROXY_API_KEYS else ""
+    client = request_owner(request)
     out = await mcp_server.handle_body(body, tools.Hosted(), client)
     if out is None:
         return Response(status_code=202)

@@ -172,6 +172,12 @@ def _owner_secret() -> bytes:
     return _secret
 
 
+def owner_secret() -> bytes:
+    """Le secret des condensés (data/client.secret) : d'autres clés en
+    dérivent (la session de la page, app.UISession)."""
+    return _owner_secret()
+
+
 def owner(token: str) -> str:
     """Le client : un condensé de la clé qu'il présente au proxy, JAMAIS la
     clé, stable d'un démarrage à l'autre. «» (pas de clé) reste «» : c'est
