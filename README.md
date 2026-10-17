@@ -227,6 +227,7 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
 | `proxy/llm_proxy/app.py` | L'application FastAPI : l'assemblage des routes et des middlewares, le catch-all inclus en dernier |
 | `proxy/llm_proxy/startup.py` | Le démarrage et l'arrêt (`lifespan`) : statistiques, clients upstream, partage équitable relu, serveurs MCP, ce que la configuration dit au journal, limites des backends à quotas |
+| `proxy/llm_proxy/config_view.py` | La configuration effective pour la page (*Configuration → Paramètres*) : fichier et défauts, secrets masqués ; vérification d'un TOML modifié, jamais écrit |
 | `proxy/llm_proxy/health.py` | `/healthz` et `/ui/health` : l'état détaillé du déploiement, dont se préremplit le générateur de la page |
 | `proxy/llm_proxy/tool_routes.py` | Les outils hébergés exposés tels quels : `/v1/tools`, `/mcp`, les fichiers rendus |
 | `proxy/llm_proxy/relay_routes.py` | `GET /v1/audio/voices` et le catch-all (`forward_post_paths`, `404` local sinon) |
@@ -812,6 +813,18 @@ navigateur — rien n'est écrit sur le proxy.
   TOML, et leurs valeurs vont dans un `.env` que la page produit aussi —
   les clés du proxy tirées au hasard dans le navigateur. Seuls les
   réglages du formulaire sont écrits : tout autre garde son défaut.
+- **Paramètres** : la configuration **en vigueur**, entière — les
+  valeurs de `data/config.toml` telles qu'écrites (un `${VAR}` reste un
+  renvoi au `.env`) et, pour tout réglage que le fichier ne dit pas, la
+  valeur que le proxy prend d'office, suivie de `# défaut`
+  (`GET /ui/config`). Une valeur secrète écrite en clair (clé, jeton, mot
+  de passe, en-tête) est masquée. Le texte se modifie dans la page,
+  *Vérifier* le fait relire par le proxy (`POST /ui/config/check` : syntaxe
+  TOML, et les clés qu'il ne lit pas — une faute de frappe y est sinon
+  inerte, sans un mot au démarrage), puis il se copie ou se télécharge.
+  **Rien n'est écrit sur le proxy** : appliquer, c'est remplacer
+  `data/config.toml` sur l'hôte (valeurs masquées remises) et redémarrer.
+  Avec les comptes OIDC, réservé aux admins, comme *Proxy*.
 
 Chaque client a aussi son bloc *Vérifier* : le catalogue (`GET
 /v1/models`) avec la clé, puis, s'il prend les outils par MCP, la liste
@@ -3089,6 +3102,7 @@ défauts), qu'il applique sans croire le proxy : à monter avec celles-ci.
 | Clé | Défaut | Rôle |
 |---|---|---|
 | `chat` | `false` | Ouvre l'onglet *Chat* du tableau de bord (`POST /ui/chat/completions`) : le cookie de `/ui` y dépense des tokens, comptés à la clé connectée. Voir [Le chat](#le-chat) |
+| `chat_model` | `""` | Le modèle présélectionné dans le chat (`<backend>/<modèle>`) : chaque nouvelle conversation part sur lui, s'il est au catalogue. Vide : le dernier modèle choisi dans le navigateur, sinon le premier du catalogue |
 
 ### `[fair_share]`
 

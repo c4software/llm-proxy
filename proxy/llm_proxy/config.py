@@ -78,6 +78,12 @@ def load(path: str = CONFIG_PATH) -> dict:
 
 CONFIG: dict = load()
 
+# Chaque réglage LU par le proxy, avec son défaut : rempli par get() à
+# mesure que les modules se chargent (leurs réglages sont lus à l'import).
+# C'est la liste de ce que le proxy connaît — la page en montre les
+# valeurs effectives (config_view.py), défauts compris.
+READ: dict[str, object] = {}
+
 
 def section(name: str) -> dict:
     """Une table de premier niveau, toujours un dict (vide si absente)."""
@@ -87,6 +93,8 @@ def section(name: str) -> dict:
 
 def get(path: str, default=None):
     """Lecture pointée : get(\"stats.database\"). `default` si absent."""
+    if READ.get(path) is None:
+        READ[path] = default
     node = CONFIG
     for part in path.split("."):
         if not isinstance(node, dict) or part not in node:
@@ -124,6 +132,7 @@ def flag(path: str, default: bool = False) -> bool:
 def strings(path: str, default=()) -> list[str]:
     """Liste de chaînes ; une chaîne unique séparée par des virgules est
     acceptée."""
+    READ.setdefault(path, list(default))
     value = get(path)
     if value is None:
         return [str(v) for v in default]

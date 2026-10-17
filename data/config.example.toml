@@ -792,6 +792,10 @@ allowed_origins = []
 # POST /ui/chat/completions rend 404 : le cookie ne sert qu'à lire.
 [ui]
 chat = false
+# Le modèle présélectionné dans le chat (<backend>/<modèle>) : chaque
+# nouvelle conversation part sur lui, s'il est au catalogue. Vide : le
+# dernier modèle choisi dans le navigateur, sinon le premier du catalogue.
+chat_model = ""
 
 
 # ── Partage équitable ───────────────────────────────────────────────────

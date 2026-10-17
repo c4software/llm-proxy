@@ -402,3 +402,15 @@ def test_an_admin_downloads_a_backup(idp, tmp_path, monkeypatch):
 
 def test_no_backup_download_without_accounts(proxy):
     assert proxy.client.get("/ui/admin/backup").status_code == 404
+
+
+def test_only_an_admin_sees_the_settings(idp, tmp_path, monkeypatch):
+    """Configuration → Paramètres, avec les comptes : admin seulement."""
+    from llm_proxy import config
+    (tmp_path / "config.toml").write_text("[proxy]\n")
+    monkeypatch.setattr(config, "CONFIG_PATH", str(tmp_path / "config.toml"))
+    alice = connect(idp)
+    bob = connect(idp, "bob", "bob@example.org")
+    assert alice.get("/ui/config").status_code == 200
+    assert bob.get("/ui/config").status_code == 403
+    assert bob.post("/ui/config/check", json={"toml": ""}).status_code == 403

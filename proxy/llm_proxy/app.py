@@ -4,6 +4,7 @@ routes vivent par domaine, à côté :
 
   startup.py      le démarrage et l'arrêt (lifespan), ce qu'il dit au journal
   health.py       /healthz, /ui/health
+  config_view.py  la configuration effective pour la page (lecture seule)
   tool_routes.py  outils hébergés exposés : /v1/tools, /mcp, fichiers rendus
   relay_routes.py /v1/audio/voices et le catch-all (forward_post_paths,
                   404 local sinon)
@@ -86,6 +87,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import auth
 from . import catalog
+from . import config_view
 from . import health
 from . import relay_routes
 from . import surfaces
@@ -114,7 +116,8 @@ app.add_middleware(UISession)
 
 # Les routes des modules, le relais (son catch-all) EN DERNIER, qui sinon
 # les prendrait toutes.
-for module in (surfaces, catalog, usage_api, ui_routes, health, tool_routes):
+for module in (surfaces, catalog, usage_api, ui_routes, config_view, health,
+               tool_routes):
     app.include_router(module.router)
 
 

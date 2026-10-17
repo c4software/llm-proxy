@@ -81,6 +81,10 @@ UI_VERSION = _static_version()
 # page y DÉPENSE des tokens. Absent du TOML = inactif — sans lui, le cookie
 # ne sert qu'à lire (statistiques, mémoire).
 UI_CHAT = config.flag("ui.chat", False)
+# Le modèle présélectionné dans le chat de la page (<backend>/<modèle>) :
+# chaque nouvelle conversation part sur lui, s'il est au catalogue. Vide :
+# le dernier modèle choisi dans ce navigateur, sinon le premier.
+UI_CHAT_MODEL = config.text("ui.chat_model", "").strip()
 
 
 @router.get("/ui", response_class=HTMLResponse)
@@ -431,6 +435,7 @@ async def ui_session(request: Request):
         "client": ui_client(request)[:8] or None,
         "chat": {
             "enabled": UI_CHAT,
+            "model": UI_CHAT_MODEL or None,
             "hosted_tools": chat_tools,
             "tools": chat_tool_groups() if chat_tools else [],
             "always": always_shown() if chat_tools else [],

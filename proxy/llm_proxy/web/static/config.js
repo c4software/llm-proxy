@@ -47,7 +47,8 @@ window.ConfigPanel = {
       { id: "clients", label: "Clients" },
       ...(account.value ? [{ id: "keys", label: "Clés" }] : []),
       ...(isAdmin.value ? [{ id: "accounts", label: "Comptes" }] : []),
-      ...(!account.value || isAdmin.value ? [{ id: "proxy", label: "Proxy" }] : []),
+      ...(!account.value || isAdmin.value ? [{ id: "proxy", label: "Proxy" },
+                                             { id: "settings", label: "Paramètres" }] : []),
     ]);
     const stored = ref((() => {
       try { return localStorage.getItem(STORE_PART) || "clients"; }
@@ -60,7 +61,35 @@ window.ConfigPanel = {
       try { localStorage.setItem(STORE_PART, p); } catch { /* sans stockage */ }
       if (p === "keys") loadKeys();
       if (p === "accounts") loadUsers();
+      if (p === "settings" && !settings.loaded) loadSettings();
     }
+
+    // ── paramètres : la configuration effective, en lecture seule ────────
+    // GET /ui/config : tout ce que le proxy lit, valeurs du fichier ou
+    // défauts (« # défaut »), secrets masqués. Modifiable ICI seulement :
+    // vérifié par le proxy (POST /ui/config/check), copié, téléchargé —
+    // jamais écrit sur lui.
+    const settings = reactive({ loaded: false, path: "", defaults: 0, original: "",
+                                text: "", error: "", check: null, checking: false });
+    async function loadSettings() {
+      settings.error = "";
+      settings.check = null;
+      try {
+        const r = await call("GET", "/ui/config");
+        Object.assign(settings, { loaded: true, path: r.path, defaults: r.defaults,
+                                  original: r.toml, text: r.toml });
+      } catch (e) { settings.error = e.message; }
+    }
+    async function checkSettings() {
+      settings.checking = true;
+      settings.check = null;
+      try { settings.check = await call("POST", "/ui/config/check", { toml: settings.text }); }
+      catch (e) { settings.error = e.message; }
+      finally { settings.checking = false; }
+    }
+    watch(() => settings.text, () => { settings.check = null; });
+    const settingsFile = computed(() => ({ name: "config.toml", download: "config.toml",
+                                           content: settings.text }));
 
     // ── clés et comptes (OIDC) ──────────────────────────────────────────
     const keys = ref([]);
@@ -231,6 +260,7 @@ window.ConfigPanel = {
     onMounted(() => {
       loadModels(); loadAllModels();
       if (part.value === "keys") loadKeys();
+      if (part.value === "settings") loadSettings();
       loadUsers();                    // admin : le nombre de comptes en attente
     });
 
@@ -439,7 +469,7 @@ window.ConfigPanel = {
       tools: Object.fromEntries(TOOL_LIST.map((t) => [t.id, false])),
       toolModels: { image_generation: "", ocr: "", transcribe: "" },
       searxng: "http://searxng:8080", executor: "http://executor:8080",
-      maxCalls: 16, mcpServer: true, uiChat: false, publicUrl: "",
+      maxCalls: 16, mcpServer: true, uiChat: false, chatModel: "", publicUrl: "",
       retention: 90, logLevel: "INFO",
       // Partage équitable : part par défaut (tokens / heure, 0 = aucune
       // limite) ; routes hors quotas et hors partage ([proxy].exempt_paths).
@@ -480,6 +510,7 @@ window.ConfigPanel = {
       px.maxCalls = (h.tools || {}).max_calls || 8;
       px.mcpServer = !!(h.mcp_server || {}).enabled;
       px.uiChat = !!(props.session.chat || {}).enabled;
+      px.chatModel = (props.session.chat || {}).model || "";
       if ((h.files || {}).public_url) px.publicUrl = origin;
       if (!px.keys.length && h.auth_required && !px.oidc.on) {
         px.keys = [{ name: "PROXY_API_KEY", value: "" }];
@@ -562,7 +593,9 @@ window.ConfigPanel = {
         L.push("");
       }
       L.push("[mcp_server]", `enabled = ${px.mcpServer}`, "");
-      L.push("[ui]", `chat = ${px.uiChat}`, "");
+      L.push("[ui]", `chat = ${px.uiChat}`);
+      if (px.chatModel) L.push(`chat_model = ${q(px.chatModel)}`);
+      L.push("");
       L.push("[files]", `public_url = ${q(px.publicUrl.replace(/\/+$/, ""))}`, "");
       L.push("[stats]", `retention_days = ${Number(px.retention) || 0}`, "");
       const names = new Set();
@@ -603,7 +636,7 @@ window.ConfigPanel = {
       };
     });
 
-    return { KEYFILE, part, parts, setPart, account, isAdmin, keys, tomlKeys, allKeys,
+    return { KEYFILE, settings, loadSettings, checkSettings, settingsFile, part, parts, setPart, account, isAdmin, keys, tomlKeys, allKeys,
              keyLabel, fresh, keyError, armed, createKey, revokeKey, loadKeys,
              users, userError, bindToml, ROLES, fair, num, shareMode,
              customShare, pickShare, typeShare, roleLabel, pendingCount, setRole, when,
@@ -622,6 +655,7 @@ window.ConfigPanel = {
       <span class="range-note" v-if="part === 'clients'">la configuration d'un client, la clé par variable d'environnement</span>
       <span class="range-note" v-else-if="part === 'keys'">vos clés pour vos clients : une par client, révocable</span>
       <span class="range-note" v-else-if="part === 'accounts'">les comptes connectés par OIDC, leur part et leur rôle</span>
+      <span class="range-note" v-else-if="part === 'settings'">tous les réglages en vigueur, défauts compris — lecture seule</span>
       <span class="range-note" v-else>data/config.toml et son .env, préremplis d'après ce déploiement</span>
     </div>
 
@@ -778,6 +812,39 @@ window.ConfigPanel = {
       </div>
     </div>
 
+    <div class="config-keys config-settings" v-if="part === 'settings'">
+      <section class="panel">
+        <div class="panel-head"><h2>{{ settings.path || "config.toml" }}</h2>
+          <span class="config-actions">
+            <button type="button" class="btn ghost" @click="checkSettings"
+                    :disabled="!settings.loaded || settings.checking">Vérifier</button>
+            <button type="button" class="btn ghost" @click="settings.text = settings.original"
+                    :disabled="settings.text === settings.original">Annuler les modifications</button>
+            <button type="button" class="btn ghost" @click="loadSettings">Relire</button>
+            <button type="button" class="btn ghost" @click="copy(settingsFile)"
+                    :disabled="!settings.loaded">{{ copied === settingsFile.name ? "Copié" : "Copier" }}</button>
+            <button type="button" class="btn ghost" @click="download(settingsFile)"
+                    :disabled="!settings.loaded">Télécharger</button>
+          </span></div>
+        <p class="note">La configuration en vigueur : les valeurs du fichier, et celles que le proxy prend
+          d'office ({{ settings.defaults }}, suivies de « # défaut »). Les <code>\${VAR}</code> renvoient au
+          .env ; une valeur secrète écrite en clair est masquée. Modifiable ici pour préparer un fichier :
+          <strong>rien n'est écrit sur le proxy</strong> — remplacer data/config.toml sur l'hôte (valeurs
+          masquées remises), puis redémarrer.</p>
+        <p class="err" v-if="settings.error" role="status">{{ settings.error }}</p>
+        <div v-if="settings.check" class="settings-check" role="status">
+          <p class="err" v-if="!settings.check.ok">TOML invalide : {{ settings.check.error }}</p>
+          <p class="ok" v-else-if="!settings.check.unknown.length">TOML valide, toutes les clés sont connues du proxy.</p>
+          <p class="err" v-else>TOML valide, mais le proxy ne lit pas ces clés (faute de frappe, réglage retiré) :
+            <code v-for="k in settings.check.unknown" :key="k">{{ k }}</code></p>
+          <p class="note" v-if="settings.check.masked">{{ settings.check.masked }} valeur(s) masquée(s) à
+            remettre avant usage.</p>
+        </div>
+        <textarea v-model="settings.text" spellcheck="false" aria-label="config.toml"
+                  :placeholder="settings.loaded ? '' : 'Chargement…'"></textarea>
+      </section>
+    </div>
+
     <div class="config-grid" v-if="part === 'proxy'">
       <form class="panel config-form" @submit.prevent>
         <div class="panel-head"><h2>Proxy</h2>
@@ -859,6 +926,11 @@ window.ConfigPanel = {
             <label class="check"><input type="checkbox" v-model="px.responses"> surface Responses (Codex)</label>
             <label class="check"><input type="checkbox" v-model="px.mcpServer"> serveur MCP (/mcp)</label>
             <label class="check"><input type="checkbox" v-model="px.uiChat"> chat de /ui</label>
+            <label class="field" v-if="px.uiChat"><span>Modèle présélectionné dans le chat</span>
+              <select v-model="px.chatModel" class="mono">
+                <option value="">— le dernier choisi, sinon le premier —</option>
+                <option v-for="m in modelChoices(px.chatModel)" :key="m" :value="m">{{ m }}</option>
+              </select></label>
           </fieldset>
           <fieldset><legend>Outils hébergés</legend>
             <label class="check"><input type="checkbox" v-model="px.hostedTools"> sur /v1/chat/completions</label>

@@ -328,7 +328,12 @@ window.ChatPanel = {
     const isImage = (id) => !!(models.value.find((m) => m.id === id) || {}).image;
     const imageMode = computed(() => !!current.value && isImage(current.value.model));
     const imageSizes = computed(() => chat.value.image_sizes || ["512x512"]);
+    // Le modèle d'une nouvelle conversation : celui que le proxy
+    // présélectionne ([ui].chat_model), s'il est au catalogue ; sinon le
+    // dernier choisi dans ce navigateur, sinon le premier.
     function defaultModel() {
+      const preset = chat.value.model;
+      if (preset && modelIds.value.includes(preset)) return preset;
       const last = localStorage.getItem(LAST_MODEL);
       if (last && modelIds.value.includes(last)) return last;
       return modelIds.value[0] || last || "";

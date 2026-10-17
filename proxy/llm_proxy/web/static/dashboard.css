@@ -870,6 +870,15 @@ a.btn { display: inline-block; text-decoration: none; }
 .config-keys { display: flex; flex-direction: column; gap: 16px; }
 .config-keys .panel { overflow-x: auto; }
 .config-keys .note, .config-keys .err { font-size: 13px; margin: 0; padding: 12px 18px; }
+.config-settings textarea {
+  display: block; width: calc(100% - 36px); margin: 0 18px 18px; min-height: 65vh; resize: vertical;
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2;
+  color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+}
+.config-settings textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.config-settings .ok { color: var(--ok); font-size: 13px; margin: 0; padding: 12px 18px; }
+.settings-check code { margin-right: 6px; }
+.config-settings .panel-head { flex-wrap: wrap; gap: 8px; }
 .config-keys .note { color: var(--muted); }
 .config-keys td { white-space: nowrap; }
 .config-keys td:first-child { white-space: normal; }

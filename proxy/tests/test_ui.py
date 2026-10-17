@@ -140,7 +140,7 @@ def test_chat_is_closed_unless_enabled(ui, monkeypatch):
     monkeypatch.setattr(ui_routes, "UI_CHAT", False)
     assert chat(ui).status_code == 404
     assert ui.client.get("/ui/session").json()["chat"] == {
-        "enabled": False, "hosted_tools": False, "tools": [], "always": [],
+        "enabled": False, "model": None, "hosted_tools": False, "tools": [], "always": [],
         "image_sizes": ["512x512", "768x768", "1024x1024"],
         "image_size": "512x512"}
     assert not ui.sent
