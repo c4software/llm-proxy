@@ -32,7 +32,7 @@ son image et ses tests.
     ├── .env.example                          les secrets
     ├── data/       la configuration et les statistiques DU DÉPLOIEMENT (config.toml,
     │               stats.db, non versionnés) ; config.example.toml, le modèle
-    ├── docs/       outils.md (le contrat des outils hébergés), preview.jpg, keys.jpg
+    ├── docs/       outils.md (le contrat des outils hébergés), les captures du README
     ├── proxy/      LE PROXY : Dockerfile, requirements*.txt, main.py, le paquet
     │               llm_proxy/, ses tests (tests/)
     ├── services/   LES SERVICES TIERS de la pile
@@ -242,7 +242,7 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/httputil.py` | La forme des erreurs (OpenAI ou Anthropic), la lecture des corps JSON |
 | `proxy/tests/` | Tests du proxy : traducteurs, outils, stats (`cd proxy && pytest`, `requirements-dev.txt`, `pytest.ini`) — sur des octets et une base temporaire, sans réseau |
 | `bench/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi, Codex CLI, omp et un client HTTP nu, scénarios PASS/FAIL — voir `bench/README.md` |
-| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le squelette de la page, servi tel quel) et `static/`, des modules ES par domaine — `app.js` (session, vues, menu), `stats/`, `chat/` (`ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js`), `config/` (une partie par fichier, `proxy/form.js`, `proxy/advanced.js`), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème) — plus `dashboard.css` et `vue.global.prod.js` |
+| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le squelette de la page, servi tel quel) et `static/`, des modules ES par domaine — `app.js` (session, vues, menu), `stats/`, `chat/` (`ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js`, `pagetools.js` et les outils de la page : `ask.js`, `workspace.js`, `outputs.js`, `diff.js`, `ArtifactPanel.js` ; `voice.js`, `notify.js`), `config/` (une partie par fichier, `proxy/form.js`, `proxy/advanced.js`), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème) — plus `dashboard.css` et `vue.global.prod.js` |
 | `proxy/llm_proxy/ui_static.py` | Les fichiers de la page, sous un chemin versionné (`/ui/static/v/<empreinte>/…`, gardés un an) : un import relatif d'un module hérite de la même version |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 | `services/searxng/settings.yml` | Réglages de l'instance SearXNG du compose : les défauts de SearXNG, plus le format JSON. Monté en lecture seule dans le service `searxng` |
@@ -758,23 +758,7 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   les lire, la page prévient si le catalogue ne le dit pas ; les
   fichiers texte (256 Ko au plus) sont joints au message entre balises
   `<file name="…">`. Le reste est refusé. *Joindre* ouvre un menu :
-  *Fichiers…* (ce qui précède) ou *Dossier…*.
-- **Dossier ouvert** (*Joindre → Dossier…*, `chat/workspace.js`) : le
-  dossier choisi reste **dans le navigateur**, rien n'est envoyé
-  d'avance. Le modèle reçoit trois outils que **la page exécute elle-même**
-  quand il les appelle — le proxy les lui rend en `tool_calls`, comme à
-  tout client : `folder_list` (un sous-dossier, ou tout en récursif),
-  `folder_read` (un fichier texte, lignes numérotées, par tranches de
-  1 500 lignes ou 60 000 caractères), `folder_search` (un texte ou une
-  expression, « chemin:ligne: texte »). Il ne lit donc que ce dont il a
-  besoin : un dépôt de mille fichiers ne coûte que ce qu'il en ouvre.
-  Ignorés : `.git`, `node_modules`, environnements Python et caches ; un
-  fichier binaire est refusé. Chaque appel s'affiche dans le fil comme
-  ceux des outils du proxy, et reste dans l'historique de la conversation
-  (le modèle retrouve ce qu'il a lu au message suivant). 25 tours au plus
-  par réponse. Un modèle qui sait appeler des outils est nécessaire.
-  Après un rechargement, la conversation garde le nom du dossier et
-  demande de le **rouvrir** : le navigateur ne rend pas l'accès tout seul.
+  *Fichiers…* (ce qui précède) ou *Dossier…* (voir [les outils de la page](#les-outils-de-la-page)).
 - **Rendu** : Markdown écrit pour la page (`lib/markdown.js`, aucune
   dépendance) — titres, listes, tableaux, citations, code avec bouton
   *Copier*, liens et images. Tout le texte est échappé avant analyse :
@@ -795,6 +779,88 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   les fichiers de la clé connectée, à lire, corriger ou effacer. Il se
   relit dès que le modèle a appelé l'outil `memory`, et l'appel se lit
   « `create /memories/…` » plutôt qu'en arguments bruts.
+- **Voix** (`chat/voice.js`), avec les modèles du catalogue :
+  - *Dicter* (à côté de *Joindre*) : le micro est enregistré, puis
+    converti en WAV 16 kHz mono **dans la page** — les serveurs de
+    transcription lisent le WAV, le navigateur enregistre du WebM ou du
+    MP4 — et transcrit par `POST /ui/audio/transcriptions` ; le texte
+    rejoint la zone de saisie. Modèle par défaut : celui de
+    `[tools.transcribe]`.
+  - *Écouter* (sous une réponse) : le texte, sans code ni Markdown (3 000
+    caractères au plus), lu par `POST /ui/audio/speech` avec la voix
+    choisie (`GET /ui/audio/voices`). Modèle par défaut : un modèle à voix
+    toutes faites (`customvoice`), pas le clonage ni la conception de voix,
+    qui demandent une référence.
+  - Les modèles (dictée, lecture) et la voix se choisissent dans
+    *Réglages* ; le choix reste dans le navigateur. Ces routes relaient
+    `/v1/audio/*` sous le cookie, comptées à la clé connectée.
+- **Notifications** (*Réglages*) : une réponse finie, ou une question qui
+  attend, pendant que l'onglet est en arrière-plan — le titre de l'onglet
+  le marque (« ● »), et une notification du navigateur si elle est
+  permise.
+
+#### Les outils de la page
+
+![Le menu Joindre : Fichiers… (joints au message) ou Dossier… (parcouru par le modèle, qui peut proposer des écritures), à côté du bouton Dicter](docs/chat-joindre.png)
+
+Le chat déclare au modèle, en plus des outils hébergés, des outils que
+**la page exécute elle-même** : le proxy les lui rend en `tool_calls`,
+comme à tout client (`chat/pagetools.js`, leur registre). Tant que le
+modèle en appelle, la page les exécute et le relance avec leurs
+résultats (25 tours au plus par réponse). Chaque appel s'affiche dans le
+fil comme ceux des outils du proxy, et reste dans l'historique de la
+conversation : au message suivant, le modèle retrouve ce qu'il a lu,
+demandé ou produit. Un modèle qui sait appeler des outils est
+nécessaire.
+
+Certains **attendent l'utilisateur** : la réponse se met en pause sur
+une carte, et reprend dès qu'il répond. L'état est dans le message — la
+carte survit à un rechargement et reste répondable. Écrire un nouveau
+message au lieu de répondre la clôt, sans réponse.
+
+| Outil | Ce qu'il fait | Attend l'utilisateur |
+|---|---|---|
+| `ask_user` | 1 à 4 questions à choix (unique ou multiple), toujours avec « Autre… » libre | oui |
+| `show_artifact` | une page HTML, un document Markdown, un SVG, un schéma Mermaid ou du code, dans le panneau latéral ; même `id` = nouvelle version | non |
+| `save_file` | un fichier texte (CSV, script, Markdown…) en puce sous la réponse, à télécharger | non |
+| `folder_list`, `folder_read`, `folder_search` | parcourir, lire (par tranches numérotées), chercher dans le dossier ouvert | non |
+| `folder_write`, `folder_edit` | créer ou remplacer un fichier, remplacer un passage exact | oui : diff, *Appliquer* ou *Refuser* |
+
+![Une carte ask_user : deux questions à choix (budget, rythme), un champ « Autre… » sous chacune, Répondre ou Passer](docs/chat-question.png)
+
+- **Questions** (`ask_user`) : quand une décision revient à
+  l'utilisateur ou qu'une précision manque. Sa réponse est rendue au
+  modèle question par question ; *Passer* le dit aussi.
+- **Dossier ouvert** (*Joindre → Dossier…*, `chat/workspace.js`) : le
+  dossier choisi reste **dans le navigateur**, rien n'est envoyé
+  d'avance ; le modèle ne lit que ce dont il a besoin — un dépôt de mille
+  fichiers ne coûte que ce qu'il en ouvre. Ignorés : `.git`,
+  `node_modules`, environnements Python et caches ; un fichier binaire est
+  refusé. Après un rechargement, la conversation garde le nom du dossier
+  et demande de le **rouvrir** : le navigateur ne rend pas l'accès tout
+  seul.
+- **Écrire dans le dossier** : chaque écriture proposée s'affiche en
+  **diff** (3 lignes de contexte), avec un commentaire facultatif pour le
+  modèle ; rien n'est écrit sans *Appliquer*. Sous Chrome et Edge, le
+  dossier est ouvert par le sélecteur du système et le fichier est **écrit
+  sur le disque** (l'accès en écriture est demandé à la première
+  écriture) ; ailleurs, le fichier modifié est **téléchargé**. Dans les
+  deux cas, le modèle relit ensuite la nouvelle version.
+
+![Une écriture proposée : folder_list, folder_read puis folder_edit sur README.md, le diff (une ligne retirée, une ajoutée), Appliquer ou Refuser](docs/chat-ecriture.png)
+
+- **Artifacts** (`show_artifact`, `chat/ArtifactPanel.js`) : le bouton
+  *Artifacts* de l'en-tête ouvre le panneau, à droite du fil (par-dessus
+  sur un écran étroit) — un artifact à la fois, ses versions, *Source*,
+  *Copier*, *Télécharger*, *Large*. **Isolé** : rendu dans un cadre
+  `sandbox` sans `allow-same-origin`, une origine à lui — il ne voit ni la
+  page, ni sa session, ni ses clés — sous une politique de contenu posée
+  dans le document : scripts et styles en ligne, bibliothèques depuis
+  cdnjs, jsdelivr ou unpkg (graphiques, Mermaid…), **aucune autre requête
+  réseau** (ni `fetch`, ni image distante, ni formulaire). Gardés avec la
+  conversation.
+
+![Le panneau des artifacts : une page HTML produite par le modèle, un graphique Chart.js chargé depuis jsdelivr, avec Source, Copier, Télécharger et Large](docs/chat-artifact.png)
 
 ### L'onglet Configuration
 
