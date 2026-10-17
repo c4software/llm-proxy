@@ -1,6 +1,6 @@
 /*
   L'onglet « Chat » du tableau de bord : un composant à part, enregistré
-  par dashboard.js sous <chat-panel>, comme la section Mémoire. Il a ses
+  par dashboard.js sous <chat-panel>, comme la mémoire (memory.js). Il a ses
   propres appels et ne touche pas aux statistiques.
 
   Routes (même cookie que /ui/usage — la clé de la personne connectée) :
@@ -24,7 +24,7 @@
   la page : c'est la mémoire du proxy ([chat].memory) qui le réinsère,
   tant que la réponse est renvoyée telle qu'elle a été reçue.
 
-  MÉMOIRE : le panneau de la section Mémoire (memory.js, `compact`), à
+  MÉMOIRE : le panneau de la mémoire (memory.js, `compact`), à
   droite du fil, relu dès que le modèle a appelé l'outil `memory`.
 
   FILE D'ATTENTE : pendant une réponse, Entrée met le message en file

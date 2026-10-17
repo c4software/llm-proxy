@@ -630,7 +630,8 @@ createApp({
              backendSummary, num, ms, ago, dur, moment, tickLabel, select,
              selectMetric };
   },
-// La section Mémoire : un composant à part (memory.js), ses propres appels.
+// La mémoire : un composant à part (memory.js), ses propres appels — dans la
+// configuration et à côté du chat.
 }).component("memory-panel", window.MemoryPanel)
   .component("chat-panel", window.ChatPanel)
   .component("config-panel", window.ConfigPanel).mount("#app");

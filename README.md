@@ -242,7 +242,7 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/httputil.py` | La forme des erreurs (OpenAI ou Anthropic), la lecture des corps JSON |
 | `proxy/tests/` | Tests du proxy : traducteurs, outils, stats (`cd proxy && pytest`, `requirements-dev.txt`, `pytest.ini`) — sur des octets et une base temporaire, sans réseau |
 | `bench/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi, Codex CLI, omp et un client HTTP nu, scénarios PASS/FAIL — voir `bench/README.md` |
-| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `memory.js` — la section Mémoire, un composant à part —, `dashboard.css`, `vue.global.prod.js`) |
+| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `memory.js` — la mémoire, un composant à part, dans *Configuration → Mémoire* et à côté du chat —, `dashboard.css`, `vue.global.prod.js`) |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 | `services/searxng/settings.yml` | Réglages de l'instance SearXNG du compose : les défauts de SearXNG, plus le format JSON. Monté en lecture seule dans le service `searxng` |
 
@@ -768,7 +768,7 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   et durée sous la réponse.
 
 - **Mémoire** (si `[tools.memory]` est actif) : le bouton *Retenu* de
-  l'en-tête ouvre, à droite du fil, le panneau de la section Mémoire —
+  l'en-tête ouvre, à droite du fil, le panneau de *Configuration → Mémoire* —
   les fichiers de la clé connectée, à lire, corriger ou effacer. Il se
   relit dès que le modèle a appelé l'outil `memory`, et l'appel se lit
   « `create /memories/…` » plutôt qu'en arguments bruts.
@@ -2676,7 +2676,7 @@ Sans liaison de protocole : présentée sur `/v1/chat/completions`
 (déclarée `{"type": "memory"}`, ou d'office par `[chat].always`), par
 `/v1/tools` et par le [serveur MCP](#serveur-mcp--mcp). L'outil memory
 d'Anthropic, lui, est exécuté par le client : rien à remplacer sur
-`/v1/messages`. Dans le **tableau de bord**, la section *Mémoire* montre
+`/v1/messages`. Dans le **tableau de bord**, *Configuration → Mémoire* montre
 les fichiers de la clé connectée (celle saisie à l'entrée de `/ui`) :
 lecture, édition, renommage, suppression — jamais la mémoire d'une autre
 clé. Routes, sous le même cookie : `GET /ui/memory`, `GET|PUT|DELETE
@@ -2684,7 +2684,7 @@ clé. Routes, sous le même cookie : `GET /ui/memory`, `GET|PUT|DELETE
 
 Ce qu'un modèle range ici revient dans les conversations suivantes : une
 page web lue par un agent peut lui faire écrire une consigne qui le
-suivra. La section *Mémoire* est là aussi pour relire.
+suivra. *Configuration → Mémoire* est là aussi pour relire.
 
 ### Mémoire des résultats
 
@@ -3091,7 +3091,7 @@ défauts), qu'il applique sans croire le proxy : à monter avec celles-ci.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `enabled` | `false` | Offre l'outil `memory` et la section Mémoire de `/ui` |
+| `enabled` | `false` | Offre l'outil `memory` et la partie *Mémoire* de la configuration de `/ui` |
 | `database` | `"memory.db"` | Base SQLite ; relatif = à côté de `config.toml` |
 | `max_files` | `500` | Fichiers par clé |
 | `max_file_chars` | `100000` | Caractères d'un fichier |

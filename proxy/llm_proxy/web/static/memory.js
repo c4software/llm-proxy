@@ -17,14 +17,16 @@
   jamais être écrasée par la liste. Elle se relit à l'ouverture de la
   section, après chaque action, et par « Actualiser ».
 
-  Deux présentations, le même contenu : la section repliable des
-  statistiques, et (`compact`) le panneau latéral du chat. Là, `stamp`
+  Deux présentations, le même contenu : la partie « Mémoire » de la
+  configuration (`expanded` : ouverte d'emblée), et (`compact`) le panneau
+  latéral du chat. Là, `stamp`
   change quand le modèle vient d'appeler l'outil `memory` : la liste se
   relit, et le fichier ouvert aussi s'il n'est pas en cours de
   modification.
 */
 window.MemoryPanel = {
   props: { compact: { type: Boolean, default: false },
+           expanded: { type: Boolean, default: false },
            stamp: { type: Number, default: 0 } },
   emits: ["close"],
   setup(props) {
@@ -159,7 +161,7 @@ window.MemoryPanel = {
              load, onToggle, num, when, short };
   },
   template: `
-  <details class="panel howto memory" v-if="enabled && !compact" @toggle="onToggle">
+  <details class="panel howto memory" v-if="enabled && !compact" :open="expanded" @toggle="onToggle">
     <summary>
       <h2>Mémoire</h2>
       <span class="meta">ce que les modèles ont retenu pour vous

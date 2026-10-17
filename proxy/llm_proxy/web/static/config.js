@@ -50,6 +50,8 @@ window.ConfigPanel = {
     const parts = computed(() => [
       { id: "clients", label: "Clients" },
       ...(account.value ? [{ id: "keys", label: "Clés" }] : []),
+      // Ce que l'outil `memory` a gardé pour vous (memory.js).
+      ...(props.session.memory ? [{ id: "memory", label: "Mémoire" }] : []),
       ...(isAdmin.value ? [{ id: "accounts", label: "Comptes" }] : []),
       ...(!account.value || isAdmin.value ? [{ id: "proxy", label: "Proxy" }] : []),
     ]);
@@ -662,6 +664,10 @@ window.ConfigPanel = {
                 @click="setPart(p.id)">{{ p.label }}<template
                 v-if="p.id === 'accounts' && pendingCount"> ({{ pendingCount }})</template></button>
       </div>
+    </div>
+
+    <div class="config-keys" v-if="part === 'memory'">
+      <memory-panel expanded></memory-panel>
     </div>
 
     <div class="config-keys" v-if="part === 'keys'">
