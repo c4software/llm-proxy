@@ -485,10 +485,11 @@ window.ConfigPanel = {
       // Partage équitable : part par défaut (tokens / heure, 0 = aucune
       // limite) ; routes hors quotas et hors partage ([proxy].exempt_paths).
       fairShare: 0, exempt: "/embeddings, /rerank, /audio/transcriptions, /ocr",
-      // Comptes ([oidc]) : client_id et client_secret vont dans le .env.
+      // Comptes ([oidc]) : client_secret va dans le .env (client_id aussi,
+      // sauf s'il est déjà écrit en clair : ce n'est pas un secret).
       oidc: { on: false, issuer: "", redirectUri: "", newAccounts: "pending",
               sessionDays: 7, maxKeys: 50, label: "Se connecter",
-              idVar: "OIDC_CLIENT_ID", secretVar: "OIDC_CLIENT_SECRET" },
+              clientId: "", idVar: "OIDC_CLIENT_ID", secretVar: "OIDC_CLIENT_SECRET" },
       executorVar: "",                // la variable du jeton, lue dans le fichier
     });
     const prefilled = ref(false);
@@ -522,6 +523,9 @@ window.ConfigPanel = {
         redirectUri: o.redirect_uri || "", newAccounts: o.new_accounts || "pending",
         sessionDays: o.session_days || 7, maxKeys: o.max_keys_per_account || 50,
         label: o.label || "Se connecter",
+        // client_id n'est pas un secret : écrit en clair, il le reste.
+        clientId: varOf(o.client_id) ? "" : (o.client_id || ""),
+        secretPlain: !!o.client_secret && !varOf(o.client_secret),
         idVar: varOf(o.client_id) || "OIDC_CLIENT_ID", secretVar: varOf(o.client_secret) || "OIDC_CLIENT_SECRET" });
       px.anthropic = !!g("anthropic.enabled", false);
       px.defaultModel = g("anthropic.model_map.default", "");
@@ -587,14 +591,18 @@ window.ConfigPanel = {
       if (px.oidc.on) {
         const o = px.oidc;
         L.push("[oidc]", `issuer = ${q(o.issuer.trim().replace(/\/+$/, ""))}`,
-               `client_id = "\${${o.idVar}}"`, `client_secret = "\${${o.secretVar}}"`);
+               o.clientId ? `client_id = ${q(o.clientId)}` : `client_id = "\${${o.idVar}}"`,
+               `client_secret = "\${${o.secretVar}}"`);
         if (o.redirectUri.trim()) L.push(`redirect_uri = ${q(o.redirectUri.trim())}`);
         L.push(`new_accounts = ${q(o.newAccounts)}`,
                `session_days = ${Math.max(1, Number(o.sessionDays) || 7)}`,
                `max_keys_per_account = ${Math.max(1, Number(o.maxKeys) || 50)}`,
                `label = ${q(o.label || "Se connecter")}`, "");
-        env.push(`${o.idVar}=`, `${o.secretVar}=`);
+        if (!o.clientId) env.push(`${o.idVar}=`);
+        env.push(`${o.secretVar}=`);
         if (!o.issuer.trim()) warn.push("Comptes OIDC : l'émetteur (issuer) est requis.");
+        if (o.secretPlain) warn.push(`Comptes OIDC : client_secret était écrit en clair : il devient `
+          + `\${${o.secretVar}}, sa valeur est à mettre dans le .env.`);
         if (!o.redirectUri.trim() && !px.publicUrl.trim()) warn.push("Comptes OIDC : sans adresse de retour "
           + "ni adresse publique, elle est déduite de la requête — en http:// derrière un reverse proxy, "
           + "que le fournisseur refuse.");
