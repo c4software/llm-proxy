@@ -157,8 +157,8 @@ def test_mcp_et_appel_direct_cloisonnes_par_cle(proxy):
 
 def test_routes_ui_de_la_cle_connectee(proxy):
     mcp_call(proxy, "sk-a", command="create", path="/memories/n.md", file_text="un")
-    # Le cookie de la page porte la clé : posé par /ui?key=…
-    proxy.get("/ui?key=sk-a")
+    # La session de la page : ouverte par la clé, à l'entrée.
+    proxy.post("/ui/login", json={"key": "sk-a"})
     j = proxy.get("/ui/memory").json()
     assert [f["path"] for f in j["data"]] == ["/memories/n.md"] and j["usage"]["files"] == 1
     assert proxy.get("/ui/memory/file", params={"path": "/memories/n.md"}).json()[
@@ -176,7 +176,7 @@ def test_routes_ui_de_la_cle_connectee(proxy):
     # Une autre clé ne voit rien de celle-ci.
     mcp_call(proxy, "sk-a", command="create", path="/memories/n.md", file_text="un")
     proxy.cookies.clear()
-    proxy.get("/ui?key=sk-b")
+    proxy.post("/ui/login", json={"key": "sk-b"})
     assert proxy.get("/ui/memory").json()["data"] == []
     assert proxy.get("/ui/memory/file", params={"path": "/memories/n.md"}).status_code == 404
 

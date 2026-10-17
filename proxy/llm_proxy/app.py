@@ -343,7 +343,10 @@ UI_VERSION = _static_version()
 
 
 UI_PREFIX = "/ui"
-UI_COOKIE = "proxy_key"
+# L'ancien cookie de /ui, qui portait la clé EN CLAIR : plus jamais posé,
+# effacé à l'entrée et à la sortie. La page tient désormais une session
+# signée (UISession), qui ne porte que le condensé de la clé.
+LEGACY_COOKIE = "proxy_key"
 # Le chat du tableau de bord (POST /ui/chat/completions) : le cookie de la
 # page y DÉPENSE des tokens. Absent du TOML = inactif — sans lui, le cookie
 # ne sert qu'à lire (statistiques, mémoire).
@@ -401,8 +404,7 @@ def valid_key(token: str) -> bool:
 
 
 def is_ui_path(path: str) -> bool:
-    # «/» y est inclus : il ne fait que rediriger vers /ui, autant qu'un
-    # navigateur déjà porteur du cookie y arrive sans repasser par ?key=.
+    # «/» y est inclus : il ne fait que rediriger vers /ui.
     return path == "/" or path == UI_PREFIX or path.startswith(UI_PREFIX + "/")
 
 
@@ -417,21 +419,14 @@ def dialect_of(request: Request) -> str:
 
 
 def client_token(request: Request) -> str:
-    """Clé présentée par le client. Les clients API l'envoient en
-    «Authorization: Bearer» (OpenAI) ou «x-api-key» (Anthropic) ; un
-    NAVIGATEUR ne le peut pas sur une simple URL — les pages /ui
-    acceptent donc «?key=…» (mémorisé ensuite en cookie), et rien
-    d'autre ne change."""
+    """Clé présentée par le client : «Authorization: Bearer» (OpenAI) ou
+    «x-api-key» (Anthropic). Jamais dans l'URL ni dans un cookie : un
+    NAVIGATEUR entre par POST /ui/login, et la page tient ensuite une
+    session signée qui ne porte que le condensé de la clé (ui_key)."""
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:]
-    api_key = request.headers.get("x-api-key", "")
-    if api_key:
-        return api_key
-    if is_ui_path(request.url.path):
-        return (request.query_params.get("key")
-                or request.cookies.get(UI_COOKIE, ""))
-    return ""
+    return request.headers.get("x-api-key", "")
 
 
 def error_response(dialect: str, status: int, type_: str, message: str,
@@ -516,6 +511,10 @@ async def require_proxy_key(request: Request, call_next):
         if (denied := await ui_account(request)) is not None:
             return denied
         return await call_next(request)
+    if is_ui_path(request.url.path) and (digest := ui_key(request)):
+        stats.CLIENT.set(digest)
+        request.state.owner = digest
+        return await call_next(request)
     who = await key_client(client_token(request))
     if who is None:
         log.warning(
@@ -535,29 +534,62 @@ async def require_proxy_key(request: Request, call_next):
     return await call_next(request)
 
 
+def toml_digests() -> set[str]:
+    """Les condensés des clés de proxy.api_keys (tools.owner)."""
+    return {tools.owner(k) for k in PROXY_API_KEYS}
+
+
+def ui_key(request: Request) -> str:
+    """La clé du TOML de la session de la page (mode clé, sans OIDC) : son
+    condensé, s'il est encore celui d'une clé de proxy.api_keys — retirer
+    la clé du TOML ferme aussi la page. «» sinon."""
+    digest = request.session.get("kd") if "session" in request.scope else None
+    return digest if isinstance(digest, str) and digest in toml_digests() \
+        else ""
+
+
+def scope_https(scope) -> bool:
+    """Le navigateur parle-t-il HTTPS ? Directement, ou derrière un reverse
+    proxy qui termine le TLS (Nginx Proxy Manager) et le dit par
+    `X-Forwarded-Proto` — uvicorn ne le croit que de 127.0.0.1, et NPM est
+    un autre conteneur. L'en-tête ne sert QU'À cela : poser `Secure` sur le
+    cookie de /ui. Un client qui le falsifie ne peut que rendre son propre
+    cookie plus strict."""
+    proto = next((v.decode("latin-1") for k, v in scope.get("headers", ())
+                  if k == b"x-forwarded-proto"), "")
+    return scope.get("scheme") == "https" \
+        or proto.split(",")[0].strip().lower() == "https"
+
+
 class UISession:
-    """La session de la page quand les comptes OIDC sont actifs : le
-    SessionMiddleware de Starlette (cookie signé, oidc.SESSION_COOKIE),
-    construit à la première requête — sa clé dérive du secret des
-    condensés (data/client.secret), qu'on ne lit pas à l'import. Sans
-    OIDC, rien : ni cookie, ni request.session. Ajouté APRÈS le middleware
-    d'auth, donc autour de lui : la session y est déjà lue."""
+    """La session de la page, dès qu'il faut une clé : le SessionMiddleware
+    de Starlette (cookie signé `proxy_session`, HttpOnly, SameSite=Lax —
+    le retour d'un fournisseur OIDC est une navigation venue d'ailleurs).
+    Elle porte le compte OIDC (`uid`) ou le condensé de la clé du TOML
+    (`kd`), jamais la clé. Deux instances, construites à la première
+    requête (leur clé dérive de data/client.secret, qu'on ne lit pas à
+    l'import) : l'une pose `Secure`, choisie quand le navigateur parle
+    HTTPS (scope_https). Proxy ouvert : rien, ni cookie ni
+    request.session. Ajoutée APRÈS le middleware d'auth, donc autour de
+    lui : la session y est déjà lue."""
 
     def __init__(self, app):
         self.app = app
-        self.inner = None
+        self.inner: dict[bool, SessionMiddleware] = {}
 
     async def __call__(self, scope, receive, send):
-        if not oidc.ENABLED or scope["type"] != "http":
+        if scope["type"] != "http" or not auth_required():
             return await self.app(scope, receive, send)
-        if self.inner is None:
-            self.inner = SessionMiddleware(
+        secure = scope_https(scope)
+        if secure not in self.inner:
+            days = oidc.SESSION_DAYS if oidc.ENABLED else 30
+            self.inner[secure] = SessionMiddleware(
                 self.app,
                 secret_key=oidc.session_secret(tools.owner_secret()),
                 session_cookie=oidc.SESSION_COOKIE,
-                max_age=int(oidc.SESSION_DAYS * 86400),
-                same_site="lax", https_only=oidc.secure_cookie())
-        return await self.inner(scope, receive, send)
+                max_age=int(days * 86400), same_site="lax",
+                https_only=secure)
+        return await self.inner[secure](scope, receive, send)
 
 
 app.add_middleware(UISession)
@@ -2052,40 +2084,22 @@ async def ui_page(request: Request):
     # La page elle-même n'est jamais gardée : c'est elle qui porte les URL
     # versionnées de ses fichiers.
     response = HTMLResponse(html, headers={"Cache-Control": "no-cache"})
-    # Auth active + clé passée en «?key=» : mémorisée pour que les appels
-    # suivants (sans en-tête possible depuis le navigateur) restent
-    # authentifiés.
-    key = request.query_params.get("key", "")
-    if PROXY_API_KEYS and not oidc.ENABLED and key and valid_key(key):
-        set_ui_cookie(response, request, key)
     return response
 
 
-def browser_https(request: Request) -> bool:
-    """Le navigateur parle-t-il HTTPS ? Directement, ou derrière un reverse
-    proxy qui termine le TLS (Nginx Proxy Manager) et le dit par
-    `X-Forwarded-Proto` — uvicorn ne le croit que de 127.0.0.1, et NPM est
-    un autre conteneur. L'en-tête ne sert QU'À cela : poser `Secure` sur le
-    cookie de /ui. Un client qui le falsifie ne peut que rendre son propre
-    cookie plus strict ; ni l'adresse du client ni le schéma de la requête
-    n'en dépendent."""
-    proto = request.headers.get("x-forwarded-proto", "")
-    return request.url.scheme == "https" \
-        or proto.split(",")[0].strip().lower() == "https"
-
-
-def set_ui_cookie(response: Response, request: Request, key: str) -> None:
-    response.set_cookie(
-        UI_COOKIE, key, httponly=True, samesite="strict",
-        secure=browser_https(request), max_age=30 * 86400,
-    )
+def drop_legacy_cookie(response: Response, request: Request) -> None:
+    """Efface l'ancien cookie de /ui (la clé en clair), s'il traîne."""
+    if LEGACY_COOKIE in request.cookies:
+        response.delete_cookie(LEGACY_COOKIE, httponly=True,
+                               samesite="strict",
+                               secure=scope_https(request.scope))
 
 
 def json_only(request: Request) -> JSONResponse | None:
     """Une route /ui qui ÉCRIT ou DÉPENSE exige un corps JSON : un
     formulaire d'une page tierce ne peut pas en envoyer sans requête
-    préliminaire CORS, que le proxy ne sert pas. Avec le cookie
-    SameSite=Strict, c'est ce qui la ferme aux autres sites."""
+    préliminaire CORS, que le proxy ne sert pas : c'est ce qui la ferme
+    aux autres sites (la session est SameSite=Lax, pour le retour OIDC)."""
     ct = request.headers.get("content-type", "").split(";")[0].strip().lower()
     if ct != "application/json":
         return error_response("openai", 415, "invalid_request_error",
@@ -2128,8 +2142,8 @@ async def ui_service_worker():
 
 @app.post("/ui/login")
 async def ui_login(request: Request):
-    """La clé saisie dans la page : vérifiée, puis mémorisée dans le
-    cookie de /ui — la même chose que «?key=», sans la clé dans l'URL."""
+    """La clé saisie dans la page : vérifiée, puis son CONDENSÉ gardé dans
+    la session de la page (jamais la clé elle-même)."""
     if (bad := json_only(request)) is not None:
         return bad
     if oidc.ENABLED:
@@ -2143,8 +2157,10 @@ async def ui_login(request: Request):
         log.warning("/ui/login : clé invalide → 401")
         return error_response("openai", 401, "invalid_api_key",
                               "clé du proxy invalide")
+    request.session.clear()
+    request.session["kd"] = tools.owner(key)
     response = JSONResponse({"ok": True})
-    set_ui_cookie(response, request, key)
+    drop_legacy_cookie(response, request)
     return response
 
 
@@ -2153,9 +2169,8 @@ async def ui_logout(request: Request):
     if (bad := json_only(request)) is not None:
         return bad
     response = JSONResponse({"ok": True})
-    response.delete_cookie(UI_COOKIE, httponly=True, samesite="strict",
-                           secure=browser_https(request))
-    if oidc.ENABLED:
+    drop_legacy_cookie(response, request)
+    if "session" in request.scope:
         request.session.clear()
     return response
 
@@ -2258,10 +2273,6 @@ async def ui_keys(request: Request, all: int = 0):
     if not all:
         toml = [k for k in toml if k["user_id"] == user["id"]]
     return {"object": "list", "data": data, "toml": toml}
-
-
-def toml_digests() -> set[str]:
-    return {tools.owner(k) for k in PROXY_API_KEYS}
 
 
 @app.put("/ui/keys/toml/{digest}")
@@ -2551,11 +2562,11 @@ async def ui_usage_tools(request: Request):
 
 
 # ── Mémoire, sous /ui ───────────────────────────────────────────────────
-# Ce que l'outil `memory` a gardé pour la clé CONNECTÉE (le cookie de la
-# page, ou l'en-tête) : la liste, un fichier, l'écriture, la suppression,
-# le renommage. Jamais la mémoire d'une autre clé. Le cookie est
-# SameSite=Strict et les écritures exigent un corps JSON : une page tierce
-# ne peut pas les déclencher.
+# Ce que l'outil `memory` a gardé pour le client CONNECTÉ (la session de
+# la page, ou l'en-tête) : la liste, un fichier, l'écriture, la
+# suppression, le renommage. Jamais la mémoire d'un autre. Les écritures
+# exigent un corps JSON (json_only) : une page tierce ne peut pas les
+# déclencher.
 
 def ui_client(request: Request) -> str:
     """Le client de la page : celui de la clé du cookie (ou de l'en-tête),

@@ -121,7 +121,7 @@
   </header>
 
   <!-- Auth active, pas de clé valide : on la demande. Elle part à
-       /ui/login, qui la garde dans un cookie HttpOnly de /ui. -->
+       /ui/login, qui ouvre une session signée (cookie HttpOnly). -->
   <div class="panel login" v-if="needLogin && authMode === 'oidc'">
     <p>Connectez-vous avec votre compte : vous y gérez <b>vos</b> clés pour
       vos clients, et ne voyez que <b>vos</b> statistiques et <b>vos</b> conversations.</p>

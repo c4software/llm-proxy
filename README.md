@@ -506,10 +506,16 @@ et pour rien d'autre. Il ne dépense des tokens que si le
 [chat](#le-chat) est ouvert (`[ui] chat = true`).
 
 **Une clé, une personne.** Si `proxy.api_keys` est renseigné, la page
-demande la clé à l'entrée (`POST /ui/login`, qui la vérifie et la garde
-dans un cookie `HttpOnly`, `SameSite=Strict`, 30 jours ; *Se
-déconnecter* l'efface par `POST /ui/logout`). `/ui?key=<clé>` marche
-toujours, et la clé est aussitôt retirée de la barre d'adresse. Ensuite
+demande la clé à l'entrée (`POST /ui/login`, qui la vérifie) et ouvre
+une **session signée** (cookie `proxy_session`, `HttpOnly`,
+`SameSite=Lax`, 30 jours ; `Secure` dès que le navigateur parle HTTPS,
+directement ou derrière un reverse proxy qui le dit par
+`X-Forwarded-Proto`). La session ne porte que le **condensé** de la clé,
+jamais la clé, et ne vaut que tant que la clé est dans `proxy.api_keys` ;
+*Se déconnecter* la ferme (`POST /ui/logout`). La clé ne passe jamais
+par une URL : `?key=` n'est pas lu (il finirait dans les journaux du
+reverse proxy et l'historique du navigateur). Un client qui pose la clé
+en en-tête (`Authorization: Bearer`) lit aussi les routes `/ui`. Ensuite
 la page ne montre que **les requêtes et les outils de cette clé** :
 `/ui/usage` et `/ui/usage/tools` y filtrent d'office, quoi que demande
 la page. La page elle-même, ses fichiers, l'entrée et la sortie se
@@ -527,8 +533,8 @@ d'[Authlib](https://docs.authlib.org/) : découverte
 PKCE (S256), `state` et `nonce`, id_token vérifié (signature par le JWKS
 du fournisseur, `iss`, `aud`, `exp`, `nonce`). La session est un cookie
 signé (`proxy_session`, `HttpOnly`, `SameSite=Lax` — le retour du
-fournisseur est une navigation venue d'ailleurs —, `Secure` si
-l'adresse publique est en HTTPS), dont la clé dérive de
+fournisseur est une navigation venue d'ailleurs —, `Secure` dès que le
+navigateur parle HTTPS), le même qu'en mode clé, dont la clé dérive de
 `data/client.secret`. Une clé du proxy n'ouvre plus la page ;
 `/ui/login` répond `404`.
 
@@ -610,8 +616,8 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   `image` en data URL, `size`) changé en formulaire pour
   `/v1/images/edits` : routage au préfixe, quotas, statistiques —
   comptées à la clé connectée, comme toute requête de l'API. Corps JSON exigé (`415`
-  sinon) : avec le cookie `SameSite=Strict`, une page tierce ne peut pas
-  les déclencher.
+  sinon) : une page tierce ne peut pas en envoyer sans requête
+  préliminaire CORS, que le proxy ne sert pas.
 - **Conversations** : dans le navigateur (`localStorage`), une liste par
   clé connectée ; rien n'est gardé côté proxy. Elles sont listées dans le
   menu latéral (un magasin partagé, `ChatStore` de `chat.js`). Chacune garde son modèle,
@@ -2793,7 +2799,7 @@ url = "http://bigchuck:8009"
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `api_keys` | `[]` | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>` à la OpenAI, ou `x-api-key: <clé>` à l'Anthropic). Liste vide = proxy ouvert ; 401 sinon, `/healthz` exempté ; `/ui` la demande à l'entrée (ou `?key=<clé>`), puis la garde en cookie |
+| `api_keys` | `[]` | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>` à la OpenAI, ou `x-api-key: <clé>` à l'Anthropic). Liste vide = proxy ouvert ; 401 sinon, `/healthz` exempté ; `/ui` la demande à l'entrée, puis tient une session signée (le condensé de la clé, jamais la clé) |
 | `upstream_timeout` | `600` | Secondes ; large pour les longues générations |
 | `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info` — court, un backend lent ne doit pas bloquer le catalogue |
 | `tool_choice` | `"auto"` | Valeur injectée quand `tools` est présent sans `tool_choice`, pour les backends ayant `force_tool_choice = true`. L'injection est désactivée par défaut : elle s'active par backend |
@@ -3084,11 +3090,11 @@ cumulables :
   cookies ne sont relayés aux backends (c'est la clé du proxy, pas de
   l'upstream) ; `x-api-key` ne l'est jamais. Le tableau de bord `/ui` est
   soumis à la même clé : un navigateur ne pouvant pas poser d'en-tête,
-  la page la demande à l'entrée (ou `?key=<clé>`), la vérifie et la
-  mémorise dans un cookie `HttpOnly` (`SameSite=Strict`, et `Secure`
-  quand le navigateur parle HTTPS — directement, ou derrière un reverse
-  proxy qui le dit par `X-Forwarded-Proto: https`, comme Nginx Proxy
-  Manager). Ce cookie ne
+  la page la demande à l'entrée (formulaire, jamais dans l'URL), la
+  vérifie et ouvre une session signée qui n'en porte que le condensé
+  (cookie `HttpOnly`, `SameSite=Lax`, et `Secure` quand le navigateur
+  parle HTTPS — directement, ou derrière un reverse proxy qui le dit par
+  `X-Forwarded-Proto: https`, comme Nginx Proxy Manager). Ce cookie ne
   vaut que sous `/ui` ; il ne dépense des tokens que par le chat, et
   seulement si `[ui] chat = true`. Les routes `/ui` qui écrivent ou
   dépensent exigent un corps JSON.

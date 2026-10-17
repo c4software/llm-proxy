@@ -3,6 +3,7 @@
 connectée, et le chat lui-même (/ui/chat/completions, [ui].chat) — par
 la fixture `proxy` de conftest.py. Aucun réseau."""
 
+import base64
 import json
 
 import pytest
@@ -71,9 +72,13 @@ def test_installable_app_is_served_without_key(ui):
 
 def test_login_checks_the_key_and_sets_the_cookie(ui):
     r = login(ui, "sk-mallory")
-    assert r.status_code == 401 and A.UI_COOKIE not in r.cookies
+    assert r.status_code == 401 and A.oidc.SESSION_COOKIE not in r.cookies
     r = login(ui)
-    assert r.status_code == 200 and r.cookies[A.UI_COOKIE] == KEY
+    assert r.status_code == 200
+    # Une session signée, qui ne porte pas la clé (pas même encodée).
+    cookie = r.cookies[A.oidc.SESSION_COOKIE]
+    assert KEY not in cookie and KEY not in base64.b64decode(
+        cookie.split(".")[0] + "==").decode("latin-1")
     session = ui.client.get("/ui/session").json()
     assert session["auth_required"] is True
     assert session["client"] == tools.owner(KEY)[:8]
@@ -82,10 +87,39 @@ def test_login_checks_the_key_and_sets_the_cookie(ui):
     assert ui.client.get("/ui/session").status_code == 401
 
 
-def test_query_key_with_a_wrong_value_sets_no_cookie(ui):
-    """La page est ouverte sans clé : un «?key=» faux ne doit rien poser."""
-    assert A.UI_COOKIE not in ui.client.get("/ui?key=faux").cookies
-    assert ui.client.get(f"/ui?key={KEY}").cookies[A.UI_COOKIE] == KEY
+def test_a_key_in_the_url_opens_nothing(ui):
+    """«?key=» n'existe plus : la clé ne passe jamais par une URL (journaux
+    du reverse proxy, historique du navigateur)."""
+    r = ui.client.get(f"/ui?key={KEY}")
+    assert r.status_code == 200 and not r.cookies
+    assert ui.client.get(f"/ui/session?key={KEY}").status_code == 401
+
+
+def test_the_old_cookie_with_the_key_is_ignored_then_erased(ui):
+    ui.client.cookies.set(A.LEGACY_COOKIE, KEY)
+    assert ui.client.get("/ui/session").status_code == 401
+    r = login(ui)
+    assert 'proxy_key=""' in r.headers.get("set-cookie", "")
+
+
+def test_the_session_is_secure_behind_an_https_reverse_proxy(ui):
+    r = ui.client.post("/ui/login", json={"key": KEY},
+                       headers={"x-forwarded-proto": "https"})
+    assert "secure" in r.headers["set-cookie"].lower()
+    assert "secure" not in login(ui).headers["set-cookie"].lower()
+
+
+def test_removing_the_key_from_the_toml_closes_the_page(ui, monkeypatch):
+    login(ui)
+    assert ui.client.get("/ui/session").status_code == 200
+    monkeypatch.setattr(A, "PROXY_API_KEYS", ["sk-bob"])
+    assert ui.client.get("/ui/session").status_code == 401
+
+
+def test_a_header_key_still_reads_the_ui_routes(ui):
+    """Un curl sur /ui/usage avec la clé en en-tête : comme avant."""
+    r = ui.client.get("/ui/session", headers={"authorization": f"Bearer {KEY}"})
+    assert r.status_code == 200
 
 
 def test_writing_routes_want_a_json_body(ui):

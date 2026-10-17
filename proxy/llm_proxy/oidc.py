@@ -12,11 +12,12 @@ Actif quand [oidc].issuer et [oidc].client_id sont posés. Alors :
   * chaque compte (accounts.py) gère ses propres clés, des uuid4, valables
     sur /v1, /mcp… à côté de celles du TOML (proxy.api_keys), qui restent.
 
-La session : un cookie signé (SessionMiddleware de Starlette, itsdangerous),
-qui porte l'identifiant du compte et, le temps d'une connexion, ce
-qu'Authlib garde entre la redirection et le retour. SameSite=Lax : le
-retour du fournisseur est une navigation venue d'un autre site, qui doit
-le porter. Les routes /ui qui écrivent ou dépensent exigent un corps JSON
+La session : un cookie signé (app.UISession, le SessionMiddleware de
+Starlette), qui porte l'identifiant du compte et, le temps d'une
+connexion, ce qu'Authlib garde entre la redirection et le retour.
+SameSite=Lax : le retour du fournisseur est une navigation venue d'un
+autre site, qui doit le porter ; Secure dès que le navigateur parle
+HTTPS. Les routes /ui qui écrivent ou dépensent exigent un corps JSON
 (app.json_only), qu'une page tierce ne peut pas envoyer.
 """
 
@@ -78,12 +79,6 @@ def redirect_uri(base_url: str) -> str:
     if REDIRECT_URI:
         return REDIRECT_URI
     return (files.PUBLIC_URL or base_url.rstrip("/")) + CALLBACK_PATH
-
-
-def secure_cookie() -> bool:
-    """Le cookie de session ne part qu'en HTTPS si l'adresse publique du
-    proxy est en HTTPS (celle du retour, ou [files].public_url)."""
-    return (REDIRECT_URI or files.PUBLIC_URL).startswith("https://")
 
 
 def session_secret(owner_secret: bytes) -> str:

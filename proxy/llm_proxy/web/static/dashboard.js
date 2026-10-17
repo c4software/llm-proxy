@@ -34,7 +34,7 @@
 
   SESSION ET VUES. La page lit d'abord /ui/session : auth active sans clé
   valide (401), elle montre l'écran d'entrée — la clé saisie part à
-  /ui/login, qui la garde dans le cookie HttpOnly de /ui ; avec les
+  /ui/login, qui ouvre une session signée (cookie HttpOnly) ; avec les
   comptes OIDC (/ui/auth dit «oidc»), un bouton mène au fournisseur
   (/ui/auth/login), et un compte en attente ou bloqué ne voit que son
   état. Une fois entrée,
@@ -591,10 +591,10 @@ createApp({
     }
 
     onMounted(async () => {
-      // «?key=» a servi (le proxy l'a mise en cookie) : elle n'a rien à
-      // faire dans la barre d'adresse ni dans l'historique.
+      // Le retour d'une connexion OIDC refusée : dit sur l'écran d'entrée,
+      // puis retiré de la barre d'adresse. Une «?key=» d'un ancien favori
+      // n'ouvre plus rien : retirée aussi, elle n'a rien à faire là.
       const params = new URLSearchParams(location.search);
-      // Le retour d'une connexion OIDC refusée : dit sur l'écran d'entrée.
       if (params.has("auth_error")) loginError.value = params.get("auth_error");
       if (params.has("key") || params.has("auth_error")) {
         history.replaceState(null, "", location.pathname + location.hash);
