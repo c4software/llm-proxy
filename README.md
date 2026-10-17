@@ -242,7 +242,8 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/httputil.py` | La forme des erreurs (OpenAI ou Anthropic), la lecture des corps JSON |
 | `proxy/tests/` | Tests du proxy : traducteurs, outils, stats (`cd proxy && pytest`, `requirements-dev.txt`, `pytest.ini`) — sur des octets et une base temporaire, sans réseau |
 | `bench/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi, Codex CLI, omp et un client HTTP nu, scénarios PASS/FAIL — voir `bench/README.md` |
-| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `memory.js` — la mémoire, un composant à part, dans *Configuration → Mémoire* et à côté du chat —, `dashboard.css`, `vue.global.prod.js`) |
+| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le squelette de la page, servi tel quel) et `static/`, des modules ES par domaine — `app.js` (session, vues, menu), `stats/`, `chat/` (`ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js`), `config/` (une partie par fichier, `proxy/form.js`, `proxy/advanced.js`), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème) — plus `dashboard.css` et `vue.global.prod.js` |
+| `proxy/llm_proxy/ui_static.py` | Les fichiers de la page, sous un chemin versionné (`/ui/static/v/<empreinte>/…`, gardés un an) : un import relatif d'un module hérite de la même version |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 | `services/searxng/settings.yml` | Réglages de l'instance SearXNG du compose : les défauts de SearXNG, plus le format JSON. Monté en lecture seule dans le service `searxng` |
 
@@ -446,8 +447,13 @@ parce que le client a raccroché (elle ne laisse pas de ligne).
 telle quelle : le serveur ne calcule aucun balisage. Le gabarit est
 **déclaratif, écrit dans le HTML**, et rendu par **Vue 3** — build complet
 embarqué localement (`/ui/static/vue.global.prod.js`), donc **aucun CDN et
-aucune étape de compilation**. `dashboard.js` ne contient que l'état et
-les valeurs dérivées ; rien n'y touche au DOM.
+aucune étape de compilation**. Le code est en **modules ES** rangés par
+domaine (`web/static` : `app.js`, `stats/`, `chat/`, `config/`, `memory/`,
+`lib/`), chargés tels quels par le navigateur sous un chemin versionné
+(`/ui/static/v/<empreinte>/`) : après une mise à jour, aucun ancien
+module ne reste en cache. Les composants ne contiennent que de l'état et
+des valeurs dérivées ; rien n'y touche au DOM. Le **thème** (auto, clair,
+sombre) se choisit en bas du menu latéral et reste dans le navigateur.
 
 Trois périodes, sélecteur en haut de la vue *Statistiques* :
 
@@ -669,7 +675,7 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   préliminaire CORS, que le proxy ne sert pas.
 - **Conversations** : dans le navigateur (`localStorage`), une liste par
   clé connectée ; rien n'est gardé côté proxy. Elles sont listées dans le
-  menu latéral (un magasin partagé, `ChatStore` de `chat.js`). Chacune garde son modèle,
+  menu latéral (un magasin partagé, `chat/store.js`). Chacune garde son modèle,
   son prompt système, sa température et ses outils. Renommer, supprimer,
   modifier une question (la suite repart d'elle), régénérer la dernière
   réponse, arrêter un flux en cours. Si le stockage du navigateur
@@ -752,7 +758,7 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   les lire, la page prévient si le catalogue ne le dit pas ; les
   fichiers texte (256 Ko au plus) sont joints au message entre balises
   `<file name="…">`. Le reste est refusé.
-- **Rendu** : Markdown écrit pour la page (`markdown.js`, aucune
+- **Rendu** : Markdown écrit pour la page (`lib/markdown.js`, aucune
   dépendance) — titres, listes, tableaux, citations, code avec bouton
   *Copier*, liens et images. Tout le texte est échappé avant analyse :
   aucun HTML du modèle ne passe, et seuls `http(s)`, `mailto` et les

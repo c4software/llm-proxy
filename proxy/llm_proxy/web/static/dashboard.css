@@ -5,13 +5,22 @@
   --ok: #3f7d58; --err: #b4402f; --track: #efece3;
   --radius: 14px;
 }
+/* Sombre : celui du système (sauf thème clair choisi), ou choisi
+   (data-theme, lib/theme.js). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #1a1917; --panel: #211f1d; --ink: #f2efe8; --muted: #9c968b;
     --line: #322f2b; --accent: #e08b6d; --accent-soft: #3a2b24;
     --ok: #79b58f; --err: #e08573; --track: #2b2825;
   }
 }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1a1917; --panel: #211f1d; --ink: #f2efe8; --muted: #9c968b;
+  --line: #322f2b; --accent: #e08b6d; --accent-soft: #3a2b24;
+  --ok: #79b58f; --err: #e08573; --track: #2b2825;
+}
+:root[data-theme="light"] { color-scheme: light; }
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);

@@ -1,6 +1,6 @@
 /*
   L'onglet « Chat » du tableau de bord : un composant à part, enregistré
-  par dashboard.js sous <chat-panel>, comme la mémoire (memory.js). Il a ses
+  par app.js sous <chat-panel>, comme la mémoire (memory.js). Il a ses
   propres appels et ne touche pas aux statistiques.
 
   Routes (même cookie que /ui/usage — la clé de la personne connectée) :
@@ -59,186 +59,14 @@
   celles des messages, et retirée de même si le stockage déborde. Un clic
   l'agrandit.
 */
-// Les CONVERSATIONS : un magasin partagé, lu par le chat (ChatPanel) ET par
-// le menu latéral de la page (dashboard.js), qui en affiche la liste. Dans
-// ce navigateur (localStorage), une liste par clé connectée.
-window.ChatStore = (() => {
-  const { reactive, computed, watch, toRaw } = Vue;
-  const state = reactive({
-    key: "", convs: [], currentId: null,
-    streaming: false,               // une réponse en cours : pas de changement
-    confirming: null,               // id de la conversation à supprimer
-    renaming: null, renameText: "",
-    storageWarning: "",
-    query: "",                      // la recherche du menu latéral
-  });
-  // Ce qu'une conversation neuve reçoit (modèle, outils) : posé par le chat,
-  // qui connaît le catalogue et la session.
-  let defaults = () => ({ model: "", tools: [] });
-  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  const sorted = computed(() => [...state.convs].sort((a, b) => b.updated - a.updated));
-  const current = computed(() => state.convs.find((c) => c.id === state.currentId) || null);
-  // La recherche : chaque mot, sans casse ni accents, dans le titre ou
-  // le texte d'un message. La conversation affichée reste listée.
-  const fold = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const filtered = computed(() => {
-    const words = fold(state.query).split(/\s+/).filter(Boolean);
-    if (!words.length) return sorted.value;
-    return sorted.value.filter((c) => {
-      if (c.id === state.currentId) return true;
-      const text = fold(c.title + "\n" + c.messages.map((m) => m.content).join("\n"));
-      return words.every((w) => text.includes(w));
-    });
-  });
+import { ChatStore } from "./store.js";
+import { readAttachment } from "./attachments.js";
+import { imagePrompt, oneImage } from "./images.js";
+import { readStream } from "./stream.js";
+import { Markdown } from "../lib/markdown.js";
+import { num, size } from "../lib/format.js";
 
-  // La liste de cette clé. Rien n'est relu si c'est déjà elle.
-  function open(client) {
-    const key = "llm-proxy-chats:" + (client || "open");
-    if (state.key === key) return;
-    state.key = key;
-    let list = [];
-    try {
-      list = JSON.parse(localStorage.getItem(key) || "[]");
-      if (!Array.isArray(list)) list = [];
-    } catch { list = []; }
-    state.convs = list;
-    state.currentId = list[0] ? list[0].id : null;
-  }
-
-  // Enregistrement différé : un flux modifie le message des dizaines de
-  // fois par seconde, le stockage n'a besoin que du dernier état.
-  let saveTimer = null;
-  // Ce qui s'écrit : jamais une conversation incognito.
-  const kept = () => toRaw(state.convs).filter((c) => !c.incognito);
-  function persist() {
-    if (!state.key) return;
-    try {
-      localStorage.setItem(state.key, JSON.stringify(kept()));
-      state.storageWarning = "";
-    } catch {
-      // Plein : on retire les images des AUTRES conversations, puis on
-      // réessaie. Leurs messages restent.
-      let dropped = 0;
-      for (const c of state.convs) {
-        if (c.id === state.currentId) continue;
-        for (const m of c.messages) {
-          for (const a of m.attachments || []) {
-            if (a.kind === "image" && a.data) { a.data = null; dropped++; }
-          }
-        }
-      }
-      try {
-        localStorage.setItem(state.key, JSON.stringify(kept()));
-        state.storageWarning = dropped
-          ? `Stockage du navigateur plein : ${dropped} image(s) d'anciennes conversations retirée(s).`
-          : "";
-      } catch {
-        state.storageWarning = "Stockage du navigateur plein : cette conversation "
-          + "n'est plus enregistrée. Supprimez-en d'anciennes.";
-      }
-    }
-  }
-  watch(() => state.convs, () => {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(persist, 400);
-  }, { deep: true });
-
-  function newConv(incognito = false) {
-    if (state.streaming) return;
-    // Une conversation vide (du même genre) est réutilisée plutôt que
-    // dupliquée.
-    const empty = state.convs.find((c) => !c.messages.length && !!c.incognito === incognito);
-    if (empty) { state.currentId = empty.id; return; }
-    const base = current.value;
-    const fresh = defaults();
-    const conv = {
-      id: uid(), title: "Nouvelle conversation", created: Date.now(),
-      updated: Date.now(), model: base ? base.model : fresh.model,
-      system: base ? base.system : "", temperature: null,
-      showReasoning: true, tools: base ? [...base.tools] : fresh.tools,
-      reasoning: base ? (base.reasoning || "auto") : "auto",
-      imageSize: base ? base.imageSize : undefined,
-      imageCount: base ? base.imageCount || 1 : 1,
-      incognito, messages: [],
-    };
-    state.convs.unshift(conv);
-    state.currentId = conv.id;
-  }
-
-  // Une conversation incognito qu'on quitte disparaît.
-  watch(() => state.currentId, (now, was) => {
-    const left = state.convs.find((c) => c.id === was);
-    if (left && left.incognito && now !== was) {
-      state.convs = state.convs.filter((c) => c.id !== was);
-    }
-  });
-
-  function select(id) {
-    if (state.streaming && id !== state.currentId) return;
-    state.currentId = id;
-    state.confirming = null;
-  }
-
-  function remove(id) {
-    if (state.confirming !== id) { state.confirming = id; return; }
-    state.convs = state.convs.filter((c) => c.id !== id);
-    state.confirming = null;
-    if (state.currentId === id) {
-      state.currentId = sorted.value[0] ? sorted.value[0].id : null;
-      if (!state.currentId) newConv();
-    }
-  }
-
-  function startRename(c) { state.renaming = c.id; state.renameText = c.title; }
-  function endRename(c) {
-    if (state.renaming !== c.id) return;
-    const t = state.renameText.trim();
-    if (t) c.title = t.slice(0, 120);
-    state.renaming = null;
-  }
-
-  // Exporter : la conversation en Markdown, images comprises (data URL),
-  // téléchargée par le navigateur. Le raisonnement n'y est pas.
-  function exportMd(c) {
-    const fence = (t) => "`".repeat(Math.max(3, ...(String(t).match(/`+/g) || [""]).map((b) => b.length + 1)));
-    const out = [`# ${c.title}`, "", `*${new Date(c.created).toLocaleString("fr-FR")} · ${c.model}*`, ""];
-    if (c.system && c.system.trim()) out.push("> Prompt système : " + c.system.trim().replace(/\n/g, "\n> "), "");
-    for (const m of c.messages) {
-      out.push(m.role === "user" ? "## Vous" : `## ${m.model || "Assistant"}`, "");
-      for (const a of m.attachments || []) {
-        if (a.kind === "image" && a.data) out.push(`![${a.name}](${a.data})`, "");
-        else if (a.kind === "text") { const f = fence(a.data); out.push(`\`${a.name}\``, "", f, a.data, f, ""); }
-        else out.push(`*(${a.name} : image retirée de l'historique local)*`, "");
-      }
-      if (m.content) out.push(m.content, "");
-      if (m.error) out.push(`> Erreur : ${m.error}`, "");
-      if ((m.sources || []).length) {
-        out.push(...m.sources.map((x) => `- [${x.title || x.url}](${x.url})`), "");
-      }
-    }
-    const blob = new Blob([out.join("\n")], { type: "text/markdown;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = (fold(c.title).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "conversation") + ".md";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  }
-
-  const when = (ts) => {
-    const d = new Date(ts), today = new Date();
-    return d.toDateString() === today.toDateString()
-      ? d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
-      : d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
-  };
-
-  return { state, sorted, filtered, current, open, newConv, select, remove,
-           startRename, endRename, exportMd, when, uid,
-           setDefaults(fn) { defaults = fn; } };
-})();
-
-window.ChatPanel = {
+export const ChatPanel = {
   props: { session: { type: Object, required: true } },
   emits: ["unauthorized"],
   setup(props, { emit }) {
@@ -246,9 +74,6 @@ window.ChatPanel = {
     const API = "/ui/chat/completions";
     const LAST_MODEL = "llm-proxy-chat-model";
     const MEMORY_OPEN = "llm-proxy-chat-memory";
-    const MAX_TEXT_FILE = 256 * 1024;
-    const MAX_IMAGE = 8 * 1024 * 1024;
-    const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|ya?ml|toml|ini|cfg|conf|log|xml|html?|css|js|mjs|ts|tsx|jsx|py|rb|go|rs|java|kt|c|h|cc|cpp|hpp|cs|php|sh|bash|zsh|sql|r|lua|swift|vue|svelte|tex|env|dockerfile|makefile)$/i;
     // Noms lisibles des types d'outils ; un type inconnu garde le sien.
     const TOOL_LABELS = {
       web_search: "Web", code_execution: "Code", code_interpreter: "Code",
@@ -275,7 +100,7 @@ window.ChatPanel = {
 
     // ── état ────────────────────────────────────────────────────────────
     // Les conversations : le magasin partagé avec le menu latéral.
-    const S = window.ChatStore;
+    const S = ChatStore;
     S.open(props.session.client);
     const current = S.current;
     const currentId = computed(() => S.state.currentId);
@@ -387,28 +212,10 @@ window.ChatPanel = {
     }
 
     // ── pièces jointes ──────────────────────────────────────────────────
-    const readAs = (file, how) => new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-      r[how](file);
-    });
-
     async function addFiles(list) {
       for (const file of list) {
         try {
-          if (file.type.startsWith("image/")) {
-            if (file.size > MAX_IMAGE) throw new Error("image de plus de 8 Mo");
-            pending.value.push({ kind: "image", name: file.name, type: file.type,
-                                 size: file.size, data: await readAs(file, "readAsDataURL") });
-          } else if (file.type.startsWith("text/") || TEXT_EXT.test(file.name)
-                     || /json|xml|yaml|javascript|toml|csv/.test(file.type)) {
-            if (file.size > MAX_TEXT_FILE) throw new Error("fichier texte de plus de 256 Ko");
-            pending.value.push({ kind: "text", name: file.name, type: file.type || "text/plain",
-                                 size: file.size, data: await readAs(file, "readAsText") });
-          } else {
-            throw new Error("seuls les images et les fichiers texte sont acceptés");
-          }
+          pending.value.push(await readAttachment(file));
           status.value = "";
         } catch (e) {
           status.value = `${file.name} : ${e.message}`;
@@ -560,7 +367,7 @@ window.ChatPanel = {
           live.usage = j.usage || null;
           return;
         }
-        await readStream(r.body, live);
+        await readStream(r.body, live, { onMemory: () => { memoryStamp.value++; } });
       } catch (e) {
         if (e.name !== "AbortError") live.error = "Connexion interrompue : " + e.message;
         else if (!live.content) live.error = "Arrêté.";
@@ -584,59 +391,6 @@ window.ChatPanel = {
           nextTick(resume);
         }
       }
-    }
-
-    // Le type d'une image rendue en base64, lu dans ses premiers octets.
-    function b64Type(b64) {
-      return b64.startsWith("/9j/") ? "image/jpeg" : b64.startsWith("R0lG") ? "image/gif"
-        : b64.startsWith("UklGR") ? "image/webp" : "image/png";
-    }
-
-    // Le prompt d'une image, avec le CONTEXTE de la conversation : les
-    // demandes précédentes de la même suite d'images (chaque message
-    // auquel un modèle d'images a répondu, en remontant jusqu'à une
-    // réponse de conversation), puis la dernière. « Plus sombre » suit
-    // donc « un phare au coucher du soleil ». Une retouche n'en a pas
-    // besoin : l'image porte le contexte.
-    const MAX_PROMPT = 4000;
-    function imagePrompt(conv, edit) {
-      const msgs = conv.messages;
-      const parts = [];
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        if (m.role === "assistant" && !m.image) break;
-        if (m.role === "user" && m.content.trim()) parts.unshift(m.content.trim());
-        if (edit) break;
-      }
-      const text = parts.join("\n");
-      return text.length > MAX_PROMPT ? text.slice(-MAX_PROMPT) : text;
-    }
-
-    // Une requête d'image : génération, ou retouche d'`image` (data URL).
-    async function oneImage(conv, body, signal) {
-      const r = await fetch(body.image ? "/ui/images/edits" : "/ui/images/generations", {
-        method: "POST", signal,
-        headers: { "content-type": "application/json", accept: "application/json",
-                   ...(conv.incognito ? { "x-incognito": "1" } : {}) },
-        body: JSON.stringify(body),
-      });
-      if (r.status === 401) { emit("unauthorized"); throw new Error("Session expirée : reconnectez-vous."); }
-      let j = null;
-      try { j = await r.json(); } catch { /* corps illisible */ }
-      if (!r.ok) throw new Error((j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`);
-      const item = ((j && j.data) || [])[0] || {};
-      const tag = Date.now().toString(36);
-      if (item.b64_json) {
-        const type = b64Type(item.b64_json);
-        return { kind: "image", type, size: Math.round(item.b64_json.length * 3 / 4),
-                 name: `image-${tag}.${type.split("/")[1].replace("jpeg", "jpg")}`,
-                 data: `data:${type};base64,${item.b64_json}`, revised: item.revised_prompt || "" };
-      }
-      if (/^https?:\/\//.test(item.url || "")) {
-        return { kind: "image", type: "", size: 0, name: `image-${tag}`, data: item.url,
-                 revised: item.revised_prompt || "" };
-      }
-      throw new Error("Le modèle n'a pas rendu d'image lisible.");
     }
 
     // Un modèle d'images : le dernier message (avec son contexte) → une ou
@@ -666,7 +420,7 @@ window.ChatPanel = {
         if (!ask || !ask.content.trim()) { live.error = "Décrire l'image à générer."; return; }
         for (let k = 0; k < count && !ctrl.signal.aborted; k++) {
           const got = await oneImage(conv, { model: conv.model, prompt, size, n: 1,
-            ...(source ? { image: source.data } : {}) }, ctrl.signal);
+            ...(source ? { image: source.data } : {}) }, ctrl.signal, () => emit("unauthorized"));
           const { revised, ...image } = got;
           live.attachments.push(image);
           if (revised && !live.content) live.content = "*" + revised + "*";
@@ -689,56 +443,6 @@ window.ChatPanel = {
     }
     function onZoomKey(e) { if (e.key === "Escape" && zoom.value) zoom.value = null; }
     window.addEventListener("keydown", onZoomKey);
-
-    async function readStream(stream, live) {
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl;
-        while ((nl = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, nl).replace(/\r$/, "");
-          buf = buf.slice(nl + 1);
-          if (!line.startsWith("data:")) continue;   // «: ping» et le reste
-          const data = line.slice(5).trim();
-          if (!data || data === "[DONE]") continue;
-          let doc;
-          try { doc = JSON.parse(data); } catch { continue; }
-          take(doc, live);
-        }
-      }
-    }
-
-    function take(doc, live) {
-      if (doc.error) {
-        live.error = typeof doc.error === "string" ? doc.error
-          : doc.error.message || "erreur du proxy";
-        return;
-      }
-      if (doc.usage) live.usage = doc.usage;
-      for (const choice of doc.choices || []) {
-        const d = choice.delta || {};
-        if (d.content) live.content += d.content;
-        const thought = d.reasoning_content || d.reasoning;
-        if (typeof thought === "string") live.reasoning += thought;
-        if (d.x_hosted_tool) {
-          const ev = d.x_hosted_tool;
-          const known = live.tools.find((t) => t.id === ev.id);
-          if (known) Object.assign(known, ev);
-          else live.tools.push({ ...ev });
-          if (ev.name === "memory" && ev.status !== "running") memoryStamp.value++;
-        }
-        for (const a of d.annotations || []) {
-          const c = a.url_citation;
-          if (c && !live.sources.some((s) => s.url === c.url)) {
-            live.sources.push({ url: c.url, title: c.title || c.url });
-          }
-        }
-      }
-    }
 
     function stop() { if (controller) controller.abort(); }
 
@@ -792,7 +496,7 @@ window.ChatPanel = {
       if (!entry) cache.set(raw, entry = {});
       const src = m[field] || "";
       if (!entry[field] || entry[field].src !== src) {
-        entry[field] = { src, html: window.Markdown.render(src) };
+        entry[field] = { src, html: Markdown.render(src) };
       }
       return entry[field].html;
     }
@@ -899,9 +603,6 @@ window.ChatPanel = {
       return s.length > 140 ? s.slice(0, 140) + "…" : s;
     }
 
-    const num = (n) => Number(n || 0).toLocaleString("fr-FR");
-    const size = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace(".", ",") + " Mo"
-      : Math.max(1, Math.round(n / 1e3)) + " Ko";
     const when = S.when;
     const host = (url) => { try { return new URL(url).host; } catch { return url; } };
 

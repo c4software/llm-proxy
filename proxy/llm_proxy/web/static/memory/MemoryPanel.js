@@ -2,7 +2,7 @@
   La section « Mémoire » du tableau de bord : ce que l'outil `memory` a
   gardé pour la clé CONNECTÉE (celle du cookie de la page), à lire,
   corriger, renommer ou effacer. Un composant à part, enregistré par
-  dashboard.js sous <memory-panel> : il a ses propres appels et ne touche
+  app.js sous <memory-panel> : il a ses propres appels et ne touche
   pas aux statistiques.
 
   Routes (même cookie que /ui/usage) :
@@ -24,7 +24,10 @@
   relit, et le fichier ouvert aussi s'il n'est pas en cours de
   modification.
 */
-window.MemoryPanel = {
+import { call } from "../lib/http.js";
+import { num, stamp as when } from "../lib/format.js";
+
+export const MemoryPanel = {
   props: { compact: { type: Boolean, default: false },
            expanded: { type: Boolean, default: false },
            stamp: { type: Number, default: 0 } },
@@ -51,23 +54,6 @@ window.MemoryPanel = {
     function say(text, isError = false) {
       status.value = text;
       error.value = isError;
-    }
-
-    async function call(method, url, body) {
-      const r = await fetch(url, {
-        method,
-        headers: { accept: "application/json",
-                   ...(body ? { "content-type": "application/json" } : {}) },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      let json = null;
-      try { json = await r.json(); } catch { /* corps vide */ }
-      if (!r.ok) {
-        const err = new Error((json && json.error && json.error.message) || `HTTP ${r.status}`);
-        err.status = r.status;
-        throw err;
-      }
-      return json;
     }
 
     async function load() {
@@ -146,9 +132,6 @@ window.MemoryPanel = {
 
     function onToggle(e) { if (e.target.open) load(); }
 
-    const num = (n) => Number(n || 0).toLocaleString("fr-FR");
-    const when = (ts) => new Date(ts * 1000).toLocaleString("fr-FR",
-      { dateStyle: "short", timeStyle: "short" });
     const short = (p) => p.replace(/^\/memories\//, "");
 
     onMounted(load);

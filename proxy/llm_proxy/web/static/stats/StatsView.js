@@ -1,11 +1,8 @@
 /*
-  L'application du tableau de bord. Elle ne contient que de l'état et des
-  valeurs dérivées : le rendu est déclaratif, dans le gabarit de la page
-  (templates/index.html). Rien ici ne touche au DOM.
-
-  Elle ne consomme que l'Usage API du proxy (/ui/usage =
-  /v1/organization/usage/completions servi sous /ui, pour que le cookie de
-  la page suffise) — exactement ce que verrait un client tiers.
+  Les STATISTIQUES : l'usage de la période, lu sur l'Usage API du proxy
+  (/ui/usage = /v1/organization/usage/completions servi sous /ui, pour
+  que le cookie de la page suffise) — exactement ce que verrait un client
+  tiers.
 
   UN SEUL appel par rafraîchissement : les seaux de la période, groupés
   par modèle. Tout le reste — totaux, ligne par modèle, courbe — s'en
@@ -19,47 +16,35 @@
   Un second appel, léger, sert uniquement à savoir jusqu'où remonte
   l'historique — au chargement et au changement de période, jamais dans
   la boucle. La vue « Tout » en a besoin pour choisir son découpage.
-  Un troisième, au chargement puis toutes les 30 s, lit /healthz : le
-  cache web et les serveurs MCP de la section Outils, et l'état du
-  déploiement que l'onglet Configuration reprend — ce n'est pas de
-  l'usage, ça ne suit pas la période.
 
   La section « Outils » a son propre appel, à la route sœur
   (/ui/usage/tools = /v1/organization/usage/tools) : UN seau sur la même
-  période, groupé par outil et par route d'appel. Elle ne montre que des
-  totaux, il n'y a donc rien à découper ; et elle disparaît quand aucun
-  outil hébergé n'a servi dans la fenêtre.
+  période, groupé par outil et par route d'appel. Elle disparaît quand
+  aucun outil hébergé n'a servi dans la fenêtre. Le cache web et les
+  serveurs MCP viennent de `health` (/ui/health, lu par app.js).
 
-  Rien n'est demandé tant que l'onglet est masqué.
-
-  SESSION ET VUES. La page lit d'abord /ui/session : auth active sans clé
-  valide (401), elle montre l'écran d'entrée — la clé saisie part à
-  /ui/login, qui ouvre une session signée (cookie HttpOnly) ; avec les
-  comptes OIDC (/ui/auth dit «oidc»), un bouton mène au fournisseur
-  (/ui/auth/login), et un compte en attente ou bloqué ne voit que son
-  état. Une fois entrée,
-  la personne ne voit que SES requêtes (le proxy filtre /ui/usage sur sa
-  clé). Trois vues, menu latéral (tiroir sur mobile) : « Statistiques » (tout ce qui
-  suit), « Chat » (chat.js, <chat-panel>) et « Configuration »
-  (config.js, <config-panel> : générateurs de configuration, clients et
-  proxy), mémorisées dans l'URL (#chat, #config) et le navigateur. Les statistiques ne se rafraîchissent pas tant que le
-  chat est affiché ; le chat, lui, reste monté — une réponse en cours
-  continue pendant qu'on regarde les chiffres.
-
-  Le rafraîchissement ne clignote pas : Vue rapproche les listes par leur
-  clé et ne réécrit que ce qui a changé. Les nœuds survivants gardent donc
-  leurs transitions, le survol et la sélection de texte.
+  Rien n'est demandé tant que la vue n'est pas affichée (`active`) ou que
+  l'onglet est masqué. Le rafraîchissement ne clignote pas : Vue rapproche
+  les listes par leur clé et ne réécrit que ce qui a changé.
 */
-const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
+import { ask } from "../lib/http.js";
+import { num, ms, dur, ago, moment } from "../lib/format.js";
 
-createApp({
-  setup() {
+const { ref, computed, watch, onMounted, onUnmounted } = Vue;
+
+export const StatsView = {
+  props: {
+    session: { type: Object, required: true },
+    health: { type: Object, default: null },
+    active: { type: Boolean, default: false },   // la vue affichée
+  },
+  emits: ["unauthorized"],
+  setup(props, { emit }) {
     const API = "/ui/usage";
     const API_TOOLS = "/ui/usage/tools";
     const REFRESH = 5000;
     const STORE = "llm-proxy-window";
     const STORE_METRIC = "llm-proxy-metric";
-    const STORE_VIEW = "llm-proxy-view";
     // Tons chauds lisibles sur les deux thèmes, cyclés au-delà de six modèles.
     const COLORS = ["#d97757", "#e0a458", "#7d9b76", "#6b8fa3", "#a37ba0",
                     "#c08552"];
@@ -85,34 +70,6 @@ createApp({
     ];
     const metricById = Object.fromEntries(metrics.map((m) => [m.id, m]));
 
-    // ── session et vues ─────────────────────────────────────────────────
-    const views = [{ id: "stats", label: "Statistiques" }, { id: "chat", label: "Chat" },
-                   { id: "config", label: "Configuration" }];
-    const known = (id) => views.some((v) => v.id === id);
-    const storedView = () => {
-      if (known(location.hash.slice(1))) return location.hash.slice(1);
-      try { const v = localStorage.getItem(STORE_VIEW); return known(v) ? v : "stats"; }
-      catch { return "stats"; }
-    };
-    const view = ref(storedView());
-    const session = ref(null);       // /ui/session ; null tant qu'inconnu
-    const navOpen = ref(false);      // le menu latéral, sur mobile
-    // Les conversations du chat (chat.js), listées dans le menu latéral.
-    const chats = window.ChatStore;
-    const chatState = chats.state;
-    const chatList = chats.filtered;
-    function openChat(id) { chats.select(id); setView("chat"); navOpen.value = false; }
-    function newChat() { chats.newConv(); setView("chat"); navOpen.value = false; }
-    const needLogin = ref(false);
-    const loginKey = ref("");
-    const loginError = ref("");
-    const loginBusy = ref(false);
-    // L'entrée : «oidc» (bouton vers le fournisseur) ou «key» (/ui/auth).
-    const authMode = ref(null);
-    const authLabel = ref("");
-    // Un compte OIDC en attente ou bloqué : son état, et rien d'autre.
-    const inactive = ref(null);
-
     // ── état ────────────────────────────────────────────────────────────
     const current = ref(byId[localStorage.getItem(STORE)] ? localStorage
       .getItem(STORE) : "all");
@@ -132,9 +89,7 @@ createApp({
     // Armé au seul changement de période : c'est lui qui déclenche la
     // cascade des barres (voir .bars.entering dans la feuille de style).
     const entering = ref(false);
-    // /healthz : cache web, serveurs MCP, et l'état du déploiement pour
-    // l'onglet Configuration. null tant qu'il n'a pas répondu.
-    const health = ref(null);
+    const health = computed(() => props.health);
     // Serveurs MCP de la configuration (/healthz) : joints ou non, et
     // combien d'outils chacun apporte.
     const mcpServers = computed(() =>
@@ -157,29 +112,7 @@ createApp({
       };
     });
 
-    // ── formatage ───────────────────────────────────────────────────────
-    // Entier à la française : espace comme séparateur de milliers.
-    const num = (v) => String(Math.round(v) || 0)
-      .replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-    const ms = (s) => (s >= 1 ? s.toFixed(1) + " s" : Math.round(s * 1000) + " ms");
-    const ago = (ts) => {
-      const s = Math.max(0, Math.round(now.value - ts));
-      if (s < 5) return "à l'instant";
-      if (s < 60) return "il y a " + s + " s";
-      if (s < 3600) return "il y a " + Math.floor(s / 60) + " min";
-      if (s < 86400) return "il y a " + Math.floor(s / 3600) + " h";
-      return "il y a " + Math.floor(s / 86400) + " j";
-    };
-    const dur = (s) => {
-      s = Math.max(0, Math.round(s));
-      if (s < 60) return s + " s";
-      if (s < 3600) return Math.floor(s / 60) + " min";
-      if (s < 86400) return Math.floor(s / 3600) + " h " +
-        String(Math.floor((s % 3600) / 60)).padStart(2, "0");
-      return Math.floor(s / 86400) + " j";
-    };
-    const moment = (ts) => new Date(ts * 1000).toLocaleString("fr-FR", {
-      day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    // ── formatage ─────────────────────────────────────────────────────────
     const tickLabel = (b) => bucketWidth.value === "1h"
       ? String(new Date(b.start_time * 1000).getHours()).padStart(2, "0") + " h"
       : new Date(b.start_time * 1000).toLocaleDateString("fr-FR",
@@ -385,19 +318,11 @@ createApp({
       ? "1 heure" : "1 jour");
 
     // ── lecture de l'Usage API ──────────────────────────────────────────
-    const ask = (params, api = API) => {
-      const q = Object.entries(params)
-        .filter(([, v]) => v !== null && v !== undefined)
-        .map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
-      return fetch(api + "?" + q, { headers: { accept: "application/json" } })
-        .then((r) => (r.ok ? r.json() : Promise.reject(r.status)));
-    };
-
     // Jusqu'où remonte l'historique. Un seul seau, sans regroupement :
     // sa borne basse est la plus ancienne ligne de la plage.
     async function refreshSince() {
       const span = byId[current.value].span;
-      const page = await ask({
+      const page = await ask(API, {
         start_time: span ? Math.floor(Date.now() / 1000) - span : 0,
         bucket_width: "all", limit: 1,
       });
@@ -406,7 +331,7 @@ createApp({
     }
 
     async function poll() {
-      if (needLogin.value || !session.value || view.value !== "stats") return;
+      if (!props.active) return;
       const win = current.value;
       const span = byId[win].span;
       const stamp = Math.floor(Date.now() / 1000);
@@ -427,14 +352,14 @@ createApp({
         // appelé directement (/v1/tools) peut les précéder. Si elle
         // échoue, le reste de la page n'en dépend pas.
         const [page, toolPage] = await Promise.all([
-          ask({
+          ask(API, {
             start_time: start, bucket_width: width, "group_by[]": "model",
             limit: Math.min(Math.ceil((stamp - start) / seconds) + 1, 180),
           }),
-          ask({
+          ask(API_TOOLS, {
             start_time: span ? start : 0, bucket_width: "all",
             "group_by[]": "tool,endpoint", limit: 1,
-          }, API_TOOLS).catch(() => null),
+          }).catch(() => null),
         ]);
         if (win !== current.value) return;   // période changée entre-temps
         if (toolPage) {
@@ -447,88 +372,9 @@ createApp({
         if (!since.value && totals.value.requests) refreshSince();
       } catch (e) {
         // Clé révoquée ou cookie expiré : retour à l'écran d'entrée.
-        if (e === 401) needLogin.value = true;
+        if (e === 401) emit("unauthorized");
         /* sinon proxy injoignable : on retentera dans 5 s */
       }
-    }
-
-    async function loadSession() {
-      try {
-        const r = await fetch("/ui/session", { headers: { accept: "application/json" } });
-        if (r.status === 401) { await loadAuth(); needLogin.value = true; session.value = null; return; }
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const s = await r.json();
-        needLogin.value = false;
-        if (s.account && !["admin", "user"].includes(s.account.role)) {
-          inactive.value = s.account;
-          session.value = null;
-          return;
-        }
-        inactive.value = null;
-        session.value = s;
-      } catch (e) {
-        // Proxy injoignable : réessayé dans 5 s, par la boucle.
-        setTimeout(loadSession, REFRESH);
-      }
-    }
-
-    async function loadAuth() {
-      if (authMode.value) return;
-      try {
-        const a = await (await fetch("/ui/auth", { headers: { accept: "application/json" } })).json();
-        authMode.value = a.mode || "key";
-        authLabel.value = a.label || "Se connecter";
-      } catch { authMode.value = "key"; }
-    }
-
-    async function login() {
-      if (!loginKey.value.trim() || loginBusy.value) return;
-      loginBusy.value = true;
-      loginError.value = "";
-      try {
-        const r = await fetch("/ui/login", {
-          method: "POST",
-          headers: { "content-type": "application/json", accept: "application/json" },
-          body: JSON.stringify({ key: loginKey.value.trim() }),
-        });
-        if (r.status === 401) { loginError.value = "Clé refusée."; return; }
-        if (!r.ok) { loginError.value = "Le proxy a répondu " + r.status + "."; return; }
-        loginKey.value = "";
-        await loadSession();
-        loadHealth();
-        since.value = 0;
-        poll();
-      } catch (e) {
-        loginError.value = "Proxy injoignable.";
-      } finally {
-        loginBusy.value = false;
-      }
-    }
-
-    async function logout() {
-      try {
-        await fetch("/ui/logout", { method: "POST",
-          headers: { "content-type": "application/json" }, body: "{}" });
-      } catch { /* le cookie partira au prochain 401 */ }
-      session.value = null;
-      inactive.value = null;
-      await loadAuth();
-      buckets.value = [];
-      toolResults.value = [];
-      loaded.value = false;
-      needLogin.value = true;
-    }
-
-    // Le chat dit qu'il a reçu un 401 : même chose qu'ici.
-    function onUnauthorized() { needLogin.value = true; session.value = null; }
-
-    function setView(id) {
-      navOpen.value = false;
-      if (id === view.value || !views.some((v) => v.id === id)) return;
-      view.value = id;
-      try { localStorage.setItem(STORE_VIEW, id); } catch { /* sans stockage */ }
-      history.replaceState(null, "", location.pathname + location.search + "#" + id);
-      if (id === "stats") poll();
     }
 
     function select(id) {
@@ -556,8 +402,7 @@ createApp({
     // Raccourcis A / W / D, R / T. Ignorés dès qu'un modificateur est enfoncé ou
     // qu'un champ a le focus : un raccourci ne doit jamais voler une frappe.
     function onKey(e) {
-      if (e.key === "Escape" && navOpen.value) { navOpen.value = false; return; }
-      if (e.ctrlKey || e.metaKey || e.altKey || view.value !== "stats") return;
+      if (e.ctrlKey || e.metaKey || e.altKey || !props.active) return;
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
       const key = String(e.key || "").toUpperCase();
       const hit = windows.find((w) => w.key === key);
@@ -566,49 +411,20 @@ createApp({
       if (met) { e.preventDefault(); selectMetric(met.id); }
     }
 
-    // Onglet masqué : plus aucune requête. Personne ne regarde, et au
-    // retour on rafraîchit immédiatement plutôt que d'afficher des
-    // chiffres vieux de plusieurs minutes.
-    function onVisibility() {
-      if (!document.hidden) poll();
-    }
+    // Onglet masqué : plus aucune requête. Au retour, on rafraîchit
+    // immédiatement plutôt que d'afficher des chiffres vieux de plusieurs
+    // minutes.
+    function onVisibility() { if (!document.hidden) poll(); }
 
-    // L'état détaillé du déploiement : /ui/health, sous la session de la
-    // page (/healthz sans clé ne dit plus que « ok »). Lu une fois la
-    // session ouverte.
-    function loadHealth() {
-      fetch("/ui/health", { headers: { accept: "application/json" } })
-        .then((r) => (r.ok ? r.json() : null))
-        // Un échec passager garde le dernier état connu : sinon les
-        // exemples et le cache web clignoteraient à chaque relecture.
-        .then((h) => { if (h || !health.value) health.value = h; })
-        .catch(() => {});
-    }
+    // La vue revient à l'écran : rafraîchie aussitôt.
+    watch(() => props.active, (on) => { if (on) poll(); });
 
     let timers = [];
-    // L'application installable : son service worker (/ui/sw.js), qui ne
-    // garde rien. Refusé hors HTTPS (sauf localhost) : sans effet alors.
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/ui/sw.js", { scope: "/ui" }).catch(() => {});
-    }
-
-    onMounted(async () => {
-      // Le retour d'une connexion OIDC refusée : dit sur l'écran d'entrée,
-      // puis retiré de la barre d'adresse. Une «?key=» d'un ancien favori
-      // n'ouvre plus rien : retirée aussi, elle n'a rien à faire là.
-      const params = new URLSearchParams(location.search);
-      if (params.has("auth_error")) loginError.value = params.get("auth_error");
-      if (params.has("key") || params.has("auth_error")) {
-        history.replaceState(null, "", location.pathname + location.hash);
-      }
-      await loadSession();
-      loadHealth();
+    onMounted(() => {
       poll();
       timers = [
         setInterval(() => { if (!document.hidden) poll(); }, REFRESH),
         setInterval(() => { now.value = Date.now() / 1000; }, 1000),
-        // /healthz relu de temps en temps : le cache web bouge.
-        setInterval(() => { if (!document.hidden) loadHealth(); }, 6 * REFRESH),
       ];
       window.addEventListener("keydown", onKey);
       document.addEventListener("visibilitychange", onVisibility);
@@ -619,19 +435,265 @@ createApp({
       document.removeEventListener("visibilitychange", onVisibility);
     });
 
-    return { views, view, setView, navOpen, chats, chatState, chatList, openChat,
-             newChat, session, needLogin, loginKey, loginError,
-             loginBusy, login, logout, onUnauthorized, authMode, authLabel,
-             inactive, loadSession,
-             windows, current, metrics, metric, metricUnit, metricLabel,
+    return { windows, current, metrics, metric, metricUnit, metricLabel,
              models, totals, bars, axis, peak, since, now, tools, toolCalls,
-             loaded, entering, webCache, mcpServers, health,
+             loaded, entering, webCache, mcpServers,
              note, shortcuts, bucketLabel, successRate,
-             backendSummary, num, ms, ago, dur, moment, tickLabel, select,
-             selectMetric };
+             backendSummary, num, ms, dur, moment, tickLabel, select, selectMetric,
+             ago: (ts) => ago(ts, now.value) };
   },
-// La mémoire : un composant à part (memory.js), ses propres appels — dans la
-// configuration et à côté du chat.
-}).component("memory-panel", window.MemoryPanel)
-  .component("chat-panel", window.ChatPanel)
-  .component("config-panel", window.ConfigPanel).mount("#app");
+  template: `
+  <div class="stats">
+  <div class="toolbar">
+    <div class="range" role="group" aria-label="Période">
+      <button v-for="w in windows" :key="w.id" type="button"
+              :aria-pressed="String(w.id === current)"
+              @click="select(w.id)">{{ w.label }}</button>
+    </div>
+    <!-- La MESURE portée par la courbe. Les deux grandeurs sont déjà dans
+         la réponse : basculer ne redemande rien au proxy. -->
+    <div class="range" role="group" aria-label="Mesure">
+      <button v-for="m in metrics" :key="m.id" type="button"
+              :aria-pressed="String(m.id === metric)"
+              @click="selectMetric(m.id)">{{ m.label }}</button>
+    </div>
+    <span class="range-note">{{ note }}<template v-if="session.account && session.account.role === 'admin'">
+      · tous les comptes</template><template v-else-if="session.auth_required">
+      · vos requêtes seulement</template> · raccourcis {{ shortcuts }}</span>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">Requêtes</div>
+      <div class="value">{{ num(totals.requests) }}</div>
+      <div class="hint">
+        <template v-if="totals.requests">{{ successRate }} en succès · </template>
+        {{ num(totals.streamed) }} en flux<template v-if="totals.anthropic">
+        · {{ num(totals.anthropic) }} via Claude Code</template>
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">Tokens</div>
+      <div class="value">{{ num(totals.tokens) }}</div>
+      <div class="hint">{{ num(totals.prompt) }} entrée ·
+        {{ num(totals.completion) }} sortie<template v-if="totals.cached">
+        · {{ Math.round(100 * totals.cached / totals.prompt) || "<1" }}% de
+        l'entrée en cache</template></div>
+    </div>
+    <div class="card">
+      <div class="label">Modèles actifs</div>
+      <div class="value">{{ num(models.length) }}</div>
+      <div class="hint">{{ backendSummary }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Erreurs</div>
+      <div class="value">{{ num(totals.errors) }}</div>
+      <div class="hint">
+        <template v-if="since">mesures depuis {{ dur(now - since) }}</template>
+        <template v-else>aucune mesure enregistrée</template>
+      </div>
+    </div>
+  </div>
+
+  <!-- UNE mesure à la fois — requêtes OU tokens, au choix du sélecteur :
+       un seul axe. Chaque barre est empilée par modèle, aux couleurs de la
+       répartition ci-dessous. L'autre grandeur vit dans l'infobulle,
+       jamais sur un second axe. -->
+  <div class="panel chart-panel" v-if="bars.length">
+    <div class="panel-head">
+      <h2>Trafic</h2>
+      <span class="meta">{{ bars.length }} × {{ bucketLabel }} ·
+        en {{ metricLabel }} · pic {{ num(peak) }} {{ metricUnit }} ·
+        empilé par modèle</span>
+    </div>
+    <div class="chart">
+      <div class="bars" :class="{ entering }">
+        <i v-for="(b, i) in bars" :key="b.start_time"
+           :class="{ zero: !b.value, left: i < bars.length / 2, right: i >= bars.length / 2 }"
+           :style="{ '--i': i }">
+          <b :style="{ height: b.height.toFixed(2) + '%' }">
+            <s v-for="seg in b.segments" :key="seg.id"
+               :style="{ height: seg.share.toFixed(2) + '%', background: seg.color }"></s>
+          </b>
+          <span class="tip">
+            <span class="when">{{ moment(b.start_time) }}</span>
+            <span class="row" v-for="seg in b.segments" :key="seg.id">
+              <span><em :style="{ background: seg.color }"></em>{{ seg.id }}</span>
+              <b>{{ num(seg.value) }}</b>
+            </span>
+            <!-- Le total de la mesure affichée d'abord, l'autre juste
+                 en dessous : l'infobulle reste la vue complète du seau. -->
+            <template v-if="metric === 'tokens'">
+              <span class="row total"><span>Tokens</span><b>{{ num(b.tokens) }}</b></span>
+              <span class="row"><span>Requêtes</span><b>{{ num(b.requests) }}</b></span>
+            </template>
+            <template v-else>
+              <span class="row total"><span>Requêtes</span><b>{{ num(b.requests) }}</b></span>
+              <span class="row"><span>Tokens</span><b>{{ num(b.tokens) }}</b></span>
+            </template>
+          </span>
+        </i>
+      </div>
+      <div class="axis">
+        <span v-for="b in axis" :key="b.start_time">{{ tickLabel(b) }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel share" v-if="totals.tokens">
+    <div class="label">Répartition des tokens</div>
+    <div class="share-bar">
+      <i v-for="m in models" :key="m.id"
+         :style="{ width: m.share.toFixed(2) + '%', background: m.color }"
+         :title="m.id + ' — ' + num(m.tokens) + ' tokens'"></i>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Par modèle</h2>
+      <span class="meta live"><i></i>par ordre alphabétique</span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Modèle</th><th>Requêtes</th><th>Erreurs</th><th>Entrée</th>
+          <th>Sortie</th><th>Total</th><th>Part</th><th>Moy./req</th>
+          <th>Cache</th>
+          <th>Lat. moy.</th><th>Lat. max</th>
+          <th>Comptage</th><th>Dernière</th>
+        </tr></thead>
+        <tbody>
+          <tr v-for="m in models" :key="m.id">
+            <td>
+              <div class="model"><b :style="{ background: m.color }"></b><span>
+                <span class="id">{{ m.id }}</span><br>
+                <span class="backend">{{ num(m.streamed) }} en flux<template v-if="m.anthropic">
+                  · {{ num(m.anthropic) }} Claude Code</template></span>
+              </span></div>
+            </td>
+            <td>{{ num(m.requests) }}</td>
+            <td>
+              <span v-if="m.errors" class="err">{{ num(m.errors) }}</span>
+              <span v-else class="dim">0</span>
+            </td>
+            <td>{{ num(m.prompt) }}</td>
+            <td>{{ num(m.completion) }}</td>
+            <td><strong>{{ num(m.tokens) }}</strong></td>
+            <!-- Sa part des tokens de la période : la barre « Répartition
+                 des tokens » au-dessus, chiffrée (sans légende à part). -->
+            <td>{{ m.share > 0 && m.share < 1 ? "<1" : Math.round(m.share) }}%</td>
+            <td>{{ num(m.avg) }}</td>
+            <!-- Cache de préfixe du backend : part de l'entrée qu'il n'a
+                 pas eu à recalculer. «—» quand il ne le dit pas. -->
+            <td :title="m.cached ? num(m.cached) + ' tokens d\\'entrée lus en cache' : 'le backend ne remonte pas de cached_tokens'">
+              <span v-if="m.cached">{{ m.cachePct }}%</span>
+              <span v-else class="dim">—</span>
+            </td>
+            <td>{{ ms(m.avgLatency) }}</td>
+            <td class="dim">{{ ms(m.maxLatency) }}</td>
+            <!-- Provenance des tokens : \`usage\` de l'upstream, ou
+                 estimation. Le détail chiffré passe en infobulle — la
+                 colonne doit tenir sans pousser le tableau au défilement. -->
+            <td>
+              <span v-if="!m.estimated" class="tag exact">exact</span>
+              <span v-else-if="!m.exact" class="tag est">estimé</span>
+              <span v-else class="tag est"
+                    :title="num(m.exact) + ' exactes · ' + num(m.estimated) + ' estimées'">
+                {{ m.exactPct }}% exact</span>
+            </td>
+            <td class="dim">{{ ago(m.last) }}</td>
+          </tr>
+          <tr v-if="!models.length && loaded">
+            <td colspan="13"><div class="empty">
+              <div class="big">Aucune génération sur cette période</div>
+              <div v-if="since">Les mesures remontent à {{ dur(now - since) }} ;
+                essayez une période plus large.</div>
+              <div v-else>Les modèles apparaîtront ici dès leur première
+                requête.</div>
+            </div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Les outils que le proxy exécute lui-même (recherche web, lecture
+       de page), sur la même période. Absente tant
+       qu'aucun n'a servi dans la fenêtre. Des mesures seulement : ce qui
+       a été cherché ou lu n'est pas dans les statistiques. -->
+  <div class="panel tools" v-if="tools.length || (webCache && webCache.asked) || mcpServers.length">
+    <div class="panel-head">
+      <h2>Outils</h2>
+      <span class="meta">{{ num(toolCalls) }} exécution{{ toolCalls > 1 ? "s" : "" }}
+        d'outils hébergés · {{ note }}</span>
+    </div>
+    <div class="scroll" v-if="tools.length">
+      <table>
+        <thead><tr>
+          <th>Outil</th><th>Appels</th><th>Erreurs</th><th>Refus</th>
+          <th>Durée moy.</th><th>Durée max</th><th>Rendu</th>
+          <th>Dernier</th>
+        </tr></thead>
+        <tbody>
+          <tr v-for="t in tools" :key="t.id">
+            <td>
+              <div class="model"><span>
+                <span class="id">{{ t.id }}</span><br>
+                <!-- Par où l'outil a été appelé : les boucles du proxy
+                     (/v1/responses, /v1/messages) ou l'appel direct. -->
+                <span class="backend">{{ t.routes }}</span>
+              </span></div>
+            </td>
+            <td>{{ num(t.calls) }}</td>
+            <td title="le résultat rendu au modèle était un texte « Error: … »">
+              <span v-if="t.errors" class="err">{{ num(t.errors) }}</span>
+              <span v-else class="dim">0</span>
+            </td>
+            <!-- Refus par limite d'appels : rien n'a été exécuté, ce
+                 n'est pas une panne de l'outil. -->
+            <td title="appels refusés par la limite d'appels par réponse : rien n'a été exécuté">
+              <span v-if="t.limited">{{ num(t.limited) }}</span>
+              <span v-else class="dim">0</span>
+            </td>
+            <td>{{ ms(t.avgDuration) }}</td>
+            <td class="dim">{{ ms(t.maxDuration) }}</td>
+            <td title="caractères rendus au modèle, tous résultats confondus">
+              {{ num(t.chars) }} car.</td>
+            <td class="dim">{{ ago(t.last) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- Cache web : ce que les outils n'ont pas eu à redemander au web.
+         Compteurs en mémoire vive, depuis le démarrage du proxy — pas sur
+         la période du tableau. -->
+    <p class="note webcache" v-if="webCache">
+      <template v-if="webCache.on">
+        <b>Cache web</b> — {{ num(webCache.hits) }} demande{{ webCache.hits > 1 ? "s" : "" }}
+        sur {{ num(webCache.asked) }} servie{{ webCache.hits > 1 ? "s" : "" }}
+        sans retourner sur le web ({{ webCache.share }} %) depuis le
+        démarrage du proxy · {{ num(webCache.entries) }} page{{ webCache.entries > 1 ? "s" : "" }}
+        ou recherche{{ webCache.entries > 1 ? "s" : "" }} en cache
+        ({{ webCache.size }}), gardée{{ webCache.entries > 1 ? "s" : "" }} {{ webCache.ttl }}
+      </template>
+      <template v-else><b>Cache web</b> désactivé
+        (<code>[tools] web_cache_ttl = 0</code>)</template>
+    </p>
+    <!-- Serveurs MCP : l'état de la dernière découverte, à l'instant. -->
+    <p class="note webcache" v-if="mcpServers.length">
+      <b>Serveurs MCP</b> —
+      <template v-for="(s, i) in mcpServers" :key="s.name">
+        <template v-if="i"> · </template>
+        <span :title="s.url + (s.error ? ' — ' + s.error : '')">{{ s.name }} :
+          <template v-if="s.up">{{ s.tools.length }} outil{{ s.tools.length > 1 ? "s" : "" }}</template>
+          <template v-else-if="s.up === false">injoignable</template>
+          <template v-else>pas encore joint</template></span>
+      </template>
+    </p>
+  </div>
+
+  <footer>Rafraîchissement toutes les 5 s.</footer>
+  </div>
+  `,
+};

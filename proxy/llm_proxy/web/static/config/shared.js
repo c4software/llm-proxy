@@ -1,0 +1,84 @@
+/*
+  Ce que les parties de la configuration partagent : l'écriture TOML, la
+  clé du poste, le catalogue des modèles et les comptes (Clés y prend la
+  liste pour rattacher une clé du TOML, le sélecteur de parties le nombre
+  de comptes en attente).
+*/
+import { call } from "../lib/http.js";
+
+const { ref, computed } = Vue;
+
+// ── TOML et variables ───────────────────────────────────────────────────
+// Une chaîne TOML « basique » : les échappements de JSON en sont un
+// sous-ensemble valide.
+export const q = (s) => JSON.stringify(String(s ?? ""));
+export const list = (xs) => "[" + xs.map(q).join(", ") + "]";
+export const csv = (s) => String(s || "").split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+export const envName = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9_]/g, "_")
+  .replace(/^(\d)/, "_$1");
+export function randomKey() {
+  const b = new Uint8Array(24);
+  crypto.getRandomValues(b);
+  return "sk-" + [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+// ── la clé du poste ─────────────────────────────────────────────────────
+// Où vit la clé du proxy sur le poste, et comment l'y poser sans qu'elle
+// passe par l'historique du shell.
+export const KEYFILE = "~/.config/llm-proxy.key";
+export const KEY_ENV = "LLM_PROXY_API_KEY";
+export const KEY_SETUP = `(umask 077; read -rsp "Clé du proxy : " k && echo && printf '%s' "$k" > ${KEYFILE})\n`;
+
+// ── catalogue des modèles ───────────────────────────────────────────────
+// Lu une fois pour toute la configuration : les modèles de conversation
+// (/ui/models, avec leur fenêtre de contexte) et le catalogue complet
+// (?all=1 : images, voix, OCR — pour les outils qui en visent un).
+const models = ref([]);
+const contexts = ref({});
+const allModels = ref([]);
+let loading = null;
+function loadCatalog() {
+  return loading || (loading = Promise.all([
+    call("GET", "/ui/models").then((r) => {
+      const data = r.data || [];
+      models.value = data.map((m) => m.id).sort();
+      contexts.value = Object.fromEntries(data.filter((m) => m.context).map((m) => [m.id, m.context]));
+    }).catch(() => { /* hors ligne : saisie libre */ }),
+    call("GET", "/ui/models?all=1").then((r) => {
+      allModels.value = (r.data || []).map((m) => m.id).sort();
+    }).catch(() => { /* les modèles de chat suffiront */ }),
+  ]));
+}
+export function useCatalog() {
+  loadCatalog();
+  // Les modèles d'un menu : le catalogue, et la valeur en place si elle
+  // n'y est pas (un modèle de configuration hors catalogue ne se perd
+  // pas). `all` : tout le catalogue — l'OCR, la transcription ou l'image
+  // visent des modèles qui ne sont pas de chat.
+  function modelChoices(current, all = false) {
+    const pool = all && allModels.value.length ? allModels.value : models.value;
+    return current && !pool.includes(current) ? [current, ...pool] : pool;
+  }
+  return { models, contexts, allModels, modelChoices };
+}
+
+// ── comptes (admin) ─────────────────────────────────────────────────────
+const users = ref([]);
+const userError = ref("");
+const pendingCount = computed(() => users.value.filter((u) => u.role === "pending").length);
+async function loadUsers() {
+  try {
+    users.value = (await call("GET", "/ui/users")).data || [];
+    userError.value = "";
+  } catch (e) { userError.value = e.message; }
+}
+export function useUsers() {
+  return { users, userError, pendingCount, loadUsers };
+}
+
+// Le compte connecté (comptes OIDC), et s'il est admin.
+export function useAccount(props) {
+  const account = computed(() => props.session.account || null);
+  const isAdmin = computed(() => !!account.value && account.value.role === "admin");
+  return { account, isAdmin };
+}

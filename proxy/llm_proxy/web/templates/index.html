@@ -1,17 +1,12 @@
 <!doctype html>
 <!--
-  Le tableau de bord. Le gabarit est déclaratif, écrit ici même : Vue le
-  compile au chargement (build complet, embarqué localement — aucun CDN,
-  aucune étape de compilation). dashboard.js ne contient que l'état et
-  les valeurs dérivées ; plus une ligne ne touche au DOM à la main.
+  Le tableau de bord : le SQUELETTE de la page — menu latéral, écran
+  d'entrée, et les trois vues, chacune un composant (web/static, modules
+  ES chargés par app.js) : <stats-view>, <chat-panel>, <config-panel>.
+  Vue compile ce gabarit au chargement (build complet, embarqué
+  localement — aucun CDN, aucune étape de compilation).
 
-  Les chiffres viennent de /ui/usage, c'est-à-dire l'Usage API OpenAI du
-  proxy (/v1/organization/usage/completions) servie sous /ui pour que le
-  cookie de la page suffise à s'authentifier ; ceux de la section Outils,
-  de sa route sœur /ui/usage/tools (/v1/organization/usage/tools).
-
-  Deux vues sous la même barre : les statistiques et le chat (chat.js).
-  Auth active sans clé valide : l'écran d'entrée, à la place des deux.
+  Auth active sans clé valide : l'écran d'entrée, à la place des vues.
 -->
 <html lang="fr">
 <head>
@@ -32,7 +27,12 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="llm-proxy">
 <link rel="stylesheet" href="/ui/static/dashboard.css">
+<!-- Le thème choisi (lib/theme.js), posé AVANT le premier rendu : pas
+     d'éclair de l'autre thème au chargement. -->
+<script>try { const t = localStorage.getItem("llm-proxy-theme");
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}</script>
 <script src="/ui/static/vue.global.prod.js"></script>
+<script type="module" src="/ui/static/app.js"></script>
 </head>
 <body>
 <!-- Vue compile le CONTENU de #app, pas ses propres attributs : la classe
@@ -43,9 +43,9 @@
        par ☰ sur mobile. Les vues, puis la clé connectée en bas. -->
   <aside class="sidenav" v-if="session" aria-label="Navigation">
     <div class="brand"><span class="dot"></span> llm-proxy</div>
-    <!-- En haut : le chat et ses conversations (le magasin ChatStore de
-         chat.js), la liste défile ; en bas, fixés : Statistiques,
-         Configuration, la clé connectée. -->
+    <!-- En haut : le chat et ses conversations (chat/store.js), la liste
+         défile ; en bas, fixés : Statistiques, Configuration, le thème,
+         la personne connectée. -->
     <button type="button" class="nav-item" :aria-current="view === 'chat' ? 'page' : null"
             @click="setView('chat')">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>
@@ -92,6 +92,12 @@
               @click="setView('config')">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M16 4v4M10 10v4M18 16v4"/></svg>
         <span>Configuration</span></button>
+      <button type="button" class="nav-item" @click="cycleTheme"
+              :title="'Thème : ' + themeLabel + ' — cliquer pour changer (auto, clair, sombre)'">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" v-if="theme === 'dark'"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" v-else-if="theme === 'light'"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" v-else><circle cx="12" cy="12" r="8"/><path d="M12 4v16a8 8 0 0 0 0-16z"/></svg>
+        <span>Thème : {{ themeLabel }}</span></button>
       <div class="nav-foot" v-if="session.account">
         <span :title="session.account.email">{{ session.account.name || session.account.email }}
           <span class="tag" v-if="session.account.role === 'admin'">admin</span></span>
@@ -166,265 +172,10 @@
   <config-panel v-if="session" v-show="view === 'config'" :session="session"
                 :health="health"></config-panel>
 
-  <div class="stats" v-if="session" v-show="view === 'stats'">
-  <div class="toolbar">
-    <div class="range" role="group" aria-label="Période">
-      <button v-for="w in windows" :key="w.id" type="button"
-              :aria-pressed="String(w.id === current)"
-              @click="select(w.id)">{{ w.label }}</button>
-    </div>
-    <!-- La MESURE portée par la courbe. Les deux grandeurs sont déjà dans
-         la réponse : basculer ne redemande rien au proxy. -->
-    <div class="range" role="group" aria-label="Mesure">
-      <button v-for="m in metrics" :key="m.id" type="button"
-              :aria-pressed="String(m.id === metric)"
-              @click="selectMetric(m.id)">{{ m.label }}</button>
-    </div>
-    <span class="range-note">{{ note }}<template v-if="session.account && session.account.role === 'admin'">
-      · tous les comptes</template><template v-else-if="session.auth_required">
-      · vos requêtes seulement</template> · raccourcis {{ shortcuts }}</span>
-  </div>
-
-  <div class="cards">
-    <div class="card">
-      <div class="label">Requêtes</div>
-      <div class="value">{{ num(totals.requests) }}</div>
-      <div class="hint">
-        <template v-if="totals.requests">{{ successRate }} en succès · </template>
-        {{ num(totals.streamed) }} en flux<template v-if="totals.anthropic">
-        · {{ num(totals.anthropic) }} via Claude Code</template>
-      </div>
-    </div>
-    <div class="card">
-      <div class="label">Tokens</div>
-      <div class="value">{{ num(totals.tokens) }}</div>
-      <div class="hint">{{ num(totals.prompt) }} entrée ·
-        {{ num(totals.completion) }} sortie<template v-if="totals.cached">
-        · {{ Math.round(100 * totals.cached / totals.prompt) || "<1" }}% de
-        l'entrée en cache</template></div>
-    </div>
-    <div class="card">
-      <div class="label">Modèles actifs</div>
-      <div class="value">{{ num(models.length) }}</div>
-      <div class="hint">{{ backendSummary }}</div>
-    </div>
-    <div class="card">
-      <div class="label">Erreurs</div>
-      <div class="value">{{ num(totals.errors) }}</div>
-      <div class="hint">
-        <template v-if="since">mesures depuis {{ dur(now - since) }}</template>
-        <template v-else>aucune mesure enregistrée</template>
-      </div>
-    </div>
-  </div>
-
-  <!-- UNE mesure à la fois — requêtes OU tokens, au choix du sélecteur :
-       un seul axe. Chaque barre est empilée par modèle, aux couleurs de la
-       répartition ci-dessous. L'autre grandeur vit dans l'infobulle,
-       jamais sur un second axe. -->
-  <div class="panel chart-panel" v-if="bars.length">
-    <div class="panel-head">
-      <h2>Trafic</h2>
-      <span class="meta">{{ bars.length }} × {{ bucketLabel }} ·
-        en {{ metricLabel }} · pic {{ num(peak) }} {{ metricUnit }} ·
-        empilé par modèle</span>
-    </div>
-    <div class="chart">
-      <div class="bars" :class="{ entering }">
-        <i v-for="(b, i) in bars" :key="b.start_time"
-           :class="{ zero: !b.value, left: i < bars.length / 2, right: i >= bars.length / 2 }"
-           :style="{ '--i': i }">
-          <b :style="{ height: b.height.toFixed(2) + '%' }">
-            <s v-for="seg in b.segments" :key="seg.id"
-               :style="{ height: seg.share.toFixed(2) + '%', background: seg.color }"></s>
-          </b>
-          <span class="tip">
-            <span class="when">{{ moment(b.start_time) }}</span>
-            <span class="row" v-for="seg in b.segments" :key="seg.id">
-              <span><em :style="{ background: seg.color }"></em>{{ seg.id }}</span>
-              <b>{{ num(seg.value) }}</b>
-            </span>
-            <!-- Le total de la mesure affichée d'abord, l'autre juste
-                 en dessous : l'infobulle reste la vue complète du seau. -->
-            <template v-if="metric === 'tokens'">
-              <span class="row total"><span>Tokens</span><b>{{ num(b.tokens) }}</b></span>
-              <span class="row"><span>Requêtes</span><b>{{ num(b.requests) }}</b></span>
-            </template>
-            <template v-else>
-              <span class="row total"><span>Requêtes</span><b>{{ num(b.requests) }}</b></span>
-              <span class="row"><span>Tokens</span><b>{{ num(b.tokens) }}</b></span>
-            </template>
-          </span>
-        </i>
-      </div>
-      <div class="axis">
-        <span v-for="b in axis" :key="b.start_time">{{ tickLabel(b) }}</span>
-      </div>
-    </div>
-  </div>
-
-  <div class="panel share" v-if="totals.tokens">
-    <div class="label">Répartition des tokens</div>
-    <div class="share-bar">
-      <i v-for="m in models" :key="m.id"
-         :style="{ width: m.share.toFixed(2) + '%', background: m.color }"
-         :title="m.id + ' — ' + num(m.tokens) + ' tokens'"></i>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
-      <h2>Par modèle</h2>
-      <span class="meta live"><i></i>par ordre alphabétique</span>
-    </div>
-    <div class="scroll">
-      <table>
-        <thead><tr>
-          <th>Modèle</th><th>Requêtes</th><th>Erreurs</th><th>Entrée</th>
-          <th>Sortie</th><th>Total</th><th>Part</th><th>Moy./req</th>
-          <th>Cache</th>
-          <th>Lat. moy.</th><th>Lat. max</th>
-          <th>Comptage</th><th>Dernière</th>
-        </tr></thead>
-        <tbody>
-          <tr v-for="m in models" :key="m.id">
-            <td>
-              <div class="model"><b :style="{ background: m.color }"></b><span>
-                <span class="id">{{ m.id }}</span><br>
-                <span class="backend">{{ num(m.streamed) }} en flux<template v-if="m.anthropic">
-                  · {{ num(m.anthropic) }} Claude Code</template></span>
-              </span></div>
-            </td>
-            <td>{{ num(m.requests) }}</td>
-            <td>
-              <span v-if="m.errors" class="err">{{ num(m.errors) }}</span>
-              <span v-else class="dim">0</span>
-            </td>
-            <td>{{ num(m.prompt) }}</td>
-            <td>{{ num(m.completion) }}</td>
-            <td><strong>{{ num(m.tokens) }}</strong></td>
-            <!-- Sa part des tokens de la période : la barre « Répartition
-                 des tokens » au-dessus, chiffrée (sans légende à part). -->
-            <td>{{ m.share > 0 && m.share < 1 ? "<1" : Math.round(m.share) }}%</td>
-            <td>{{ num(m.avg) }}</td>
-            <!-- Cache de préfixe du backend : part de l'entrée qu'il n'a
-                 pas eu à recalculer. «—» quand il ne le dit pas. -->
-            <td :title="m.cached ? num(m.cached) + ' tokens d\'entrée lus en cache' : 'le backend ne remonte pas de cached_tokens'">
-              <span v-if="m.cached">{{ m.cachePct }}%</span>
-              <span v-else class="dim">—</span>
-            </td>
-            <td>{{ ms(m.avgLatency) }}</td>
-            <td class="dim">{{ ms(m.maxLatency) }}</td>
-            <!-- Provenance des tokens : `usage` de l'upstream, ou
-                 estimation. Le détail chiffré passe en infobulle — la
-                 colonne doit tenir sans pousser le tableau au défilement. -->
-            <td>
-              <span v-if="!m.estimated" class="tag exact">exact</span>
-              <span v-else-if="!m.exact" class="tag est">estimé</span>
-              <span v-else class="tag est"
-                    :title="num(m.exact) + ' exactes · ' + num(m.estimated) + ' estimées'">
-                {{ m.exactPct }}% exact</span>
-            </td>
-            <td class="dim">{{ ago(m.last) }}</td>
-          </tr>
-          <tr v-if="!models.length && loaded">
-            <td colspan="13"><div class="empty">
-              <div class="big">Aucune génération sur cette période</div>
-              <div v-if="since">Les mesures remontent à {{ dur(now - since) }} ;
-                essayez une période plus large.</div>
-              <div v-else>Les modèles apparaîtront ici dès leur première
-                requête.</div>
-            </div></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Les outils que le proxy exécute lui-même (recherche web, lecture
-       de page), sur la même période. Absente tant
-       qu'aucun n'a servi dans la fenêtre. Des mesures seulement : ce qui
-       a été cherché ou lu n'est pas dans les statistiques. -->
-  <div class="panel tools" v-if="tools.length || (webCache && webCache.asked) || mcpServers.length">
-    <div class="panel-head">
-      <h2>Outils</h2>
-      <span class="meta">{{ num(toolCalls) }} exécution{{ toolCalls > 1 ? "s" : "" }}
-        d'outils hébergés · {{ note }}</span>
-    </div>
-    <div class="scroll" v-if="tools.length">
-      <table>
-        <thead><tr>
-          <th>Outil</th><th>Appels</th><th>Erreurs</th><th>Refus</th>
-          <th>Durée moy.</th><th>Durée max</th><th>Rendu</th>
-          <th>Dernier</th>
-        </tr></thead>
-        <tbody>
-          <tr v-for="t in tools" :key="t.id">
-            <td>
-              <div class="model"><span>
-                <span class="id">{{ t.id }}</span><br>
-                <!-- Par où l'outil a été appelé : les boucles du proxy
-                     (/v1/responses, /v1/messages) ou l'appel direct. -->
-                <span class="backend">{{ t.routes }}</span>
-              </span></div>
-            </td>
-            <td>{{ num(t.calls) }}</td>
-            <td title="le résultat rendu au modèle était un texte « Error: … »">
-              <span v-if="t.errors" class="err">{{ num(t.errors) }}</span>
-              <span v-else class="dim">0</span>
-            </td>
-            <!-- Refus par limite d'appels : rien n'a été exécuté, ce
-                 n'est pas une panne de l'outil. -->
-            <td title="appels refusés par la limite d'appels par réponse : rien n'a été exécuté">
-              <span v-if="t.limited">{{ num(t.limited) }}</span>
-              <span v-else class="dim">0</span>
-            </td>
-            <td>{{ ms(t.avgDuration) }}</td>
-            <td class="dim">{{ ms(t.maxDuration) }}</td>
-            <td title="caractères rendus au modèle, tous résultats confondus">
-              {{ num(t.chars) }} car.</td>
-            <td class="dim">{{ ago(t.last) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <!-- Cache web : ce que les outils n'ont pas eu à redemander au web.
-         Compteurs en mémoire vive, depuis le démarrage du proxy — pas sur
-         la période du tableau. -->
-    <p class="note webcache" v-if="webCache">
-      <template v-if="webCache.on">
-        <b>Cache web</b> — {{ num(webCache.hits) }} demande{{ webCache.hits > 1 ? "s" : "" }}
-        sur {{ num(webCache.asked) }} servie{{ webCache.hits > 1 ? "s" : "" }}
-        sans retourner sur le web ({{ webCache.share }} %) depuis le
-        démarrage du proxy · {{ num(webCache.entries) }} page{{ webCache.entries > 1 ? "s" : "" }}
-        ou recherche{{ webCache.entries > 1 ? "s" : "" }} en cache
-        ({{ webCache.size }}), gardée{{ webCache.entries > 1 ? "s" : "" }} {{ webCache.ttl }}
-      </template>
-      <template v-else><b>Cache web</b> désactivé
-        (<code>[tools] web_cache_ttl = 0</code>)</template>
-    </p>
-    <!-- Serveurs MCP : l'état de la dernière découverte, à l'instant. -->
-    <p class="note webcache" v-if="mcpServers.length">
-      <b>Serveurs MCP</b> —
-      <template v-for="(s, i) in mcpServers" :key="s.name">
-        <template v-if="i"> · </template>
-        <span :title="s.url + (s.error ? ' — ' + s.error : '')">{{ s.name }} :
-          <template v-if="s.up">{{ s.tools.length }} outil{{ s.tools.length > 1 ? "s" : "" }}</template>
-          <template v-else-if="s.up === false">injoignable</template>
-          <template v-else>pas encore joint</template></span>
-      </template>
-    </p>
-  </div>
-
-  <footer>Rafraîchissement toutes les 5 s.</footer>
-  </div>
+  <stats-view v-if="session" v-show="view === 'stats'" :session="session" :health="health"
+              :active="view === 'stats'" @unauthorized="onUnauthorized"></stats-view>
 </div>
 </div>
 </div>
-<script src="/ui/static/markdown.js"></script>
-<script src="/ui/static/memory.js"></script>
-<script src="/ui/static/chat.js"></script>
-<script src="/ui/static/config.js"></script>
-<script src="/ui/static/dashboard.js"></script>
 </body>
 </html>

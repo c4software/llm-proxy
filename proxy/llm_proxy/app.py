@@ -79,11 +79,9 @@ association routeurs ↔ modèles) vit dans albert.py.
 """
 
 import mimetypes
-import os
 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
-from fastapi.staticfiles import StaticFiles
 
 from . import auth
 from . import catalog
@@ -93,21 +91,16 @@ from . import relay_routes
 from . import surfaces
 from . import tool_routes
 from . import ui_routes
+from . import ui_static
 from . import usage_api
 from .auth import UISession
 from .startup import lifespan
-from .ui_routes import WEB_DIR
 
 app = FastAPI(title="albert-proxy", lifespan=lifespan)
 
-# Feuille de style et script du tableau de bord : servis par le proxy
-# lui-même, aucun CDN. Monté AVANT le catch-all, qui sinon répondrait
-# 404. Le mount reste sous /ui : l'auth du proxy s'y applique.
 # Le manifeste de l'application installable : un type que `mimetypes` ne
-# connaît pas toujours.
+# connaît pas toujours. Les fichiers de la page : ui_static.py.
 mimetypes.add_type("application/manifest+json", ".webmanifest")
-app.mount("/ui/static", StaticFiles(directory=os.path.join(WEB_DIR, "static")),
-          name="static")
 
 # L'auth (auth.py) : le middleware, puis la session de la page AUTOUR de
 # lui (ajoutée après, donc exécutée avant : la session y est déjà lue).
@@ -116,8 +109,8 @@ app.add_middleware(UISession)
 
 # Les routes des modules, le relais (son catch-all) EN DERNIER, qui sinon
 # les prendrait toutes.
-for module in (surfaces, catalog, usage_api, ui_routes, config_view, health,
-               tool_routes):
+for module in (surfaces, catalog, usage_api, ui_static, ui_routes, config_view,
+               health, tool_routes):
     app.include_router(module.router)
 
 
