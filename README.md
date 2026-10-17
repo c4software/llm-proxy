@@ -718,9 +718,11 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   une question à choix (la feuille d'`ask_user` : il répond en JSON
   imposé, texte ou questions), mais n'a ni outils hébergés, ni niveau de
   réflexion, ni dossier — ces contrôles sont masqués quand il est
-  choisi. Chaque modèle du navigateur est décrit dans
-  `web/static/chat/browser.js` avec ce qu'il sait faire (`caps`) : le
-  chat ne s'appuie que sur cette description.
+  choisi. Chaque modèle du navigateur a son module
+  (`web/static/chat/models/`, ici `gemini-nano.js`) qui le décrit — ce
+  qu'il sait faire (`caps`), sa façon de répondre (`answer`) ; le
+  registre `web/static/chat/browser.js` les liste, et le chat ne
+  s'appuie que sur cette description.
 - **Modèles d'images** : le sélecteur les range à part (*Images ·
   backend*). Choisi, un tel modèle reçoit le dernier message **avec son
   contexte** : les demandes précédentes de la même suite d'images (en
