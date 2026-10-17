@@ -1138,21 +1138,34 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .chat.with-memory.side-wide:has(.artifact-side.wide) { grid-template-columns: minmax(280px, 32%) minmax(0, 1fr); }
 /* Le réseau ouvert : signalé dans l'en-tête ; l'avertissement avant. */
-.artifact-head .tag.net { color: var(--accent); border-color: var(--accent); }
 .artifact-warn {
   padding: 12px 14px; border-bottom: 1px solid var(--line); font-size: 13px;
   background: var(--accent-soft); display: flex; flex-direction: column; gap: 10px;
 }
 .artifact-warn p { margin: 0; line-height: 1.45; }
+/* Une ligne, à la hauteur de l'en-tête du chat (mêmes boutons à icône) :
+   le titre se tronque, les actions ont leur libellé au survol. */
 .artifact-head {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
+  display: flex; align-items: center; gap: 6px; min-width: 0;
   padding: 10px 12px; border-bottom: 1px solid var(--line);
 }
-.artifact-head h3 { margin: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
-.artifact-head select { font: inherit; font-size: 13px; color: var(--ink); background: var(--bg);
-  border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 45%; }
-.artifact-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-.artifact-actions .btn { padding: 4px 9px; font-size: 12.5px; }
+.artifact-head h3 {
+  margin: 0 0 0 4px; flex: 1; min-width: 0; font-size: 15px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.artifact-head select {
+  font: inherit; font-size: 13px; color: var(--ink); background: var(--bg); cursor: pointer;
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; flex: none;
+}
+.artifact-head select.art-pick { flex: 1; min-width: 0; max-width: none; text-overflow: ellipsis; }
+.artifact-head .tag { flex: none; }
+.artifact-actions { margin-left: auto; display: flex; gap: 4px; align-items: center; flex: none; }
+.art-btn { padding: 8px; display: inline-flex; align-items: center; justify-content: center; }
+.art-btn .ico {
+  display: block; width: 18px; height: 18px; fill: none; stroke: currentColor;
+  stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round;
+}
+.art-btn.net[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .artifact-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; color-scheme: light; }
 .artifact-source { flex: 1; min-height: 0; margin: 0; padding: 12px 14px; overflow: auto;
   font: 12.5px/1.5 ui-monospace, SFMono-Regular, monospace; white-space: pre-wrap; }

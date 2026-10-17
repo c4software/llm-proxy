@@ -55,25 +55,36 @@ export const ArtifactPanel = {
   template: `
   <section class="artifact-side" :class="{ wide }" v-if="art">
     <header class="artifact-head">
-      <select v-if="artifacts.length > 1" :value="art.id" @change="pick($event.target.value)"
-              aria-label="Artifact affiché">
+      <select v-if="artifacts.length > 1" class="art-pick" :value="art.id" @change="pick($event.target.value)"
+              aria-label="Artifact affiché" :title="art.title">
         <option v-for="a in artifacts" :key="a.id" :value="a.id">{{ a.title }}</option></select>
       <h3 v-else :title="art.title">{{ art.title }}</h3>
       <select v-if="art.versions.length > 1" v-model.number="versionIndex" aria-label="Version">
-        <option :value="-1">v{{ art.versions.length }} (dernière)</option>
+        <option :value="-1">v{{ art.versions.length }}</option>
         <option v-for="(v, k) in art.versions.slice(0, -1)" :key="k" :value="k">v{{ k + 1 }}</option></select>
-      <span class="tag">{{ version.type }}</span>
-      <span class="tag net" v-if="art.network" title="Cet artifact peut joindre internet">réseau</span>
+      <span class="tag" :title="'Type : ' + version.type">{{ version.type }}</span>
       <span class="artifact-actions">
-        <button type="button" class="btn ghost" :aria-pressed="String(showSource)"
-                @click="showSource = !showSource">{{ showSource ? "Aperçu" : "Source" }}</button>
-        <button type="button" class="btn ghost" @click="copy(file)">{{ copied === file.name ? "Copié" : "Copier" }}</button>
-        <button type="button" class="btn ghost" @click="download(file)">Télécharger</button>
-        <button type="button" class="btn ghost" :aria-pressed="String(!!art.network)" @click="toggleNetwork"
-                :title="art.network ? 'Réseau ouvert : couper' : 'Réseau bloqué : l’ouvrir à cet artifact (cartes, API…)'">Réseau</button>
-        <button type="button" class="btn ghost" :aria-pressed="String(wide)" @click="wide = !wide"
-                title="Élargir le panneau">Large</button>
-        <button type="button" class="icon" title="Fermer" @click="close">×</button>
+        <button type="button" class="btn ghost art-btn" :aria-pressed="String(showSource)"
+                @click="showSource = !showSource" :title="showSource ? 'Aperçu' : 'Source'"
+                :aria-label="showSource ? 'Aperçu' : 'Source'">
+          <svg v-if="showSource" class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg v-else class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8l-4 4 4 4M16 8l4 4-4 4"/></svg></button>
+        <button type="button" class="btn ghost art-btn" @click="copy(file)"
+                :title="copied === file.name ? 'Copié' : 'Copier le source'" aria-label="Copier le source">
+          <svg v-if="copied === file.name" class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>
+          <svg v-else class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg></button>
+        <button type="button" class="btn ghost art-btn" @click="download(file)"
+                :title="'Télécharger ' + file.name" aria-label="Télécharger">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>
+        <button type="button" class="btn ghost art-btn net" :aria-pressed="String(!!art.network)" @click="toggleNetwork"
+                :title="art.network ? 'Réseau ouvert à cet artifact : couper' : 'Réseau bloqué : l’ouvrir à cet artifact (cartes, API…)'"
+                aria-label="Réseau">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></button>
+        <button type="button" class="btn ghost art-btn" :aria-pressed="String(wide)" @click="wide = !wide"
+                :title="wide ? 'Réduire le panneau' : 'Élargir le panneau'" aria-label="Large">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        <button type="button" class="btn ghost art-btn" title="Fermer" aria-label="Fermer" @click="close">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </span>
     </header>
     <div class="artifact-warn" v-if="asking" role="alertdialog" aria-label="Ouvrir le réseau">
