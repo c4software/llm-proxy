@@ -851,6 +851,8 @@ message au lieu de répondre la clôt, sans réponse.
 |---|---|---|
 | `ask_user` | 1 à 4 questions à choix (unique ou multiple), un titre court par question, une description par option, toujours avec « Autre » libre | oui |
 | `show_artifact` | une page HTML, un document Markdown, un SVG, un schéma Mermaid ou du code, dans le panneau latéral ; même `id` = nouvelle version | non |
+| `edit_artifact` | retouche un artifact sans le réécrire : des remplacements de passages exacts (uniques, ou `replace_all`) dans la dernière version, tous ou aucun → une nouvelle version | non |
+| `read_artifact` | la dernière version d'un artifact, pour retoucher un texte qui a déjà changé | non |
 | `save_file` | un fichier texte (CSV, script, Markdown…) en puce sous la réponse, à télécharger | non |
 | *outils du navigateur* | position, notifications, presse-papiers, agenda, liens, capture d'écran, caméra… — [par famille](#les-outils-du-navigateur), activées par conversation | selon l'outil |
 | `folder_list`, `folder_read`, `folder_search` | parcourir, lire (par tranches numérotées), chercher dans le dossier ouvert | non |

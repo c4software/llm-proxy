@@ -746,7 +746,7 @@ export const ChatPanel = {
       if (!chip.label) {
         const head = slot.arguments.slice(0, 2000);
         chip.label = partialString(head, "title") || partialString(head, "name")
-          || partialString(head, "path") || "";
+          || partialString(head, "path") || partialString(head, "id") || "";
       }
     }
 
@@ -1141,6 +1141,11 @@ export const ChatPanel = {
         return a.questions.map((q) => (q && q.question) || "").filter(Boolean).join(" · ").slice(0, 140);
       }
       if (t.name === "show_artifact") return [a.title, a.type].filter(Boolean).join(" · ");
+      if (t.name === "edit_artifact") {
+        const n = Array.isArray(a.edits) ? a.edits.length : 0;
+        return [a.id, n ? n + " retouche" + (n > 1 ? "s" : "") : ""].filter(Boolean).join(" · ");
+      }
+      if (t.name === "read_artifact") return a.id || "";
       if (t.name === "save_file") return a.name || "";
       if (["get_location", "clipboard_read", "capture_screen", "take_photo", "scan_code",
            "pick_color"].includes(t.name)) return a.reason || "";

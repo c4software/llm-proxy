@@ -6,7 +6,8 @@
     folder_list, folder_read,           workspace.js  si un dossier est ouvert
       folder_search
     folder_write, folder_edit           workspace.js  attendent son accord
-    save_file, show_artifact            outputs.js
+    save_file, show_artifact,           outputs.js
+      edit_artifact, read_artifact
     les outils du navigateur            device/       par famille, activée ou non
       (position, caméra, écran,                       par conversation ; ce qui
       presse-papiers, agenda…)                        touche à l'appareil attend
@@ -46,6 +47,11 @@ export async function run(ctx, call) {
     const { id, result } = outputs.showArtifact(ctx.conv, args);
     return { result, artifact: id };
   }
+  if (call.name === "edit_artifact") {
+    const { id, result } = outputs.editArtifact(ctx.conv, args);
+    return { result, artifact: id };
+  }
+  if (call.name === "read_artifact") return { result: outputs.readArtifact(ctx.conv, args) };
   if (device.isTool(call.name)) return { result: await device.run(call.name, args, ctx) };
   if (workspace.TOOL_NAMES.has(call.name)) {
     if (!ctx.ws) return { result: "Error: aucun dossier ouvert (l'utilisateur doit le rouvrir)." };

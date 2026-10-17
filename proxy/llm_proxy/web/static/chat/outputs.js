@@ -7,6 +7,11 @@
     show_artifact  une page, un document, un schéma ou un SVG, montré dans
                    le panneau latéral ; un même `id` en fait une nouvelle
                    version
+    edit_artifact  une RETOUCHE : des remplacements de passages exacts dans
+                   la dernière version, qui en font une nouvelle — sans
+                   réécrire (ni re-streamer) tout l'artifact
+    read_artifact  la dernière version, telle qu'elle est (après des
+                   retouches, le modèle ne l'a plus en entier sous les yeux)
 
   Les deux sont gardés avec la conversation (le message pour un fichier,
   conv.artifacts pour un artifact).
@@ -48,6 +53,30 @@ export const TOOLS = [
       content: { type: "string", description: "Le contenu complet (une page HTML entière pour `html`)." },
       language: { type: "string", description: "Pour `code` : le langage." },
     } } } },
+  { type: "function", function: {
+    name: "edit_artifact",
+    description: "Retouche un artifact déjà affiché SANS le réécrire : chaque `old_string`, "
+      + "un passage exact et unique de sa dernière version (espaces et retours à la ligne "
+      + "compris, assez long pour être unique), est remplacé par `new_string`. À préférer à "
+      + "show_artifact pour toute modification qui ne change pas l'essentiel. Toutes les "
+      + "retouches s'appliquent, ou aucune ; en cas de doute sur le texte exact, read_artifact.",
+    parameters: { type: "object", required: ["id", "edits"], properties: {
+      id: { type: "string", description: "L'identifiant de l'artifact." },
+      edits: { type: "array", minItems: 1, items: {
+        type: "object", required: ["old_string", "new_string"], properties: {
+          old_string: { type: "string", description: "Le passage exact à remplacer." },
+          new_string: { type: "string", description: "Ce qui le remplace (vide : le supprimer)." },
+          replace_all: { type: "boolean", description: "Remplacer toutes ses occurrences (sinon il doit être unique)." },
+        } } },
+      title: { type: "string", description: "Un nouveau titre (facultatif)." },
+    } } } },
+  { type: "function", function: {
+    name: "read_artifact",
+    description: "Rend la dernière version d'un artifact, telle quelle — avant de le retoucher "
+      + "quand son texte exact n'est plus sûr (après plusieurs retouches).",
+    parameters: { type: "object", required: ["id"], properties: {
+      id: { type: "string", description: "L'identifiant de l'artifact." },
+    } } } },
 ];
 export const TOOL_NAMES = new Set(TOOLS.map((t) => t.function.name));
 
@@ -82,7 +111,53 @@ export function showArtifact(conv, args) {
   art.title = title;
   art.versions.push({ type, content, language: args.language || "", at: Date.now() });
   const n = art.versions.length;
-  return { id, result: `Affiché dans le panneau : « ${title} »` + (n > 1 ? ` (version ${n}).` : ".") };
+  return { id, result: `Affiché dans le panneau : « ${title} » (id « ${id} »`
+    + (n > 1 ? `, version ${n}).` : ").") + " Pour le modifier ensuite : edit_artifact." };
+}
+
+const findArtifact = (conv, id) => (conv.artifacts || []).find((a) => a.id === String(id || ""));
+const known = (conv) => (conv.artifacts || []).map((a) => `« ${a.id} »`).join(", ") || "aucun";
+
+// edit_artifact : les remplacements, tous ou aucun → une nouvelle version.
+export function editArtifact(conv, args) {
+  const art = findArtifact(conv, args.id);
+  if (!art) return { result: `Error: artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).` };
+  const last = art.versions[art.versions.length - 1];
+  const edits = Array.isArray(args.edits) ? args.edits : [];
+  if (!edits.length) return { result: "Error: `edits` attendu, au moins une retouche." };
+  let content = last.content;
+  for (const [k, e] of edits.entries()) {
+    const from = String((e && e.old_string) ?? "");
+    const to = String((e && e.new_string) ?? "");
+    const where = edits.length > 1 ? `retouche ${k + 1} : ` : "";
+    if (!from) return { result: `Error: ${where}\`old_string\` est vide.` };
+    const count = content.split(from).length - 1;
+    if (!count) {
+      return { result: `Error: ${where}passage introuvable dans la version ${art.versions.length}. `
+        + "Le texte doit être EXACT (espaces, retours à la ligne) ; read_artifact pour le relire. "
+        + "Rien n'a été modifié." };
+    }
+    if (count > 1 && !e.replace_all) {
+      return { result: `Error: ${where}passage présent ${count} fois ; l'allonger pour qu'il soit `
+        + "unique, ou `replace_all`. Rien n'a été modifié." };
+    }
+    content = e.replace_all ? content.split(from).join(to) : content.replace(from, () => to);
+  }
+  if (content.length > MAX_ARTIFACT) return { result: `Error: artifact trop long (${MAX_ARTIFACT} caractères au plus).` };
+  if (args.title) art.title = String(args.title).trim().slice(0, 120);
+  art.versions.push({ ...last, content, at: Date.now() });
+  const n = art.versions.length;
+  return { id: art.id, result: `Artifact « ${art.id} » retouché (${edits.length} remplacement`
+    + `${edits.length > 1 ? "s" : ""}) : version ${n}, affichée dans le panneau.` };
+}
+
+// read_artifact : la dernière version.
+export function readArtifact(conv, args) {
+  const art = findArtifact(conv, args.id);
+  if (!art) return `Error: artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).`;
+  const last = art.versions[art.versions.length - 1];
+  return `Artifact « ${art.id} », version ${art.versions.length} (${last.type}, `
+    + `${last.content.length} caractères) :\n${last.content}`;
 }
 
 // ── le document d'un artifact, pour le cadre isolé ────────────────────
