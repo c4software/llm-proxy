@@ -144,14 +144,10 @@ export const ChatPanel = {
       artifactsOpen.value = open;
       if (open) memoryOpen.value = false;
     }
-    // ── voix (voice.js) : dicter, écouter ───────────────────────────────
-    const voicePrefs = reactive({ asr: "", tts: "", voice: "", ...voice.loadPrefs() });
-    const voiceList = reactive({ asr: [], tts: [], voices: [] });
+    // ── voix (voice.js) : écouter ───────────────────────────────
+    const voicePrefs = reactive({ tts: "", voice: "", ...voice.loadPrefs() });
+    const voiceList = reactive({ tts: [], voices: [] });
     watch(voicePrefs, (p) => voice.savePrefs({ ...p }), { deep: true });
-    // Le modèle de dictée : le choisi, sinon celui de l'outil transcribe,
-    // sinon le premier du catalogue.
-    const asrModel = computed(() => (voiceList.asr.includes(voicePrefs.asr) && voicePrefs.asr)
-      || (voiceList.asr.includes(chat.value.asr_model) && chat.value.asr_model) || voiceList.asr[0] || "");
     // La lecture, par défaut : un modèle à voix toutes faites — pas le
     // clonage (« base », il lui faut un enregistrement de référence) ni la
     // conception de voix (« design », il lui faut une description).
@@ -168,28 +164,6 @@ export const ChatPanel = {
       try { voiceList.voices = await voice.voicesOf(m); } catch { /* aucune voix listée */ }
       if (!voiceList.voices.includes(voicePrefs.voice)) voicePrefs.voice = voiceList.voices[0] || "";
     });
-    const dictation = ref("idle");             // idle, rec, busy
-    let recorder = null;
-    async function toggleDictation() {
-      if (dictation.value === "busy") return;
-      if (dictation.value === "rec") {
-        dictation.value = "busy";
-        try {
-          const wav = await recorder.stop();
-          const text = await voice.transcribe(wav, asrModel.value, current.value && current.value.incognito);
-          if (text) draft.value = draft.value.trim() ? draft.value.trimEnd() + " " + text : text;
-          nextTick(() => { if (input.value) { input.value.focus(); autosize(); } });
-        } catch (e) { status.value = "Dictée : " + e.message; }
-        recorder = null;
-        dictation.value = "idle";
-        return;
-      }
-      try {
-        recorder = await voice.startRecording();
-        dictation.value = "rec";
-        status.value = "";
-      } catch (e) { status.value = "Micro : " + (e.name === "NotAllowedError" ? "accès refusé" : e.message); }
-    }
     const playing = reactive({ id: "", loading: false });
     let audio = null;
     async function listen(m) {
@@ -209,7 +183,7 @@ export const ChatPanel = {
         playing.id = "";
       } finally { playing.loading = false; }
     }
-    onUnmounted(() => { if (audio) audio.pause(); if (recorder) recorder.cancel(); });
+    onUnmounted(() => { if (audio) audio.pause(); });
 
     // Prévenir de la fin d'une réponse (notify.js), réglage du navigateur.
     const notifyOn = ref(notify.enabled());
@@ -923,8 +897,7 @@ export const ChatPanel = {
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
-             voicePrefs, voiceList, asrModel, ttsModel, ttsDefault, dictation, toggleDictation, playing, listen,
-             canDictate: !!(navigator.mediaDevices && window.MediaRecorder),
+             voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
              askReady, togglePick, answerAsk, skipAsk, applyWrite, refuseWrite, writeDiff, diffCounts,
              download, fileOf: (f) => ({ name: f.name, content: f.content }),
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
@@ -1004,12 +977,9 @@ export const ChatPanel = {
           <label class="check"><input type="checkbox" v-model="current.showReasoning">
             montrer le raisonnement du modèle</label>
         </div>
-        <div class="field" v-if="voiceList.asr.length || voiceList.tts.length">
+        <div class="field" v-if="voiceList.tts.length">
           <span>Voix</span>
           <div class="voice-pick">
-            <label v-if="voiceList.asr.length">dictée
-              <select v-model="voicePrefs.asr"><option value="">{{ asrModel }} (défaut)</option>
-                <option v-for="m in voiceList.asr" :key="m" :value="m">{{ m }}</option></select></label>
             <label v-if="voiceList.tts.length">lecture
               <select v-model="voicePrefs.tts"><option value="">{{ ttsDefault }} (défaut)</option>
                 <option v-for="m in voiceList.tts" :key="m" :value="m">{{ m }}</option></select></label>
@@ -1224,11 +1194,6 @@ export const ChatPanel = {
                 <input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
             </div>
           </div>
-          <button type="button" class="btn ghost ico-btn mic" v-if="asrModel && canDictate"
-                  :class="dictation" :disabled="dictation === 'busy'" @click="toggleDictation"
-                  :title="dictation === 'rec' ? 'Arrêter et transcrire' : 'Dicter (' + asrModel + ')'">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-            <span class="lbl">{{ dictation === "rec" ? "Arrêter" : dictation === "busy" ? "Transcription…" : "Dicter" }}</span></button>
           <label class="effort" v-if="imageMode" title="Nombre d'images par demande">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
             <select v-model.number="current.imageCount" :disabled="streaming" aria-label="Nombre d'images">

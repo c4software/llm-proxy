@@ -1158,8 +1158,6 @@ a.btn { display: inline-block; text-decoration: none; }
 .attach-menu .menu button[role="menuitem"]:hover { background: var(--accent-soft); }
 
 /* ── Chat : voix (chat/voice.js) ── */
-.mic.rec { color: #fff; background: var(--err); border-color: var(--err); }
-.mic.rec .ico { animation: pulse 1.2s ease-in-out infinite; }
 .voice-pick { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; color: var(--muted); }
 .voice-pick label { display: inline-flex; align-items: center; gap: 6px; }
 .voice-pick select { font: inherit; color: var(--ink); background: var(--bg);

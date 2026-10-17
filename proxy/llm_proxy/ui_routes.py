@@ -425,9 +425,6 @@ async def ui_session(request: Request):
             # Les tailles qu'un modèle d'images peut recevoir du chat :
             # celles de l'outil image_generation.
             "image_sizes": list(tools.image_generation.SIZES),
-            # La dictée : le modèle de transcription de l'outil transcribe,
-            # proposé par défaut (la page en choisit un autre si besoin).
-            "asr_model": tools.transcribe.MODEL or None,
             "image_size": tools.image_generation.SIZE,
         },
         # La mémoire persistante (outil `memory`) : son panneau, à côté du
@@ -521,23 +518,14 @@ async def ui_images(request: Request):
     return await forward_post(request, "/v1/images/generations", "openai")
 
 
-# La VOIX du chat : dictée (transcription) et lecture à voix haute
-# (synthèse), relayées comme /v1/audio/* — sous /ui pour le cookie, donc
-# comptées à la clé connectée. Le modèle est choisi par la page.
+# La VOIX du chat : la lecture à voix haute (synthèse), relayée comme
+# /v1/audio/* — sous /ui pour le cookie, donc comptée à la clé connectée.
+# Le modèle est choisi par la page.
 def _chat_closed():
     if not UI_CHAT:
         return error_response("openai", 404, "unknown_route",
                               "chat de la page désactivé ([ui].chat)")
     return None
-
-
-@router.post("/ui/audio/transcriptions")
-async def ui_transcriptions(request: Request):
-    """Multipart (model, file) : /v1/audio/transcriptions."""
-    if (bad := _chat_closed()) is not None:
-        return bad
-    incognito(request)
-    return await forward_post(request, "/v1/audio/transcriptions", "openai")
 
 
 @router.post("/ui/audio/speech")

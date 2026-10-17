@@ -790,19 +790,13 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   relit dès que le modèle a appelé l'outil `memory`, et l'appel se lit
   « `create /memories/…` » plutôt qu'en arguments bruts.
 - **Voix** (`chat/voice.js`), avec les modèles du catalogue :
-  - *Dicter* (à côté de *Joindre*) : le micro est enregistré, puis
-    converti en WAV 16 kHz mono **dans la page** — les serveurs de
-    transcription lisent le WAV, le navigateur enregistre du WebM ou du
-    MP4 — et transcrit par `POST /ui/audio/transcriptions` ; le texte
-    rejoint la zone de saisie. Modèle par défaut : celui de
-    `[tools.transcribe]`.
   - *Écouter* (sous une réponse) : le texte, sans code ni Markdown (3 000
     caractères au plus), lu par `POST /ui/audio/speech` avec la voix
     choisie (`GET /ui/audio/voices`). Modèle par défaut : un modèle à voix
     toutes faites (`customvoice`), pas le clonage ni la conception de voix,
     qui demandent une référence.
-  - Les modèles (dictée, lecture) et la voix se choisissent dans
-    *Réglages* ; le choix reste dans le navigateur. Ces routes relaient
+  - Le modèle de lecture et la voix se choisissent dans *Réglages* ; le
+    choix reste dans le navigateur. Ces routes relaient
     `/v1/audio/*` sous le cookie, comptées à la clé connectée.
 - **Notifications** (*Réglages*) : une réponse finie, ou une question qui
   attend, pendant que l'onglet est en arrière-plan — le titre de l'onglet
@@ -811,7 +805,7 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
 
 #### Les outils de la page
 
-![Le menu Joindre : Fichiers… (joints au message) ou Dossier… (parcouru par le modèle, qui peut proposer des écritures), à côté du bouton Dicter](docs/chat-joindre.png)
+![Le menu Joindre : Fichiers… (joints au message) ou Dossier… (parcouru par le modèle, qui peut proposer des écritures)](docs/chat-joindre.png)
 
 Le chat déclare au modèle, en plus des outils hébergés, des outils que
 **la page exécute elle-même** : le proxy les lui rend en `tool_calls`,
