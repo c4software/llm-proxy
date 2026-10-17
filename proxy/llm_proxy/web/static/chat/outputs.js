@@ -48,10 +48,7 @@ export const TOOLS = [
       + "bibliothèques depuis cdnjs, jsdelivr ou unpkg ; le reste du réseau — fetch, images "
       + "et tuiles distantes — est bloqué tant que l'utilisateur ne l'a pas autorisé pour cet "
       + "artifact par le bouton Réseau du panneau : prévoir alors un message clair si une "
-      + "requête échoue ; pour une carte, des tuiles Esri — server.arcgisonline.com/ArcGIS/"
-      + "rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x} — ou OpenTopoMap, car "
-      + "OpenStreetMap et CARTO refusent une page isolée ; jamais d'attribut `integrity` "
-      + "sur une bibliothèque : une empreinte inexacte la bloque), un "
+      + "requête échoue), un "
       + "document Markdown, un SVG, un schéma Mermaid ou du code. Réutiliser le même `id` "
       + "pour en publier une nouvelle version. Pour les visualisations, maquettes, petits "
       + "outils interactifs, documents longs — pas pour une réponse courte.",

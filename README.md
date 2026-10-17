@@ -902,10 +902,7 @@ message au lieu de répondre la clôt, sans réponse.
   modèle, il pourrait alors envoyer ce qu'il contient à n'importe quel
   site ; il reste isolé de la page, et les formulaires restent bloqués.
   Le choix est gardé avec l'artifact (*réseau* dans son en-tête), et se
-  coupe d'un clic. Pour une carte : les tuiles d'OpenStreetMap et de CARTO
-  sont refusées à une page isolée (sans référent), celles d'Esri
-  (`World_Street_Map`) et d'OpenTopoMap passent — la description de
-  `show_artifact` le dit au modèle. Gardés avec la conversation.
+  coupe d'un clic. Gardés avec la conversation.
 
 ![Le panneau des artifacts : une page HTML produite par le modèle, un graphique Chart.js chargé depuis jsdelivr, avec Source, Copier, Télécharger et Large](docs/chat-artifact.png)
 
