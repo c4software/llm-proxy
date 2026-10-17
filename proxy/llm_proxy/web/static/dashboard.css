@@ -415,6 +415,8 @@ html, .thread, .nav-chats ul, .memory-side { scrollbar-gutter: stable; }
 }
 .wrap.is-chat > .chat, .wrap.is-chat > .chat-off { flex: 1; min-height: 0; }
 .wrap.is-chat header { margin-bottom: 0; }
+/* Vue statistiques : toute la largeur de la page (graphes, tableaux). */
+.wrap.is-stats { max-width: none; }
 
 /* Les boutons communs (ceux de la Mémoire en sont un cas). */
 .btn {

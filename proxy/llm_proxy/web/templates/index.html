@@ -111,7 +111,7 @@
   </aside>
   <div class="scrim" v-if="navOpen" @click="navOpen = false"></div>
 
-<div class="wrap" :class="{ 'is-chat': session && view === 'chat' }">
+<div class="wrap" :class="{ 'is-chat': session && view === 'chat', 'is-stats': session && view === 'stats' }">
   <header>
     <!-- Sur mobile (et sans session) : la marque, et ☰ pour le menu. -->
     <div class="mobilebar">

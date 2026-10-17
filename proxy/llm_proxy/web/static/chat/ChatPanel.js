@@ -64,6 +64,7 @@ import { inline, dataUrl, ownImage } from "./history.js";
 import { readAttachment } from "./attachments.js";
 import { imagePrompt, oneImage } from "./images.js";
 import { readStream } from "./stream.js";
+import { localModels, isLocal, runLocal } from "./local.js";
 import * as workspace from "./workspace.js";
 import * as pagetools from "./pagetools.js";
 import * as askTool from "./ask.js";
@@ -220,6 +221,23 @@ export const ChatPanel = {
     // ── modèles ─────────────────────────────────────────────────────────
     const modelIds = computed(() => models.value.filter((m) => !m.image).map((m) => m.id));
     // Le modèle de la conversation est-il un modèle d'images ?
+    // La liste, groupée par fournisseur (le préfixe « fournisseur/ » de
+    // l'identifiant) : sous chaque groupe, le seul nom du modèle. La
+    // conversation d'abord, puis le navigateur, puis les images.
+    const modelGroups = computed(() => {
+      const groups = new Map();
+      for (const m of models.value) {
+        const cut = m.id.indexOf("/");
+        const from = m.local ? "Dans le navigateur" : cut > 0 ? m.id.slice(0, cut) : "Autres";
+        const label = m.image ? "Images · " + from : from;
+        if (!groups.has(label)) groups.set(label, { label, rank: m.image ? 2 : m.local ? 1 : 0, models: [] });
+        const name = m.local ? "Gemini Nano" : cut > 0 ? m.id.slice(cut + 1) : m.id;
+        const notes = [m.vision && !m.image && "vision",
+                       m.availability && m.availability !== "available" && "à télécharger"];
+        groups.get(label).models.push({ id: m.id, text: [name, ...notes.filter(Boolean)].join(" · ") });
+      }
+      return [...groups.values()].sort((a, b) => a.rank - b.rank);
+    });
     const isImage = (id) => !!(models.value.find((m) => m.id === id) || {}).image;
     const imageMode = computed(() => !!current.value && isImage(current.value.model));
     const imageSizes = computed(() => chat.value.image_sizes || ["512x512"]);
@@ -231,7 +249,7 @@ export const ChatPanel = {
       if (preset && modelIds.value.includes(preset)) return preset;
       const last = localStorage.getItem(LAST_MODEL);
       if (last && modelIds.value.includes(last)) return last;
-      return modelIds.value[0] || last || "";
+      return modelIds.value.find((id) => !isLocal(id)) || last || "";
     }
     // Des images à un modèle que le catalogue ne dit pas capable de les
     // lire : envoyées quand même (le catalogue peut se tromper), mais dit.
@@ -246,6 +264,14 @@ export const ChatPanel = {
       || pending.value.filter((a) => a.kind === "image").length > 1));
 
     async function loadModels() {
+      // Le modèle du navigateur (Gemini Nano dans Chrome), s'il y en a un :
+      // à la suite du catalogue, même illisible. Chrome peut mettre
+      // quelques secondes à le dire : le catalogue ne l'attend pas.
+      const local = [];
+      localModels().then((got) => {
+        local.push(...got);
+        models.value = models.value.filter((m) => !m.local).concat(got);
+      });
       try {
         const r = await fetch("/ui/models?images=1", { headers: { accept: "application/json" } });
         if (r.status === 401) { emit("unauthorized"); return; }
@@ -253,11 +279,12 @@ export const ChatPanel = {
         const j = await r.json();
         // Le proxy ne rend que les modèles de conversation, et d'images.
         models.value = (j.data || []).filter((m) => m.id)
-          .sort((a, b) => a.id.localeCompare(b.id));
+          .sort((a, b) => a.id.localeCompare(b.id)).concat(local);
         modelsError.value = "";
         if (current.value && !current.value.model) current.value.model = defaultModel();
       } catch (e) {
         modelsError.value = "Catalogue illisible : " + e.message;
+        models.value = [...local];
       }
     }
 
@@ -470,6 +497,20 @@ export const ChatPanel = {
       streaming.value = true;
       status.value = "";
       const ctrl = controller = new AbortController();
+      // Le modèle du navigateur : un seul tour, sans outils, sans le proxy.
+      if (isLocal(conv.model)) {
+        try {
+          await runLocal(await inline(apiMessages(conv, upto)), live, ctrl.signal,
+                         (s) => { status.value = s; });
+        } catch (e) {
+          if (e.name !== "AbortError") live.error = "Modèle du navigateur : " + e.message;
+          else if (!live.content) live.error = "Arrêté.";
+        } finally {
+          status.value = "";
+          done(conv, live, ctrl);
+        }
+        return;
+      }
       const body = { model: conv.model, stream: true, stream_options: { include_usage: true } };
       if (conv.temperature !== null && conv.temperature !== "") {
         body.temperature = Number(conv.temperature);
@@ -975,7 +1016,7 @@ export const ChatPanel = {
     });
 
     return { chat, toolGroups, available, current, currentId,
-             ownImage, models, modelsError, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
+             ownImage, models, modelGroups, modelsError, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
@@ -1007,15 +1048,12 @@ export const ChatPanel = {
       <header class="chat-head">
         <h2 :title="current.title">{{ current.title }}</h2>
         <label class="model-pick" title="Modèle">
-          <select v-model="current.model" :disabled="streaming">
+          <select v-model="current.model" :disabled="streaming" :title="current.model">
             <option v-if="!models.length && current.model" :value="current.model">{{ current.model }}</option>
             <option v-if="current.model && models.length && !models.some((m) => m.id === current.model)"
                     :value="current.model">{{ current.model }} (absent du catalogue)</option>
-            <optgroup label="Conversation">
-              <option v-for="m in models.filter((m) => !m.image)" :key="m.id" :value="m.id">{{ m.id }}{{ m.vision ? " · vision" : "" }}</option>
-            </optgroup>
-            <optgroup label="Génération d'images" v-if="models.some((m) => m.image)">
-              <option v-for="m in models.filter((m) => m.image)" :key="m.id" :value="m.id">{{ m.id }}</option>
+            <optgroup v-for="g in modelGroups" :key="g.label" :label="g.label">
+              <option v-for="m in g.models" :key="m.id" :value="m.id">{{ m.text }}</option>
             </optgroup>
           </select>
         </label>
