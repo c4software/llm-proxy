@@ -161,7 +161,8 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 - **Mémoire persistante** — si `[tools.memory].enabled`, l'outil `memory`
   (commandes de l'outil memory d'Anthropic) donne au modèle des fichiers
   texte sous `/memories` qui survivent aux conversations, **cloisonnés
-  par clé du proxy**, visibles et modifiables dans le tableau de bord.
+  par clé du proxy** (par compte avec les [comptes OIDC](#comptes-oidc)),
+  visibles et modifiables dans le tableau de bord.
   Voir [Mémoire persistante](#mémoire-persistante-memory).
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
@@ -560,6 +561,23 @@ celle d'un admin montre tout le monde.
 `PATCH /ui/users/<id>` `{"role": …}` : `pending`, `user`, `admin`,
 `blocked`), les clés de tous (`GET /ui/keys?all=1`), et le générateur
 *Proxy*, réservé aux admins dès que les comptes existent.
+
+`GET /ui/auth` (sans clé ni session) dit à la page comment entrer :
+`{"mode": "oidc" | "key" | null, "label": …}` ; `/healthz` le répète
+(`ui_login`), et `GET /ui/session` y ajoute le compte connecté
+(`account` : identifiant, e-mail, nom, rôle). Le journal dit au
+démarrage si les comptes sont actifs, et chaque connexion (compte,
+rôle) ; un retour refusé par le fournisseur ou un jeton invalide renvoie
+sur la page avec le motif (`/ui?auth_error=…`).
+
+**Mettre en route** : déclarer chez le fournisseur un client
+confidentiel, flux *authorization code*, adresse de retour
+`https://<adresse publique>/ui/auth/callback` ; remplir `[oidc]`
+(`issuer`, `client_id`, `client_secret = "${OIDC_CLIENT_SECRET}"`, la
+valeur dans `.env`) ; derrière un reverse proxy, poser
+`[oidc].redirect_uri` ou `[files].public_url` (sinon l'adresse déduite
+de la requête est en `http://`, et le fournisseur la refuse) ;
+redémarrer, puis se connecter **le premier** : ce compte est admin.
 
 ### Le chat
 
@@ -2099,7 +2117,9 @@ qui suivent restent entières :
   reste dans le bac. Le téléchargement, lui, part du proxy : seul
   `[tools.net]` (adresses publiques, `allowed_domains`,
   `blocked_domains`) dit ce qu'il peut joindre.
-- **Entre clients.** Les bacs sont cloisonnés par clé du proxy. Sur un
+- **Entre clients.** Les bacs sont cloisonnés par clé du proxy — par
+  compte avec les [comptes OIDC](#comptes-oidc), dont les clés partagent
+  donc les bacs et leur plafond. Sur un
   proxy ouvert tous les clients sont un seul client : seul l'identifiant
   de conversation, interne au proxy, sépare leurs bacs, et qui rejoue à
   l'identique la conversation d'un autre retrouve son bac. Les 8 bacs et
@@ -2552,8 +2572,11 @@ l'a écrit (`call.client`, le condensé de `tools.owner`), et ne se relit
 qu'avec elle — le modèle ne choisit pas le client. La clé n'est jamais
 écrite ; le condensé est stable d'un démarrage à l'autre, son secret
 étant gardé dans `data/client.secret`. Changer une clé, c'est changer de
-mémoire. **Proxy ouvert** (`api_keys` vide) : une seule mémoire, commune.
-Bornes par clé (fichiers, taille d'un fichier, taille totale) ; au-delà,
+mémoire. **Avec les [comptes OIDC](#comptes-oidc)**, le client d'une clé
+gérée est son **compte** : toutes ses clés et le chat de sa page lisent
+et écrivent la même mémoire, et une clé révoquée puis remplacée ne perd
+rien. **Proxy ouvert** (`api_keys` vide) : une seule mémoire, commune.
+Bornes par clé (par compte avec OIDC) (fichiers, taille d'un fichier, taille totale) ; au-delà,
 l'écriture est refusée et le modèle invité à faire de la place. Tout `..`
 est refusé dans un chemin.
 
@@ -2597,7 +2620,9 @@ Elle est **cloisonnée par client** : une entrée ne se relit qu'avec la
 clé du proxy (`proxy.api_keys`) qui l'a fait ranger. L'identifiant de
 l'élément (`ws_…`, 96 bits aléatoires) ne suffit donc pas : présenté sous
 une autre clé, il est traité comme un identifiant inconnu — même réponse
-qu'après un redémarrage, rien ne dit que l'entrée existe. La clé n'est
+qu'après un redémarrage, rien ne dit que l'entrée existe (avec les
+[comptes OIDC](#comptes-oidc), « la clé » s'entend du compte : toutes
+ses clés se valent). La clé n'est
 gardée nulle part : la mémoire n'en tient qu'un condensé, salé par un
 aléa tiré au démarrage, et il n'est pas journalisé. Avec `proxy.api_keys`
 vide (proxy ouvert), tous les clients sont le même, quel que soit le
@@ -3077,7 +3102,14 @@ tourne sur la machine : lire
 
     # tableau de bord : http://localhost:8000/ui
     # (si proxy.api_keys est renseigné, la page demande la clé, puis la
-    #  garde en cookie ; D / W / A changent de période)
+    #  garde en cookie ; avec [oidc], bouton « Se connecter » vers le
+    #  fournisseur ; D / W / A changent de période)
+
+    # comptes OIDC (si [oidc]) : ce que la page proposera, puis une clé
+    # créée dans Configuration → Clés, sur l'API
+    curl -s http://localhost:8000/ui/auth          # {"mode":"oidc",…}
+    curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8000/v1/models \
+      -H "Authorization: Bearer <uuid de la clé>"   # 200 ; 401 une fois révoquée
 
     # usage par modèle, tout l'historique (Usage API OpenAI)
     curl -s "http://localhost:8000/v1/organization/usage/completions\

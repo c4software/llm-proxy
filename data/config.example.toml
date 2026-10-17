@@ -247,7 +247,8 @@ max_result_chars = 24000
 # le nom de la fonction, ses arguments tels que le modèle les a écrits, et
 # le texte du résultat — rien d'autre. Cloisonnée par client : une entrée
 # ne se relit qu'avec la clé (proxy.api_keys) qui l'a fait ranger, dont
-# seul un condensé est gardé ; proxy ouvert = un seul client. En mémoire
+# seul un condensé est gardé — ou, avec les comptes ([oidc]), avec
+# n'importe quelle clé du même compte ; proxy ouvert = un seul client. En mémoire
 # vive, jamais sur disque : un redémarrage du proxy la vide, le modèle
 # reçoit alors à la place un mot qui lui dit de relancer l'outil.
 # cache_entries : nombre d'appels gardés (les moins récemment relus
@@ -739,7 +740,10 @@ max_input_bytes = 10000000
 # la sienne, l'interface ne montre que celle de la clé connectée. La clé
 # n'est jamais écrite : la base range un condensé de la clé sous un secret
 # tiré une fois (client.secret, à côté de ce fichier). Changer de clé =
-# changer de mémoire. Proxy OUVERT : une seule mémoire, commune à tous.
+# changer de mémoire. Avec les comptes ([oidc]) : une mémoire PAR COMPTE,
+# partagée par toutes ses clés et le chat de sa page — révoquer une clé
+# et en créer une autre ne perd rien. Proxy OUVERT : une seule mémoire,
+# commune à tous.
 # À SAVOIR : ce qu'un modèle range ici revient dans les conversations
 # suivantes — une page web lue par un agent peut lui faire écrire une
 # consigne qui le suivra (injection persistante). Relire la mémoire de
@@ -783,7 +787,8 @@ allowed_origins = []
 # L'onglet « Chat » du tableau de bord : une interface de conversation sur
 # les backends du proxy, outils hébergés compris (ceux de [chat], si
 # hosted_tools est vrai). Le cookie de /ui y DÉPENSE des tokens — comptés
-# à la clé connectée, comme toute requête. false = l'onglet le dit, et
+# à la clé connectée (au compte, avec [oidc]), comme toute requête.
+# false = l'onglet le dit, et
 # POST /ui/chat/completions rend 404 : le cookie ne sert qu'à lire.
 [ui]
 chat = false
