@@ -270,12 +270,6 @@
          :style="{ width: m.share.toFixed(2) + '%', background: m.color }"
          :title="m.id + ' — ' + num(m.tokens) + ' tokens'"></i>
     </div>
-    <div class="legend">
-      <span v-for="m in models" :key="m.id">
-        <b :style="{ background: m.color }"></b><em>{{ m.id }}</em>&nbsp;{{
-          Math.round(m.share) }}%
-      </span>
-    </div>
   </div>
 
   <div class="panel">
@@ -287,7 +281,7 @@
       <table>
         <thead><tr>
           <th>Modèle</th><th>Requêtes</th><th>Erreurs</th><th>Entrée</th>
-          <th>Sortie</th><th>Total</th><th>Moy./req</th>
+          <th>Sortie</th><th>Total</th><th>Part</th><th>Moy./req</th>
           <th>Cache</th>
           <th>Lat. moy.</th><th>Lat. max</th>
           <th>Comptage</th><th>Dernière</th>
@@ -297,8 +291,7 @@
             <td>
               <div class="model"><b :style="{ background: m.color }"></b><span>
                 <span class="id">{{ m.id }}</span><br>
-                <span class="backend">{{ m.backend }} ·
-                  {{ num(m.streamed) }} en flux<template v-if="m.anthropic">
+                <span class="backend">{{ num(m.streamed) }} en flux<template v-if="m.anthropic">
                   · {{ num(m.anthropic) }} Claude Code</template></span>
               </span></div>
             </td>
@@ -310,6 +303,9 @@
             <td>{{ num(m.prompt) }}</td>
             <td>{{ num(m.completion) }}</td>
             <td><strong>{{ num(m.tokens) }}</strong></td>
+            <!-- Sa part des tokens de la période : la barre « Répartition
+                 des tokens » au-dessus, chiffrée (sans légende à part). -->
+            <td>{{ m.share > 0 && m.share < 1 ? "<1" : Math.round(m.share) }}%</td>
             <td>{{ num(m.avg) }}</td>
             <!-- Cache de préfixe du backend : part de l'entrée qu'il n'a
                  pas eu à recalculer. «—» quand il ne le dit pas. -->
@@ -332,7 +328,7 @@
             <td class="dim">{{ ago(m.last) }}</td>
           </tr>
           <tr v-if="!models.length && loaded">
-            <td colspan="12"><div class="empty">
+            <td colspan="13"><div class="empty">
               <div class="big">Aucune génération sur cette période</div>
               <div v-if="since">Les mesures remontent à {{ dur(now - since) }} ;
                 essayez une période plus large.</div>

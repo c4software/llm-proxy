@@ -162,7 +162,7 @@ window.MemoryPanel = {
   <details class="panel howto memory" v-if="enabled && !compact" @toggle="onToggle">
     <summary>
       <h2>Mémoire</h2>
-      <span class="meta">ce que les modèles ont retenu pour la clé connectée
+      <span class="meta">ce que les modèles ont retenu pour vous
         <template v-if="usage"> · {{ num(usage.files) }} fichier{{ usage.files > 1 ? "s" : "" }},
           {{ num(usage.chars) }} car. sur {{ num(usage.max_chars) }}</template></span>
     </summary>

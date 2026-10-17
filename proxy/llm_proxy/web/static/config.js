@@ -309,7 +309,7 @@ window.ConfigPanel = {
       const shell = (name, content, note) => files.push({ name, content, note, lang: "sh" });
       if (auth.value && form.client !== "openwebui") {
         shell("La clé, une fois", KEY_SETUP,
-          "Saisie masquée, hors de l'historique du shell ; une clé se crée dans l'onglet Clés.");
+          "Saisie masquée, hors de l'historique du shell.");
       }
 
       switch (form.client) {
@@ -654,11 +654,6 @@ window.ConfigPanel = {
                 @click="setPart(p.id)">{{ p.label }}<template
                 v-if="p.id === 'accounts' && pendingCount"> ({{ pendingCount }})</template></button>
       </div>
-      <span class="range-note" v-if="part === 'clients'">la configuration d'un client, la clé par variable d'environnement</span>
-      <span class="range-note" v-else-if="part === 'keys'">vos clés pour vos clients : une par client, révocable</span>
-      <span class="range-note" v-else-if="part === 'accounts'">les comptes connectés par OIDC, leur part et leur rôle</span>
-      <span class="range-note" v-else-if="part === 'settings'">tous les réglages en vigueur, défauts compris — lecture seule</span>
-      <span class="range-note" v-else>data/config.toml et son .env, préremplis d'après ce déploiement</span>
     </div>
 
     <div class="config-keys" v-if="part === 'keys'">

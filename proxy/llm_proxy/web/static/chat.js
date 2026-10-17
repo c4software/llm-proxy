@@ -1010,9 +1010,7 @@ window.ChatPanel = {
       <div class="thread" ref="thread" @scroll="onScroll" @click="onThreadClick">
         <div class="empty" v-if="!current.messages.length">
           <div class="big">{{ imageMode ? "Quelle image ?" : current.incognito ? "Une question, sans trace ?" : "Une question ?" }}</div>
-          <div>{{ current.model || "Choisir un modèle" }}<template v-if="imageMode">
-            · génération d'images, {{ current.imageSize }}</template><template v-else-if="current.tools.length">
-            · outils : {{ toolGroups.filter((g) => current.tools.includes(g.type)).map((g) => g.label).join(", ") }}</template></div>
+          <div v-if="!current.model">Choisir un modèle</div>
         </div>
         <article v-for="(m, i) in current.messages" :key="m.id" class="msg" :class="m.role">
           <template v-if="m.role === 'user'">
