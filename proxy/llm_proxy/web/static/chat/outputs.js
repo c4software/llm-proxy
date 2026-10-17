@@ -21,7 +21,10 @@
   session ni à ses clés — sous une politique de contenu posée dans le
   document : scripts et styles en ligne, bibliothèques chargées depuis
   cdnjs, jsdelivr ou unpkg ; aucune autre requête réseau (ni fetch, ni
-  image distante, ni formulaire).
+  image distante, ni formulaire). L'utilisateur peut OUVRIR le réseau à
+  un artifact (bouton « Réseau » du panneau, `art.network`) : il joint
+  alors n'importe quel site — une carte, une API publique — mais reste
+  isolé de la page.
 */
 import { Markdown } from "../lib/markdown.js";
 
@@ -42,7 +45,10 @@ export const TOOLS = [
   { type: "function", function: {
     name: "show_artifact",
     description: "Affiche dans le panneau latéral du chat une page HTML (scripts permis, "
-      + "bibliothèques depuis cdnjs, jsdelivr ou unpkg ; aucune autre requête réseau), un "
+      + "bibliothèques depuis cdnjs, jsdelivr ou unpkg ; le reste du réseau — fetch, images "
+      + "et tuiles distantes — est bloqué tant que l'utilisateur ne l'a pas autorisé pour cet "
+      + "artifact par le bouton Réseau du panneau : prévoir alors un message clair si une "
+      + "requête échoue), un "
       + "document Markdown, un SVG, un schéma Mermaid ou du code. Réutiliser le même `id` "
       + "pour en publier une nouvelle version. Pour les visualisations, maquettes, petits "
       + "outils interactifs, documents longs — pas pour une réponse courte.",
@@ -174,7 +180,10 @@ const CDN = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg
 const CSP = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' ${CDN}; `
   + `style-src 'unsafe-inline' ${CDN} https://fonts.googleapis.com; `
   + `font-src data: ${CDN} https://fonts.gstatic.com; img-src data: blob:; media-src data: blob:`;
-const META = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP}">`;
+// Réseau ouvert par l'utilisateur : tout site, mais toujours pas de
+// formulaire (le cadre reste isolé de la page).
+const OPEN_CSP = "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; form-action 'none'";
+const meta = (csp) => `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">`;
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 // Les documents générés par la page (Markdown, SVG, code) : thème clair,
 // fixé — le cadre est blanc quel que soit celui de la page.
@@ -183,8 +192,9 @@ const BASE_CSS = `<style>:root{color-scheme:light}body{margin:0;padding:20px;bac
   pre{white-space:pre-wrap}table{border-collapse:collapse}td,th{border:1px solid #8884;padding:4px 8px}
   img,svg{max-width:100%}</style>`;
 
-export function artifactDoc(version) {
+export function artifactDoc(version, { network = false } = {}) {
   const { type, content } = version;
+  const META = meta(network ? OPEN_CSP : CSP);
   if (type === "html") {
     // La politique en tête de SA page : avant tout ce qu'elle charge.
     if (/<head[^>]*>/i.test(content)) return content.replace(/<head[^>]*>/i, (h) => h + META);

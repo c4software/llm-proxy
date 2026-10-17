@@ -896,8 +896,13 @@ message au lieu de répondre la clôt, sans réponse.
   page, ni sa session, ni ses clés — sous une politique de contenu posée
   dans le document : scripts et styles en ligne, bibliothèques depuis
   cdnjs, jsdelivr ou unpkg (graphiques, Mermaid…), **aucune autre requête
-  réseau** (ni `fetch`, ni image distante, ni formulaire). Gardés avec la
-  conversation.
+  réseau** (ni `fetch`, ni image distante, ni formulaire). Le bouton
+  **Réseau** du panneau l'ouvre à internet, pour cet artifact seulement
+  (cartes, tuiles, API publiques), après un avertissement : écrit par le
+  modèle, il pourrait alors envoyer ce qu'il contient à n'importe quel
+  site ; il reste isolé de la page, et les formulaires restent bloqués.
+  Le choix est gardé avec l'artifact (*réseau* dans son en-tête), et se
+  coupe d'un clic. Gardés avec la conversation.
 
 ![Le panneau des artifacts : une page HTML produite par le modèle, un graphique Chart.js chargé depuis jsdelivr, avec Source, Copier, Télécharger et Large](docs/chat-artifact.png)
 

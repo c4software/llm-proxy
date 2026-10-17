@@ -1137,6 +1137,13 @@ a.btn { display: inline-block; text-decoration: none; }
   border-left: 1px solid var(--line); background: var(--panel);
 }
 .chat.with-memory.side-wide:has(.artifact-side.wide) { grid-template-columns: minmax(280px, 32%) minmax(0, 1fr); }
+/* Le réseau ouvert : signalé dans l'en-tête ; l'avertissement avant. */
+.artifact-head .tag.net { color: var(--accent); border-color: var(--accent); }
+.artifact-warn {
+  padding: 12px 14px; border-bottom: 1px solid var(--line); font-size: 13px;
+  background: var(--accent-soft); display: flex; flex-direction: column; gap: 10px;
+}
+.artifact-warn p { margin: 0; line-height: 1.45; }
 .artifact-head {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
   padding: 10px 12px; border-bottom: 1px solid var(--line);
