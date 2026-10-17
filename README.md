@@ -765,13 +765,18 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   la file en pause (*Envoyer la suite* la relance). Un message en file se
   modifie (il revient dans la zone de saisie) ou se retire ; la file est
   gardée avec la conversation.
-- **Outils hébergés** (avec `[chat] hosted_tools = true`) : un
-  interrupteur par type déclarable — *Web* déclare `{"type":
+- **Le menu Outils** (zone de saisie) : une case par outil, ceux **du
+  proxy** puis ceux **du navigateur** ([plus bas](#les-outils-du-navigateur)),
+  cochés par conversation ; le bouton dit combien sont actifs (et
+  lesquels, au survol). Un modèle qui ne sait pas s'en servir (Gemini
+  Nano, un modèle d'images) n'en voit pas les cases.
+- **Outils hébergés** (avec `[chat] hosted_tools = true`), la section
+  *Proxy* du menu : une case par type déclarable — *Web* déclare `{"type":
   "web_search"}` (donc `web_search`, `web_fetch`, `web_grep`), *Code*,
   *Images*, *Mémoire* (l'outil `memory` ; le bouton *Mémoire* de l'en-tête ouvre son panneau), et un par serveur MCP de la configuration
   (`{"type": "mcp:<serveur>"}`, tous ses outils). Un refus par limite
   d'appels s'affiche comme tel (`status: "limit"`), pas comme une panne.
-  Les interrupteurs **font foi** :
+  Les cases **font foi** :
   `[chat].always` ne s'ajoute pas aux requêtes du chat. Chaque appel
   s'affiche pendant qu'il tourne puis, replié, avec le début de son
   résultat : le proxy l'annonce dans le flux par un champ hors schéma,
@@ -898,9 +903,9 @@ message au lieu de répondre la clôt, sans réponse.
 
 Le modèle peut aussi demander à l'**appareil** : sa position, une photo,
 une capture d'écran, le presse-papiers… Ces outils sont rangés par
-**famille**, que chaque conversation active ou non — le menu
-**Navigateur** de la zone de saisie (le nombre d'actives sur le bouton),
-comme *Mémoire* ou *Images* ; une conversation neuve reprend le dernier
+**famille**, que chaque conversation active ou non — la section
+*Navigateur* du menu **Outils**, sous ceux du proxy (*Mémoire*,
+*Images*…) ; une conversation neuve reprend le dernier
 choix fait dans ce navigateur. Seules les familles que le navigateur sait
 faire sont proposées, et seules les actives sont déclarées au modèle
 (chacune coûte des tokens). Un module par famille, `chat/device/`.

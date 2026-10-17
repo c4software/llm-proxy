@@ -765,7 +765,6 @@ button.icon:disabled { opacity: .4; cursor: default; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .composer-bar .status.warn { color: var(--accent); }
-.tools-toggle button { padding: 6px 12px; font-size: 12.5px; }
 .composer .attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
@@ -954,15 +953,7 @@ a.btn { display: inline-block; text-decoration: none; }
   /* La zone de saisie : [joindre] [outils, défilants] [envoyer] sur une ligne ;
      un message d'état, s'il y en a un, au-dessus. */
   .composer-bar { flex-wrap: wrap; gap: 8px; }
-  /* Deux lignes : [joindre] [réflexion] … [envoyer], puis les outils,
-     défilants, sur toute la largeur. */
-  .composer-bar .tools-toggle {
-    order: 5; flex: 1 1 100%; min-width: 0; overflow-x: auto; flex-wrap: nowrap;
-    scrollbar-width: none; -webkit-overflow-scrolling: touch;
-  }
   .composer-bar .send { margin-left: auto; }
-  .composer-bar .tools-toggle::-webkit-scrollbar { display: none; }
-  .composer-bar .tools-toggle button { flex: none; white-space: nowrap; }
   .composer-bar .status { order: -1; flex-basis: 100%; }
   .composer-bar .status:empty { display: none; }
   .composer textarea { font-size: 16px; }   /* pas de zoom au focus (iOS) */
@@ -1099,11 +1090,17 @@ a.btn { display: inline-block; text-decoration: none; }
 .chip.folder .ico { width: 15px; height: 15px; }
 .attach-menu .menu span { display: flex; flex-direction: column; gap: 1px; line-height: 1.35; }
 .chip.folder .link { cursor: pointer; }
-/* Le menu « Navigateur » : une case par famille d'outils, le nombre
-   d'actives sur le bouton. */
-.device-menu .menu { max-height: min(60vh, 460px); overflow-y: auto; }
-.device-menu .menu input { margin: 3px 0 0; accent-color: var(--accent); flex: none; }
-.device-menu .count {
+/* Le menu « Outils » : une case par outil, ceux du proxy puis ceux du
+   navigateur ; le nombre d'actifs sur le bouton. */
+.tools-menu .menu { max-height: min(60vh, 480px); overflow-y: auto; min-width: 280px; }
+.tools-menu .menu input { margin: 3px 0 0; accent-color: var(--accent); flex: none; }
+.tools-menu .menu-head {
+  margin: 6px 10px 2px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted);
+}
+.tools-menu .menu-head:first-child { margin-top: 2px; }
+.tools-menu .menu-note { margin: 4px 10px; font-size: 12.5px; color: var(--muted); }
+.tools-menu .count {
   font-size: 11px; line-height: 1; padding: 2px 6px; border-radius: 999px;
   background: var(--track); color: var(--muted);
 }

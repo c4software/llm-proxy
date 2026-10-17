@@ -333,7 +333,15 @@ export const ChatPanel = {
       c.device = on.includes(key) ? on.filter((k) => k !== key) : [...on, key];
       try { localStorage.setItem(DEVICE_PREFS, JSON.stringify(c.device)); } catch { /* sans stockage */ }
     }
-    const deviceCount = computed(() => deviceFamilies.filter((f) => deviceOn.value.includes(f.key)).length);
+    // Le menu « Outils » : ceux du proxy (hébergés) et ceux du navigateur,
+    // ce que le modèle sait utiliser (`caps`), cochés par conversation.
+    const hostedShown = computed(() => (caps.value.hostedTools ? toolGroups.value : []));
+    const devicesShown = computed(() => (caps.value.pageTools ? [] : deviceFamilies));
+    const hostedOn = (g) => !!current.value && current.value.tools.includes(g.type)
+      && !(current.value.incognito && g.type === "memory");
+    const activeTools = computed(() => [
+      ...hostedShown.value.filter(hostedOn).map((g) => g.label),
+      ...devicesShown.value.filter((f) => deviceOn.value.includes(f.key)).map((f) => f.label)]);
     function toggleTool(type) {
       const c = current.value;
       if (!c) return;
@@ -399,13 +407,13 @@ export const ChatPanel = {
       delete c.folder;
       folderTick.value++;
     }
-    // Les menus « Joindre » (fichiers, ou un dossier) et « Navigateur »
-    // (ses outils) : se ferment au clic dehors.
+    // Les menus « Joindre » (fichiers, ou un dossier) et « Outils » : se
+    // ferment au clic dehors.
     const attachOpen = ref(false);
-    const deviceOpen = ref(false);
+    const toolsOpen = ref(false);
     function onDocClick(e) {
-      if (attachOpen.value && !e.target.closest(".attach-menu")) attachOpen.value = false;
-      if (deviceOpen.value && !e.target.closest(".device-menu")) deviceOpen.value = false;
+      if (attachOpen.value && !e.target.closest(".attach-menu:not(.tools-menu)")) attachOpen.value = false;
+      if (toolsOpen.value && !e.target.closest(".tools-menu")) toolsOpen.value = false;
     }
     document.addEventListener("click", onDocClick);
     onUnmounted(() => document.removeEventListener("click", onDocClick));
@@ -1156,7 +1164,7 @@ export const ChatPanel = {
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
-             deviceOpen, deviceFamilies, deviceOn, deviceCount, toggleDevice,
+             toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
@@ -1516,18 +1524,32 @@ export const ChatPanel = {
                 <input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
             </div>
           </div>
-          <div class="attach-menu device-menu" v-if="!imageMode && !caps.pageTools && deviceFamilies.length">
+          <div class="attach-menu tools-menu" v-if="!imageMode && (hostedShown.length || devicesShown.length)">
             <button type="button" class="btn ghost attach ico-btn" aria-haspopup="menu"
-                    :aria-expanded="String(deviceOpen)" @click="deviceOpen = !deviceOpen"
-                    :title="'Outils du navigateur : ' + deviceCount + ' actif' + (deviceCount > 1 ? 's' : '')
-                      + ' (position, caméra, presse-papiers, agenda…)'">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v12H3zM8 21h8M12 17v4"/></svg>
-              <span class="lbl">Navigateur</span><span class="count">{{ deviceCount }}</span></button>
-            <div class="menu" role="menu" v-show="deviceOpen">
-              <label role="menuitemcheckbox" v-for="f in deviceFamilies" :key="f.key"
-                     :aria-checked="String(deviceOn.includes(f.key))">
-                <input type="checkbox" :checked="deviceOn.includes(f.key)" @change="toggleDevice(f.key)">
-                <span>{{ f.label }}<small>{{ f.hint }}</small></span></label>
+                    :aria-expanded="String(toolsOpen)" @click="toolsOpen = !toolsOpen"
+                    :title="activeTools.length ? 'Outils actifs : ' + activeTools.join(', ') : 'Aucun outil actif'">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg>
+              <span class="lbl">Outils</span><span class="count">{{ activeTools.length }}</span></button>
+            <div class="menu" role="menu" v-show="toolsOpen">
+              <template v-if="hostedShown.length">
+                <p class="menu-head">Proxy</p>
+                <label role="menuitemcheckbox" v-for="g in hostedShown" :key="g.type"
+                       :aria-checked="String(hostedOn(g))"
+                       :title="current.incognito && g.type === 'memory' ? 'Pas de mémoire en incognito' : ''">
+                  <input type="checkbox" :checked="hostedOn(g)" @change="toggleTool(g.type)"
+                         :disabled="current.incognito && g.type === 'memory'">
+                  <span>{{ g.label }}<small>{{ current.incognito && g.type === 'memory'
+                    ? "pas de mémoire en incognito" : g.tools.join(", ") }}</small></span></label>
+              </template>
+              <p class="menu-note" v-else-if="caps.hostedTools && !chat.hosted_tools"
+                 title="[chat] hosted_tools = true dans config.toml">Outils du proxy inactifs</p>
+              <template v-if="devicesShown.length">
+                <p class="menu-head">Navigateur</p>
+                <label role="menuitemcheckbox" v-for="f in devicesShown" :key="f.key"
+                       :aria-checked="String(deviceOn.includes(f.key))">
+                  <input type="checkbox" :checked="deviceOn.includes(f.key)" @change="toggleDevice(f.key)">
+                  <span>{{ f.label }}<small>{{ f.hint }}</small></span></label>
+              </template>
             </div>
           </div>
           <label class="effort" v-if="imageMode" title="Nombre d'images par demande">
@@ -1552,16 +1574,6 @@ export const ChatPanel = {
               <option value="high">élevée</option>
             </select>
           </label>
-          <template v-if="imageMode"></template>
-          <div class="range tools-toggle" v-else-if="caps.hostedTools && toolGroups.length" role="group" aria-label="Outils hébergés">
-            <button v-for="g in toolGroups" :key="g.type" type="button"
-                    :disabled="current.incognito && g.type === 'memory'"
-                    :aria-pressed="String(current.tools.includes(g.type) && !(current.incognito && g.type === 'memory'))"
-                    :title="current.incognito && g.type === 'memory' ? 'Pas de mémoire en incognito'
-                      : g.tools.join(', ')" @click="toggleTool(g.type)">{{ g.label }}</button>
-          </div>
-          <span class="dim" v-else-if="caps.hostedTools && !chat.hosted_tools" title="[chat] hosted_tools = true dans config.toml">
-            outils hébergés inactifs</span>
           <span class="status" :class="{ warn: (blind || unsent) && !status }">{{ status
             || (unsent ? "seule la première image est envoyée (à retoucher)"
             : blind ? "ce modèle ne lit peut-être pas les images" : "") }}</span>
