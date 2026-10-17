@@ -1080,8 +1080,13 @@ a.btn { display: inline-block; text-decoration: none; }
   cursor: pointer; font-size: 13.5px; color: var(--ink);
 }
 .attach-menu .menu label:hover { background: var(--accent-soft); }
-.attach-menu .menu .ico { margin-top: 2px; flex: none; }
+.attach-menu .menu .ico, .chip.folder .ico {
+  width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.attach-menu .menu .ico { margin-top: 1px; color: var(--muted); }
 .attach-menu .menu small { display: block; font-size: 11.5px; color: var(--muted); }
 .chip.folder { display: inline-flex; align-items: center; gap: 6px; }
 .chip.folder .ico { width: 15px; height: 15px; }
+.attach-menu .menu span { display: flex; flex-direction: column; gap: 1px; line-height: 1.35; }
 .chip.folder .link { cursor: pointer; }
