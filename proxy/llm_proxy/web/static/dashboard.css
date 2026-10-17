@@ -548,6 +548,13 @@ button.icon:disabled { opacity: .4; cursor: default; }
 }
 .chat.incognito .thread { background: color-mix(in srgb, var(--ink) 5%, transparent); }
 .btn.ghost.incognito-btn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+/* Relire le catalogue : l'icône tourne pendant la lecture. */
+.reload-models { padding: 6px 8px; display: inline-flex; align-items: center; }
+.reload-models .ico { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.reload-models.busy .ico { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .reload-models.busy .ico { animation: none; } }
 .nav-chats .tag-incognito {
   font-size: 10.5px; padding: 0 5px; margin-right: 5px; border-radius: 4px;
   background: var(--ink); color: var(--bg); vertical-align: 1px;

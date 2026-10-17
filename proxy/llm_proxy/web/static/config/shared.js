@@ -5,7 +5,7 @@
   de comptes en attente).
 */
 import { call } from "../lib/http.js";
-import { catalog } from "../lib/catalog.js";
+import { catalog, catalogState } from "../lib/catalog.js";
 
 const { ref, computed } = Vue;
 
@@ -31,23 +31,17 @@ export const KEY_ENV = "LLM_PROXY_API_KEY";
 export const KEY_SETUP = `(umask 077; read -rsp "Clé du proxy : " k && echo && printf '%s' "$k" > ${KEYFILE})\n`;
 
 // ── catalogue des modèles ───────────────────────────────────────────────
-// Celui de la page (lib/catalog.js) : les modèles de conversation, avec
+// Celui de la page (lib/catalog.js, réactif) : les modèles de conversation, avec
 // leur fenêtre de contexte, et le catalogue complet (images, voix, OCR —
 // pour les outils qui en visent un).
-const models = ref([]);
-const contexts = ref({});
-const allModels = ref([]);
-let loading = null;
-function loadCatalog() {
-  return loading || (loading = catalog().then((data) => {
-    const chat = data.filter((m) => m.chat);
-    models.value = chat.map((m) => m.id).sort();
-    contexts.value = Object.fromEntries(chat.filter((m) => m.context).map((m) => [m.id, m.context]));
-    allModels.value = data.map((m) => m.id).sort();
-  }).catch(() => { loading = null; /* hors ligne : saisie libre */ }));
-}
+const chatModels = computed(() => catalogState.data.filter((m) => m.chat));
+const models = computed(() => chatModels.value.map((m) => m.id).sort());
+const contexts = computed(() => Object.fromEntries(
+  chatModels.value.filter((m) => m.context).map((m) => [m.id, m.context])));
+const allModels = computed(() => catalogState.data.map((m) => m.id).sort());
 export function useCatalog() {
-  loadCatalog();
+  // Hors ligne : saisie libre.
+  catalog().catch(() => {});
   // Les modèles d'un menu : le catalogue, et la valeur en place si elle
   // n'y est pas (un modèle de configuration hors catalogue ne se perd
   // pas). `all` : tout le catalogue — l'OCR, la transcription ou l'image

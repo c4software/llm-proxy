@@ -704,8 +704,25 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   `[files].incognito_ttl`, 900 s par défaut (au plus `[files].ttl`).
   Restent les statistiques — des comptes, sans contenu — et le bac
   d'exécution de code du tour, qui expire comme les autres.
-- **Modèles d'images** : le sélecteur les range à part (*Génération
-  d'images*). Choisi, un tel modèle reçoit le dernier message **avec son
+- **Liste des modèles** : groupée par backend (`albert`, `silentchuck`…),
+  le seul nom du modèle sous chaque groupe (l'identifiant complet au
+  survol). Le catalogue est lu une fois pour toute la page (chat, voix,
+  configuration) et gardé dans le navigateur : la liste s'affiche tout de
+  suite, le catalogue est relu derrière ; ↻ le relit à la demande. Côté
+  proxy, le catalogue de chaque backend est gardé `[proxy].catalog_ttl`.
+- **Modèles du navigateur** : *Gemini Nano*, que Chrome embarque (l'API
+  Prompt), apparaît dans la liste (*Dans le navigateur*) quand Chrome le
+  propose. Il répond **sur l'appareil**, sans passer par le proxy ; son
+  premier usage télécharge le modèle (plusieurs Go), puis le charger
+  prend une vingtaine de secondes à la première réponse. Il sait poser
+  une question à choix (la feuille d'`ask_user` : il répond en JSON
+  imposé, texte ou questions), mais n'a ni outils hébergés, ni niveau de
+  réflexion, ni dossier — ces contrôles sont masqués quand il est
+  choisi. Chaque modèle du navigateur est décrit dans
+  `web/static/chat/browser.js` avec ce qu'il sait faire (`caps`) : le
+  chat ne s'appuie que sur cette description.
+- **Modèles d'images** : le sélecteur les range à part (*Images ·
+  backend*). Choisi, un tel modèle reçoit le dernier message **avec son
   contexte** : les demandes précédentes de la même suite d'images (en
   remontant jusqu'à une réponse d'un modèle de conversation), une par
   ligne — « plus sombre » suit « un phare au coucher du soleil » ; le

@@ -64,8 +64,8 @@ import { inline, dataUrl, ownImage } from "./history.js";
 import { readAttachment } from "./attachments.js";
 import { imagePrompt, oneImage } from "./images.js";
 import { readStream } from "./stream.js";
-import { localModels, isLocal, runLocal } from "./local.js";
-import { catalog } from "../lib/catalog.js";
+import { availableBrowserModels, browserModel, modelCaps } from "./browser.js";
+import { catalog, catalogState, refreshCatalog } from "../lib/catalog.js";
 import * as workspace from "./workspace.js";
 import * as pagetools from "./pagetools.js";
 import * as askTool from "./ask.js";
@@ -118,8 +118,6 @@ export const ChatPanel = {
     S.open(props.session.client);
     const current = S.current;
     const currentId = computed(() => S.state.currentId);
-    const models = ref([]);
-    const modelsError = ref("");
     const draft = ref("");
     const pending = ref([]);          // pièces jointes du message en cours
     const streaming = ref(false);
@@ -222,17 +220,36 @@ export const ChatPanel = {
     // ── modèles ─────────────────────────────────────────────────────────
     const modelIds = computed(() => models.value.filter((m) => !m.image).map((m) => m.id));
     // Le modèle de la conversation est-il un modèle d'images ?
+    // Les modèles : ceux du catalogue du proxy (de conversation et
+    // d'images ; lib/catalog.js, gardé dans le navigateur), puis ceux du
+    // navigateur (browser.js), décrits avec ce qu'ils savent faire.
+    const browserModels = ref([]);
+    const models = computed(() => catalogState.data.filter((m) => m.chat || m.image)
+      .sort((a, b) => a.id.localeCompare(b.id)).concat(browserModels.value));
+    // Sans catalogue gardé, l'échec se dit ; avec, le bouton le rappelle.
+    const modelsError = computed(() => catalogState.error && !catalogState.data.length
+      ? "Catalogue illisible : " + catalogState.error : "");
+    const modelsLoading = computed(() => catalogState.loading);
+    const modelsTitle = computed(() => catalogState.loading ? "Lecture du catalogue…"
+      : catalogState.error ? "Catalogue illisible (" + catalogState.error + ") — relire"
+      : "Relire le catalogue" + (catalogState.at ? " (lu à " + new Date(catalogState.at)
+        .toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) + ")" : ""));
+    // L'entrée du modèle de la conversation, et ce qu'il sait faire : le
+    // chat n'en connaît que cela (outils, réflexion, dossier, réponse).
+    const modelEntry = (id) => models.value.find((m) => m.id === id) || browserModel(id);
+    const caps = computed(() => modelCaps(current.value && modelEntry(current.value.model)));
     // La liste, groupée par fournisseur (le préfixe « fournisseur/ » de
-    // l'identifiant) : sous chaque groupe, le seul nom du modèle. La
-    // conversation d'abord, puis le navigateur, puis les images.
+    // l'identifiant, ou le `group` de l'entrée) : sous chaque groupe, le
+    // seul nom du modèle. La conversation d'abord, puis le navigateur,
+    // puis les images.
     const modelGroups = computed(() => {
       const groups = new Map();
       for (const m of models.value) {
         const cut = m.id.indexOf("/");
-        const from = m.local ? "Dans le navigateur" : cut > 0 ? m.id.slice(0, cut) : "Autres";
+        const from = m.group || (cut > 0 ? m.id.slice(0, cut) : "Autres");
         const label = m.image ? "Images · " + from : from;
-        if (!groups.has(label)) groups.set(label, { label, rank: m.image ? 2 : m.local ? 1 : 0, models: [] });
-        const name = m.local ? "Gemini Nano" : cut > 0 ? m.id.slice(cut + 1) : m.id;
+        if (!groups.has(label)) groups.set(label, { label, rank: m.image ? 2 : m.browser ? 1 : 0, models: [] });
+        const name = m.name || (cut > 0 ? m.id.slice(cut + 1) : m.id);
         const notes = [m.vision && !m.image && "vision",
                        m.availability && m.availability !== "available" && "à télécharger"];
         groups.get(label).models.push({ id: m.id, text: [name, ...notes.filter(Boolean)].join(" · ") });
@@ -250,7 +267,8 @@ export const ChatPanel = {
       if (preset && modelIds.value.includes(preset)) return preset;
       const last = localStorage.getItem(LAST_MODEL);
       if (last && modelIds.value.includes(last)) return last;
-      return modelIds.value.find((id) => !isLocal(id)) || last || "";
+      const first = models.value.find((m) => !m.image && m.byDefault !== false);
+      return (first && first.id) || last || "";
     }
     // Des images à un modèle que le catalogue ne dit pas capable de les
     // lire : envoyées quand même (le catalogue peut se tromper), mais dit.
@@ -265,25 +283,19 @@ export const ChatPanel = {
       || pending.value.filter((a) => a.kind === "image").length > 1));
 
     async function loadModels() {
-      // Le modèle du navigateur (Gemini Nano dans Chrome), s'il y en a un :
-      // à la suite du catalogue, même illisible. Chrome peut mettre
-      // quelques secondes à le dire : le catalogue ne l'attend pas.
-      const local = [];
-      localModels().then((got) => {
-        local.push(...got);
-        models.value = models.value.filter((m) => !m.local).concat(got);
-      });
+      // Chrome peut mettre quelques secondes à dire ses modèles : le
+      // catalogue ne les attend pas.
+      availableBrowserModels().then((got) => { browserModels.value = got; });
       try {
-        // Les modèles de conversation, et d'images.
-        models.value = (await catalog()).filter((m) => m.chat || m.image)
-          .sort((a, b) => a.id.localeCompare(b.id)).concat(local);
-        modelsError.value = "";
+        await catalog();
         if (current.value && !current.value.model) current.value.model = defaultModel();
       } catch (e) {
-        if (e.status === 401) { emit("unauthorized"); return; }
-        modelsError.value = "Catalogue illisible : " + e.message;
-        models.value = [...local];
+        if (e.status === 401) emit("unauthorized");
       }
+    }
+    async function reloadModels() {
+      availableBrowserModels().then((got) => { browserModels.value = got; });
+      try { await refreshCatalog(); } catch (e) { if (e.status === 401) emit("unauthorized"); }
     }
 
     watch(() => current.value && current.value.model, (m) => {
@@ -495,17 +507,19 @@ export const ChatPanel = {
       streaming.value = true;
       status.value = "";
       const ctrl = controller = new AbortController();
-      // Le modèle du navigateur : un seul tour, sans outils, sans le proxy.
-      if (isLocal(conv.model)) {
+      // Un modèle qui répond lui-même, sur l'appareil (browser.js) : sans
+      // le proxy ; la question à choix y est la même carte, la même pause.
+      const entry = modelEntry(conv.model);
+      if (entry && entry.answer) {
+        let paused = false;
         try {
-          await runLocal(await inline(apiMessages(conv, upto)), live, ctrl.signal,
-                         (s) => { status.value = s; });
+          paused = await deviceTurns(conv, live, upto, ctrl, entry.answer);
         } catch (e) {
           if (e.name !== "AbortError") live.error = "Modèle du navigateur : " + e.message;
           else if (!live.content) live.error = "Arrêté.";
         } finally {
           status.value = "";
-          done(conv, live, ctrl);
+          done(conv, live, ctrl, paused);
         }
         return;
       }
@@ -518,15 +532,18 @@ export const ChatPanel = {
       // (gpt-oss : courte ou longue) ; « non » coupe celle d'un modèle
       // hybride par son gabarit (enable_thinking) — gpt-oss, lui, réfléchit
       // toujours un peu. « auto » : rien n'est envoyé.
-      const effort = conv.reasoning || "auto";
+      const effort = modelCaps(modelEntry(conv.model)).reasoning ? conv.reasoning || "auto" : "auto";
       if (["low", "medium", "high"].includes(effort)) body.reasoning_effort = effort;
       else if (effort === "none") body.chat_template_kwargs = { enable_thinking: false };
       // Incognito : rien de persistant, donc pas l'outil `memory`.
-      const hosted = conv.tools.filter((t) => available.value.has(t)
-        && !(conv.incognito && t === "memory"));
+      // Ce que le modèle ne sait pas faire (`caps`) n'est pas envoyé.
+      const can = modelCaps(modelEntry(conv.model));
+      const hosted = can.hostedTools ? conv.tools.filter((t) => available.value.has(t)
+        && !(conv.incognito && t === "memory")) : [];
       // Les outils de la page, ceux du dossier s'il est ouvert.
-      const ws = folders.get(conv.id) || null;
-      body.tools = [...hosted.map((type) => ({ type })), ...pagetools.toolsFor(ws)];
+      const ws = can.folder ? folders.get(conv.id) || null : null;
+      body.tools = [...hosted.map((type) => ({ type })), ...pagetools.toolsFor(ws)
+        .filter((t) => !can.pageTools || can.pageTools.includes(t.function.name))];
       const ctx = { conv, live, ws };
       let paused = false;
       try {
@@ -615,6 +632,58 @@ export const ChatPanel = {
         else if (!live.content) live.error = "Arrêté.";
       } finally {
         done(conv, live, ctrl, paused);
+      }
+    }
+
+    // Les tours d'un modèle de l'appareil (`answer`) : sa réponse, et s'il
+    // pose des questions, la carte d'ask_user (un appel d'outil comme un
+    // autre dans live.step / live.steps : un autre modèle relit l'échange
+    // tel quel). Rend true quand une carte attend.
+    async function deviceTurns(conv, live, upto, ctrl, answer) {
+      for (;;) {
+        if (!(live.step && live.step.queue.length)) {
+          if ((live.steps || []).length >= MAX_ROUNDS) {
+            live.error = `Arrêté après ${MAX_ROUNDS} questions.`;
+            return false;
+          }
+          const start = live.content.length;
+          const msgs = await inline([...apiMessages(conv, upto), ...workspace.stepMessages(live.steps)]);
+          const args = await answer(msgs, live, ctrl.signal, (s) => { status.value = s; });
+          if (!args) {
+            if (live.steps) live.final = live.content.slice(start);
+            return false;
+          }
+          live.step = { content: live.content.slice(start), calls: [],
+                        queue: [{ id: "call_" + uid(), name: "ask_user", arguments: JSON.stringify(args) }] };
+        }
+        const c = live.step.queue[0];
+        let chip = live.tools.find((t) => t.id === c.id);
+        if (!chip) {
+          live.tools.push({ id: c.id, name: c.name, arguments: c.arguments, status: "running" });
+          chip = live.tools[live.tools.length - 1];
+        }
+        let result;
+        if (live.waiting && live.waiting.id === c.id) {
+          if (live.waiting.result === undefined) return true;
+          result = live.waiting.result;
+          live.waiting = null;
+        } else {
+          const card = askTool.prepare(JSON.parse(c.arguments));
+          if (card.error) result = card.error;
+          else {
+            live.waiting = { id: c.id, name: c.name, ...card };
+            chip.status = "waiting";
+            notify.notify("Une question vous attend", conv.title);
+            return true;
+          }
+        }
+        Object.assign(chip, { status: result.startsWith("Error:") ? "error" : "done",
+                              chars: result.length, preview: result.slice(0, 600) });
+        live.step.calls.push({ id: c.id, name: c.name, arguments: c.arguments, result });
+        live.step.queue.shift();
+        (live.steps || (live.steps = [])).push({ content: live.step.content, calls: live.step.calls });
+        live.step = null;
+        if (live.content && !live.content.endsWith("\n")) live.content += "\n\n";
       }
     }
 
@@ -1014,7 +1083,7 @@ export const ChatPanel = {
     });
 
     return { chat, toolGroups, available, current, currentId,
-             ownImage, models, modelGroups, modelsError, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
+             ownImage, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
@@ -1047,14 +1116,18 @@ export const ChatPanel = {
         <h2 :title="current.title">{{ current.title }}</h2>
         <label class="model-pick" title="Modèle">
           <select v-model="current.model" :disabled="streaming" :title="current.model">
-            <option v-if="!models.length && current.model" :value="current.model">{{ current.model }}</option>
+            <option v-if="!models.length && current.model" :value="current.model">{{ modelsLoading ? "Chargement des modèles…" : current.model }}</option>
+            <option v-if="!models.length && !current.model" value="" disabled>{{ modelsLoading ? "Chargement des modèles…" : "Aucun modèle" }}</option>
             <option v-if="current.model && models.length && !models.some((m) => m.id === current.model)"
-                    :value="current.model">{{ current.model }} (absent du catalogue)</option>
+                    :value="current.model">{{ current.model }} ({{ modelsLoading ? "chargement…" : "absent du catalogue" }})</option>
             <optgroup v-for="g in modelGroups" :key="g.label" :label="g.label">
               <option v-for="m in g.models" :key="m.id" :value="m.id">{{ m.text }}</option>
             </optgroup>
           </select>
         </label>
+        <button type="button" class="btn ghost reload-models" :class="{ busy: modelsLoading }"
+                :disabled="modelsLoading" :title="modelsTitle" :aria-label="modelsTitle" @click="reloadModels">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button>
         <button type="button" class="btn ghost ico-btn incognito-btn" :disabled="streaming"
                 :aria-pressed="String(!!current.incognito)" @click="toggleIncognito"
                 :title="current.incognito ? 'Quitter le mode incognito' : 'Conversation incognito : rien n’est gardé'">
@@ -1349,9 +1422,9 @@ export const ChatPanel = {
               <label role="menuitem"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/></svg>
                 <span>Fichiers…<small>images, textes : joints au message</small></span>
                 <input type="file" multiple hidden @change="onPick"></label>
-              <button type="button" role="menuitem" v-if="canPick" @click.stop="pickFolder"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
+              <button type="button" role="menuitem" v-if="caps.folder && canPick" @click.stop="pickFolder"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
                 <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut, propose des écritures</small></span></button>
-              <label role="menuitem" v-else><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
+              <label role="menuitem" v-else-if="caps.folder"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
                 <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut ; écritures téléchargées</small></span>
                 <input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
             </div>
@@ -1368,7 +1441,7 @@ export const ChatPanel = {
               <option v-for="z in imageSizes" :key="z" :value="z">{{ z.replace("x", " × ") }}</option>
             </select>
           </label>
-          <label class="effort" v-if="!imageMode" title="Niveau de réflexion du modèle : auto (celui du modèle), non, faible, moyenne, élevée">
+          <label class="effort" v-if="!imageMode && caps.reasoning" title="Niveau de réflexion du modèle : auto (celui du modèle), non, faible, moyenne, élevée">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>
             <select v-model="current.reasoning" :disabled="streaming" aria-label="Réflexion">
               <option value="auto">auto</option>
@@ -1379,14 +1452,14 @@ export const ChatPanel = {
             </select>
           </label>
           <template v-if="imageMode"></template>
-          <div class="range tools-toggle" v-else-if="toolGroups.length" role="group" aria-label="Outils hébergés">
+          <div class="range tools-toggle" v-else-if="caps.hostedTools && toolGroups.length" role="group" aria-label="Outils hébergés">
             <button v-for="g in toolGroups" :key="g.type" type="button"
                     :disabled="current.incognito && g.type === 'memory'"
                     :aria-pressed="String(current.tools.includes(g.type) && !(current.incognito && g.type === 'memory'))"
                     :title="current.incognito && g.type === 'memory' ? 'Pas de mémoire en incognito'
                       : g.tools.join(', ')" @click="toggleTool(g.type)">{{ g.label }}</button>
           </div>
-          <span class="dim" v-else-if="!chat.hosted_tools" title="[chat] hosted_tools = true dans config.toml">
+          <span class="dim" v-else-if="caps.hostedTools && !chat.hosted_tools" title="[chat] hosted_tools = true dans config.toml">
             outils hébergés inactifs</span>
           <span class="status" :class="{ warn: (blind || unsent) && !status }">{{ status
             || (unsent ? "seule la première image est envoyée (à retoucher)"
