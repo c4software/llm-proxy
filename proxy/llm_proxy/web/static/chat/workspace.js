@@ -296,6 +296,14 @@ export function stepMessages(steps) {
       tool_calls: step.calls.map((c) => ({ id: c.id, type: "function",
         function: { name: c.name, arguments: c.arguments || "{}" } })) });
     for (const c of step.calls) out.push({ role: "tool", tool_call_id: c.id, content: c.result });
+    // Une image rendue par un outil (capture, photo) : un message de
+    // l'utilisateur après les résultats — tous les backends le lisent.
+    const images = step.calls.filter((c) => c.image);
+    if (images.length) {
+      out.push({ role: "user", content: [
+        { type: "text", text: "Image(s) rendue(s) par " + images.map((c) => c.name).join(", ") + " :" },
+        ...images.map((c) => ({ type: "image_url", image_url: { url: c.image } }))] });
+    }
   }
   return out;
 }

@@ -26,14 +26,33 @@ export async function load() {
 
 // Les images encore en data URL rejoignent le proxy ; leur adresse
 // remplace la donnée DANS la conversation (elle s'affiche à l'identique).
+// Une même image (jointe à la réponse ET rendue par l'outil qui l'a
+// prise) ne part qu'une fois.
 async function upload(conv) {
+  const sent = new Map();            // data URL → adresse
+  const put = async (data, name) => {
+    if (!sent.has(data)) {
+      const r = await call("POST", "/ui/assets", { conversation: conv.id, name, data });
+      cache.set(r.url, data);
+      sent.set(data, r.url);
+    }
+    return sent.get(data);
+  };
+  const isData = (v) => typeof v === "string" && v.startsWith("data:");
   for (const m of conv.messages || []) {
     for (const a of m.attachments || []) {
-      if (a.kind !== "image" || typeof a.data !== "string" || !a.data.startsWith("data:")) continue;
+      if (a.kind !== "image" || !isData(a.data)) continue;
       const data = a.data;
-      const r = await call("POST", "/ui/assets", { conversation: conv.id, name: a.name, data });
-      cache.set(r.url, data);
-      if (a.data === data) a.data = r.url;
+      const url = await put(data, a.name);
+      if (a.data === data) a.data = url;
+    }
+    // Les images rendues par un outil de la page (capture, photo).
+    const steps = [...(m.steps || []), ...(m.step ? [m.step] : [])];
+    for (const c of steps.flatMap((st) => st.calls || [])) {
+      if (!isData(c.image)) continue;
+      const data = c.image;
+      const url = await put(data, c.name + ".jpg");
+      if (c.image === data) c.image = url;
     }
   }
 }

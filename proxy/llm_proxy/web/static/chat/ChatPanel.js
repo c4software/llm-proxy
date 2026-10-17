@@ -70,7 +70,7 @@ import * as workspace from "./workspace.js";
 import * as pagetools from "./pagetools.js";
 import * as askTool from "./ask.js";
 import * as notify from "./notify.js";
-import * as device from "./device.js";
+import * as device from "./device/index.js";
 import { lineDiff, counts as diffCounts } from "./diff.js";
 import { ArtifactPanel } from "./ArtifactPanel.js";
 import { download } from "../lib/files.js";
@@ -111,6 +111,19 @@ export const ChatPanel = {
         .map((g) => g.type);
       if (picked.length) return picked;
       return available.value.has("web_search") ? ["web_search"] : [];
+    }
+
+    // Les familles d'outils du navigateur (device/) : celles que ce
+    // navigateur sait faire, cochées par conversation ; une conversation
+    // neuve reprend le dernier choix fait dans ce navigateur.
+    const DEVICE_PREFS = "llm-proxy-chat-device";
+    const deviceFamilies = device.usableFamilies();
+    function defaultDevice() {
+      try {
+        const v = JSON.parse(localStorage.getItem(DEVICE_PREFS) || "null");
+        if (Array.isArray(v)) return v;
+      } catch { /* sans stockage */ }
+      return device.defaultFamilies();
     }
 
     // ── état ────────────────────────────────────────────────────────────
@@ -208,7 +221,7 @@ export const ChatPanel = {
     // Ce qu'une conversation neuve reçoit, et ce que fait le chat quand la
     // conversation change (le menu la choisit) : suivre la fin du fil, et
     // la zone de saisie prête pour une conversation neuve.
-    S.setDefaults(() => ({ model: defaultModel(), tools: defaultTools() }));
+    S.setDefaults(() => ({ model: defaultModel(), tools: defaultTools(), device: defaultDevice() }));
     watch(() => S.state.currentId, () => {
       pinned = true;
       nextTick(() => {
@@ -312,6 +325,15 @@ export const ChatPanel = {
       else S.newConv(!c.incognito);
     }
 
+    const deviceOn = computed(() => (current.value && current.value.device) || defaultDevice());
+    function toggleDevice(key) {
+      const c = current.value;
+      if (!c) return;
+      const on = deviceOn.value;
+      c.device = on.includes(key) ? on.filter((k) => k !== key) : [...on, key];
+      try { localStorage.setItem(DEVICE_PREFS, JSON.stringify(c.device)); } catch { /* sans stockage */ }
+    }
+    const deviceCount = computed(() => deviceFamilies.filter((f) => deviceOn.value.includes(f.key)).length);
     function toggleTool(type) {
       const c = current.value;
       if (!c) return;
@@ -351,9 +373,7 @@ export const ChatPanel = {
       folders.set(c.id, ws);
       c.folder = { name: ws.name, count: ws.count };
       folderTick.value++;
-      status.value = `Dossier « ${ws.name} » ouvert : ${ws.count} fichier${ws.count > 1 ? "s" : ""}`
-        + (ws.ignored ? ` (${ws.ignored} ignoré${ws.ignored > 1 ? "s" : ""} : .git, node_modules…)` : "")
-        + " — le modèle les lit à la demande.";
+      status.value = "";
     }
     // Chrome, Edge : le sélecteur du système, qui permet d'écrire ensuite.
     const canPick = workspace.canPick();
@@ -367,9 +387,7 @@ export const ChatPanel = {
         folders.set(c.id, ws);
         c.folder = { name: ws.name, count: ws.count };
         folderTick.value++;
-        status.value = `Dossier « ${ws.name} » ouvert : ${ws.count} fichier${ws.count > 1 ? "s" : ""}`
-          + (ws.ignored ? ` (${ws.ignored} ignoré${ws.ignored > 1 ? "s" : ""})` : "")
-          + " — le modèle le lit à la demande, et peut proposer des écritures.";
+        status.value = "";
       } catch (e) {
         if (e.name !== "AbortError") status.value = "Dossier : " + e.message;
       }
@@ -381,10 +399,13 @@ export const ChatPanel = {
       delete c.folder;
       folderTick.value++;
     }
-    // Le menu « Joindre » : fichiers, ou un dossier. Se ferme au clic dehors.
+    // Les menus « Joindre » (fichiers, ou un dossier) et « Navigateur »
+    // (ses outils) : se ferment au clic dehors.
     const attachOpen = ref(false);
+    const deviceOpen = ref(false);
     function onDocClick(e) {
       if (attachOpen.value && !e.target.closest(".attach-menu")) attachOpen.value = false;
+      if (deviceOpen.value && !e.target.closest(".device-menu")) deviceOpen.value = false;
     }
     document.addEventListener("click", onDocClick);
     onUnmounted(() => document.removeEventListener("click", onDocClick));
@@ -543,7 +564,7 @@ export const ChatPanel = {
         && !(conv.incognito && t === "memory")) : [];
       // Les outils de la page, ceux du dossier s'il est ouvert.
       const ws = can.folder ? folders.get(conv.id) || null : null;
-      body.tools = [...hosted.map((type) => ({ type })), ...pagetools.toolsFor(ws)
+      body.tools = [...hosted.map((type) => ({ type })), ...pagetools.toolsFor(ws, conv.device || defaultDevice())
         .filter((t) => !can.pageTools || can.pageTools.includes(t.function.name))];
       const ctx = { conv, live, ws };
       let paused = false;
@@ -596,6 +617,7 @@ export const ChatPanel = {
               chip = live.tools[live.tools.length - 1];
             }
             let result;
+            let image = "";
             // (Une carte déjà montrée reste la réponse, même si l'attente
             // ne serait plus nécessaire : une permission donnée depuis.)
             if (pagetools.waitsForUser(c.name) || (live.waiting && live.waiting.id === c.id)) {
@@ -603,6 +625,7 @@ export const ChatPanel = {
                 // La carte de cet appel : répondue (reprise), ou encore en attente.
                 if (live.waiting.result === undefined) { paused = true; return; }
                 result = live.waiting.result;
+                image = live.waiting.image || "";
                 live.waiting = null;
               } else {
                 const card = await pagetools.prepare(ctx, c);
@@ -612,8 +635,7 @@ export const ChatPanel = {
                   chip.status = "waiting";
                   paused = true;
                   notify.notify(c.name === "ask_user" ? "Une question vous attend"
-                    : card.kind === "location" ? "Le modèle demande votre position"
-                    : card.kind === "notify" ? "Le modèle veut vous envoyer une notification"
+                    : card.kind === "device" ? device.view(live.waiting).title
                     : "Une écriture attend votre accord", conv.title);
                   return;
                 }
@@ -625,7 +647,8 @@ export const ChatPanel = {
             }
             Object.assign(chip, { status: result.startsWith("Error:") ? "error" : "done",
                                   chars: result.length, preview: result.slice(0, 600) });
-            live.step.calls.push({ id: c.id, name: c.name, arguments: c.arguments, result });
+            live.step.calls.push({ id: c.id, name: c.name, arguments: c.arguments, result,
+                                   ...(image ? { image } : {}) });
             live.step.queue.shift();
           }
           (live.steps || (live.steps = [])).push({ content: live.step.content, calls: live.step.calls });
@@ -805,23 +828,33 @@ export const ChatPanel = {
         status.value = `${w.path} : ${e.message}`;
       }
     }
-    // La position (get_location) : lue seulement sur ce clic.
-    async function shareLocation(m, precise) {
-      m.waiting.locating = true;
-      let result;
+    // Une carte d'un outil du navigateur (device/) : chaque bouton est une
+    // action du module — l'API de l'appareil part de ce clic (le geste
+    // que le navigateur exige). Répondue, elle rend un résultat, et
+    // peut-être une image (capture, photo) : jointe à la réponse, et
+    // envoyée au modèle avec le résultat.
+    async function deviceAct(m, action) {
+      const w = m.waiting;
+      if (!w || w.busy) return;
+      const pending = device.act(w, action);
+      w.busy = true;
+      let out = null;
       try {
-        result = await device.locate(precise);
+        out = await pending;
       } catch (e) {
-        result = "Error: position non obtenue (" + e.message + ").";
+        out = { result: "Error: " + e.message };
+      } finally {
+        w.busy = false;
       }
-      if (m.waiting) { m.waiting.locating = false; settle(m, result); }
+      if (!out || m.waiting !== w) return;
+      if (out.image) {
+        (m.attachments || (m.attachments = [])).push({ kind: "image", name: out.name || "image.jpg", data: out.image });
+        w.image = out.image;
+      }
+      settle(m, out.result);
     }
-    const refuseLocation = (m) => settle(m, device.REFUSED);
-    // Une notification pas encore permise : la permission sur ce clic.
-    async function allowNotify(m) {
-      settle(m, await device.allowAndNotify(m.waiting.args));
-    }
-    const refuseNotify = (m) => settle(m, device.NOTIFY_REFUSED);
+    const deviceView = (w) => device.view(w);
+    const attachVideo = (el, w) => device.attachVideo(el, w);
     const refuseWrite = (m) => settle(m, `Refusé par l'utilisateur : « ${m.waiting.path} » n'a pas été modifié.`
       + (m.waiting.comment ? ` Son commentaire : « ${m.waiting.comment} »` : ""));
     // Le diff d'une carte d'écriture, calculé une fois.
@@ -836,6 +869,7 @@ export const ChatPanel = {
     function abandonWaiting(c) {
       const m = c.messages[c.messages.length - 1];
       if (!m || !m.waiting || !m.step) return;
+      device.release(m.waiting);
       for (const q of m.step.queue) {
         const result = q.id === m.waiting.id ? askTool.NO_ANSWER : "Non exécuté : l'utilisateur est passé à autre chose.";
         m.step.calls.push({ ...q, result });
@@ -1072,7 +1106,14 @@ export const ChatPanel = {
       }
       if (t.name === "show_artifact") return [a.title, a.type].filter(Boolean).join(" · ");
       if (t.name === "save_file") return a.name || "";
-      if (t.name === "get_location") return a.reason || "";
+      if (["get_location", "clipboard_read", "capture_screen", "take_photo", "scan_code",
+           "pick_color"].includes(t.name)) return a.reason || "";
+      if (t.name === "open_link") return a.url || "";
+      if (t.name === "add_to_calendar") return [a.title, a.start].filter(Boolean).join(" · ");
+      if (t.name === "clipboard_write") return (a.text || "").slice(0, 80);
+      if (t.name === "share") return a.title || (a.text || "").slice(0, 80);
+      if (t.name === "keep_screen_on") return a.on ? "allumé" : "veille normale";
+      if (t.name === "run_javascript") return (a.code || "").replace(/\s+/g, " ").slice(0, 120);
       if (t.name === "notify") return [a.title, a.delay_minutes ? "dans " + a.delay_minutes + " min" : ""]
         .filter(Boolean).join(" · ");
       // La mémoire : la commande et le fichier, pas le texte écrit.
@@ -1100,6 +1141,9 @@ export const ChatPanel = {
         if (!c.imageSize) c.imageSize = chat.value.image_size;
         if (!c.imageCount) c.imageCount = 1;
         if (!c.reasoning) c.reasoning = "auto";
+        // Une carte du navigateur en cours au rechargement : ses boutons
+        // reviennent (le flux de caméra, lui, est perdu).
+        for (const m of c.messages) if (m.waiting && m.waiting.kind === "device") m.waiting.busy = false;
       }
       nextTick(() => {
         if (thread.value) thread.value.scrollTop = thread.value.scrollHeight;
@@ -1112,11 +1156,12 @@ export const ChatPanel = {
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
+             deviceOpen, deviceFamilies, deviceOn, deviceCount, toggleDevice,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
              askReady, answerAsk, asking, sheetOpen, sheetBody, askTab, askQ, askOptions,
-             askAnswered, askCount, showTab, pick, pickOther, onSheetKey, skipAsk, applyWrite, refuseWrite, shareLocation, refuseLocation, allowNotify, refuseNotify, writeDiff, diffCounts,
+             askAnswered, askCount, showTab, pick, pickOther, onSheetKey, skipAsk, applyWrite, refuseWrite, deviceAct, deviceView, attachVideo, writeDiff, diffCounts,
              download, fileOf: (f) => ({ name: f.name, content: f.content }),
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
@@ -1289,25 +1334,22 @@ export const ChatPanel = {
             <button type="button" class="ask-pending" v-if="m.waiting && m.waiting.kind === 'ask'"
                     @click="sheetOpen = true">{{ m.waiting.questions.length > 1
                       ? m.waiting.questions.length + " questions attendent" : "Une question attend" }} votre réponse</button>
-            <div class="tool-card location-card" v-if="m.waiting && m.waiting.kind === 'location'">
-              <p class="write-head"><b>Le modèle demande votre position</b></p>
-              <p class="dim" v-if="m.waiting.reason">{{ m.waiting.reason }}</p>
-              <div class="card-actions">
-                <button type="button" class="btn" :disabled="streaming || m.waiting.locating" @click="shareLocation(m, false)"
-                        title="Arrondie à environ 1 km">Position approximative</button>
-                <button type="button" class="btn ghost" :disabled="streaming || m.waiting.locating" @click="shareLocation(m, true)">Position précise</button>
-                <button type="button" class="btn ghost" :disabled="streaming || m.waiting.locating" @click="refuseLocation(m)">Refuser</button>
-                <span class="dim" v-if="m.waiting.locating">lecture de la position…</span>
-              </div>
-            </div>
-            <div class="tool-card location-card" v-if="m.waiting && m.waiting.kind === 'notify'">
-              <p class="write-head"><b>Le modèle veut vous envoyer une notification</b></p>
-              <p class="dim">« {{ m.waiting.title }} »{{ m.waiting.args.delay_minutes
-                ? " — dans " + m.waiting.args.delay_minutes + " min" : "" }}</p>
-              <div class="card-actions">
-                <button type="button" class="btn" :disabled="streaming" @click="allowNotify(m)">Autoriser les notifications</button>
-                <button type="button" class="btn ghost" :disabled="streaming" @click="refuseNotify(m)">Non merci</button>
-              </div>
+            <div class="tool-card device-card" v-if="m.waiting && m.waiting.kind === 'device'">
+              <template v-for="v in [deviceView(m.waiting)]" :key="m.waiting.id">
+                <p class="write-head"><b>{{ v.title }}</b></p>
+                <p class="dim" v-if="v.detail">{{ v.detail }}</p>
+                <code class="device-url" v-if="v.code">{{ v.code }}</code>
+                <pre class="device-quote" v-if="v.quote">{{ v.quote }}</pre>
+                <video class="device-media" v-if="v.video" :ref="(el) => attachVideo(el, m.waiting)"
+                       autoplay muted playsinline></video>
+                <img class="device-media" v-if="v.preview" :src="v.preview" alt="Aperçu de l'image à envoyer">
+                <div class="card-actions">
+                  <button v-for="a in v.actions" :key="a.id" type="button" :class="['btn', { ghost: !a.primary }]"
+                          :disabled="streaming || m.waiting.busy" :title="a.title || ''"
+                          @click="deviceAct(m, a.id)">{{ a.label }}</button>
+                  <span class="dim" v-if="v.note">{{ v.note }}</span>
+                </div>
+              </template>
             </div>
             <div class="tool-card write-card" v-if="m.waiting && m.waiting.kind === 'write'">
               <p class="write-head"><b>{{ m.waiting.created ? "Créer" : "Modifier" }}</b>
@@ -1472,6 +1514,20 @@ export const ChatPanel = {
               <label role="menuitem" v-else-if="caps.folder"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
                 <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut ; écritures téléchargées</small></span>
                 <input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
+            </div>
+          </div>
+          <div class="attach-menu device-menu" v-if="!imageMode && !caps.pageTools && deviceFamilies.length">
+            <button type="button" class="btn ghost attach ico-btn" aria-haspopup="menu"
+                    :aria-expanded="String(deviceOpen)" @click="deviceOpen = !deviceOpen"
+                    :title="'Outils du navigateur : ' + deviceCount + ' actif' + (deviceCount > 1 ? 's' : '')
+                      + ' (position, caméra, presse-papiers, agenda…)'">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v12H3zM8 21h8M12 17v4"/></svg>
+              <span class="lbl">Navigateur</span><span class="count">{{ deviceCount }}</span></button>
+            <div class="menu" role="menu" v-show="deviceOpen">
+              <label role="menuitemcheckbox" v-for="f in deviceFamilies" :key="f.key"
+                     :aria-checked="String(deviceOn.includes(f.key))">
+                <input type="checkbox" :checked="deviceOn.includes(f.key)" @change="toggleDevice(f.key)">
+                <span>{{ f.label }}<small>{{ f.hint }}</small></span></label>
             </div>
           </div>
           <label class="effort" v-if="imageMode" title="Nombre d'images par demande">

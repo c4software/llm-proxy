@@ -7,9 +7,10 @@
       folder_search
     folder_write, folder_edit           workspace.js  attendent son accord
     save_file, show_artifact            outputs.js
-    device_context, notify              device.js     notify : son accord, s'il
-                                                      n'a pas encore permis
-    get_location                        device.js     attend son accord
+    les outils du navigateur            device/       par famille, activée ou non
+      (position, caméra, écran,                       par conversation ; ce qui
+      presse-papiers, agenda…)                        touche à l'appareil attend
+                                                      son accord
 
   Deux familles : ceux qui s'exécutent aussitôt (run), et ceux qui
   ATTENDENT l'utilisateur (prepare → une carte dans le fil, m.waiting ;
@@ -20,16 +21,17 @@
 import * as ask from "./ask.js";
 import * as outputs from "./outputs.js";
 import * as workspace from "./workspace.js";
-import * as device from "./device.js";
+import * as device from "./device/index.js";
 
-// Les déclarations pour une conversation : `ws`, son dossier ouvert.
-export function toolsFor(ws) {
-  return [ask.TOOL, ...outputs.TOOLS, ...device.TOOLS,
+// Les déclarations pour une conversation : `ws`, son dossier ouvert ;
+// `families`, les familles d'outils du navigateur qu'elle active.
+export function toolsFor(ws, families) {
+  return [ask.TOOL, ...outputs.TOOLS, ...device.toolsFor(families),
           ...(ws ? [...workspace.TOOLS, ...workspace.WRITE_TOOLS] : [])];
 }
 
 export const isPageTool = (name) => name === "ask_user" || outputs.TOOL_NAMES.has(name)
-  || device.TOOL_NAMES.has(name) || workspace.TOOL_NAMES.has(name) || workspace.WRITE_NAMES.has(name);
+  || device.isTool(name) || workspace.TOOL_NAMES.has(name) || workspace.WRITE_NAMES.has(name);
 export const waitsForUser = (name) => name === "ask_user" || device.waits(name)
   || workspace.WRITE_NAMES.has(name);
 
@@ -44,7 +46,7 @@ export async function run(ctx, call) {
     const { id, result } = outputs.showArtifact(ctx.conv, args);
     return { result, artifact: id };
   }
-  if (device.TOOL_NAMES.has(call.name)) return { result: device.run(call.name, args) };
+  if (device.isTool(call.name)) return { result: await device.run(call.name, args, ctx) };
   if (workspace.TOOL_NAMES.has(call.name)) {
     if (!ctx.ws) return { result: "Error: aucun dossier ouvert (l'utilisateur doit le rouvrir)." };
     return { result: await workspace.run(ctx.ws, call.name, call.arguments) };
@@ -57,7 +59,7 @@ export async function prepare(ctx, call) {
   const args = parse(call.arguments);
   if (args === null) return { error: "Error: arguments illisibles (JSON attendu)." };
   if (call.name === "ask_user") return ask.prepare(args);
-  if (device.TOOL_NAMES.has(call.name)) return device.prepare(call.name, args);
+  if (device.isTool(call.name)) return device.prepare(call.name, args);
   if (!ctx.ws) return { error: "Error: aucun dossier ouvert (l'utilisateur doit le rouvrir)." };
   return workspace.prepareWrite(ctx.ws, call.name, args);
 }
