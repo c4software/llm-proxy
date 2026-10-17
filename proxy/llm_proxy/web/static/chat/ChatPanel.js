@@ -589,10 +589,6 @@ export const ChatPanel = {
       respond(c, m);
     }
     const askReady = (w) => w.questions.every(askTool.answered);
-    function togglePick(q, option) {
-      if (q.multiple) q.picked = q.picked.includes(option) ? q.picked.filter((o) => o !== option) : [...q.picked, option];
-      else q.picked = q.picked[0] === option ? [] : [option];
-    }
     const answerAsk = (m) => settle(m, askTool.result(m.waiting));
     // La question en attente de la conversation (sa dernière réponse), dans
     // la feuille du bas : ouverte à chaque nouvelle question.
@@ -601,15 +597,86 @@ export const ChatPanel = {
       const m = ms[ms.length - 1];
       return m && m.waiting && m.waiting.kind === "ask" ? m : null;
     });
+    // La feuille : ouverte ou réduite, et la question montrée (un onglet
+    // par question). Le clavier : 1…9 choisit, ←/→ change d'onglet,
+    // Entrée envoie, Échap réduit.
     const sheetOpen = ref(true);
     const sheetBody = ref(null);
+    const askTab = ref(0);
+    const askQ = computed(() => {
+      const qs = asking.value ? asking.value.waiting.questions : [];
+      return qs[Math.min(askTab.value, qs.length - 1)] || null;
+    });
+    const askOptions = (q) => q.options.map(askTool.option);
+    const askAnswered = askTool.answered;
+    const askCount = (w) => w.questions.filter(askTool.answered).length;
+    function focusSheet(selector) {
+      nextTick(() => {
+        const el = sheetBody.value && sheetBody.value.closest(".ask-sheet").querySelector(selector);
+        if (el) el.focus({ preventScroll: true });
+      });
+    }
+    function showTab(k) {
+      const n = asking.value ? asking.value.waiting.questions.length : 0;
+      askTab.value = (k + n) % n;
+      focusSheet(".ask-opt");
+    }
+    // Une réponse donnée (choix unique) : la question suivante sans
+    // réponse, sinon le bouton d'envoi.
+    function advance() {
+      const qs = asking.value.waiting.questions;
+      for (let d = 1; d <= qs.length; d++) {
+        const k = (askTab.value + d) % qs.length;
+        if (!askTool.answered(qs[k])) { showTab(k); return; }
+      }
+      focusSheet(".sheet-submit");
+    }
+    function pick(q, label) {
+      if (streaming.value) return;
+      if (q.multiple) {
+        q.picked = q.picked.includes(label) ? q.picked.filter((o) => o !== label) : [...q.picked, label];
+        return;
+      }
+      q.picked = [label];
+      q.otherOn = false;
+      q.other = "";
+      advance();
+    }
+    function pickOther(q) {
+      if (streaming.value) return;
+      if (q.multiple && (q.otherOn || q.other)) { q.otherOn = false; q.other = ""; return; }
+      if (!q.multiple) q.picked = [];
+      q.otherOn = true;
+      focusSheet(".ask-other");
+    }
+    function onSheetKey(e) {
+      if (e.key === "Escape") { sheetOpen.value = false; return; }
+      const q = askQ.value;
+      if (!q || !sheetOpen.value || e.ctrlKey || e.metaKey || e.altKey) return;
+      const typing = e.target.tagName === "INPUT";
+      if (e.key === "Enter" && typing) {
+        e.preventDefault();
+        if (askReady(asking.value.waiting)) answerAsk(asking.value);
+        else if (!q.multiple && askTool.answered(q)) advance();
+        return;
+      }
+      if (typing) return;
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        showTab(askTab.value + (e.key === "ArrowRight" ? 1 : -1));
+        return;
+      }
+      if (/^[1-9]$/.test(e.key)) {
+        const n = Number(e.key) - 1, opts = askOptions(q);
+        if (n < opts.length) { e.preventDefault(); pick(q, opts[n].label); }
+        else if (n === opts.length) { e.preventDefault(); pickOther(q); }
+      }
+    }
     watch(() => asking.value && asking.value.waiting.id, (id) => {
       if (!id) return;
       sheetOpen.value = true;
-      nextTick(() => {
-        const first = sheetBody.value && sheetBody.value.querySelector("button, input");
-        if (first) first.focus({ preventScroll: true });
-      });
+      askTab.value = 0;
+      focusSheet(".ask-opt");
     });
     const skipAsk = (m) => settle(m, "L'utilisateur a passé la question sans répondre.");
     async function applyWrite(m) {
@@ -915,7 +982,8 @@ export const ChatPanel = {
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
-             askReady, togglePick, answerAsk, asking, sheetOpen, sheetBody, skipAsk, applyWrite, refuseWrite, writeDiff, diffCounts,
+             askReady, answerAsk, asking, sheetOpen, sheetBody, askTab, askQ, askOptions,
+             askAnswered, askCount, showTab, pick, pickOther, onSheetKey, skipAsk, applyWrite, refuseWrite, writeDiff, diffCounts,
              download, fileOf: (f) => ({ name: f.name, content: f.content }),
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
@@ -1144,33 +1212,53 @@ export const ChatPanel = {
            zone de saisie ; réduite, une barre la rouvre. -->
       <transition name="sheet">
       <section class="ask-sheet" v-if="asking" :class="{ min: !sheetOpen }" role="dialog"
-               aria-label="Le modèle vous pose une question" @keydown.esc="sheetOpen = false">
-        <button type="button" class="sheet-grip" @click="sheetOpen = !sheetOpen"
-                :aria-expanded="String(sheetOpen)" :title="sheetOpen ? 'Réduire pour relire le fil' : 'Rouvrir'">
-          <span class="grip" aria-hidden="true"></span>
-          <span class="sheet-title">{{ sheetOpen ? "Le modèle vous demande"
-            : (asking.waiting.questions.length > 1 ? asking.waiting.questions.length + " questions attendent"
-              : "Une question attend") + " votre réponse" }}</span>
-          <span class="dim">{{ sheetOpen ? "Réduire" : "Ouvrir" }}</span>
-        </button>
-        <div class="sheet-body" v-show="sheetOpen" ref="sheetBody">
-          <div class="ask-q" v-for="(q, k) in asking.waiting.questions" :key="k">
-            <p class="ask-text">{{ q.question }}<span class="dim" v-if="q.multiple"> · plusieurs choix</span></p>
-            <div class="ask-options">
-              <button type="button" v-for="o in q.options" :key="o" class="btn ghost"
-                      :aria-pressed="String(q.picked.includes(o))" :disabled="streaming"
-                      @click="togglePick(q, o)">{{ o }}</button>
+               aria-label="Le modèle vous pose une question" @keydown="onSheetKey">
+        <template v-if="sheetOpen">
+          <header class="sheet-head">
+            <div class="sheet-tabs" role="tablist">
+              <button type="button" role="tab" v-for="(q, k) in asking.waiting.questions" :key="k"
+                      :aria-selected="String(q === askQ)" :class="{ done: askAnswered(q) }"
+                      @click="showTab(k)" :title="q.question">
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" v-if="askAnswered(q)"><path d="M5 12l5 5 9-10"/></svg>
+                {{ q.header || "Question " + (k + 1) }}</button>
             </div>
-            <input class="ask-other" v-model="q.other" :disabled="streaming"
-                   placeholder="Autre… (réponse libre)" @keydown.enter.prevent="askReady(asking.waiting) && answerAsk(asking)">
+            <button type="button" class="sheet-x" @click="sheetOpen = false"
+                    title="Réduire pour relire le fil ou écrire autre chose (Échap)" aria-label="Réduire">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+          </header>
+          <div class="sheet-body" ref="sheetBody" role="tabpanel" v-if="askQ">
+            <p class="ask-text">{{ askQ.question }}<span class="dim" v-if="askQ.multiple"> · plusieurs choix</span></p>
+            <div class="ask-list" :role="askQ.multiple ? 'group' : 'radiogroup'">
+              <button type="button" class="ask-opt" v-for="(o, n) in askOptions(askQ)" :key="o.label"
+                      :role="askQ.multiple ? 'checkbox' : 'radio'" :aria-checked="String(askQ.picked.includes(o.label))"
+                      :class="{ box: askQ.multiple }" :disabled="streaming" @click="pick(askQ, o.label)">
+                <span class="mark" aria-hidden="true"></span>
+                <span class="opt-text"><b>{{ o.label }}</b><small v-if="o.description">{{ o.description }}</small></span>
+                <kbd v-if="n < 9">{{ n + 1 }}</kbd>
+              </button>
+              <button type="button" class="ask-opt" :role="askQ.multiple ? 'checkbox' : 'radio'"
+                      :aria-checked="String(!!(askQ.otherOn || askQ.other))" :class="{ box: askQ.multiple }"
+                      :disabled="streaming" @click="pickOther(askQ)">
+                <span class="mark" aria-hidden="true"></span>
+                <span class="opt-text"><b>Autre</b><small>une réponse libre</small></span>
+                <kbd v-if="askOptions(askQ).length < 9">{{ askOptions(askQ).length + 1 }}</kbd>
+              </button>
+              <input class="ask-other" v-if="askQ.otherOn || askQ.other" v-model="askQ.other"
+                     :disabled="streaming" placeholder="Votre réponse…">
+            </div>
           </div>
-        </div>
-        <div class="card-actions sheet-actions" v-show="sheetOpen">
-          <button type="button" class="btn" :disabled="streaming || !askReady(asking.waiting)"
-                  @click="answerAsk(asking)">Répondre</button>
-          <button type="button" class="btn ghost" :disabled="streaming" @click="skipAsk(asking)">Passer</button>
-          <span class="dim">ou réduire pour écrire autre chose</span>
-        </div>
+          <footer class="sheet-foot">
+            <button type="button" class="btn sheet-submit" :disabled="streaming || !askReady(asking.waiting)"
+                    @click="answerAsk(asking)">Envoyer les réponses
+              <span class="count" v-if="asking.waiting.questions.length > 1">{{ askCount(asking.waiting) }}/{{ asking.waiting.questions.length }}</span></button>
+            <button type="button" class="btn ghost" :disabled="streaming" @click="skipAsk(asking)">Passer</button>
+          </footer>
+        </template>
+        <button type="button" class="sheet-grip" v-else @click="sheetOpen = true" aria-expanded="false">
+          <span class="sheet-title">{{ asking.waiting.questions.length > 1
+            ? asking.waiting.questions.length + " questions attendent" : "Une question attend" }} votre réponse</span>
+          <span class="dim">Ouvrir</span>
+        </button>
       </section>
       </transition>
 
