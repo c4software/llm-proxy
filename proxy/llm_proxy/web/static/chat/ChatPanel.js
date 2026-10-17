@@ -70,6 +70,7 @@ import * as workspace from "./workspace.js";
 import * as pagetools from "./pagetools.js";
 import * as askTool from "./ask.js";
 import * as notify from "./notify.js";
+import * as device from "./device.js";
 import { lineDiff, counts as diffCounts } from "./diff.js";
 import { ArtifactPanel } from "./ArtifactPanel.js";
 import { download } from "../lib/files.js";
@@ -595,7 +596,9 @@ export const ChatPanel = {
               chip = live.tools[live.tools.length - 1];
             }
             let result;
-            if (pagetools.waitsForUser(c.name)) {
+            // (Une carte déjà montrée reste la réponse, même si l'attente
+            // ne serait plus nécessaire : une permission donnée depuis.)
+            if (pagetools.waitsForUser(c.name) || (live.waiting && live.waiting.id === c.id)) {
               if (live.waiting && live.waiting.id === c.id) {
                 // La carte de cet appel : répondue (reprise), ou encore en attente.
                 if (live.waiting.result === undefined) { paused = true; return; }
@@ -609,6 +612,8 @@ export const ChatPanel = {
                   chip.status = "waiting";
                   paused = true;
                   notify.notify(c.name === "ask_user" ? "Une question vous attend"
+                    : card.kind === "location" ? "Le modèle demande votre position"
+                    : card.kind === "notify" ? "Le modèle veut vous envoyer une notification"
                     : "Une écriture attend votre accord", conv.title);
                   return;
                 }
@@ -800,6 +805,23 @@ export const ChatPanel = {
         status.value = `${w.path} : ${e.message}`;
       }
     }
+    // La position (get_location) : lue seulement sur ce clic.
+    async function shareLocation(m, precise) {
+      m.waiting.locating = true;
+      let result;
+      try {
+        result = await device.locate(precise);
+      } catch (e) {
+        result = "Error: position non obtenue (" + e.message + ").";
+      }
+      if (m.waiting) { m.waiting.locating = false; settle(m, result); }
+    }
+    const refuseLocation = (m) => settle(m, device.REFUSED);
+    // Une notification pas encore permise : la permission sur ce clic.
+    async function allowNotify(m) {
+      settle(m, await device.allowAndNotify(m.waiting.args));
+    }
+    const refuseNotify = (m) => settle(m, device.NOTIFY_REFUSED);
     const refuseWrite = (m) => settle(m, `Refusé par l'utilisateur : « ${m.waiting.path} » n'a pas été modifié.`
       + (m.waiting.comment ? ` Son commentaire : « ${m.waiting.comment} »` : ""));
     // Le diff d'une carte d'écriture, calculé une fois.
@@ -1050,6 +1072,9 @@ export const ChatPanel = {
       }
       if (t.name === "show_artifact") return [a.title, a.type].filter(Boolean).join(" · ");
       if (t.name === "save_file") return a.name || "";
+      if (t.name === "get_location") return a.reason || "";
+      if (t.name === "notify") return [a.title, a.delay_minutes ? "dans " + a.delay_minutes + " min" : ""]
+        .filter(Boolean).join(" · ");
       // La mémoire : la commande et le fichier, pas le texte écrit.
       if (t.name === "memory" && a.command) {
         return [a.command, a.path || a.old_path, a.new_path ? "→ " + a.new_path : ""]
@@ -1091,7 +1116,7 @@ export const ChatPanel = {
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
              askReady, answerAsk, asking, sheetOpen, sheetBody, askTab, askQ, askOptions,
-             askAnswered, askCount, showTab, pick, pickOther, onSheetKey, skipAsk, applyWrite, refuseWrite, writeDiff, diffCounts,
+             askAnswered, askCount, showTab, pick, pickOther, onSheetKey, skipAsk, applyWrite, refuseWrite, shareLocation, refuseLocation, allowNotify, refuseNotify, writeDiff, diffCounts,
              download, fileOf: (f) => ({ name: f.name, content: f.content }),
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
@@ -1259,11 +1284,31 @@ export const ChatPanel = {
               <summary>prompt envoyé (avec le contexte)</summary><pre>{{ m.prompt }}</pre></details>
             <div class="md" v-html="html(m)"></div>
             <!-- Ce qui attend l'utilisateur : une question (ask_user, dans la
-                 feuille du bas) ou une écriture dans le dossier (carte) ; sa
-                 réponse relance le modèle. -->
+                 feuille du bas), sa position ou une écriture dans le dossier
+                 (cartes) ; sa réponse relance le modèle. -->
             <button type="button" class="ask-pending" v-if="m.waiting && m.waiting.kind === 'ask'"
                     @click="sheetOpen = true">{{ m.waiting.questions.length > 1
                       ? m.waiting.questions.length + " questions attendent" : "Une question attend" }} votre réponse</button>
+            <div class="tool-card location-card" v-if="m.waiting && m.waiting.kind === 'location'">
+              <p class="write-head"><b>Le modèle demande votre position</b></p>
+              <p class="dim" v-if="m.waiting.reason">{{ m.waiting.reason }}</p>
+              <div class="card-actions">
+                <button type="button" class="btn" :disabled="streaming || m.waiting.locating" @click="shareLocation(m, false)"
+                        title="Arrondie à environ 1 km">Position approximative</button>
+                <button type="button" class="btn ghost" :disabled="streaming || m.waiting.locating" @click="shareLocation(m, true)">Position précise</button>
+                <button type="button" class="btn ghost" :disabled="streaming || m.waiting.locating" @click="refuseLocation(m)">Refuser</button>
+                <span class="dim" v-if="m.waiting.locating">lecture de la position…</span>
+              </div>
+            </div>
+            <div class="tool-card location-card" v-if="m.waiting && m.waiting.kind === 'notify'">
+              <p class="write-head"><b>Le modèle veut vous envoyer une notification</b></p>
+              <p class="dim">« {{ m.waiting.title }} »{{ m.waiting.args.delay_minutes
+                ? " — dans " + m.waiting.args.delay_minutes + " min" : "" }}</p>
+              <div class="card-actions">
+                <button type="button" class="btn" :disabled="streaming" @click="allowNotify(m)">Autoriser les notifications</button>
+                <button type="button" class="btn ghost" :disabled="streaming" @click="refuseNotify(m)">Non merci</button>
+              </div>
+            </div>
             <div class="tool-card write-card" v-if="m.waiting && m.waiting.kind === 'write'">
               <p class="write-head"><b>{{ m.waiting.created ? "Créer" : "Modifier" }}</b>
                 <code>{{ m.waiting.path }}</code>

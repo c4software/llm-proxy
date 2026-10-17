@@ -1232,6 +1232,7 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .card-actions .dim { font-size: 12.5px; }
 .write-head { margin: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.location-card > .dim { margin: 0; }
 .diff {
   margin: 0; max-height: 360px; overflow: auto; padding: 8px 0; border-radius: 8px;
   background: var(--bg); border: 1px solid var(--line);

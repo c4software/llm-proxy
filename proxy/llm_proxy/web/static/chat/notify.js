@@ -27,6 +27,15 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && document.title.startsWith(MARK)) document.title = document.title.slice(MARK.length);
 });
 
+// Une notification demandée (outil `notify`) : même onglet au premier
+// plan, si le navigateur les permet.
+export function show(title, body) {
+  try {
+    const n = new Notification(title, { body, icon: "/ui/static/icon-192.png" });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch { /* refusée ou indisponible */ }
+}
+
 export function notify(title, body) {
   if (!document.hidden) return;
   if (!document.title.startsWith(MARK)) document.title = MARK + document.title;

@@ -243,7 +243,7 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/httputil.py` | La forme des erreurs (OpenAI ou Anthropic), la lecture des corps JSON |
 | `proxy/tests/` | Tests du proxy : traducteurs, outils, stats (`cd proxy && pytest`, `requirements-dev.txt`, `pytest.ini`) — sur des octets et une base temporaire, sans réseau |
 | `bench/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi, Codex CLI, omp et un client HTTP nu, scénarios PASS/FAIL — voir `bench/README.md` |
-| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le squelette de la page, servi tel quel) et `static/`, des modules ES par domaine — `app.js` (session, vues, menu), `stats/`, `chat/` (`ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js`, `pagetools.js` et les outils de la page : `ask.js`, `workspace.js`, `outputs.js`, `diff.js`, `ArtifactPanel.js` ; `voice.js`, `notify.js`), `config/` (une partie par fichier, `proxy/form.js`, `proxy/advanced.js`), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème) — plus `dashboard.css` et `vue.global.prod.js` |
+| `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le squelette de la page, servi tel quel) et `static/`, des modules ES par domaine — `app.js` (session, vues, menu), `stats/`, `chat/` (`ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js`, `pagetools.js` et les outils de la page : `ask.js`, `workspace.js`, `outputs.js`, `device.js`, `diff.js`, `ArtifactPanel.js` ; `voice.js`, `notify.js`), `config/` (une partie par fichier, `proxy/form.js`, `proxy/advanced.js`), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème) — plus `dashboard.css` et `vue.global.prod.js` |
 | `proxy/llm_proxy/ui_static.py` | Les fichiers de la page, sous un chemin versionné (`/ui/static/v/<empreinte>/…`, gardés un an) : un import relatif d'un module hérite de la même version |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 | `services/searxng/settings.yml` | Réglages de l'instance SearXNG du compose : les défauts de SearXNG, plus le format JSON. Monté en lecture seule dans le service `searxng` |
@@ -847,6 +847,9 @@ message au lieu de répondre la clôt, sans réponse.
 | `ask_user` | 1 à 4 questions à choix (unique ou multiple), un titre court par question, une description par option, toujours avec « Autre » libre | oui |
 | `show_artifact` | une page HTML, un document Markdown, un SVG, un schéma Mermaid ou du code, dans le panneau latéral ; même `id` = nouvelle version | non |
 | `save_file` | un fichier texte (CSV, script, Markdown…) en puce sous la réponse, à télécharger | non |
+| `device_context` | la date et l'heure locales, le fuseau horaire, les langues du navigateur | non |
+| `get_location` | la position (latitude, longitude), avec la raison montrée | oui : *Position approximative* (≈ 1 km), *Position précise* ou *Refuser* |
+| `notify` | une notification du navigateur, tout de suite ou dans N minutes (un rappel, tant que la page reste ouverte) | seulement si les notifications ne sont pas encore permises : *Autoriser les notifications* |
 | `folder_list`, `folder_read`, `folder_search` | parcourir, lire (par tranches numérotées), chercher dans le dossier ouvert | non |
 | `folder_write`, `folder_edit` | créer ou remplacer un fichier, remplacer un passage exact | oui : diff, *Appliquer* ou *Refuser* |
 
@@ -862,6 +865,13 @@ message au lieu de répondre la clôt, sans réponse.
   la question suivante), `←`/`→` change d'onglet, Entrée envoie, Échap
   replie la feuille en une barre au-dessus de la saisie, pour relire le
   fil ou écrire autre chose.
+- **Le navigateur** (`chat/device.js`) : la position n'est **jamais** lue
+  sans un clic sur la carte — une permission du navigateur déjà accordée
+  n'y suffit pas ; approximative, elle est arrondie au centième de degré.
+  Une notification demande la permission du navigateur sur la carte (il
+  exige un clic) ; refusée dans le navigateur, le modèle en est averti.
+  Un rappel (`delay_minutes`, 24 h au plus) ne survit pas à la fermeture
+  de la page.
 - **Dossier ouvert** (*Joindre → Dossier…*, `chat/workspace.js`) : le
   dossier choisi reste **dans le navigateur**, rien n'est envoyé
   d'avance ; le modèle ne lit que ce dont il a besoin — un dépôt de mille
