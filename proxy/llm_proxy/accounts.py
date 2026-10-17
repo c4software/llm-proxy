@@ -96,6 +96,12 @@ def _connect() -> sqlite3.Connection:
         digest TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
         created REAL NOT NULL)""")
+    # Ajouts de colonnes, idempotents (une base d'avant les reçoit sans
+    # rien perdre) : `share`, la part du compte dans le partage équitable
+    # (fairshare.py) — NULL = la part par défaut, 0 = illimitée.
+    have = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+    if "share" not in have:
+        conn.execute("ALTER TABLE users ADD COLUMN share INTEGER")
     return conn
 
 
@@ -129,7 +135,7 @@ def _user(row) -> dict | None:
         return None
     return {"id": row["id"], "email": row["email"], "name": row["name"],
             "role": row["role"], "created": row["created"],
-            "last_login": row["last_login"]}
+            "last_login": row["last_login"], "share": row["share"]}
 
 
 # ── Comptes ─────────────────────────────────────────────────────────────
@@ -197,6 +203,38 @@ def set_role(uid: int, role: str) -> dict:
         return _user(conn.execute("SELECT * FROM users WHERE id = ?",
                                   (uid,)).fetchone())
     return _run(go, write=True)
+
+
+def set_share(uid: int, share) -> dict:
+    """La part d'un compte dans le partage équitable (admin) : None = la
+    part par défaut ([fair_share].tokens_per_hour), 0 = illimitée, sinon
+    des tokens par heure glissante."""
+    if share is not None and (not isinstance(share, int)
+                              or isinstance(share, bool) or share < 0):
+        raise AccountError("share : null (défaut), 0 (illimitée) ou un "
+                           "nombre de tokens par heure")
+
+    def go(conn):
+        if conn.execute("UPDATE users SET share = ? WHERE id = ?",
+                        (share, uid)).rowcount == 0:
+            raise AccountError("compte introuvable", 404)
+        return _user(conn.execute("SELECT * FROM users WHERE id = ?",
+                                  (uid,)).fetchone())
+    return _run(go, write=True)
+
+
+def owners() -> dict[str, int]:
+    """condensé → compte, pour toutes les clés qui en ont un (clés gérées,
+    révoquées comprises, et clés du TOML rattachées) : de quoi relire
+    la dernière heure des statistiques au démarrage (fairshare.seed)."""
+    return _run(lambda conn: {r[0]: r[1] for r in conn.execute(
+        "SELECT digest, user_id FROM keys UNION "
+        "SELECT digest, user_id FROM bound").fetchall()})
+
+
+def user_ids() -> list[int]:
+    return _run(lambda conn: [r[0] for r in conn.execute(
+        "SELECT id FROM users").fetchall()])
 
 
 # ── Clés ────────────────────────────────────────────────────────────────

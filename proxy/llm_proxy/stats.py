@@ -596,6 +596,17 @@ def recording_since(keys=None) -> float:
                             tail).fetchone()[0] or 0.0
 
 
+def recent(since: float) -> list[tuple]:
+    """Les requêtes faites depuis `since`, ce qu'il faut pour remplir les
+    fenêtres du partage équitable au démarrage (fairshare.seed) :
+    (ts, api_key_id, backend, endpoint, tokens d'entrée + de sortie)."""
+    with _reader() as conn:
+        return conn.execute(
+            "SELECT ts, api_key_id, backend, endpoint, "
+            "prompt_tokens + completion_tokens FROM requests "
+            "WHERE ts > ? AND api_key_id != ''", (since,)).fetchall()
+
+
 def default_limit(bucket_width: str) -> int:
     return DEFAULT_LIMITS.get(bucket_width, 7)
 

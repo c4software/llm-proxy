@@ -17,12 +17,14 @@ dit ce que /ui sert sans clé ni session.
 
 import asyncio
 import hmac
+from typing import NamedTuple
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import accounts
+from . import fairshare
 from . import files
 from . import oidc
 from . import stats
@@ -111,24 +113,34 @@ def client_token(request: Request) -> str:
     return request.headers.get("x-api-key", "")
 
 
-async def key_client(token: str) -> tuple[str, str] | None:
-    """La clé présentée → (api_key_id, client), None si elle ne vaut rien.
-    Une clé du TOML est son propre client, sauf rattachée à un compte
-    (accounts.bind) ; une clé gérée (accounts.py) a pour client son
-    COMPTE — toutes ses clés partagent sa mémoire. Chacune garde son
-    propre api_key_id dans les statistiques."""
+class Who(NamedTuple):
+    """Qui présente une clé : son api_key_id (les statistiques), son
+    client (mémoire, échanges d'outils, partage équitable) et son compte
+    (None : clé du TOML seule)."""
+    api_key_id: str
+    client: str
+    account: int | None
+
+
+async def key_client(token: str) -> Who | None:
+    """La clé présentée → Who, None si elle ne vaut rien. Une clé du TOML
+    est son propre client, sauf rattachée à un compte (accounts.bind) ;
+    une clé gérée (accounts.py) a pour client son COMPTE — toutes ses
+    clés partagent sa mémoire. Chacune garde son propre api_key_id dans
+    les statistiques."""
     if not token:
         return None
     digest = tools.owner(token)
     if valid_key(token):
         if not oidc.ENABLED:
-            return digest, digest
+            return Who(digest, digest, None)
         link = await asyncio.to_thread(accounts.bound, digest)
         if link is None:
-            return digest, digest
+            return Who(digest, digest, None)
         # Rattachée : elle suit son compte, bloqué ou en attente compris.
-        return (digest, account_owner(link["user_id"])) \
-            if link["active"] else None
+        uid = link["user_id"]
+        return Who(digest, account_owner(uid), uid) if link["active"] \
+            else None
     if not oidc.ENABLED:
         return None
     hit = await asyncio.to_thread(accounts.resolve, digest)
@@ -136,7 +148,20 @@ async def key_client(token: str) -> tuple[str, str] | None:
         return None
     if accounts.touch_due(hit["id"]):
         await asyncio.to_thread(accounts.touch, hit["id"])
-    return digest, account_owner(hit["user_id"])
+    uid = hit["user_id"]
+    return Who(digest, account_owner(uid), uid)
+
+
+def identify(request: Request, who: Who) -> None:
+    """Pose sur la requête ce qui en découle : son api_key_id pour ses
+    lignes de statistiques (stats.CLIENT), son client pour ce que ses
+    outils gardent (request_owner) et pour le partage équitable
+    (fairshare). Des variables de contexte : tout ce que la route lance
+    en hérite."""
+    stats.CLIENT.set(who.api_key_id)
+    fairshare.CLIENT.set(who.client)
+    fairshare.ACCOUNT.set(who.account)
+    request.state.owner = who.client
 
 
 # Ce qu'un compte en attente ou bloqué peut encore voir de /ui : de quoi
@@ -162,8 +187,8 @@ async def ui_account(request: Request) -> JSONResponse | None:
             "openai", 403, "account_inactive",
             "compte en attente de validation par un admin"
             if user["role"] == "pending" else "compte bloqué")
-    request.state.owner = account_owner(user["id"])
-    stats.CLIENT.set(request.state.owner)
+    owner = account_owner(user["id"])
+    identify(request, Who(owner, owner, user["id"]))
     return None
 
 
@@ -180,8 +205,7 @@ async def require_proxy_key(request: Request, call_next):
             return denied
         return await call_next(request)
     if is_ui_path(request.url.path) and (digest := ui_key(request)):
-        stats.CLIENT.set(digest)
-        request.state.owner = digest
+        identify(request, Who(digest, digest, None))
         return await call_next(request)
     who = await key_client(client_token(request))
     if who is None:
@@ -194,11 +218,7 @@ async def require_proxy_key(request: Request, call_next):
             "clé API du proxy absente ou invalide (en-tête "
             "«Authorization: Bearer <clé>» ou «x-api-key: <clé>» attendu)",
         )
-    # Le client de la requête, pour ses lignes de statistiques
-    # (stats.CLIENT) et pour ce que ses outils gardent (request_owner) :
-    # tout ce que la route lance hérite du contexte.
-    stats.CLIENT.set(who[0])
-    request.state.owner = who[1]
+    identify(request, who)
     return await call_next(request)
 
 

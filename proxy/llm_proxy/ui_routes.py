@@ -27,9 +27,11 @@ from . import auth
 from . import catalog
 from . import chat_api
 from . import config
+from . import fairshare
 from . import files
 from . import memories
 from . import oidc
+from . import relaying
 from . import stats
 from . import tools
 from .backends import BACKENDS, route_backend, unknown_prefix_message
@@ -335,16 +337,27 @@ async def ui_users(request: Request):
 
 @router.patch("/ui/users/{uid}")
 async def ui_user_update(request: Request, uid: int):
-    """Le rôle d'un compte (admin) : accepter un compte en attente, le
-    bloquer, le promouvoir. Le dernier admin garde le sien."""
+    """Un compte (admin) : son rôle (`role` : accepter un compte en
+    attente, le bloquer, le promouvoir ; le dernier admin garde le sien)
+    et/ou sa part dans le partage équitable (`share` : null = la part par
+    défaut, 0 = illimitée, sinon des tokens par heure glissante)."""
     if (bad := admin_only(request)) is not None:
         return bad
     if (bad := json_only(request)) is not None:
         return bad
     body = parse_json(await request.body())
-    role = body.get("role") if isinstance(body, dict) else None
+    if not isinstance(body, dict) or not ({"role", "share"} & body.keys()):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps attendu : {\"role\": …} et/ou "
+                              "{\"share\": null | 0 | <tokens par heure>}")
     try:
-        return await asyncio.to_thread(accounts.set_role, uid, role)
+        user = None
+        if "role" in body:
+            user = await asyncio.to_thread(accounts.set_role, uid, body["role"])
+        if "share" in body:
+            user = await asyncio.to_thread(accounts.set_share, uid,
+                                           body["share"])
+        return user
     except accounts.AccountError as exc:
         return account_error(exc)
 
@@ -397,7 +410,20 @@ async def ui_session(request: Request):
         # La mémoire persistante (outil `memory`) : son panneau, à côté du
         # chat comme dans les statistiques.
         "memory": tools.memory.ENABLED,
+        # Le partage équitable : la part du client connecté (None =
+        # illimitée) et ce qu'il en a consommé sur l'heure glissante.
+        # None : proxy ouvert, personne n'est compté.
+        "fair_share": await fair_share_state(),
     }
+
+
+async def fair_share_state() -> dict | None:
+    client = fairshare.CLIENT.get()
+    if client is None:
+        return None
+    return {"share": await relaying.share_of(), "used": fairshare.used(client),
+            "default": fairshare.DEFAULT_SHARE or None,
+            "window_seconds": int(fairshare.WINDOW)}
 
 
 @router.get("/ui/models")

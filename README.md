@@ -233,6 +233,7 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/tool_loop.py` | La boucle des outils hébergés, commune aux trois surfaces |
 | `proxy/llm_proxy/usage_api.py` | L'Usage API (`/v1/organization/usage/*`) et ce qu'une page connectée peut en voir |
 | `proxy/llm_proxy/ui_routes.py` | Les routes du tableau de bord (`/ui/*`) : entrée, session, comptes et clés, chat, mémoire |
+| `proxy/llm_proxy/fairshare.py` | Le partage équitable : une part de tokens par client sur une heure glissante, au-delà de laquelle ses requêtes attendent |
 | `proxy/llm_proxy/httputil.py` | La forme des erreurs (OpenAI ou Anthropic), la lecture des corps JSON |
 | `proxy/tests/` | Tests du proxy : traducteurs, outils, stats (`cd proxy && pytest`, `requirements-dev.txt`, `pytest.ini`) — sur des octets et une base temporaire, sans réseau |
 | `bench/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi, Codex CLI, omp et un client HTTP nu, scénarios PASS/FAIL — voir `bench/README.md` |
@@ -530,6 +531,39 @@ la page ne montre que **les requêtes et les outils de cette clé** :
 la page. La page elle-même, ses fichiers, l'entrée et la sortie se
 servent sans clé ; `GET /ui/session` dit qui est connecté (un fragment
 du condensé de la clé) et ce que le chat peut faire, ou `401`.
+
+### Partage équitable
+
+Pas un quota : **rien n'est jamais refusé**, aucun `429`. Chaque client a
+une **part** de tokens (entrée + sortie) sur une **heure glissante**. Une
+requête dont le client a dépassé sa part **attend** que la fenêtre
+redescende sous la part, puis part — l'attente se fait dans la porte
+commune à toutes les routes (`relaying.gate`), avant le quota du backend ;
+un client qui raccroche pendant l'attente est abandonné (`499`). Le but :
+qu'un client (un agent qui boucle) ne sature pas les backends au détriment
+des autres.
+
+- **Le client** : le **compte** pour une clé gérée, une clé du TOML
+  rattachée ou la page connectée ; la clé du TOML elle-même sinon. Proxy
+  ouvert : personne n'est compté.
+- **La part** : `[fair_share].tokens_per_hour` par défaut (`0` = aucune
+  limite). Un admin la règle par compte (*Configuration → Comptes*,
+  colonne *Part / h* ; `PATCH /ui/users/<id>` `{"share": null | 0 | n}`) :
+  défaut, **illimitée**, ou un nombre. Elle est relue pendant l'attente :
+  la relever libère aussitôt qui attend.
+- **Ce qui compte** : chaque requête relayée, une fois faite (ses tokens
+  ne sont connus qu'alors) ; pas les routes de `[proxy].exempt_paths`
+  (embeddings, transcription, OCR), ni un backend `fair_share = false`,
+  ni les appels qu'un outil hébergé fait lui-même à un backend (OCR,
+  images, transcription). Plusieurs requêtes parallèles sous la part
+  partent toutes : la part borne la moyenne, pas la pointe.
+- **Où le voir** : chacun voit sa part et sa consommation en tête de
+  *Configuration → Clés* (`/ui/session`, `fair_share`) ; `/healthz`
+  détaillé dit la part par défaut, les clients suivis et ceux qui
+  attendent ; le journal dit chaque attente (`[partage] … relâché après
+  …s`).
+- **Au démarrage**, la dernière heure est relue dans la base de
+  statistiques : un redémarrage ne remet personne à zéro.
 
 ### Comptes OIDC
 
@@ -2799,6 +2833,7 @@ url = "http://bigchuck:8009"
 | `max_tokens` | `0` = aucun | Plafond : `max_tokens` / `max_completion_tokens` du client ramené au plafond, jamais augmenté ni ajouté |
 | `images` | `false` | Les modèles multimodaux au catalogue du backend reçoivent les `image_url` d'un client Anthropic ; sinon texte de remplacement |
 | `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact — llama.cpp : `"/tokenize"` |
+| `fair_share` | `true` | Le backend relève du [partage équitable](#partage-équitable) ; `false` : ses requêtes ne pèsent sur la part de personne et n'y attendent jamais |
 | `model_types` | `{}` | Type imposé à des modèles du backend, par motif (`"*-vision-*" = "image-text-to-text"`). Sans lui le type vient du catalogue du backend, ou, s'il ne dit rien (llama-swap), du nom du modèle (`image`, `tts`, `asr`, `embed`…). Décide de ce qui est proposé à un client de chat et de qui reçoit les images |
 
 **Tout modèle doit être préfixé** : préfixe inconnu → 400
@@ -2996,6 +3031,12 @@ défauts), qu'il applique sans croire le proxy : à monter avec celles-ci.
 | Clé | Défaut | Rôle |
 |---|---|---|
 | `chat` | `false` | Ouvre l'onglet *Chat* du tableau de bord (`POST /ui/chat/completions`) : le cookie de `/ui` y dépense des tokens, comptés à la clé connectée. Voir [Le chat](#le-chat) |
+
+### `[fair_share]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `tokens_per_hour` | `0` | Part par défaut de chaque client, en tokens (entrée + sortie) par heure glissante ; au-delà ses requêtes attendent. `0` = aucune limite. Réglable par compte dans la page. Voir [Partage équitable](#partage-équitable) |
 
 ### `[oidc]`
 

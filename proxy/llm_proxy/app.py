@@ -79,6 +79,7 @@ import dataclasses
 import json
 import mimetypes
 import os
+import time
 from contextlib import asynccontextmanager
 
 import httpx2
@@ -93,6 +94,7 @@ from . import auth
 from . import catalog
 from . import chat_api
 from . import config
+from . import fairshare
 from . import files
 from . import mcp_server
 from . import oidc
@@ -106,9 +108,12 @@ from .backends import (
     BACKENDS, FALLBACK_BACKEND, backend_offline_message, close_clients,
     open_clients, route_backend, unknown_prefix_message,
 )
-from .settings import EXEMPT_SUFFIXES, FORWARD_POST_PATHS, TOOL_CHOICE, log
+from .settings import (
+    EXEMPT_SUFFIXES, FORWARD_POST_PATHS, TOOL_CHOICE, is_exempt, log,
+)
 from .auth import (
-    UISession, auth_required, client_token, key_client, request_owner,
+    UISession, account_owner, auth_required, client_token, key_client,
+    request_owner,
 )
 from .catalog import CHAT_TYPES, always_shown
 from .httputil import dialect_of, error_response, parse_json
@@ -116,10 +121,34 @@ from .relaying import clean_headers, response_headers
 from .surfaces import forward_post
 from .ui_routes import WEB_DIR, ui_login_mode
 
+def seed_fair_share() -> int:
+    """La dernière heure des statistiques dans les fenêtres du partage
+    équitable : chaque ligne au client de sa clé — son compte (clé gérée,
+    clé du TOML rattachée, chat de la page), ou la clé elle-même."""
+    owners = accounts.owners() if oidc.ENABLED else {}
+    pages = {account_owner(uid): uid for uid in accounts.user_ids()} \
+        if oidc.ENABLED else {}
+    rows = []
+    for ts, key_id, backend, endpoint, tokens in stats.recent(
+            time.time() - fairshare.WINDOW):
+        b = BACKENDS.get(backend)
+        if b is None or not b.fair_share or is_exempt(endpoint):
+            continue
+        uid = owners.get(key_id, pages.get(key_id))
+        rows.append((ts, account_owner(uid) if uid is not None else key_id,
+                     tokens))
+    return fairshare.seed(rows)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("configuration : %s", config.CONFIG_PATH)
     stats.init()
+    seeded = await asyncio.to_thread(seed_fair_share)
+    log.info("partage équitable : %s par heure glissante par défaut, "
+             "réglable par compte ; %d requête(s) de la dernière heure "
+             "relue(s)", f"{fairshare.DEFAULT_SHARE} tokens"
+             if fairshare.DEFAULT_SHARE else "aucune limite", seeded)
     await open_clients()
     # Serveurs MCP ([tools.mcp.<serveur>]) : découverte de leurs outils,
     # attendue quelques secondes au plus — un serveur éteint ne retient
@@ -353,6 +382,8 @@ def health_detail() -> dict:
     """L'état du déploiement : backends, surfaces, outils, caches."""
     return {
         "status": "ok",
+        # Le partage équitable : part par défaut, clients suivis, en attente.
+        "fair_share": fairshare.snapshot(),
         "tool_choice": TOOL_CHOICE,
         "auth_required": auth_required(),
         # Comment la page s'ouvre : «oidc» (comptes), «key» (une clé du

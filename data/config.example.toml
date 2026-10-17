@@ -794,6 +794,23 @@ allowed_origins = []
 chat = false
 
 
+# ── Partage équitable ───────────────────────────────────────────────────
+# Pas un quota : rien n'est jamais refusé (aucun 429). Chaque client a une
+# PART de tokens (entrée + sortie) sur une heure GLISSANTE ; au-delà, ses
+# requêtes ATTENDENT que la part se libère, puis partent. But : qu'un
+# client (un agent qui boucle) ne sature pas les backends au détriment des
+# autres. Le client : le compte (clé gérée, clé du TOML rattachée, page
+# connectée), sinon la clé du TOML elle-même ; proxy ouvert = personne
+# n'est compté. L'admin règle la part d'un compte dans la page
+# (Configuration → Comptes) : défaut, illimitée, ou un nombre. Hors
+# partage : les routes de [proxy].exempt_paths (embeddings, transcription,
+# OCR) et les backends `fair_share = false`.
+[fair_share]
+# La part par défaut, en tokens par heure glissante. 0 = aucune limite
+# (seules comptent alors les parts réglées par compte).
+tokens_per_hour = 0
+
+
 # ── Comptes : connexion par OIDC ────────────────────────────────────────
 # Sans `issuer` ni `client_id` : rien ne change — la page s'ouvre avec une
 # clé de [proxy].api_keys, et il n'y a pas de comptes.
@@ -952,6 +969,10 @@ models = ["openweight-large", "gpt-oss"]
 #
 # tokenize_path — endpoint de tokenisation pour un count_tokens EXACT
 # (llama.cpp : "/tokenize") ; absent = estimation à 4 caractères/token.
+#
+# fair_share — le backend relève-t-il du partage équitable ([fair_share]) ?
+# true par défaut ; false = ses requêtes ne pèsent sur la part de personne
+# et n'y attendent jamais.
 #
 # model_types — type imposé à des modèles de ce backend, par motif (jokers
 # shell, casse ignorée). Le type vient d'ordinaire du catalogue du backend

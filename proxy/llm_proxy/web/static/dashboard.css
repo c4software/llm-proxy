@@ -875,6 +875,10 @@ a.btn { display: inline-block; text-decoration: none; }
 .config-keys td:first-child { white-space: normal; }
 .config-keys tr.dim td { color: var(--muted); }
 .config-keys td .tag { margin-left: 6px; }
+.config-keys .share-cell { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+.config-keys .share-cell input { width: 110px; font: inherit; font-size: 13px; padding: 5px 8px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+.config-keys .fair-note { padding: 12px 18px; }
 .config-keys .btn { padding: 4px 10px; font-size: 12.5px; }
 .config-keys .btn.danger.armed { background: var(--err); color: #fff; }
 .config-keys select, .key-new-row input {

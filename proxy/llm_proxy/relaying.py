@@ -9,14 +9,17 @@ toutes les routes ; `send_upstream` est le seul endroit qui joint un
 backend (les tests le remplacent).
 """
 
+import asyncio
 import time
 
 import httpx2
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from . import accounts
 from . import albert
 from . import anthropic_api
+from . import fairshare
 from . import stats
 from .backends import Backend, backend_offline_message
 from .settings import HOP_BY_HOP, is_exempt, log
@@ -137,6 +140,9 @@ class Call:
                      self.endpoint, status, time.monotonic() - self.started,
                      prompt_tokens, completion_tokens, exact, streamed,
                      cached_tokens)
+        if shared(self):
+            fairshare.charge(fairshare.CLIENT.get(),
+                             prompt_tokens + completion_tokens)
 
     def error(self, status: int, type_: str, message: str,
               headers: dict | None = None) -> JSONResponse:
@@ -156,12 +162,49 @@ async def wait_disconnect(request: Request) -> None:
             return
 
 
+def shared(call: Call) -> bool:
+    """La requête relève-t-elle du partage équitable ? Pas sur une route
+    exemptée du limiteur ([proxy].exempt_paths), ni sur un backend
+    `fair_share = false`."""
+    return call.backend.fair_share and not is_exempt(call.endpoint)
+
+
+async def share_of() -> int | None:
+    """La part du client de la requête en cours (fairshare) : celle de son
+    compte si l'admin l'a réglée (0 = illimitée), sinon la part par
+    défaut ([fair_share].tokens_per_hour, 0 = aucune limite). None =
+    illimitée."""
+    share = fairshare.DEFAULT_SHARE
+    uid = fairshare.ACCOUNT.get()
+    if uid is not None:
+        user = await asyncio.to_thread(accounts.user, uid)
+        if user is not None and user.get("share") is not None:
+            share = user["share"]
+    return share or None
+
+
 async def gate(call: Call, request: Request, payload, cost: int) -> Response | None:
-    """La porte de quota, commune à toutes les routes. None = passer.
-    Sinon la réponse à renvoyer, déjà comptée : 429 local si l'attente
-    dépasserait MAX_QUEUE_SECONDS, 499 si le client a raccroché pendant
-    l'attente (la requête n'est PAS partie à l'upstream, le quota est
-    préservé — personne ne lira cette réponse)."""
+    """La porte commune à toutes les routes. None = passer. D'abord le
+    partage équitable (fairshare) : un client au-delà de sa part attend
+    qu'elle se libère, sans limite de durée ni 429. Puis le quota du
+    backend. Sinon la réponse à renvoyer, déjà comptée : 429 local si
+    l'attente du quota dépasserait MAX_QUEUE_SECONDS, 499 si le client a
+    raccroché pendant l'une ou l'autre attente (la requête n'est PAS partie
+    à l'upstream — personne ne lira cette réponse)."""
+    client = fairshare.CLIENT.get()
+    if client is not None and shared(call):
+        try:
+            waited = await fairshare.wait(client, share_of,
+                                          lambda: wait_disconnect(request))
+        except fairshare.ClientGone:
+            log.info("[partage] client parti pendant l'attente : %s "
+                     "abandonné", call.endpoint)
+            call.done(CLIENT_CLOSED)
+            return Response(status_code=CLIENT_CLOSED)
+        if waited:
+            log.info("[partage] %s relâché après %.1fs d'attente (part "
+                     "dépassée, %d tokens sur l'heure)", call.endpoint,
+                     waited, fairshare.used(client))
     b = call.backend
     if not b.quotas or is_exempt(call.endpoint):
         return None

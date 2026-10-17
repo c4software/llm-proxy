@@ -58,6 +58,10 @@ class Backend:
         # que son catalogue déclare multimodaux ; un modèle texte seul y
         # reçoit un texte de remplacement. false = jamais d'image.
         self.images = bool(cfg.get("images", False))
+        # Le partage équitable (fairshare.py) compte-t-il ce backend ?
+        # Faux : ses requêtes ne pèsent sur la part de personne et n'y
+        # attendent jamais.
+        self.fair_share = bool(cfg.get("fair_share", True))
         # Chemin d'un endpoint de tokenisation (llama.cpp : "/tokenize")
         # pour un count_tokens EXACT ; vide = estimation locale.
         self.tokenize_path = str(cfg.get("tokenize_path", "") or "").strip()

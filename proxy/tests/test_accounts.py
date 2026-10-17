@@ -257,7 +257,7 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     bob_id = bob.get("/ui/session").json()["account"]["id"]
     alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
     # Seule, la clé est son propre client.
-    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest)
+    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None)
 
     # Un user ne rattache rien ; l'admin, si.
     assert bob.put(f"/ui/keys/toml/{digest}",
@@ -266,7 +266,7 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     assert r.status_code == 200 and r.json()["user"] == "bob@example.org"
     # Elle écrit désormais dans la mémoire du compte ; ses stats aussi.
     assert asyncio.run(auth.key_client("sk-toml")) == (
-        digest, auth.account_owner(bob_id))
+        digest, auth.account_owner(bob_id), bob_id)
     assert digest in A.accounts.digests(bob_id)
     # Bob la voit parmi ses clés ; l'admin, dans toutes.
     mine = bob.get("/ui/keys").json()["toml"]
@@ -284,7 +284,7 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     # Détachée : de nouveau son propre client.
     assert alice.put(f"/ui/keys/toml/{digest}",
                      json={"user_id": None}).json()["user_id"] is None
-    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest)
+    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None)
 
 
 def test_binding_refuses_what_is_not_a_toml_key(idp, monkeypatch):
@@ -329,3 +329,47 @@ def test_a_token_signed_by_another_key_is_refused(idp):
     r = browser.get(back, follow_redirects=False)
     assert r.status_code == 303 and "auth_error" in r.headers["location"]
     assert browser.get("/ui/session").status_code == 401
+
+
+def test_the_admin_sets_an_account_share(idp, monkeypatch):
+    """La part d'un compte dans le partage équitable : par défaut, puis
+    illimitée (0), puis un nombre — relue pendant l'attente."""
+    import time
+
+    from fakes import FakeUpstream, chat_doc
+    from llm_proxy import chat_api, fairshare
+    fairshare.reset()
+    monkeypatch.setattr(chat_api, "ENABLED", False)
+    monkeypatch.setattr(fairshare, "DEFAULT_SHARE", 100)
+    monkeypatch.setattr(fairshare, "WINDOW", 0.4)
+    monkeypatch.setattr(fairshare, "CHECK_EVERY", 0.05)
+    alice = connect(idp)
+    uid = alice.get("/ui/session").json()["account"]["id"]
+    key = new_key(alice)["key"]
+
+    def ask():
+        idp.replies.append(FakeUpstream(chat_doc(
+            {"role": "assistant", "content": "ok"}, "stop", 100, 50)))
+        started = time.monotonic()
+        r = idp.client.post("/v1/chat/completions", headers=bearer(key),
+                            json={"model": "essai/qwen", "messages": [
+                                {"role": "user", "content": "q"}]})
+        assert r.status_code == 200
+        return time.monotonic() - started
+
+    ask()
+    assert ask() >= 0.3                                # part par défaut
+    r = alice.patch(f"/ui/users/{uid}", json={"share": 0})
+    assert r.status_code == 200 and r.json()["share"] == 0
+    ask()
+    assert ask() < 0.3                                 # illimitée
+    assert alice.get("/ui/session").json()["fair_share"]["share"] is None
+    assert alice.patch(f"/ui/users/{uid}", json={"share": 10_000}).json()[
+        "share"] == 10_000
+    assert alice.patch(f"/ui/users/{uid}", json={"share": None}).json()[
+        "share"] is None
+    for bad in (-1, "beaucoup", True):
+        assert alice.patch(f"/ui/users/{uid}",
+                           json={"share": bad}).status_code == 400
+    assert alice.patch(f"/ui/users/{uid}", json={}).status_code == 400
+    fairshare.reset()
