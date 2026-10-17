@@ -198,10 +198,12 @@ def _leaves(node, path: str) -> list[str]:
     return [leaf for k, v in node.items() for leaf in _leaves(v, f"{path}.{k}")]
 
 
-def merged(partial: dict) -> tuple[dict, set[str]]:
+def merged(partial: dict, overrides: list | None = None) -> tuple[dict, set[str]]:
     """Le fichier partiel du formulaire appliqué sur la configuration
     effective : ce qu'il écrit remplace, ce qu'il retire (FORM_DROPS,
-    backends) disparaît, tout le reste est gardé tel quel."""
+    backends) disparaît, tout le reste est gardé tel quel. Puis
+    `overrides` (la section « Avancé » de la page) : [{"path": [...],
+    "value": …}], chaque réglage posé à son chemin."""
     tree, defaults = effective()
     for path in FORM_DROPS:
         node, current = partial, tree
@@ -224,6 +226,19 @@ def merged(partial: dict) -> tuple[dict, set[str]]:
                         current[name].pop(key, None)
     touched: set[str] = set()
     _overlay(tree, partial, (), touched)
+    for item in overrides or ():
+        path, value = item.get("path"), item.get("value")
+        if not (isinstance(path, list) and path and all(isinstance(x, str) for x in path)):
+            raise ValueError("override : `path` attendu, une liste de noms")
+        node = tree
+        for part in path[:-1]:
+            nxt = node.get(part)
+            if not isinstance(nxt, dict):
+                nxt = node[part] = {}
+            node = nxt
+        if node.get(path[-1]) != value:
+            node[path[-1]] = value
+            touched.add(".".join(path))
     return tree, {d for d in defaults if d not in touched}
 
 
@@ -233,7 +248,8 @@ async def ui_config(request: Request):
         return bad
     tree, defaults = effective()
     return {"path": config.CONFIG_PATH, "toml": dumps(tree, defaults),
-            "defaults": len(defaults), "values": tree}
+            "defaults": len(defaults), "values": tree,
+            "default_paths": sorted(defaults)}
 
 
 @router.post("/ui/config/merge")
@@ -252,7 +268,14 @@ async def ui_config_merge(request: Request):
     except tomllib.TOMLDecodeError as exc:
         return error_response("openai", 400, "invalid_request_error",
                               f"TOML du formulaire invalide : {exc}")
-    tree, defaults = merged(partial)
+    overrides = body.get("overrides") or []
+    if not isinstance(overrides, list) or not all(isinstance(o, dict) for o in overrides):
+        return error_response("openai", 400, "invalid_request_error",
+                              "overrides : une liste de {path, value}")
+    try:
+        tree, defaults = merged(partial, overrides)
+    except ValueError as exc:
+        return error_response("openai", 400, "invalid_request_error", str(exc))
     return {"toml": dumps(tree, defaults), "defaults": len(defaults)}
 
 

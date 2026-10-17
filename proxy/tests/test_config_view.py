@@ -135,3 +135,21 @@ url = "http://local:8080"
     tree = tomllib.loads(r["toml"])
     assert "api_key" not in tree["backends"]["albert"]
     assert tree["backends"]["local"] == {"url": "http://local:8080", "timeout": 30}
+
+
+def test_the_advanced_section_sets_any_setting(conf):
+    """Section « Avancé » : tout réglage hors du formulaire, posé par son
+    chemin — un nom de table peut contenir un point."""
+    values = conf.client.get("/ui/config").json()
+    assert "fair_share.tokens_per_hour" in values["default_paths"]
+    r = conf.client.post("/ui/config/merge", json={
+        "toml": '[backends.local]\nurl = "http://local:8080"\n',
+        "overrides": [{"path": ["backends", "local", "timeout"], "value": 90},
+                      {"path": ["anthropic", "model_map", "claude-3.5"], "value": "local/m"},
+                      {"path": ["stats", "retention_days"], "value": 30}]}).json()
+    tree = tomllib.loads(r["toml"])
+    assert tree["backends"]["local"]["timeout"] == 90
+    assert tree["anthropic"]["model_map"]["claude-3.5"] == "local/m"
+    assert "retention_days = 30\n" in r["toml"]
+    assert conf.client.post("/ui/config/merge", json={
+        "toml": "", "overrides": [{"path": "stats.x", "value": 1}]}).status_code == 400

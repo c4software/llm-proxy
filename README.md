@@ -798,30 +798,30 @@ navigateur — rien n'est écrit sur le proxy.
 - **Clés** et **Comptes** : avec les [comptes OIDC](#comptes-oidc)
   seulement — créer et révoquer ses clés, et pour un admin, les comptes
   et les clés de tous.
-- **Proxy** : **un seul fichier**, `data/config.toml` complet, et le
-  formulaire guidé qui s'y applique — clés (une par personne), backends
-  (et leur part au [partage équitable](#partage-équitable)), surfaces,
-  outils hébergés et leurs modèles, chat (modèle présélectionné compris),
-  adresse publique, rétention, partage équitable et
-  [comptes OIDC](#comptes-oidc).
-  - **Le fichier** : la configuration **en vigueur**, entière — les valeurs
-    de `data/config.toml` telles qu'écrites (un `${VAR}` reste un renvoi
-    au `.env`) et, pour tout réglage que le fichier ne dit pas, la valeur
-    que le proxy prend d'office, suivie de `# défaut` (`GET /ui/config`).
-    Une valeur secrète écrite en clair (clé, jeton, mot de passe, en-tête)
-    est masquée.
-  - **Le formulaire** se préremplit de ce même fichier, et ce qu'on y
-    change s'y applique (`POST /ui/config/merge`) : sans changement, le
-    fichier reste identique ; un champ changé, sa ligne seule. Ce que le
-    formulaire ne règle pas (délais d'un backend, `[quotas]`, alias de
-    `model_map`, serveurs MCP…) est gardé tel quel ; un backend retiré du
-    formulaire l'est du fichier. *Réinitialiser* relit la configuration.
-  - **À la main** : le fichier se modifie aussi directement ; le
-    formulaire ne l'écrase plus alors, *Réappliquer le formulaire* le lui
-    rend. *Vérifier* le fait relire par le proxy (`POST /ui/config/check` :
-    syntaxe TOML, et les clés qu'il ne lit pas — une faute de frappe y est
-    sinon inerte, sans un mot au démarrage), puis il se copie ou se
-    télécharge, avec le `.env` des secrets qu'il référence.
+- **Proxy** : **toute la configuration**, à voir et à modifier, en
+  sections : un **sommaire** à gauche (Accès, Backends, Surfaces, Outils,
+  Partage équitable, Comptes, Divers, Avancé, puis Fichier complet et
+  `.env`), la section à l'écran en évidence ; une **barre** qui reste en
+  haut : lignes modifiées, avertissements, *Réinitialiser*, *Vérifier*,
+  *Copier*, *Télécharger config.toml*.
+  - **Les sections** se préremplissent de la configuration en vigueur
+    (`GET /ui/config`) et ce qu'on y change s'applique au fichier complet
+    (`POST /ui/config/merge`) : sans changement, le fichier reste
+    identique ; un champ changé, sa ligne seule. Un backend retiré l'est
+    du fichier.
+  - **Avancé** : chaque réglage que les sections ne couvrent pas (délais,
+    `[quotas]`, alias de `model_map`, serveurs MCP, réglages d'un
+    backend…), généré depuis la configuration — sa valeur en vigueur,
+    éditable selon son type (case, nombre, texte, liste), marquée
+    *défaut* quand le fichier ne la dit pas, *modifié* quand on l'a
+    changée ; un filtre pour s'y retrouver.
+  - **Fichier complet** : `data/config.toml` tel qu'il en résulte, les
+    défauts suivis de `# défaut`, les `${VAR}` gardés (renvois au `.env`),
+    une valeur secrète écrite en clair masquée. Modifiable directement :
+    les sections ne l'écrasent plus alors, *Réappliquer les sections* le
+    leur rend. *Vérifier* le fait relire par le proxy
+    (`POST /ui/config/check` : syntaxe TOML, et les clés qu'il ne lit pas —
+    une faute de frappe y est sinon inerte, sans un mot au démarrage).
   - **Rien n'est écrit sur le proxy** : appliquer, c'est remplacer
     `data/config.toml` sur l'hôte (l'ancien en `.bak`, valeurs masquées
     remises) et redémarrer. Avec les comptes OIDC, réservé aux admins.

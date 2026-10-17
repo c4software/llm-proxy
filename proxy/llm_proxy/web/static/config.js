@@ -38,7 +38,7 @@ window.ConfigPanel = {
     health: { type: Object, default: null },
   },
   setup(props) {
-    const { ref, reactive, computed, watch, onMounted } = Vue;
+    const { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } = Vue;
     const origin = window.location.origin;
     const STORE_PART = "llm-proxy-config-part";
 
@@ -79,6 +79,7 @@ window.ConfigPanel = {
     // modifié à la main. Vérifié par le proxy (POST /ui/config/check),
     // copié, téléchargé — jamais écrit sur lui.
     const settings = reactive({ loaded: false, path: "", defaults: 0, values: null,
+                                defaultPaths: [], original: "",
                                 generated: "", text: "", error: "", check: null, checking: false });
     async function loadSettings() {
       settings.error = "";
@@ -86,7 +87,9 @@ window.ConfigPanel = {
       try {
         const r = await call("GET", "/ui/config");
         Object.assign(settings, { loaded: true, path: r.path, defaults: r.defaults,
-                                  values: r.values, generated: r.toml, text: r.toml });
+                                  values: r.values, defaultPaths: r.default_paths || [],
+                                  original: r.toml, generated: r.toml, text: r.toml });
+        loadAdvanced();
         if (!prefilled.value) prefill();
       } catch (e) { settings.error = e.message; }
     }
@@ -684,7 +687,8 @@ window.ConfigPanel = {
     async function mergeForm() {
       if (!prefilled.value) return;
       try {
-        const r = await call("POST", "/ui/config/merge", { toml: proxyOut.value.partial });
+        const r = await call("POST", "/ui/config/merge", { toml: proxyOut.value.partial,
+                                                            overrides: overrides.value });
         const follow = !edited.value;
         settings.generated = r.toml;
         settings.defaults = r.defaults;
@@ -692,12 +696,138 @@ window.ConfigPanel = {
         settings.error = "";
       } catch (e) { settings.error = e.message; }
     }
-    watch(() => proxyOut.value.partial, () => {
+    // Ce qui diffère de la configuration en vigueur, en lignes du fichier :
+    // une valeur changée compte une fois (sa ligne d'avant, sa ligne d'après).
+    const changes = computed(() => {
+      if (!settings.loaded) return 0;
+      const before = settings.original.split("\n"), after = settings.text.split("\n");
+      const a = new Set(before), b = new Set(after);
+      return Math.max(after.filter((l) => !a.has(l)).length, before.filter((l) => !b.has(l)).length);
+    });
+    const showWarn = ref(false);
+
+    // ── avancé : tout réglage que le formulaire ne couvre pas ─────────────
+    // Généré depuis la configuration en vigueur (fichier et défauts) : une
+    // ligne par réglage, éditable selon son type. Ce qui change part au
+    // proxy en `overrides` ({path, value}) avec le formulaire.
+    const FORM_FLAT = new Set(["proxy.log_level", "proxy.api_keys", "proxy.exempt_paths",
+      "fair_share.tokens_per_hour", "anthropic.enabled", "anthropic.model_map.default",
+      "responses.enabled", "chat.hosted_tools", "chat.always", "chat.always_except",
+      "tools.max_calls", "mcp_server.enabled", "ui.chat", "ui.chat_model",
+      "files.public_url", "stats.retention_days"]);
+    const BACKEND_FORM_KEYS = ["url", "api_key", "quotas", "images", "force_tool_choice",
+                               "max_tokens", "fair_share"];
+    const OIDC_FORM_KEYS = ["issuer", "client_id", "client_secret", "redirect_uri",
+                            "new_accounts", "session_days", "max_keys_per_account", "label"];
+    function formCovers(path) {
+      const [top, a, b] = path;
+      if (top === "backends") return path.length === 3 && BACKEND_FORM_KEYS.includes(b);
+      if (top === "oidc") return path.length === 2 && OIDC_FORM_KEYS.includes(a);
+      if (top === "tools" && path.length === 3 && TOOL_LIST.some((t) => t.id === a)) {
+        const tool = TOOL_LIST.find((t) => t.id === a);
+        return b === "enabled" || (b === "model" && !!tool.model)
+          || (a === "web_search" && b === "searxng_url")
+          || (a === "code_execution" && (b === "url" || b === "token"));
+      }
+      return FORM_FLAT.has(path.join("."));
+    }
+    const kindOf = (v) => typeof v === "boolean" ? "bool" : typeof v === "number" ? "number"
+      : typeof v === "string" ? "string"
+      : Array.isArray(v) && v.every((x) => typeof x === "string") ? "list" : "json";
+    const asText = (v, kind) => kind === "list" ? v.join(", ")
+      : kind === "json" ? JSON.stringify(v) : v;
+    const advanced = ref([]);        // [{path, group, key, kind, orig, value, isDefault}]
+    const advFilter = ref("");
+    function loadAdvanced() {
+      const rows = [];
+      const defaults = new Set(settings.defaultPaths);
+      const walk = (node, path) => {
+        for (const [k, v] of Object.entries(node)) {
+          const p = [...path, k];
+          if (v && typeof v === "object" && !Array.isArray(v)) { walk(v, p); continue; }
+          if (formCovers(p)) continue;
+          const kind = kindOf(v);
+          rows.push({ path: p, group: path.join(".") || "(racine)", key: k, kind, orig: v,
+                      value: asText(v, kind), isDefault: defaults.has(p.join(".")), error: "" });
+        }
+      };
+      walk(settings.values || {}, []);
+      advanced.value = rows;
+    }
+    // La valeur saisie, typée comme l'originale : {value} ou {error}.
+    function parseAdv(row) {
+      if (row.kind === "bool") return { value: row.value };
+      if (row.kind === "number") {
+        const n = Number(row.value);
+        return row.value === "" || Number.isNaN(n) ? { error: "nombre attendu" } : { value: n };
+      }
+      if (row.kind === "list") return { value: csv(row.value) };
+      if (row.kind === "json") {
+        try { return { value: JSON.parse(row.value) }; } catch { return { error: "JSON invalide" }; }
+      }
+      return { value: row.value };
+    }
+    const advError = (row) => parseAdv(row).error || "";
+    const backendNames = computed(() => new Set(px.backends.map((b) => String(b.name || "").trim())));
+    const overrides = computed(() => advanced.value.flatMap((row) => {
+      const { value, error } = parseAdv(row);
+      if (error || JSON.stringify(value) === JSON.stringify(row.orig)) return [];
+      // Un backend retiré du formulaire ne revient pas par ses réglages avancés.
+      if (row.path[0] === "backends" && !backendNames.value.has(row.path[1])) return [];
+      return [{ path: row.path, value }];
+    }));
+    const advGroups = computed(() => {
+      const f = advFilter.value.trim().toLowerCase();
+      const groups = new Map();
+      for (const row of advanced.value) {
+        if (f && !row.path.join(".").toLowerCase().includes(f)) continue;
+        if (!groups.has(row.group)) groups.set(row.group, []);
+        groups.get(row.group).push(row);
+      }
+      return [...groups].sort(([x], [y]) => x.localeCompare(y))
+        .map(([name, rows]) => ({ name, rows }));
+    });
+    const advChanged = (row) => {
+      const { value, error } = parseAdv(row);
+      return !error && JSON.stringify(value) !== JSON.stringify(row.orig);
+    };
+    watch(() => [proxyOut.value.partial, JSON.stringify(overrides.value)], () => {
       clearTimeout(mergeTimer);
       mergeTimer = setTimeout(mergeForm, 300);
     });
 
-    return { KEYFILE, settings, loadSettings, checkSettings, settingsFile, edited, resetProxy, part, parts, setPart, account, isAdmin, keys, tomlKeys, allKeys,
+    // ── sommaire : les sections de l'onglet, celle à l'écran en évidence ──
+    const SECTIONS = [
+      { id: "acces", label: "Accès" }, { id: "backends", label: "Backends" },
+      { id: "surfaces", label: "Surfaces" }, { id: "outils", label: "Outils" },
+      { id: "partage", label: "Partage équitable" }, { id: "comptes", label: "Comptes (OIDC)" },
+      { id: "divers", label: "Divers" }, { id: "avance", label: "Avancé" },
+      { id: "fichier", label: "Fichier complet", sep: true }, { id: "env", label: ".env" },
+    ];
+    const activeSection = ref("acces");
+    let observer = null;
+    function goTo(id) {
+      activeSection.value = id;
+      const el = document.getElementById("px-" + id);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    function observeSections() {
+      if (observer) observer.disconnect();
+      if (!("IntersectionObserver" in window)) return;
+      const visible = new Map();
+      observer = new IntersectionObserver((entries) => {
+        for (const e of entries) visible.set(e.target.dataset.section, e.isIntersecting);
+        const first = SECTIONS.find((sct) => visible.get(sct.id));
+        if (first) activeSection.value = first.id;
+      }, { rootMargin: "-80px 0px -55% 0px" });
+      document.querySelectorAll("[data-section]").forEach((el) => observer.observe(el));
+    }
+    watch(part, async (p) => { if (p === "proxy") { await nextTick(); observeSections(); } },
+          { immediate: true });
+    onBeforeUnmount(() => observer && observer.disconnect());
+
+    return { KEYFILE, settings, loadSettings, checkSettings, settingsFile, edited, resetProxy,
+             changes, showWarn, advanced, advFilter, advGroups, advChanged, advError, SECTIONS, activeSection, goTo, part, parts, setPart, account, isAdmin, keys, tomlKeys, allKeys,
              keyLabel, fresh, keyError, armed, createKey, revokeKey, loadKeys,
              users, userError, bindToml, ROLES, fair, num, shareMode,
              customShare, pickShare, typeShare, roleLabel, pendingCount, setRole, when,
@@ -872,15 +1002,54 @@ window.ConfigPanel = {
       </div>
     </div>
 
-    <div class="config-grid" v-if="part === 'proxy'">
-      <form class="panel config-form" @submit.prevent>
-        <div class="panel-head"><h2>Proxy</h2>
-          <button type="button" class="btn ghost" @click="resetProxy" :disabled="!settings.loaded"
-                  title="Relit la configuration en vigueur : formulaire et fichier y reviennent">Réinitialiser</button></div>
-        <p class="note config-intro">Prérempli d'après la configuration en vigueur ; ce qu'on y
-          change s'applique au fichier complet ci-contre. « Réinitialiser » y ramène l'un et l'autre.</p>
-        <div class="config-fields">
-          <fieldset><legend>Accès</legend>
+    <div class="proxy-layout" v-if="part === 'proxy'">
+      <nav class="proxy-nav" aria-label="Sections">
+        <template v-for="sct in SECTIONS" :key="sct.id">
+          <hr v-if="sct.sep">
+          <button type="button" :aria-current="activeSection === sct.id ? 'true' : null"
+                  @click="goTo(sct.id)">{{ sct.label }}<span class="count" v-if="sct.id === 'backends'">{{ px.backends.length }}</span><span
+                  class="count" v-else-if="sct.id === 'avance' && advanced.length">{{ advanced.length }}</span></button>
+        </template>
+      </nav>
+      <div class="proxy-main">
+        <div class="proxy-bar panel">
+          <span class="proxy-state">
+            <strong v-if="changes">{{ changes }} ligne{{ changes > 1 ? "s" : "" }} modifiée{{ changes > 1 ? "s" : "" }}</strong>
+            <span v-else class="dim">Configuration en vigueur, sans modification</span>
+            <button type="button" class="link warn-toggle" v-if="proxyOut.warn.length"
+                    @click="showWarn = !showWarn">⚠ {{ proxyOut.warn.length }} avertissement{{ proxyOut.warn.length > 1 ? "s" : "" }}</button>
+            <span class="dim" v-if="edited">· fichier modifié à la main</span>
+          </span>
+          <span class="config-actions">
+            <button type="button" class="btn ghost" @click="resetProxy" :disabled="!settings.loaded"
+                    title="Relit la configuration en vigueur : formulaire et fichier y reviennent">Réinitialiser</button>
+            <button type="button" class="btn ghost" @click="checkSettings"
+                    :disabled="!settings.loaded || settings.checking">Vérifier</button>
+            <button type="button" class="btn ghost" @click="copy(settingsFile)"
+                    :disabled="!settings.loaded">{{ copied === settingsFile.name ? "Copié" : "Copier" }}</button>
+            <button type="button" class="btn" @click="download(settingsFile)"
+                    :disabled="!settings.loaded">Télécharger config.toml</button>
+          </span>
+          <ul class="proxy-warn" v-if="showWarn && proxyOut.warn.length">
+            <li v-for="w in proxyOut.warn" :key="w">{{ w }}</li>
+          </ul>
+          <p class="err" v-if="settings.error" role="status">{{ settings.error }}</p>
+        <div v-if="settings.check" class="settings-check" role="status">
+          <p class="err" v-if="!settings.check.ok">TOML invalide : {{ settings.check.error }}</p>
+          <p class="ok" v-else-if="!settings.check.unknown.length">TOML valide, toutes les clés sont connues du proxy.</p>
+          <p class="err" v-else>TOML valide, mais le proxy ne lit pas ces clés (faute de frappe, réglage retiré) :
+            <code v-for="k in settings.check.unknown" :key="k">{{ k }}</code></p>
+          <p class="note" v-if="settings.check.masked">{{ settings.check.masked }} valeur(s) masquée(s) à
+            remettre avant usage.</p>
+        </div>
+        </div>
+        <p class="note proxy-intro">Tout part de la configuration en vigueur : ce qu'on change ici
+          s'applique au fichier complet (section « Fichier complet »). <strong>Rien n'est écrit sur le
+          proxy</strong> : télécharger le fichier, remplacer data/config.toml sur l'hôte (l'ancien en
+          .bak, valeurs masquées remises), puis redémarrer.</p>
+        <section class="panel proxy-section" id="px-acces" data-section="acces">
+          <div class="panel-head"><h2>Accès</h2></div>
+          <div class="config-fields">
             <p class="note">Une clé par personne : chacune a ses statistiques, sa mémoire, ses conversations.</p>
             <div class="row" v-for="(k, i) in px.keys" :key="i">
               <input v-model="k.name" spellcheck="false" placeholder="VARIABLE" class="mono">
@@ -889,8 +1058,11 @@ window.ConfigPanel = {
               <button type="button" class="icon danger" title="Retirer" @click="px.keys.splice(i, 1)">×</button>
             </div>
             <button type="button" class="btn ghost" @click="addKey">Ajouter une clé</button>
-          </fieldset>
-          <fieldset><legend>Backends</legend>
+          </div>
+        </section>
+        <section class="panel proxy-section" id="px-backends" data-section="backends">
+          <div class="panel-head"><h2>Backends</h2></div>
+          <div class="config-fields">
             <div class="backend" v-for="(b, i) in px.backends" :key="i">
               <div class="row">
                 <input v-model="b.name" placeholder="nom (préfixe)" spellcheck="false" class="mono">
@@ -912,37 +1084,11 @@ window.ConfigPanel = {
               </div>
             </div>
             <button type="button" class="btn ghost" @click="addBackend">Ajouter un backend</button>
-          </fieldset>
-          <fieldset><legend>Partage équitable</legend>
-            <p class="note">Une part de tokens par client sur une heure glissante : au-delà, ses requêtes
-              attendent, rien n'est refusé. La part de chaque compte se règle dans Comptes.</p>
-            <label class="field"><span>Part par défaut (tokens / heure, 0 = aucune limite)</span>
-              <input v-model.number="px.fairShare" type="number" min="0" step="10000" class="num"></label>
-            <label class="field"><span>Routes exemptées (quotas et partage)</span>
-              <input v-model="px.exempt" placeholder="/embeddings, /ocr" spellcheck="false" class="mono"></label>
-          </fieldset>
-          <fieldset><legend>Comptes (OIDC)</legend>
-            <label class="check"><input type="checkbox" v-model="px.oidc.on"> connexion par un fournisseur OIDC</label>
-            <template v-if="px.oidc.on">
-              <p class="note">client_id et client_secret vont dans le .env. Chez le fournisseur : un client
-                confidentiel, retour sur &lt;adresse publique&gt;/ui/auth/callback.</p>
-              <label class="field"><span>Émetteur (issuer)</span>
-                <input v-model="px.oidc.issuer" placeholder="https://auth.example.org/realms/x" spellcheck="false" class="mono"></label>
-              <label class="field"><span>Adresse de retour (vide : adresse publique + /ui/auth/callback)</span>
-                <input v-model="px.oidc.redirectUri" placeholder="https://llm.example.org/ui/auth/callback" spellcheck="false" class="mono"></label>
-              <label class="field"><span>Nouveaux comptes</span>
-                <select v-model="px.oidc.newAccounts">
-                  <option value="pending">en attente d'un admin</option>
-                  <option value="user">actifs d'emblée</option></select></label>
-              <label class="field"><span>Durée d'une session (jours)</span>
-                <input v-model.number="px.oidc.sessionDays" type="number" min="1" class="num"></label>
-              <label class="field"><span>Clés actives par compte</span>
-                <input v-model.number="px.oidc.maxKeys" type="number" min="1" class="num"></label>
-              <label class="field"><span>Libellé du bouton</span>
-                <input v-model="px.oidc.label" spellcheck="false"></label>
-            </template>
-          </fieldset>
-          <fieldset><legend>Clients</legend>
+          </div>
+        </section>
+        <section class="panel proxy-section" id="px-surfaces" data-section="surfaces">
+          <div class="panel-head"><h2>Surfaces</h2></div>
+          <div class="config-fields">
             <label class="check"><input type="checkbox" v-model="px.anthropic"> surface Anthropic (Claude Code)</label>
             <label class="field" v-if="px.anthropic"><span>Modèle par défaut de Claude Code</span>
               <select v-model="px.defaultModel" class="mono">
@@ -957,8 +1103,11 @@ window.ConfigPanel = {
                 <option value="">— le dernier choisi, sinon le premier —</option>
                 <option v-for="m in modelChoices(px.chatModel)" :key="m" :value="m">{{ m }}</option>
               </select></label>
-          </fieldset>
-          <fieldset><legend>Outils hébergés</legend>
+          </div>
+        </section>
+        <section class="panel proxy-section" id="px-outils" data-section="outils">
+          <div class="panel-head"><h2>Outils hébergés</h2></div>
+          <div class="config-fields">
             <label class="check"><input type="checkbox" v-model="px.hostedTools"> sur /v1/chat/completions</label>
             <div class="tools-grid">
               <template v-for="t in TOOL_LIST" :key="t.id">
@@ -978,50 +1127,95 @@ window.ConfigPanel = {
               <input v-model.number="px.maxCalls" type="number" min="1" max="64" class="num"></label>
             <label class="field"><span>Présentés d'office ([chat].always)</span>
               <input v-model="px.always" placeholder="web_search, web_fetch" spellcheck="false" class="mono"></label>
-          </fieldset>
-          <fieldset><legend>Divers</legend>
+          </div>
+        </section>
+        <section class="panel proxy-section" id="px-partage" data-section="partage">
+          <div class="panel-head"><h2>Partage équitable</h2></div>
+          <div class="config-fields">
+            <p class="note">Une part de tokens par client sur une heure glissante : au-delà, ses requêtes
+              attendent, rien n'est refusé. La part de chaque compte se règle dans Comptes.</p>
+            <label class="field"><span>Part par défaut (tokens / heure, 0 = aucune limite)</span>
+              <input v-model.number="px.fairShare" type="number" min="0" step="10000" class="num"></label>
+            <label class="field"><span>Routes exemptées (quotas et partage)</span>
+              <input v-model="px.exempt" placeholder="/embeddings, /ocr" spellcheck="false" class="mono"></label>
+          </div>
+        </section>
+        <section class="panel proxy-section" id="px-comptes" data-section="comptes">
+          <div class="panel-head"><h2>Comptes (OIDC)</h2></div>
+          <div class="config-fields">
+            <label class="check"><input type="checkbox" v-model="px.oidc.on"> connexion par un fournisseur OIDC</label>
+            <template v-if="px.oidc.on">
+              <p class="note">client_secret va dans le .env. Chez le fournisseur : un client
+                confidentiel, retour sur &lt;adresse publique&gt;/ui/auth/callback.</p>
+              <label class="field"><span>Émetteur (issuer)</span>
+                <input v-model="px.oidc.issuer" placeholder="https://auth.example.org/realms/x" spellcheck="false" class="mono"></label>
+              <label class="field"><span>Adresse de retour (vide : adresse publique + /ui/auth/callback)</span>
+                <input v-model="px.oidc.redirectUri" placeholder="https://llm.example.org/ui/auth/callback" spellcheck="false" class="mono"></label>
+              <label class="field"><span>Nouveaux comptes</span>
+                <select v-model="px.oidc.newAccounts">
+                  <option value="pending">en attente d'un admin</option>
+                  <option value="user">actifs d'emblée</option></select></label>
+              <label class="field"><span>Durée d'une session (jours)</span>
+                <input v-model.number="px.oidc.sessionDays" type="number" min="1" class="num"></label>
+              <label class="field"><span>Clés actives par compte</span>
+                <input v-model.number="px.oidc.maxKeys" type="number" min="1" class="num"></label>
+              <label class="field"><span>Libellé du bouton</span>
+                <input v-model="px.oidc.label" spellcheck="false"></label>
+            </template>
+          </div>
+        </section>
+        <section class="panel proxy-section" id="px-divers" data-section="divers">
+          <div class="panel-head"><h2>Divers</h2></div>
+          <div class="config-fields">
             <label class="field"><span>Adresse publique (liens des fichiers)</span>
               <input v-model="px.publicUrl" placeholder="https://llm.example.org" spellcheck="false" class="mono"></label>
             <label class="field"><span>Rétention des statistiques (jours, 0 = illimitée)</span>
               <input v-model.number="px.retention" type="number" min="0" class="num"></label>
-          </fieldset>
-        </div>
-      </form>
-      <div class="config-out">
-        <p class="chat-warn panel" v-for="w in proxyOut.warn" :key="w">{{ w }}</p>
-        <section class="panel config-settings">
-        <div class="panel-head"><h3>data/config.toml</h3>
-          <span class="config-actions">
-            <button type="button" class="btn ghost" @click="checkSettings"
-                    :disabled="!settings.loaded || settings.checking">Vérifier</button>
-            <button type="button" class="btn ghost" @click="settings.text = settings.generated"
-                    :disabled="!edited" title="Rend au fichier les valeurs du formulaire">Réappliquer le formulaire</button>
-            <button type="button" class="btn ghost" @click="copy(settingsFile)"
-                    :disabled="!settings.loaded">{{ copied === settingsFile.name ? "Copié" : "Copier" }}</button>
-            <button type="button" class="btn ghost" @click="download(settingsFile)"
-                    :disabled="!settings.loaded">Télécharger</button>
-          </span></div>
-        <p class="note">Le fichier complet : <code>{{ settings.path }}</code> tel qu'il est, avec ce que le
-          formulaire y change, et les valeurs que le proxy prend d'office ({{ settings.defaults }}, suivies de
-          « # défaut »). Les <code>\${VAR}</code> renvoient au .env ; une valeur secrète écrite en clair est
-          masquée. <strong>Rien n'est écrit sur le proxy</strong> : remplacer data/config.toml sur l'hôte
-          (l'ancien en .bak, valeurs masquées remises), puis redémarrer.</p>
-        <p class="note" v-if="edited">Modifié à la main : le formulaire ne l'écrase plus.</p>
-        <p class="err" v-if="settings.error" role="status">{{ settings.error }}</p>
-        <div v-if="settings.check" class="settings-check" role="status">
-          <p class="err" v-if="!settings.check.ok">TOML invalide : {{ settings.check.error }}</p>
-          <p class="ok" v-else-if="!settings.check.unknown.length">TOML valide, toutes les clés sont connues du proxy.</p>
-          <p class="err" v-else>TOML valide, mais le proxy ne lit pas ces clés (faute de frappe, réglage retiré) :
-            <code v-for="k in settings.check.unknown" :key="k">{{ k }}</code></p>
-          <p class="note" v-if="settings.check.masked">{{ settings.check.masked }} valeur(s) masquée(s) à
-            remettre avant usage.</p>
-        </div>
-        <textarea v-model="settings.text" spellcheck="false" aria-label="config.toml"
-                  :placeholder="settings.loaded ? '' : 'Chargement…'"></textarea>
-      </section>
-        <section class="panel config-file" v-for="f in proxyOut.files" :key="f.name">
+          </div>
+        </section>
+        <section class="panel proxy-section" id="px-avance" data-section="avance">
+          <div class="panel-head"><h2>Avancé</h2>
+            <input class="adv-filter" v-model="advFilter" type="search" placeholder="Filtrer (ex. timeout, quotas)"
+                   aria-label="Filtrer les réglages avancés" spellcheck="false"></div>
+          <p class="note adv-intro">Chaque réglage que les sections ci-dessus ne couvrent pas, à sa valeur
+            en vigueur (« défaut » : le fichier ne le dit pas, le proxy le prend d'office).</p>
+          <div class="adv-group" v-for="g in advGroups" :key="g.name">
+            <h3>[{{ g.name }}]</h3>
+            <div class="adv-row" v-for="row in g.rows" :key="JSON.stringify(row.path)"
+                 :class="{ changed: advChanged(row) }">
+              <label class="adv-key mono" :for="'adv-' + row.path.join('.')">{{ row.key }}</label>
+              <span class="adv-val">
+                <input v-if="row.kind === 'bool'" :id="'adv-' + row.path.join('.')" type="checkbox" v-model="row.value">
+                <input v-else :id="'adv-' + row.path.join('.')" v-model="row.value" spellcheck="false"
+                       :class="{ mono: row.kind !== 'number', num: row.kind === 'number' }"
+                       :inputmode="row.kind === 'number' ? 'decimal' : null">
+                <span class="err" v-if="advError(row)">{{ advError(row) }}</span>
+              </span>
+              <span class="adv-tags">
+                <span class="tag" v-if="row.isDefault && !advChanged(row)">défaut</span>
+                <span class="tag changed" v-if="advChanged(row)">modifié</span>
+              </span>
+            </div>
+          </div>
+          <p class="note adv-intro" v-if="!advGroups.length">{{ advFilter ? "Aucun réglage ne correspond." : "Chargement…" }}</p>
+        </section>
+        <section class="panel proxy-section config-settings" id="px-fichier" data-section="fichier">
+          <div class="panel-head"><h2>Fichier complet</h2>
+            <span class="config-actions">
+              <button type="button" class="btn ghost" @click="settings.text = settings.generated"
+                      :disabled="!edited" title="Rend au fichier les valeurs des sections">Réappliquer les sections</button>
+            </span></div>
+          <p class="note"><code>{{ settings.path }}</code> avec ce que les sections y changent ; les valeurs
+            que le proxy prend d'office sont suivies de « # défaut » ({{ settings.defaults }}). Les
+            <code>\${VAR}</code> renvoient au .env ; une valeur secrète écrite en clair est masquée. Modifiable
+            directement : les sections ne l'écrasent plus alors.</p>
+          <textarea v-model="settings.text" spellcheck="false" aria-label="config.toml"
+                    :placeholder="settings.loaded ? '' : 'Chargement…'"></textarea>
+        </section>
+        <section class="panel proxy-section config-file" id="px-env" data-section="env"
+                 v-for="f in proxyOut.files" :key="f.name">
           <header class="panel-head">
-            <h3>{{ f.name }}</h3>
+            <h2>{{ f.name }}</h2>
             <span class="config-actions">
               <button type="button" class="btn ghost" @click="copy(f)">{{ copied === f.name ? "Copié" : "Copier" }}</button>
               <button type="button" class="btn ghost" @click="download(f)">Télécharger</button>
