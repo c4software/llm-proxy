@@ -1,8 +1,9 @@
 """
 Sauvegarde et restauration de data/ — ce qu'on ne peut pas reconstruire :
 
-  stats.db, memory.db, accounts.db   les bases SQLite (statistiques,
-                                     mémoire persistante, comptes et clés)
+  stats.db, memory.db, accounts.db,  les bases SQLite (statistiques,
+  conversations.db                   mémoire persistante, comptes et clés,
+                                     historique du chat de la page)
   client.secret                      le secret des condensés : le perdre,
                                      c'est perdre toutes les mémoires, les
                                      clés gérées et les sessions
@@ -36,7 +37,7 @@ import tempfile
 import time
 import tomllib
 
-from . import accounts, config, memories, stats, tools
+from . import accounts, config, conversations, memories, stats, tools
 
 PREFIX = "llm-proxy-"
 
@@ -45,6 +46,7 @@ def sources() -> dict[str, str]:
     """Nom dans l'archive → chemin sur le disque."""
     return {"stats.db": stats.DB_PATH, "memory.db": memories.DB_PATH,
             "accounts.db": accounts.DB_PATH,
+            "conversations.db": conversations.DB_PATH,
             "client.secret": tools.SECRET_PATH,
             "config.toml": config.CONFIG_PATH}
 

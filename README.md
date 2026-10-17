@@ -212,6 +212,7 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `proxy/llm_proxy/tools/web_fetch.py` | L'outil `web_fetch` : lecture d'une page (ou du texte d'un PDF) par son URL, redirections suivies saut par saut sous le garde-fou, tailles bornées ; la lecture (`load`) et le texte d'une page (`page_text`) servent aussi à `web_grep` |
 | `proxy/llm_proxy/tools/web_grep.py` | L'outil `web_grep` : expression régulière cherchée dans une page lue par `web_fetch.load`, lignes trouvées avec contexte et offset ; bibliothèque `regex`, pour son délai |
 | `proxy/llm_proxy/tools/memory.py` | L'outil `memory` : `view`, `create`, `str_replace`, `insert`, `delete`, `rename` sur la mémoire persistante du client qui appelle |
+| `proxy/llm_proxy/conversations.py`, `conversation_routes.py` | L'historique du chat de la page (SQLite `data/conversations.db`) : conversations et images par compte, routes `/ui/conversations` et `/ui/assets` |
 | `proxy/llm_proxy/memories.py` | Le magasin de la mémoire persistante (SQLite `data/memory.db`) : fichiers par client (`call.client`), chemins sous `/memories`, bornes par client |
 | `proxy/llm_proxy/mcp_server.py` | Le serveur MCP (`POST /mcp`) : JSON-RPC sans état — `initialize`, `ping`, `tools/list`, `tools/call` — sur les outils hébergés actifs |
 | `proxy/llm_proxy/tools/mcp.py` | Client MCP (Streamable HTTP, sans SDK) : découverte des outils des serveurs de la configuration, chacun enregistré comme outil hébergé ; révision 2026-07-28 sans état et révisions à `initialize`/session ; résultats ramenés à du texte |
@@ -673,16 +674,25 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   comptées à la clé connectée, comme toute requête de l'API. Corps JSON exigé (`415`
   sinon) : une page tierce ne peut pas en envoyer sans requête
   préliminaire CORS, que le proxy ne sert pas.
-- **Conversations** : dans le navigateur (`localStorage`), une liste par
-  clé connectée ; rien n'est gardé côté proxy. Elles sont listées dans le
-  menu latéral (un magasin partagé, `chat/store.js`). Chacune garde son modèle,
-  son prompt système, sa température et ses outils. Renommer, supprimer,
-  modifier une question (la suite repart d'elle), régénérer la dernière
-  réponse, arrêter un flux en cours. Si le stockage du navigateur
-  déborde, les images des autres conversations sont retirées de
-  l'historique local, pas leurs messages.
+- **Conversations** : gardées par le proxy (SQLite `data/conversations.db`),
+  liées au **compte** connecté — le même compte les retrouve sur tout
+  navigateur et tout appareil. Elles sont listées dans le menu latéral (un
+  magasin partagé, `chat/store.js`, enregistré par `chat/history.js`).
+  Chacune garde son modèle, son prompt système, sa température, ses
+  outils, ses artifacts et ses fichiers produits. Les **images** (jointes,
+  générées, retouchées) sont gardées à part et servies sous
+  `/ui/assets/<id>` (PNG, JPEG, GIF, WebP seulement, reconnues à leurs
+  octets) ; la page les remet en data URL pour le modèle. Une image que
+  plus rien ne cite est effacée après dix minutes. Routes :
+  `GET /ui/conversations`, `PUT`/`DELETE /ui/conversations/{id}`,
+  `POST /ui/assets`, `GET /ui/assets/{id}` — toujours celles du compte
+  connecté. Bornes réglables (`[ui]` : `conversation_max_bytes`,
+  `asset_max_bytes`, `history_max_bytes`). Les conversations que gardait
+  l'ancien stockage du navigateur ne sont pas reprises. Renommer,
+  supprimer, modifier une question (la suite repart d'elle), régénérer la
+  dernière réponse, arrêter un flux en cours.
 - **Incognito** (bouton de l'en-tête) : la conversation n'est **jamais
-  écrite** dans le stockage du navigateur et disparaît dès qu'on la
+  envoyée** à l'historique et disparaît dès qu'on la
   quitte ou qu'on recharge la page. Sur une conversation vide, le bouton
   change son genre ; sur une conversation commencée, il en ouvre une
   neuve. Ses requêtes portent `X-Incognito: 1` (jamais relayé au
@@ -2905,7 +2915,7 @@ un second service, avec ses propres options de sécurité.
 ### Sauvegarde et restauration
 
 `data/` porte ce qu'on ne peut pas reconstruire : les bases
-(`stats.db`, `memory.db`, `accounts.db`), **`client.secret`** — le perdre
+(`stats.db`, `memory.db`, `accounts.db`, `conversations.db`), **`client.secret`** — le perdre
 ou le remplacer, c'est perdre toutes les mémoires, toutes les clés
 gérées et toutes les sessions — et `config.toml`. Les bases sont en WAL :
 un `cp` pendant que le proxy écrit ne donne pas une copie fiable.
@@ -3192,6 +3202,10 @@ défauts), qu'il applique sans croire le proxy : à monter avec celles-ci.
 |---|---|---|
 | `chat` | `false` | Ouvre l'onglet *Chat* du tableau de bord (`POST /ui/chat/completions`) : le cookie de `/ui` y dépense des tokens, comptés à la clé connectée. Voir [Le chat](#le-chat) |
 | `chat_model` | `""` | Le modèle présélectionné dans le chat (`<backend>/<modèle>`) : chaque nouvelle conversation part sur lui, s'il est au catalogue. Vide : le dernier modèle choisi dans le navigateur, sinon le premier du catalogue |
+| `conversations_database` | `"conversations.db"` | Base SQLite de l'historique du chat (conversations et images, par compte) ; relatif = à côté de `config.toml` |
+| `conversation_max_bytes` | `20000000` | Taille maximale d'une conversation (texte, artifacts, fichiers produits) |
+| `asset_max_bytes` | `20000000` | Taille maximale d'une image gardée |
+| `history_max_bytes` | `2000000000` | Taille maximale de tout l'historique d'un compte |
 
 ### `[fair_share]`
 

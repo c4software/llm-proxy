@@ -796,6 +796,15 @@ chat = false
 # nouvelle conversation part sur lui, s'il est au catalogue. Vide : le
 # dernier modèle choisi dans le navigateur, sinon le premier du catalogue.
 chat_model = ""
+# L'historique du chat : les conversations du compte connecté et leurs
+# images, gardées en base (le même compte les retrouve sur tout appareil ;
+# jamais une conversation incognito). Relatif = à côté de ce fichier.
+conversations_database = "conversations.db"
+# Bornes, en octets : une conversation (son texte, artifacts et fichiers
+# produits compris), une image, et tout l'historique d'un compte.
+conversation_max_bytes = 20000000
+asset_max_bytes = 20000000
+history_max_bytes = 2000000000
 
 
 # ── Partage équitable ───────────────────────────────────────────────────

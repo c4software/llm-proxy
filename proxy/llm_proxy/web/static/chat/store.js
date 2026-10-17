@@ -1,12 +1,14 @@
 import { when } from "../lib/format.js";
+import * as history from "./history.js";
 
 // Les CONVERSATIONS : un magasin partagé, lu par le chat (ChatPanel) ET par
-// le menu latéral de la page (app.js), qui en affiche la liste. Dans
-// ce navigateur (localStorage), une liste par clé connectée.
+// le menu latéral de la page (app.js), qui en affiche la liste. Gardées
+// par le proxy, une liste par compte connecté (chat/history.js).
 export const ChatStore = (() => {
   const { reactive, computed, watch, toRaw } = Vue;
   const state = reactive({
     key: "", convs: [], currentId: null,
+    loading: false,                 // l'historique arrive du proxy
     streaming: false,               // une réponse en cours : pas de changement
     confirming: null,               // id de la conversation à supprimer
     renaming: null, renameText: "",
@@ -32,57 +34,64 @@ export const ChatStore = (() => {
     });
   });
 
-  // La liste de cette clé. Rien n'est relu si c'est déjà elle.
+  // L'historique du COMPTE connecté, gardé par le proxy (chat/history.js).
+  // Rien n'est relu si c'est déjà le sien. `ready` : la liste est là.
+  let ready = Promise.resolve();
+  const saved = new Map();          // id → le JSON envoyé en dernier
   function open(client) {
-    const key = "llm-proxy-chats:" + (client || "open");
-    if (state.key === key) return;
+    const key = client || "open";
+    if (state.key === key) return ready;
     state.key = key;
-    let list = [];
-    try {
-      list = JSON.parse(localStorage.getItem(key) || "[]");
-      if (!Array.isArray(list)) list = [];
-    } catch { list = []; }
-    state.convs = list;
-    state.currentId = list[0] ? list[0].id : null;
+    state.loading = true;
+    saved.clear();
+    ready = history.load().then((list) => {
+      if (state.key !== key) return;
+      list = list.filter((c) => c && c.id && Array.isArray(c.messages));
+      for (const c of list) saved.set(c.id, JSON.stringify(c));
+      // Une conversation commencée pendant le chargement reste en tête.
+      state.convs = [...state.convs.filter((c) => !saved.has(c.id)), ...list];
+      if (!state.currentId && state.convs[0]) state.currentId = state.convs[0].id;
+      state.storageWarning = "";
+    }).catch((e) => {
+      state.storageWarning = "Historique indisponible : " + e.message;
+    }).finally(() => { state.loading = false; });
+    return ready;
   }
 
   // Enregistrement différé : un flux modifie le message des dizaines de
-  // fois par seconde, le stockage n'a besoin que du dernier état.
-  let saveTimer = null;
-  // Ce qui s'écrit : jamais une conversation incognito.
-  const kept = () => toRaw(state.convs).filter((c) => !c.incognito);
-  function persist() {
-    if (!state.key) return;
-    try {
-      localStorage.setItem(state.key, JSON.stringify(kept()));
-      state.storageWarning = "";
-    } catch {
-      // Plein : on retire les images des AUTRES conversations, puis on
-      // réessaie. Leurs messages restent.
-      let dropped = 0;
-      for (const c of state.convs) {
-        if (c.id === state.currentId) continue;
-        for (const m of c.messages) {
-          for (const a of m.attachments || []) {
-            if (a.kind === "image" && a.data) { a.data = null; dropped++; }
-          }
+  // fois par seconde, le proxy n'a besoin que d'un état de temps en
+  // temps. Seules partent les conversations qui ont changé — jamais une
+  // conversation incognito, ni une conversation encore vide.
+  let saveTimer = null, running = null, again = false;
+  const kept = (c) => !c.incognito && c.messages.length;
+  async function persist() {
+    saveTimer = null;
+    if (running) { again = true; return running; }
+    running = (async () => {
+      for (const c of toRaw(state.convs)) {
+        if (!kept(c) || saved.get(c.id) === JSON.stringify(c)) continue;
+        try {
+          await history.save(c);
+          saved.set(c.id, JSON.stringify(c));
+          state.storageWarning = "";
+        } catch (e) {
+          state.storageWarning = `« ${c.title} » n'est pas enregistrée : ${e.message}`;
         }
       }
-      try {
-        localStorage.setItem(state.key, JSON.stringify(kept()));
-        state.storageWarning = dropped
-          ? `Stockage du navigateur plein : ${dropped} image(s) d'anciennes conversations retirée(s).`
-          : "";
-      } catch {
-        state.storageWarning = "Stockage du navigateur plein : cette conversation "
-          + "n'est plus enregistrée. Supprimez-en d'anciennes.";
-      }
-    }
+    })();
+    try { await running; } finally { running = null; }
+    if (again) { again = false; return persist(); }
   }
   watch(() => state.convs, () => {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(persist, 400);
+    if (!saveTimer) saveTimer = setTimeout(persist, 1000);
   }, { deep: true });
+  // La page quittée ou cachée : ce qui reste part tout de suite.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && saveTimer) {
+      clearTimeout(saveTimer);
+      persist();
+    }
+  });
 
   function newConv(incognito = false) {
     if (state.streaming) return;
@@ -122,7 +131,15 @@ export const ChatStore = (() => {
 
   function remove(id) {
     if (state.confirming !== id) { state.confirming = id; return; }
+    const gone = state.convs.find((c) => c.id === id);
     state.convs = state.convs.filter((c) => c.id !== id);
+    if (gone && !gone.incognito && saved.has(id)) {
+      saved.delete(id);
+      // Après un enregistrement en cours, qui la recréerait.
+      Promise.resolve(running).then(() => history.drop(id)).catch((e) => {
+        state.storageWarning = "Suppression non enregistrée : " + e.message;
+      });
+    }
     state.confirming = null;
     if (state.currentId === id) {
       state.currentId = sorted.value[0] ? sorted.value[0].id : null;
@@ -140,16 +157,19 @@ export const ChatStore = (() => {
 
   // Exporter : la conversation en Markdown, images comprises (data URL),
   // téléchargée par le navigateur. Le raisonnement n'y est pas.
-  function exportMd(c) {
+  async function exportMd(c) {
     const fence = (t) => "`".repeat(Math.max(3, ...(String(t).match(/`+/g) || [""]).map((b) => b.length + 1)));
     const out = [`# ${c.title}`, "", `*${new Date(c.created).toLocaleString("fr-FR")} · ${c.model}*`, ""];
     if (c.system && c.system.trim()) out.push("> Prompt système : " + c.system.trim().replace(/\n/g, "\n> "), "");
     for (const m of c.messages) {
       out.push(m.role === "user" ? "## Vous" : `## ${m.model || "Assistant"}`, "");
       for (const a of m.attachments || []) {
-        if (a.kind === "image" && a.data) out.push(`![${a.name}](${a.data})`, "");
+        if (a.kind === "image" && a.data) {
+          const url = await history.dataUrl(a.data).catch(() => a.data);
+          out.push(`![${a.name}](${url})`, "");
+        }
         else if (a.kind === "text") { const f = fence(a.data); out.push(`\`${a.name}\``, "", f, a.data, f, ""); }
-        else out.push(`*(${a.name} : image retirée de l'historique local)*`, "");
+        else out.push(`*(${a.name} : image absente)*`, "");
       }
       if (m.content) out.push(m.content, "");
       if (m.error) out.push(`> Erreur : ${m.error}`, "");
@@ -168,7 +188,7 @@ export const ChatStore = (() => {
   }
 
 
-  return { state, sorted, filtered, current, open, newConv, select, remove,
+  return { state, sorted, filtered, current, open, newConv, persist, select, remove,
            startRename, endRename, exportMd, when, uid,
            setDefaults(fn) { defaults = fn; } };
 })();

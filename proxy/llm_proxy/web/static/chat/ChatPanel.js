@@ -10,11 +10,11 @@
   Ce que la page sait du proxy (chat ouvert, outils hébergés déclarables)
   lui vient de /ui/session, par la prop `session`.
 
-  CONVERSATIONS : dans CE navigateur (localStorage), une liste par clé
-  connectée — rien n'est gardé côté proxy. Chacune garde son modèle, son
-  prompt système, sa température et ses outils. Si le stockage déborde
-  (des images jointes), les images des autres conversations sont
-  retirées de l'historique local, pas leurs messages.
+  CONVERSATIONS : gardées par le proxy, liées au compte connecté
+  (chat/history.js, GET/PUT/DELETE /ui/conversations) ; leurs images
+  (jointes, générées) à part, sous /ui/assets. Chacune garde son modèle,
+  son prompt système, sa température, ses outils, ses artifacts et ses
+  fichiers produits.
 
   OUTILS HÉBERGÉS : un interrupteur par TYPE déclarable
   (`{"type": "web_search"}` présente web_search, web_fetch, web_grep). Le
@@ -39,8 +39,8 @@
   modèle de les lire ; les fichiers texte sont joints au message, entre
   balises <file name="…">. Le reste est refusé.
 
-  INCOGNITO : une conversation marquée `incognito` n'est jamais écrite
-  dans le stockage du navigateur, et disparaît dès qu'on la quitte (ou
+  INCOGNITO : une conversation marquée `incognito` n'est jamais envoyée
+  à l'historique, et disparaît dès qu'on la quitte (ou
   qu'on recharge la page). Ses requêtes portent `X-Incognito: 1` : le
   proxy n'en garde rien (ni échange d'outils, ni cache web, pas l'outil
   `memory`), et un fichier rendu ne vit que le temps de s'afficher. Les
@@ -60,6 +60,7 @@
   l'agrandit.
 */
 import { ChatStore } from "./store.js";
+import { inline, dataUrl, ownImage } from "./history.js";
 import { readAttachment } from "./attachments.js";
 import { imagePrompt, oneImage } from "./images.js";
 import { readStream } from "./stream.js";
@@ -524,7 +525,7 @@ export const ChatPanel = {
               break;
             }
             const start = live.content.length;
-            body.messages = [...apiMessages(conv, upto), ...workspace.stepMessages(live.steps)];
+            body.messages = await inline([...apiMessages(conv, upto), ...workspace.stepMessages(live.steps)]);
             const calls = [];
             const r = await fetch(API, {
               method: "POST", signal: controller.signal,
@@ -706,7 +707,7 @@ export const ChatPanel = {
         if (!ask || !ask.content.trim()) { live.error = "Décrire l'image à générer."; return; }
         for (let k = 0; k < count && !ctrl.signal.aborted; k++) {
           const got = await oneImage(conv, { model: conv.model, prompt, size, n: 1,
-            ...(source ? { image: source.data } : {}) }, ctrl.signal, () => emit("unauthorized"));
+            ...(source ? { image: await dataUrl(source.data) } : {}) }, ctrl.signal, () => emit("unauthorized"));
           const { revised, ...image } = got;
           live.attachments.push(image);
           if (revised && !live.content) live.content = "*" + revised + "*";
@@ -899,6 +900,7 @@ export const ChatPanel = {
     const host = (url) => { try { return new URL(url).host; } catch { return url; } };
 
     onMounted(async () => {
+      await S.open(props.session.client);
       if (!S.state.convs.length) S.newConv();
       loadVoices();
       await loadModels();
@@ -915,7 +917,7 @@ export const ChatPanel = {
     });
 
     return { chat, toolGroups, available, current, currentId,
-             models, modelsError, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
+             ownImage, models, modelsError, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
@@ -1045,7 +1047,7 @@ export const ChatPanel = {
                 <template v-for="a in m.attachments" :key="a.name">
                   <img v-if="a.kind === 'image' && a.data" :src="a.data" :alt="a.name">
                   <span v-else class="chip file">{{ a.name }}<span class="dim" v-if="a.kind === 'image'">
-                    · image retirée de l'historique local</span></span>
+                    · image absente</span></span>
                 </template>
               </div>
               <div class="text" v-if="m.content">{{ m.content }}</div>
@@ -1086,7 +1088,7 @@ export const ChatPanel = {
                 <button v-if="a.data" type="button" class="gen-image" title="Agrandir"
                         @click="zoom = a"><img :src="a.data" :alt="a.name" @load="onImageLoad"></button>
                 <span v-else class="chip file">{{ a.name }}<span class="dim">
-                  · image retirée de l'historique local</span></span>
+                  · image absente</span></span>
               </template>
             </div>
             <details class="gen-prompt" v-if="m.image && m.prompt && m.prompt.includes('\\n')">
@@ -1153,7 +1155,7 @@ export const ChatPanel = {
               <!-- Une image : ses actions ici ; plusieurs : dans l'image agrandie. -->
               <template v-if="m.image && m.attachments.length === 1 && m.attachments[0].data">
                 <a class="link" :href="m.attachments[0].data" :download="m.attachments[0].name">Télécharger</a>
-                <button type="button" class="link" v-if="m.attachments[0].data.startsWith('data:')"
+                <button type="button" class="link" v-if="ownImage(m.attachments[0].data)"
                         :disabled="streaming" @click="retouch(m.attachments[0])">Retoucher</button>
               </template>
               <span v-else-if="m.image && m.attachments.length > 1">cliquer une image pour la télécharger ou la retoucher</span>
@@ -1283,7 +1285,7 @@ export const ChatPanel = {
       <div class="lightbox-bar">
         <span class="dim">{{ zoom.name }}</span>
         <a class="btn ghost" :href="zoom.data" :download="zoom.name">Télécharger</a>
-        <button type="button" class="btn ghost" v-if="zoom.data.startsWith('data:')"
+        <button type="button" class="btn ghost" v-if="ownImage(zoom.data)"
                 :disabled="streaming" @click="retouch(zoom)">Retoucher</button>
         <button type="button" class="btn" @click="zoom = null">Fermer</button>
       </div>

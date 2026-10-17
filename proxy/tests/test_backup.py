@@ -9,7 +9,7 @@ import tarfile
 
 import pytest
 
-from llm_proxy import accounts, backup, config, memories, stats, tools
+from llm_proxy import accounts, backup, config, conversations, memories, stats, tools
 
 
 @pytest.fixture
@@ -26,6 +26,8 @@ def data(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "DB_PATH", str(d / "accounts.db"))
     monkeypatch.setattr(accounts, "_cache", {})
     monkeypatch.setattr(stats, "DB_PATH", str(d / "stats.db"))
+    monkeypatch.setattr(conversations, "DB_PATH", str(d / "conversations.db"))
+    conversations.save("cle", "c1", {"id": "c1", "title": "à garder", "messages": []})
     memories.write("cle", "/memories/note.md", "à garder")
     accounts.login("https://idp", "alice", "a@x")
     conn = sqlite3.connect(stats.DB_PATH)
@@ -51,7 +53,8 @@ def test_backup_check_restore(data, tmp_path):
     assert oct(os.stat(archive).st_mode & 0o777) == "0o600"
     with tarfile.open(archive) as tar:
         assert sorted(tar.getnames()) == ["accounts.db", "client.secret",
-                                         "config.toml", "memory.db", "stats.db"]
+                                         "config.toml", "conversations.db",
+                                         "memory.db", "stats.db"]
     assert backup.check(archive)
 
     target = tmp_path / "restored"

@@ -15,6 +15,7 @@ routes vivent par domaine, à côté :
   tool_loop.py  la boucle des outils hébergés, commune aux surfaces
   usage_api.py  l'Usage API (rôle 4bis)
   ui_routes.py  les routes du tableau de bord (/ui/*)
+  conversation_routes.py  l'historique du chat de la page (conversations.py)
   httputil.py   forme des erreurs, corps JSON
 
 Rôles du proxy :
@@ -86,6 +87,7 @@ from fastapi.responses import RedirectResponse
 from . import auth
 from . import catalog
 from . import config_view
+from . import conversation_routes
 from . import health
 from . import relay_routes
 from . import surfaces
@@ -109,8 +111,8 @@ app.add_middleware(UISession)
 
 # Les routes des modules, le relais (son catch-all) EN DERNIER, qui sinon
 # les prendrait toutes.
-for module in (surfaces, catalog, usage_api, ui_static, ui_routes, config_view,
-               health, tool_routes):
+for module in (surfaces, catalog, usage_api, ui_static, ui_routes,
+               conversation_routes, config_view, health, tool_routes):
     app.include_router(module.router)
 
 

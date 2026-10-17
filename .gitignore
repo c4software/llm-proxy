@@ -17,6 +17,10 @@ data/memory.db-shm
 data/accounts.db
 data/accounts.db-wal
 data/accounts.db-shm
+# Historique du chat de la page (conversations et images).
+data/conversations.db
+data/conversations.db-wal
+data/conversations.db-shm
 data/backups/
 data/pre-restore-*/
 .venv/
