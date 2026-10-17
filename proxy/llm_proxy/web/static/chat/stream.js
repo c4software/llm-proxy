@@ -2,7 +2,10 @@
   Le FLUX d'une réponse du chat (SSE de /ui/chat/completions) :
   readStream lit les événements `data:` un à un ; take les applique au
   message en cours — texte, raisonnement, appels d'outils hébergés
-  (`x_hosted_tool`, propre au chat de la page), sources citées, usage.
+  (`x_hosted_tool`, propre au chat de la page), sources citées, usage —
+  et les appels que la PAGE doit exécuter (`tool_calls` : les outils du
+  dossier ouvert, chat/workspace.js), rassemblés morceau par morceau dans
+  `hooks.calls` (index → {id, name, arguments}).
 */
 export async function readStream(stream, live, hooks = {}) {
   const reader = stream.getReader();
@@ -38,6 +41,16 @@ export function take(doc, live, hooks = {}) {
     if (d.content) live.content += d.content;
     const thought = d.reasoning_content || d.reasoning;
     if (typeof thought === "string") live.reasoning += thought;
+    // Un appel pour la page : ses morceaux arrivent au fil du flux.
+    if (Array.isArray(d.tool_calls) && hooks.calls) {
+      for (const tc of d.tool_calls) {
+        const slot = hooks.calls[tc.index || 0] || (hooks.calls[tc.index || 0] =
+          { id: "", name: "", arguments: "" });
+        if (tc.id) slot.id = tc.id;
+        if (tc.function && tc.function.name) slot.name += tc.function.name;
+        if (tc.function && tc.function.arguments) slot.arguments += tc.function.arguments;
+      }
+    }
     if (d.x_hosted_tool) {
       const ev = d.x_hosted_tool;
       const known = live.tools.find((t) => t.id === ev.id);

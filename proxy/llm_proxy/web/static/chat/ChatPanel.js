@@ -63,6 +63,7 @@ import { ChatStore } from "./store.js";
 import { readAttachment } from "./attachments.js";
 import { imagePrompt, oneImage } from "./images.js";
 import { readStream } from "./stream.js";
+import * as workspace from "./workspace.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 
@@ -72,6 +73,8 @@ export const ChatPanel = {
   setup(props, { emit }) {
     const { ref, reactive, computed, watch, nextTick, onMounted, onUpdated, onUnmounted, toRaw } = Vue;
     const API = "/ui/chat/completions";
+    // Tours de lecture du dossier au plus, par réponse.
+    const MAX_ROUNDS = 25;
     const LAST_MODEL = "llm-proxy-chat-model";
     const MEMORY_OPEN = "llm-proxy-chat-memory";
     // Noms lisibles des types d'outils ; un type inconnu garde le sien.
@@ -223,6 +226,44 @@ export const ChatPanel = {
       }
     }
     function onPick(e) { addFiles([...e.target.files]); e.target.value = ""; }
+
+    // ── dossier ouvert (chat/workspace.js) ──────────────────────────────
+    // En mémoire seulement, par conversation : `conv.folder` n'en garde
+    // que le nom (après un rechargement : « à rouvrir »).
+    const folders = new Map();
+    const folderTick = ref(0);            // Map non réactive : un compteur
+    const folderReady = computed(() => (folderTick.value, !!current.value
+      && folders.has(current.value.id)));
+    const folderCount = computed(() => (folderTick.value, current.value
+      && folders.has(current.value.id) ? folders.get(current.value.id).count : 0));
+    function onFolder(e) {
+      const c = current.value;
+      const list = [...e.target.files];
+      e.target.value = "";
+      if (!c || !list.length) return;
+      const ws = workspace.openFolder(list);
+      if (!ws.count) { status.value = `${ws.name} : aucun fichier lisible.`; return; }
+      folders.set(c.id, ws);
+      c.folder = { name: ws.name, count: ws.count };
+      folderTick.value++;
+      status.value = `Dossier « ${ws.name} » ouvert : ${ws.count} fichier${ws.count > 1 ? "s" : ""}`
+        + (ws.ignored ? ` (${ws.ignored} ignoré${ws.ignored > 1 ? "s" : ""} : .git, node_modules…)` : "")
+        + " — le modèle les lit à la demande.";
+    }
+    function closeFolder() {
+      const c = current.value;
+      if (!c) return;
+      folders.delete(c.id);
+      delete c.folder;
+      folderTick.value++;
+    }
+    // Le menu « Joindre » : fichiers, ou un dossier. Se ferme au clic dehors.
+    const attachOpen = ref(false);
+    function onDocClick(e) {
+      if (attachOpen.value && !e.target.closest(".attach-menu")) attachOpen.value = false;
+    }
+    document.addEventListener("click", onDocClick);
+    onUnmounted(() => document.removeEventListener("click", onDocClick));
     function onDrop(e) {
       dragging.value = false;
       if (e.dataTransfer && e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]);
@@ -261,6 +302,12 @@ export const ChatPanel = {
         if (m.role === "user") out.push({ role: "user", content: apiContent(m) });
         // Une réponse en erreur ou vide n'est pas renvoyée : le modèle ne
         // l'a jamais écrite.
+        else if ((m.steps || []).length) {
+          // Une réponse qui a lu le dossier : ses appels et leurs résultats,
+          // puis son dernier texte — le modèle retrouve ce qu'il a lu.
+          out.push(...workspace.stepMessages(m.steps));
+          if (m.final) out.push({ role: "assistant", content: m.final });
+        }
         else if (m.content) out.push({ role: "assistant", content: m.content });
         else if ((m.attachments || []).length) {
           out.push({ role: "assistant", content: "(image générée : "
@@ -345,29 +392,60 @@ export const ChatPanel = {
       // Incognito : rien de persistant, donc pas l'outil `memory`.
       const tools = conv.tools.filter((t) => available.value.has(t)
         && !(conv.incognito && t === "memory"));
-      if (tools.length) body.tools = tools.map((type) => ({ type }));
+      // Le dossier ouvert : ses outils, exécutés ici (chat/workspace.js).
+      const ws = folders.get(conv.id) || null;
+      body.tools = [...tools.map((type) => ({ type })), ...(ws ? workspace.TOOLS : [])];
+      if (!body.tools.length) delete body.tools;
       try {
-        const r = await fetch(API, {
-          method: "POST", signal: controller.signal,
-          headers: { "content-type": "application/json", accept: "text/event-stream",
-                     ...(conv.incognito ? { "x-incognito": "1" } : {}) },
-          body: JSON.stringify(body),
-        });
-        if (r.status === 401) { live.error = "Session expirée : reconnectez-vous."; emit("unauthorized"); return; }
-        if (!r.ok) {
-          let j = null;
-          try { j = await r.json(); } catch { /* corps illisible */ }
-          live.error = (j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`;
-          return;
+        // Un tour par requête : tant que le modèle appelle les outils du
+        // dossier, la page les exécute et le relance avec leurs résultats.
+        for (let round = 0; ; round++) {
+          const start = live.content.length;
+          if (live.steps) body.messages = [...apiMessages(conv, upto), ...workspace.stepMessages(live.steps)];
+          const calls = [];
+          const r = await fetch(API, {
+            method: "POST", signal: controller.signal,
+            headers: { "content-type": "application/json", accept: "text/event-stream",
+                       ...(conv.incognito ? { "x-incognito": "1" } : {}) },
+            body: JSON.stringify(body),
+          });
+          if (r.status === 401) { live.error = "Session expirée : reconnectez-vous."; emit("unauthorized"); return; }
+          if (!r.ok) {
+            let j = null;
+            try { j = await r.json(); } catch { /* corps illisible */ }
+            live.error = (j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`;
+            return;
+          }
+          if (!(r.headers.get("content-type") || "").includes("event-stream")) {
+            const j = await r.json();
+            const choice = (j.choices || [])[0] || {};
+            live.content = (choice.message || {}).content || "";
+            live.usage = j.usage || null;
+            return;
+          }
+          await readStream(r.body, live, { calls, onMemory: () => { memoryStamp.value++; } });
+          const asked = calls.filter((c) => c && workspace.TOOL_NAMES.has(c.name));
+          if (!ws || !asked.length || live.error) {
+            if (live.steps) live.final = live.content.slice(start);
+            break;
+          }
+          if (round >= MAX_ROUNDS) {
+            live.error = `Arrêté après ${MAX_ROUNDS} tours de lecture du dossier.`;
+            break;
+          }
+          const step = { content: live.content.slice(start), calls: [] };
+          for (const c of asked) {
+            const id = c.id || "call_" + uid();
+            live.tools.push({ id, name: c.name, arguments: c.arguments, status: "running" });
+            const chip = live.tools[live.tools.length - 1];
+            const result = await workspace.run(ws, c.name, c.arguments);
+            Object.assign(chip, { status: result.startsWith("Error:") ? "error" : "done",
+                                  chars: result.length, preview: result.slice(0, 600) });
+            step.calls.push({ id, name: c.name, arguments: c.arguments, result });
+          }
+          (live.steps || (live.steps = [])).push(step);
+          if (live.content && !live.content.endsWith("\n")) live.content += "\n\n";
         }
-        if (!(r.headers.get("content-type") || "").includes("event-stream")) {
-          const j = await r.json();
-          const choice = (j.choices || [])[0] || {};
-          live.content = (choice.message || {}).content || "";
-          live.usage = j.usage || null;
-          return;
-        }
-        await readStream(r.body, live, { onMemory: () => { memoryStamp.value++; } });
       } catch (e) {
         if (e.name !== "AbortError") live.error = "Connexion interrompue : " + e.message;
         else if (!live.content) live.error = "Arrêté.";
@@ -625,7 +703,7 @@ export const ChatPanel = {
              models, modelsError, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
-             toggleTool, onPick,
+             toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
              host };
@@ -813,7 +891,15 @@ export const ChatPanel = {
             </li>
           </ol>
         </div>
-        <div class="attachments" v-if="pending.length">
+        <div class="attachments" v-if="pending.length || (current && current.folder)">
+          <span class="chip folder" v-if="current && current.folder"
+                :title="folderReady ? 'Le modèle peut lister, lire et chercher dans ce dossier' : 'Rouvrir le dossier pour que le modèle y accède'">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
+            {{ current.folder.name }}/
+            <span class="dim" v-if="folderReady">{{ num(folderCount) }} fichier{{ folderCount > 1 ? "s" : "" }}</span>
+            <label class="link" v-else>à rouvrir<input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
+            <button type="button" class="icon" title="Fermer le dossier" @click="closeFolder">×</button>
+          </span>
           <span v-for="(a, k) in pending" :key="k" class="chip" :class="{ file: a.kind !== 'image' }">
             <img v-if="a.kind === 'image'" :src="a.data" alt="">
             {{ a.name }} <span class="dim">{{ size(a.size) }}</span>
@@ -827,9 +913,23 @@ export const ChatPanel = {
                     : 'Écrire un message — Entrée pour envoyer'"
                   title="Entrée pour envoyer, Maj+Entrée pour aller à la ligne"></textarea>
         <div class="composer-bar">
-          <label class="btn ghost attach ico-btn" title="Joindre : images ou fichiers texte (ou glisser-déposer, ou coller)">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4L14.6 7.5"/></svg>
-            <span class="lbl">Joindre</span><input type="file" multiple hidden @change="onPick"></label>
+          <div class="attach-menu">
+            <button type="button" class="btn ghost attach ico-btn" aria-haspopup="menu"
+                    :aria-expanded="String(attachOpen)" @click="attachOpen = !attachOpen"
+                    title="Joindre : des fichiers (ou glisser-déposer, ou coller), ou un dossier que le modèle lira">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4L14.6 7.5"/></svg>
+              <span class="lbl">Joindre</span></button>
+            <!-- v-show : les champs restent dans la page pendant que le
+                 sélecteur du système est ouvert. -->
+            <div class="menu" role="menu" v-show="attachOpen" @click="attachOpen = false">
+              <label role="menuitem"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/></svg>
+                <span>Fichiers…<small>images, textes : joints au message</small></span>
+                <input type="file" multiple hidden @change="onPick"></label>
+              <label role="menuitem"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
+                <span>Dossier…<small>le modèle le parcourt et lit ce qu'il lui faut</small></span>
+                <input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
+            </div>
+          </div>
           <label class="effort" v-if="imageMode" title="Nombre d'images par demande">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
             <select v-model.number="current.imageCount" :disabled="streaming" aria-label="Nombre d'images">

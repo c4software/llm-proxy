@@ -1066,3 +1066,22 @@ a.btn { display: inline-block; text-decoration: none; }
   .adv-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .adv-tags { text-align: left; }
 }
+
+/* ── Chat : le menu « Joindre » (fichiers, dossier) et le dossier ouvert ── */
+.attach-menu { position: relative; }
+.attach-menu .menu {
+  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 20; min-width: 260px;
+  display: flex; flex-direction: column; padding: 6px; gap: 2px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, .45);
+}
+.attach-menu .menu label {
+  display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 8px;
+  cursor: pointer; font-size: 13.5px; color: var(--ink);
+}
+.attach-menu .menu label:hover { background: var(--accent-soft); }
+.attach-menu .menu .ico { margin-top: 2px; flex: none; }
+.attach-menu .menu small { display: block; font-size: 11.5px; color: var(--muted); }
+.chip.folder { display: inline-flex; align-items: center; gap: 6px; }
+.chip.folder .ico { width: 15px; height: 15px; }
+.chip.folder .link { cursor: pointer; }

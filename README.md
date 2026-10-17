@@ -757,7 +757,24 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   partent en `image_url` (data URL, 8 Mo au plus) — au modèle de savoir
   les lire, la page prévient si le catalogue ne le dit pas ; les
   fichiers texte (256 Ko au plus) sont joints au message entre balises
-  `<file name="…">`. Le reste est refusé.
+  `<file name="…">`. Le reste est refusé. *Joindre* ouvre un menu :
+  *Fichiers…* (ce qui précède) ou *Dossier…*.
+- **Dossier ouvert** (*Joindre → Dossier…*, `chat/workspace.js`) : le
+  dossier choisi reste **dans le navigateur**, rien n'est envoyé
+  d'avance. Le modèle reçoit trois outils que **la page exécute elle-même**
+  quand il les appelle — le proxy les lui rend en `tool_calls`, comme à
+  tout client : `folder_list` (un sous-dossier, ou tout en récursif),
+  `folder_read` (un fichier texte, lignes numérotées, par tranches de
+  1 500 lignes ou 60 000 caractères), `folder_search` (un texte ou une
+  expression, « chemin:ligne: texte »). Il ne lit donc que ce dont il a
+  besoin : un dépôt de mille fichiers ne coûte que ce qu'il en ouvre.
+  Ignorés : `.git`, `node_modules`, environnements Python et caches ; un
+  fichier binaire est refusé. Chaque appel s'affiche dans le fil comme
+  ceux des outils du proxy, et reste dans l'historique de la conversation
+  (le modèle retrouve ce qu'il a lu au message suivant). 25 tours au plus
+  par réponse. Un modèle qui sait appeler des outils est nécessaire.
+  Après un rechargement, la conversation garde le nom du dossier et
+  demande de le **rouvrir** : le navigateur ne rend pas l'accès tout seul.
 - **Rendu** : Markdown écrit pour la page (`lib/markdown.js`, aucune
   dépendance) — titres, listes, tableaux, citations, code avec bouton
   *Copier*, liens et images. Tout le texte est échappé avant analyse :
