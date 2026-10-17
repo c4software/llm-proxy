@@ -25,8 +25,7 @@ L'API HTTP de l'exécuteur : trois routes derrière un jeton, une de santé.
                       est un 200 : c'est un résultat.
                       `inputs` de la RÉPONSE est toujours là, vide au
                       besoin : c'est à lui qu'un appelant reconnaît un
-                      exécuteur qui sait déposer (un plus ancien ignore le
-                      champ de la requête, et n'en rend aucun).
+                      exécuteur qui sait déposer.
   POST /v1/destroy    {"client", "session"} → {"destroyed": bool}
 
 Erreurs : {"error": {"code", "message"}} — 400 `invalid_request`, 401
@@ -103,8 +102,6 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
             state["error"] = "EXECUTOR_TOKEN absent : tout est refusé"
             log.error(state["error"])
         try:
-            # Dans l'ordre : les restes d'un processus précédent, puis ce
-            # que podman sait tenir ici.
             orphans = await box.reap_orphans()
             kept = await box.probe()
             log.info("podman prêt : %d orphelin(s) détruit(s) ; bornes de "
@@ -176,7 +173,6 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
             "cgroup": {name: name in box.cgroup
                        for name in ("memory", "cpu", "pids")},
             "limits": {f: getattr(lim, f) for f in lim.__dataclass_fields__},
-            # La sortie vers les dépôts de paquets : ouverte ou non, et où.
             "egress": {"enabled": bool(box.egress),
                        "hosts": list(box.egress.hosts) if box.egress else []},
         }

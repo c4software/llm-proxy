@@ -2,10 +2,9 @@
 (tools/memory.py), son cloisonnement par clé par /mcp et /v1/tools, et
 les routes de la section Mémoire de /ui. Sur une base temporaire."""
 
-import asyncio
-
 import pytest
 
+from fakes import bearer, go, rendu, rpc
 from llm_proxy import auth
 from llm_proxy import mcp_server, memories, tools
 from llm_proxy.tools import memory
@@ -21,15 +20,12 @@ def base(monkeypatch, tmp_path):
 
 def mem(owner="a", **args) -> str:
     """Le texte que lit le modèle : celui du Result, ou de l'échec prévu."""
-    try:
-        return asyncio.run(memory.TOOL.run(args, tools.Call(client=owner))).text
-    except tools.ToolError as exc:
-        return tools.failure(exc.code, exc.message).text
+    return rendu(memory.TOOL.run(args, tools.Call(client=owner))).text
 
 
 def code(owner="a", **args) -> str | None:
     try:
-        asyncio.run(memory.TOOL.run(args, tools.Call(client=owner)))
+        go(memory.TOOL.run(args, tools.Call(client=owner)))
     except tools.ToolError as exc:
         return exc.code
     return None
@@ -129,20 +125,15 @@ def proxy(monkeypatch):
     return TestClient(A.app)
 
 
-def bearer(key):
-    return {"Authorization": f"Bearer {key}"}
-
-
 def mcp_call(client, key, **args):
-    r = client.post("/mcp", headers=bearer(key), json={
-        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "memory", "arguments": args}})
+    r = rpc(client, "tools/call", {"name": "memory", "arguments": args},
+            headers=bearer(key))
     return r.json()["result"]["content"][0]["text"]
 
 
 def test_mcp_et_appel_direct_cloisonnes_par_cle(proxy):
-    tools = proxy.post("/mcp", headers=bearer("sk-a"), json={
-        "jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()["result"]["tools"]
+    tools = rpc(proxy, "tools/list", headers=bearer("sk-a")).json()[
+        "result"]["tools"]
     assert [t["name"] for t in tools] == ["memory"]
     assert mcp_call(proxy, "sk-a", command="create", path="/memories/n.md",
                     file_text="note de a") == "File created: /memories/n.md"
@@ -171,7 +162,13 @@ def test_routes_ui_de_la_cle_connectee(proxy):
     assert r.json() == {"renamed": 1, "path": "/memories/m.md"}
     assert "deux" in mcp_call(proxy, "sk-a", command="view", path="/memories/m.md")
     assert proxy.put("/ui/memory/file", json={"path": "/etc/x", "content": ""}).status_code == 400
-    assert proxy.put("/ui/memory/file", content=b"pas du json").status_code == 400
+    assert proxy.put("/ui/memory/file", content=b"pas du json",
+                     headers={"content-type": "application/json"}).status_code == 400
+    # Un formulaire d'une page tierce (text/plain) : refusé avant d'être lu.
+    assert proxy.put("/ui/memory/file", content=b'{"path": "/memories/x.md", "content": ""}',
+                     headers={"content-type": "text/plain"}).status_code == 415
+    assert proxy.post("/ui/memory/rename", content=b'{"old_path": "/memories/m.md", "new_path": "/memories/z.md"}',
+                      headers={"content-type": "text/plain"}).status_code == 415
     assert proxy.delete("/ui/memory/file", params={"path": "/memories/m.md"}).json() == {"deleted": 1}
     assert proxy.delete("/ui/memory/file", params={"path": "/memories/m.md"}).status_code == 404
     # Une autre clé ne voit rien de celle-ci.

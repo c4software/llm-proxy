@@ -6,6 +6,7 @@ dans test_mcp.py.)"""
 
 import pytest
 
+from fakes import rpc
 from llm_proxy import auth
 from llm_proxy import files, mcp_server, tools
 from llm_proxy.tools import web_fetch, web_search
@@ -32,14 +33,6 @@ def mcp(monkeypatch):
         return tools.Result("[1] Titre\n    https://e.org\n    extrait")
     monkeypatch.setattr(web_search.WebSearch, "run", run)
     return TestClient(A.app), seen, active
-
-
-def rpc(client, method, params=None, id_=1, headers=None):
-    msg = {"jsonrpc": "2.0", "id": id_, "method": method}
-    if params is not None:
-        msg["params"] = params
-    return client.post("/mcp", json=msg, headers={
-        "Accept": "application/json, text/event-stream", **(headers or {})})
 
 
 def test_initialize_negocie_la_version_et_annonce_les_outils(mcp):

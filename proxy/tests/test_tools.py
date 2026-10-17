@@ -13,64 +13,35 @@ import asyncio
 import inspect
 import io
 import os
-import socket
 import threading
 
 import conftest
 import httpx2
 import pytest
 
-from fakes import (FOUND, RESULTS, SEARCHED, Echo, FakeUpstream, chat_doc,
-                   outil)
+from fakes import (FOUND, PUBLIC, RESULTS, SEARCHED, Echo, FakeUpstream,
+                   FakeWeb, chat_doc, fake_dns, go, hosted_chat, outil,
+                   pdf_bytes, rendu)
 from llm_proxy import auth, catalog, tool_loop
 from llm_proxy import tools
 from llm_proxy.tools import html_text, net, web_fetch, web_grep, web_search, webcache
 
-PUBLIC = "93.184.216.34"
 PUBLIC6 = "2606:4700:4700::1111"
 T = html_text.html_to_text
 
 
-def go(coro):
-    return asyncio.run(coro)
-
-
 @pytest.fixture(autouse=True)
 def dns(monkeypatch):
-    """Résolution sans réseau. La table donne nom → adresses (ou None :
-    introuvable ; ou une fonction, pour un nom qui change de réponse).
-    Hors table, seul un littéral NUMÉRIQUE est résolu, par le vrai
-    getaddrinfo et AI_NUMERICHOST (aucune requête DNS) : c'est lui qui
-    dit ce que valent «2130706433» ou «0x7f.1»."""
-    table = {
+    """Résolution sans réseau (fakes.fake_dns) ; la table rendue est
+    complétée par les tests qui ont besoin d'un nom de plus."""
+    return fake_dns(monkeypatch, {
         "site.test": [PUBLIC],
         "site6.test": [PUBLIC6],
         "autre.test": ["1.1.1.1"],
         "intern.test": ["10.0.0.5"],
         "mixte.test": [PUBLIC, "192.168.1.10"],
         "absent.test": None,
-    }
-    real = socket.getaddrinfo
-    seen = []
-
-    def fake(host, port, family=0, type=0, proto=0, flags=0):
-        seen.append(host)
-        if host in table:
-            ips = table[host]
-            if callable(ips):
-                ips = ips()
-            if ips is None:
-                raise socket.gaierror(socket.EAI_NONAME, "introuvable")
-            return [(socket.AF_INET6 if ":" in ip else socket.AF_INET,
-                     socket.SOCK_STREAM, 6, "",
-                     (ip, port, 0, 0) if ":" in ip else (ip, port))
-                    for ip in ips]
-        return real(host, port, family, type, proto,
-                    flags | socket.AI_NUMERICHOST)
-
-    monkeypatch.setattr(socket, "getaddrinfo", fake)
-    table["__seen__"] = seen
-    return table
+    })
 
 
 @pytest.fixture(autouse=True)
@@ -100,15 +71,6 @@ def reglages(monkeypatch):
     monkeypatch.setattr(web_grep, "ENABLED", False)
 
 
-def rendu(coro) -> tools.Result:
-    """Ce que l'exécuteur (tools.Hosted) fait d'un `run` appelé à la
-    main : son Result, ou celui de l'échec prévu (ToolError)."""
-    try:
-        return go(coro)
-    except tools.ToolError as exc:
-        return tools.failure(exc.code, exc.message)
-
-
 def blocked(url, **kw):
     """Le message du refus ; échoue en nommant l'URL si elle est acceptée."""
     try:
@@ -118,26 +80,13 @@ def blocked(url, **kw):
     pytest.fail(f"cible acceptée : {url!r}")
 
 
-class Web:
-    """Un faux web : `pages[(hôte, chemin)]` → réponse (ou fonction).
-    Garde chaque requête reçue, pour vérifier où elle est partie."""
-
-    def __init__(self, pages=None, default=None):
-        self.pages, self.default, self.requests = pages or {}, default, []
-
-    def handler(self, request: httpx2.Request) -> httpx2.Response:
-        self.requests.append(request)
-        key = (request.headers["host"], request.url.path)
-        page = self.pages.get(key, self.default)
-        if page is None:
-            return httpx2.Response(404, text="rien")
-        return page(request) if callable(page) else page
+class Web(FakeWeb):
+    """Le faux web de fakes.py, lu par web_fetch."""
 
     def fetch(self, url, **args) -> str:
         """Le texte rendu au modèle ; le résultat entier reste dans `last`."""
         self.last = rendu(web_fetch.TOOL.run(
-            {"url": url, **args}, tools.Call(),
-            transport=httpx2.MockTransport(self.handler)))
+            {"url": url, **args}, tools.Call(), transport=self.transport))
         return self.last.text
 
 
@@ -169,19 +118,11 @@ def pdf(*pages, password=None):
                  b"/Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>"
                  % (5 + 2 * i),
                  b"<< /Length %d >>\nstream\n%s\nendstream" % (len(flux), flux)]
-    out, places = bytearray(b"%PDF-1.4\n"), []
-    for i, obj in enumerate(objs, 1):
-        places.append(len(out))
-        out += b"%d 0 obj\n%s\nendobj\n" % (i, obj)
-    xref = len(out)
-    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
-    out += b"".join(b"%010d 00000 n \n" % place for place in places)
-    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
-        len(objs) + 1, xref)
+    out = pdf_bytes(objs)
     if password is None:
-        return bytes(out)
+        return out
     import pypdf
-    writer = pypdf.PdfWriter(clone_from=io.BytesIO(bytes(out)))
+    writer = pypdf.PdfWriter(clone_from=io.BytesIO(out))
     writer.encrypt(password, "proprio", algorithm="RC4-128")
     chiffre = io.BytesIO()
     writer.write(chiffre)
@@ -1034,7 +975,7 @@ def test_hosted_par_defaut_les_outils_actives(monkeypatch):
     h = tools.Hosted()
     assert h.tools == [web_search.TOOL] and h.memory is tools.MEMORY and bool(h)
     monkeypatch.setattr(web_search, "ENABLED", False)
-    assert not tools.Hosted()           # aucun outil : app.py n'en présente pas
+    assert not tools.Hosted()           # aucun outil : rien n'est présenté
 
 
 # ── web_search : le texte du modèle et ses sources ──────────────────────
@@ -1105,14 +1046,14 @@ def test_search_domain_filters(monkeypatch):
         assert request.url.params["q"] == "x"   # la requête n'est pas réécrite
         return httpx2.Response(200, json={"results": raw})
 
-    go = lambda **kw: asyncio.run(web_search.TOOL.run(
+    cherche = lambda **kw: go(web_search.TOOL.run(
         {"query": "x"}, tools.Call(settings=kw),
         transport=httpx2.MockTransport(handler))).text
     monkeypatch.setattr(web_search, "SEARXNG_URL", "http://searxng.test")
-    assert go(allowed_domains=["example.org"], blocked_domains=[
+    assert cherche(allowed_domains=["example.org"], blocked_domains=[
         "example.org/shop"]) == "[1] 3\n    https://example.org/blog/post-1"
-    assert go(allowed_domains=["nulle-part.test"]) == "No results for «x»."
-    assert go().count("https://") == 5
+    assert cherche(allowed_domains=["nulle-part.test"]) == "No results for «x»."
+    assert cherche().count("https://") == 5
 
 
 # ── routes /v1/tools (appel direct, pour pi et omp) ─────────────────────
@@ -1200,7 +1141,6 @@ def test_type_d_un_modele_sans_type_au_catalogue():
     """Un catalogue qui ne dit pas ce que sont ses modèles (llama-swap) :
     le nom tranche, un motif de configuration l'emporte, et ce que le
     backend déclare n'est jamais deviné à sa place."""
-    from llm_proxy import app as A
     from llm_proxy.backends import Backend
     b = Backend("essai", {"url": "http://x", "model_types": {"*-voice-chat": "text-generation"}})
     for model, attendu in [
@@ -1327,7 +1267,7 @@ def test_contrat_outil_minimal_sans_liaison(proxy, monkeypatch):
     /v1/chat/completions, où son appel reste caché du client ; les
     surfaces Responses et Anthropic, qui n'auraient rien pour en rendre
     compte, l'ignorent."""
-    from llm_proxy import anthropic_api, chat_api, responses_api
+    from llm_proxy import anthropic_api, responses_api
     monkeypatch.setattr(tools, "REGISTRY", [])
     echo = tools.register(Echo())
     with pytest.raises(ValueError):             # le nom est la clé
@@ -1336,8 +1276,7 @@ def test_contrat_outil_minimal_sans_liaison(proxy, monkeypatch):
     # L'annuaire que montent les routes : ce que le registre active (la
     # fixture `proxy` a remplacé tools.Hosted par le sien).
     proxy.hosted = h = type(proxy.hosted)(tools.enabled(), tools.Memory(4, 60))
-    monkeypatch.setattr(chat_api, "ENABLED", True)
-    monkeypatch.setattr(chat_api, "MEMORY", chat_api.Memory(8, 60, 100_000))
+    hosted_chat(monkeypatch)
     # La fonction présentée est l'ASSEMBLAGE du nom, du prompt et du
     # schéma — par la classe de base, qu'aucun outil du dépôt ne réécrit.
     spec = echo.spec({"echo"})
@@ -1534,7 +1473,7 @@ def test_contrat_fichiers_en_liens_et_code_failed(proxy, monkeypatch):
     les mémoires et le tour suivant ne portent que `text`. Et `failed`,
     le code d'un outil qui a tourné et dit avoir échoué : une erreur comme
     une autre, comptée `error`."""
-    from llm_proxy import anthropic_api, chat_api, files
+    from llm_proxy import anthropic_api, files
     monkeypatch.setattr(files, "PUBLIC_URL", "")
     monkeypatch.setattr(files, "STORE", files.Store(60, 10_000, 5_000))
     lines = []
@@ -1570,9 +1509,7 @@ def test_contrat_fichiers_en_liens_et_code_failed(proxy, monkeypatch):
 
     # chat/completions : le tour suivant et la mémoire des échanges cachés
     # ne portent que le texte.
-    monkeypatch.setattr(chat_api, "ENABLED", True)
-    memory = chat_api.Memory(8, 60, 100_000)
-    monkeypatch.setattr(chat_api, "MEMORY", memory)
+    memory = hosted_chat(monkeypatch)
     proxy.replies = [
         FakeUpstream(chat_doc({"content": None, "tool_calls": [{
             "id": "c", "function": {"name": "produit", "arguments": "{}"}}]},
@@ -1603,11 +1540,9 @@ def test_boucle_un_outil_a_compte_propre_ne_pese_pas_sur_le_commun(
     """Dans la boucle : les appels d'un outil à `max_calls` sont comptés
     contre SA limite, ceux des autres contre le plafond commun — et un
     modèle qui insiste au-delà de sa limite est arrêté de même."""
-    from llm_proxy import chat_api
     monkeypatch.setattr(tools, "MAX_CALLS", 1)
     monkeypatch.setattr(tool_loop, "HOSTED_HARD_LIMIT", 1 + tool_loop.HOSTED_EXTRA_CALLS)
-    monkeypatch.setattr(chat_api, "ENABLED", True)
-    monkeypatch.setattr(chat_api, "MEMORY", chat_api.Memory(8, 60, 100_000))
+    hosted_chat(monkeypatch)
     propre, commun = outil("propre"), outil("commun")
     propre.max_calls = 2
     monkeypatch.setattr(tools, "REGISTRY", [propre, commun])

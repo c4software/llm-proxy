@@ -162,10 +162,6 @@ class Egress:
                      stats["bytes"], ", ".join(sorted(stats["hosts"])) or "—")
         return stats
 
-    async def close_all(self) -> None:
-        for name in list(self._servers):
-            await self.close(name)
-
     # ── une connexion du bac ────────────────────────────────────────────
     async def _resolve(self, host: str) -> list[str]:
         infos = await asyncio.get_running_loop().getaddrinfo(

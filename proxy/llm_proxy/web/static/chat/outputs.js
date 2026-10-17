@@ -13,8 +13,8 @@
     read_artifact  la dernière version, telle qu'elle est (après des
                    retouches, le modèle ne l'a plus en entier sous les yeux)
 
-  Les deux sont gardés avec la conversation (le message pour un fichier,
-  conv.artifacts pour un artifact).
+  Fichiers et artifacts sont gardés avec la conversation (le message pour
+  un fichier, conv.artifacts pour un artifact).
 
   ISOLATION D'UN ARTIFACT : il est rendu dans un cadre `sandbox` sans
   `allow-same-origin` — une origine à lui, sans accès à la page, à sa
@@ -30,7 +30,7 @@ import { Markdown } from "../lib/markdown.js";
 
 const MAX_FILE = 2e6;          // caractères d'un fichier produit
 const MAX_ARTIFACT = 5e5;      // caractères d'un artifact
-export const TYPES = ["html", "markdown", "svg", "mermaid", "code"];
+const TYPES = ["html", "markdown", "svg", "mermaid", "code"];
 
 export const TOOLS = [
   { type: "function", function: {

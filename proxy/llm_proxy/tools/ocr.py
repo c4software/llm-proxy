@@ -6,33 +6,25 @@ ordinaire, avec l'image en `image_url`, vers le backend que le préfixe
 désigne.
 
 Le fichier arrive PAR URL, choisie par le modèle : il passe par le
-téléchargement gardé commun (net.download, [tools.net]) — listes de
-domaines, adresses publiques seulement, connexion vers l'adresse
-vérifiée, contrôle refait à CHAQUE saut de redirection. Le type est
-reconnu aux premiers octets, jamais à ce que le serveur annonce.
+téléchargement gardé commun (net.download). Le type est reconnu aux
+premiers octets, jamais à ce que le serveur annonce.
 
   image (PNG, JPEG, GIF, WebP)  envoyée telle quelle au modèle de vision ;
   PDF                           les images EMBARQUÉES dans ses pages, pas
-                                un rendu : pypdf ne dessine pas une page,
-                                et rien ici ne le fait (ni Pillow, ni
-                                poppler). Un scan est une image par page :
-                                c'est elle qui est lue. JPEG (DCTDecode)
-                                repris tel quel ; pixels bruts (Flate…,
-                                gris ou RVB) réécrits en PNG par zlib ; les
-                                codages de fax (CCITT, JBIG2) et JPEG 2000,
-                                qu'aucun modèle n'accepte, sont refusés en
-                                le disant.
+                                un rendu : rien ici ne dessine une page. Un
+                                scan est une image par page. JPEG repris
+                                tel quel ; pixels bruts réécrits en PNG ;
+                                CCITT, JBIG2 et JPEG 2000, qu'aucun modèle
+                                n'accepte, refusés en le disant.
 
 Une page = UNE requête au modèle de vision : le texte rendu dit de quelle
 page il vient, et une page lue reste lue quand le temps manque pour les
 suivantes — le modèle les redemande par `pages`. Chaque page lue est
 gardée dans le cache web (webcache.py), comme le fichier téléchargé.
 
-L'appel au backend ne passe PAS par relaying.py (qu'un outil ne peut importer
-sans cycle), mais par les mêmes portes : le limiteur du backend à quotas
-(albert.Limiter.acquire, celui de relaying.gate) et une ligne de statistiques
-par requête (stats.record), sous l'endpoint «/v1/tools/ocr» — ce que
-l'outil consomme du backend se voit, et se compte, comme le reste.
+L'appel au backend ne passe PAS par relaying.py (qu'un outil ne peut
+importer sans cycle), mais par les mêmes portes : le limiteur du backend à
+quotas et une ligne de statistiques par requête, sous «/v1/tools/ocr».
 """
 
 import asyncio
@@ -60,9 +52,8 @@ ENABLED = config.flag("tools.ocr.enabled", False)
 MODEL = config.text("tools.ocr.model", "").strip()
 # Durée (s) d'une exécution, téléchargement et lectures compris. Ce délai
 # passé, les pages déjà lues sont RENDUES et le modèle redemande la suite.
-# L'exécuteur, lui, abandonnerait tout sans rien rendre : son délai pour
-# cet outil (Ocr.timeout) est donc celui-ci plus une marge, à la place de
-# [tools].run_timeout.
+# L'exécuteur, lui, abandonnerait tout sans rien rendre : son délai
+# (Ocr.timeout) est donc celui-ci plus une marge.
 TIMEOUT = config.num("tools.ocr.timeout", 50)
 # Ce que l'exécuteur laisse de plus que TIMEOUT : le temps de rendre.
 GRACE = 10
@@ -389,9 +380,8 @@ def _content(doc) -> tuple[str, bool]:
 async def transcribe(images) -> tuple[str, bool]:
     """Le texte d'UNE page — ses images, [(type, octets)…], dans une seule
     requête chat/completions au modèle de vision. Rend (texte, coupé ?) ;
-    lève ToolError. Même parcours qu'une requête d'un client dans relaying.py :
-    le limiteur du backend à quotas, puis une ligne de statistiques,
-    quelle que soit l'issue."""
+    lève ToolError. Le limiteur du backend à quotas, puis une ligne de
+    statistiques, quelle que soit l'issue."""
     backend, plain = engine()
     payload = {
         "model": plain,
@@ -507,8 +497,6 @@ async def read_pages(key, pages: dict, deadline: float) -> dict:
 class Ocr(Tool):
     name = NAME
     # Pas de liaison : aucun protocole n'a d'outil serveur de ce nom.
-    # L'outil s'exécute par /v1/tools/ocr et se déclare `{"type": "ocr"}`
-    # sur /v1/chat/completions.
 
     @property
     def enabled(self) -> bool:
@@ -516,9 +504,8 @@ class Ocr(Tool):
 
     @property
     def timeout(self) -> float:
-        """Le délai de l'exécuteur pour cet outil (contrat : Tool.timeout),
-        à la place de [tools].run_timeout : le budget de l'outil, qui rend
-        ce qu'il a lu quand il est épuisé, plus de quoi le rendre."""
+        """Le budget de l'outil, qui rend ce qu'il a lu quand il est épuisé,
+        plus de quoi le rendre."""
         return TIMEOUT + GRACE
 
     def prompt(self, present) -> str:
@@ -592,8 +579,6 @@ class Ocr(Tool):
 
         total, skipped = 0, {}
         if kind == PDF_TYPE:
-            # Dans un fil : ouvrir le PDF et réécrire ses images est du
-            # CPU, la boucle asyncio ne l'attend pas.
             found = await asyncio.to_thread(pdf_images, body, wanted, deadline)
             if isinstance(found, str):
                 raise ToolError("unsupported", f"{url} {found}.")

@@ -1,8 +1,7 @@
 /*
   Les outils du NAVIGATEUR : ce que le modèle peut demander à l'appareil.
-  Rangés par FAMILLE, que chaque conversation active ou non (le menu
-  « Navigateur » de la zone de saisie, comme Mémoire ou Images) ; un
-  module par famille :
+  Rangés par FAMILLE, que chaque conversation active ou non (section
+  « Navigateur » du menu Outils) ; un module par famille :
 
     context.js        Date et heure       device_context
     location.js       Position            get_location            carte

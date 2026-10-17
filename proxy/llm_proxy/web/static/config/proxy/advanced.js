@@ -8,16 +8,16 @@
 import { csv } from "../shared.js";
 import { TOOL_LIST } from "./form.js";
 
-export const FORM_FLAT = new Set(["proxy.log_level", "proxy.api_keys", "proxy.exempt_paths",
+const FORM_FLAT = new Set(["proxy.log_level", "proxy.api_keys", "proxy.exempt_paths",
   "fair_share.tokens_per_hour", "anthropic.enabled", "anthropic.model_map.default",
   "responses.enabled", "chat.hosted_tools", "chat.always", "chat.always_except",
   "tools.max_calls", "mcp_server.enabled", "ui.chat", "ui.chat_model",
   "files.public_url", "stats.retention_days"]);
-export const BACKEND_FORM_KEYS = ["url", "api_key", "quotas", "images", "force_tool_choice",
+const BACKEND_FORM_KEYS = ["url", "api_key", "quotas", "images", "force_tool_choice",
                            "max_tokens", "fair_share"];
-export const OIDC_FORM_KEYS = ["issuer", "client_id", "client_secret", "redirect_uri",
+const OIDC_FORM_KEYS = ["issuer", "client_id", "client_secret", "redirect_uri",
                         "new_accounts", "session_days", "max_keys_per_account", "label"];
-export function formCovers(path) {
+function formCovers(path) {
   const [top, a, b] = path;
   if (top === "backends") return path.length === 3 && BACKEND_FORM_KEYS.includes(b);
   if (top === "oidc") return path.length === 2 && OIDC_FORM_KEYS.includes(a);
@@ -29,10 +29,10 @@ export function formCovers(path) {
   }
   return FORM_FLAT.has(path.join("."));
 }
-export const kindOf = (v) => typeof v === "boolean" ? "bool" : typeof v === "number" ? "number"
+const kindOf = (v) => typeof v === "boolean" ? "bool" : typeof v === "number" ? "number"
   : typeof v === "string" ? "string"
   : Array.isArray(v) && v.every((x) => typeof x === "string") ? "list" : "json";
-export const asText = (v, kind) => kind === "list" ? v.join(", ")
+const asText = (v, kind) => kind === "list" ? v.join(", ")
   : kind === "json" ? JSON.stringify(v) : v;
 
 export function advancedRows(values, defaultPaths) {

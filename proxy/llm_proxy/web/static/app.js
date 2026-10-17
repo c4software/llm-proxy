@@ -1,31 +1,19 @@
 /*
-  L'application de la page : son SQUELETTE. Le gabarit est celui de la
-  page (templates/index.html) ; chaque vue est un composant à part, dans
-  son dossier, avec ses propres appels :
-
-    stats/StatsView.js       les statistiques d'usage
-    chat/ChatPanel.js        le chat (chat/store.js : les conversations)
-    config/ConfigPanel.js    la configuration (clients, clés, comptes,
-                             mémoire, proxy)
-    memory/MemoryPanel.js    la mémoire de l'outil `memory`
-    lib/                     appels, formats, fichiers, Markdown, thème
-
-  Ici : la SESSION et l'entrée, les VUES et le menu latéral.
+  L'application de la page : la SESSION et l'entrée, les VUES et le menu
+  latéral. Gabarit : templates/index.html ; chaque vue est un composant
+  dans son dossier (stats/, chat/, config/, memory/) ; lib/ : appels,
+  formats, fichiers, Markdown, thème.
 
   La page lit d'abord /ui/session : auth active sans clé valide (401), elle
   montre l'écran d'entrée — la clé saisie part à /ui/login, qui ouvre une
   session signée (cookie HttpOnly) ; avec les comptes OIDC (/ui/auth dit
   «oidc»), un bouton mène au fournisseur (/ui/auth/login), et un compte en
-  attente ou bloqué ne voit que son état. Une fois entrée, la personne ne
-  voit que SES requêtes et SES conversations.
+  attente ou bloqué ne voit que son état.
 
-  Trois vues, menu latéral (tiroir sur mobile) : « Statistiques », « Chat »
-  et « Configuration », mémorisées dans l'URL (#chat, #config) et le
-  navigateur. Le chat reste monté : une réponse en cours continue pendant
-  qu'on regarde les chiffres.
-
-  /ui/health (l'état détaillé du déploiement) est lu ici, au chargement
-  puis toutes les 30 s, et passé aux vues qui en ont besoin.
+  La vue est mémorisée dans l'URL (#chat, #config) et le navigateur. Le
+  chat reste monté : une réponse en cours continue pendant qu'on regarde
+  les chiffres. /ui/health est lu ici (puis toutes les 30 s) et passé aux
+  vues qui en ont besoin.
 */
 import { ChatStore } from "./chat/store.js";
 import { ChatPanel } from "./chat/ChatPanel.js";
@@ -170,8 +158,8 @@ createApp({
     let timer = 0;
     onMounted(async () => {
       // Le retour d'une connexion OIDC refusée : dit sur l'écran d'entrée,
-      // puis retiré de la barre d'adresse. Une «?key=» d'un ancien favori
-      // n'ouvre plus rien : retirée aussi.
+      // puis retiré de la barre d'adresse. Une «?key=» n'ouvre rien : retirée
+      // aussi.
       const params = new URLSearchParams(location.search);
       if (params.has("auth_error")) loginError.value = params.get("auth_error");
       if (params.has("key") || params.has("auth_error")) {

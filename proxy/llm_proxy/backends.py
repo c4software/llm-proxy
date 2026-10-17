@@ -36,23 +36,21 @@ class Backend:
         self.timeout = float(cfg.get("timeout", TIMEOUT))
         self.meta_timeout = float(cfg.get("meta_timeout", META_TIMEOUT))
         # Poignée de main TCP seulement — traitée par le noyau, même si
-        # le serveur derrière est occupé à générer. Un hôte vivant répond
-        # en < 50 ms sur LAN, < 300 ms via Tailscale : 1 s suffit à un
-        # backend local, souvent ÉTEINT, pour échouer vite (503 en 1 s
-        # plutôt qu'en 5). Plus large vers l'Internet.
+        # le serveur derrière est occupé à générer : 1 s suffit à un
+        # backend local, souvent ÉTEINT, pour échouer vite. Plus large
+        # vers l'Internet.
         self.connect_timeout = float(cfg.get(
             "connect_timeout", 15.0 if self.quotas else 1.0))
         # Injection de `tool_choice` : DÉSACTIVÉE PAR DÉFAUT. Le
         # correctif ne vaut que pour les backends dont le schéma a
-        # "none" pour défaut (Albert) ; ailleurs il est au mieux inutile,
-        # au pire nuisible. On l'active donc backend par backend :
+        # "none" pour défaut (Albert) ; ailleurs il peut nuire :
         #   absent / false → aucune injection (défaut) ;
         #   true           → valeur globale proxy.tool_choice ;
         #   "auto", "required"… → cette valeur-là, pour ce backend.
         self.tool_choice = self._tool_choice(cfg.get("force_tool_choice"))
-        # Plafond de `max_tokens` (0 = aucun) : Claude Code en demande
-        # 32 000 par défaut, que certains backends refusent tout net. La
-        # valeur du client est ramenée au plafond, jamais augmentée.
+        # Plafond de `max_tokens` (0 = aucun) : certains clients en
+        # demandent plus que le backend n'accepte. La valeur du client est
+        # ramenée au plafond, jamais augmentée.
         self.max_tokens = int(cfg.get("max_tokens", 0) or 0)
         # Le backend accepte les images (`image_url`) — pour les modèles
         # que son catalogue déclare multimodaux ; un modèle texte seul y
@@ -101,9 +99,8 @@ class Backend:
 # Défaut si [backends] est absent du TOML : Albert seul. URLs ET clés ne
 # vivent QUE là (champ api_key par backend), rien ailleurs.
 DEFAULT_BACKENDS = {
-    # Albert est le seul à avoir besoin du correctif tool_choice (son
-    # schéma déclare «default: none») : ce fallback l'active donc, alors
-    # que l'option est à false partout ailleurs.
+    # Albert a besoin du correctif tool_choice (son schéma déclare
+    # «default: none»).
     "albert": {"url": "https://albert.api.etalab.gouv.fr", "quotas": True,
                "force_tool_choice": "auto"},
 }

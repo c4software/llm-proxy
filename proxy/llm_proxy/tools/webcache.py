@@ -7,16 +7,15 @@ chat_api.Memory), qui rendent au modèle ce qu'il a déjà lu dans UNE
 conversation : ici c'est le web lui-même qui est épargné, quel que soit le
 client.
 
-Deux raisons, vues le 05/10/2026 :
+Deux raisons :
   * une page longue est lue en plusieurs appels (`offset`) — sans cache,
-    chaque morceau la retéléchargeait en entier ;
+    chaque morceau la retéléchargerait en entier ;
   * les moteurs de SearXNG bloquent vite une adresse qui les sollicite
     trop (limite de débit, CAPTCHA) : une recherche identique refaite dans
     la minute n'a pas à repartir chez eux.
 
-Durée COURTE par défaut (`[tools].web_cache_ttl`, 10 minutes ; 0 = pas de
-cache) : au-delà, une page d'actualité ou une liste de releases serait
-servie périmée. En mémoire vive, borné en entrées et en octets, perdu au
+Durée COURTE par défaut (`[tools].web_cache_ttl`) : au-delà, une page
+d'actualité serait servie périmée. En mémoire vive, borné, perdu au
 redémarrage. Seuls les succès y entrent — jamais une erreur, une liste
 vide ou un moteur indisponible, qu'il faut pouvoir retenter. Commun à tous
 les clients : une page publique est la même pour tous, et les garde-fous

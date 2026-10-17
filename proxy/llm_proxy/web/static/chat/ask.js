@@ -30,8 +30,7 @@ export const TOOL = { type: "function", function: {
   } } } };
 
 // Une option : {label, description} — un modèle qui écrit une simple
-// chaîne est accepté aussi (et les questions gardées avant les
-// descriptions en sont faites).
+// chaîne est accepté aussi.
 export function option(o) {
   if (o && typeof o === "object") {
     return { label: String(o.label || "").trim(), description: String(o.description || "").trim() };
@@ -54,7 +53,6 @@ export function prepare(args) {
   return { kind: "ask", questions };
 }
 
-// Une question a-t-elle sa réponse ?
 export const answered = (q) => q.picked.length > 0 || (q.other || "").trim() !== "";
 
 // La carte remplie → le résultat rendu au modèle.

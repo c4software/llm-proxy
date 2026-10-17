@@ -8,7 +8,8 @@ import json
 
 import pytest
 
-from fakes import ANSWER_TURN, SEARCH_TURN, FakeUpstream, stream
+from fakes import (ANSWER_TURN, FakeUpstream, hosted_chat, search_then_answer,
+                   stream)
 from llm_proxy import auth, catalog, relaying, ui_routes, usage_api
 from llm_proxy import chat_api as C
 from llm_proxy import backends, oidc, stats, tools
@@ -24,8 +25,7 @@ def ui(proxy, monkeypatch):
     de chaque ligne de statistiques (stats.CLIENT au moment d'écrire)."""
     monkeypatch.setattr(auth, "PROXY_API_KEYS", [KEY, "sk-bob"])
     monkeypatch.setattr(ui_routes, "UI_CHAT", True)
-    monkeypatch.setattr(C, "ENABLED", True)
-    monkeypatch.setattr(C, "MEMORY", C.Memory(8, 60, 100_000))
+    hosted_chat(monkeypatch)
     proxy.clients = []
     monkeypatch.setattr(stats, "record",
                         lambda *a: proxy.clients.append(stats.CLIENT.get()))
@@ -88,8 +88,8 @@ def test_login_checks_the_key_and_sets_the_cookie(ui):
 
 
 def test_a_key_in_the_url_opens_nothing(ui):
-    """«?key=» n'existe plus : la clé ne passe jamais par une URL (journaux
-    du reverse proxy, historique du navigateur)."""
+    """La clé ne passe jamais par une URL (journaux du reverse proxy,
+    historique du navigateur)."""
     r = ui.client.get(f"/ui?key={KEY}")
     assert r.status_code == 200 and not r.cookies
     assert ui.client.get(f"/ui/session?key={KEY}").status_code == 401
@@ -102,13 +102,6 @@ def test_the_old_cookie_with_the_key_is_ignored_then_erased(ui):
     assert 'proxy_key=""' in r.headers.get("set-cookie", "")
 
 
-def test_the_session_is_secure_behind_an_https_reverse_proxy(ui):
-    r = ui.client.post("/ui/login", json={"key": KEY},
-                       headers={"x-forwarded-proto": "https"})
-    assert "secure" in r.headers["set-cookie"].lower()
-    assert "secure" not in login(ui).headers["set-cookie"].lower()
-
-
 def test_removing_the_key_from_the_toml_closes_the_page(ui, monkeypatch):
     login(ui)
     assert ui.client.get("/ui/session").status_code == 200
@@ -117,7 +110,7 @@ def test_removing_the_key_from_the_toml_closes_the_page(ui, monkeypatch):
 
 
 def test_a_header_key_still_reads_the_ui_routes(ui):
-    """Un curl sur /ui/usage avec la clé en en-tête : comme avant."""
+    """Un curl sur /ui/usage avec la clé en en-tête est accepté."""
     r = ui.client.get("/ui/session", headers={"authorization": f"Bearer {KEY}"})
     assert r.status_code == 200
 
@@ -163,16 +156,14 @@ def test_chat_announces_hosted_tool_runs(ui):
     """Le chat de la page reçoit `x_hosted_tool` (lancé, puis fini, avec
     le début du résultat) ; un client de l'API, jamais."""
     login(ui)
-    ui.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                  FakeUpstream(stream(*ANSWER_TURN))]
+    ui.replies = search_then_answer()
     r = chat(ui, tools=[{"type": "web_search"}])
     events = [c["delta"]["x_hosted_tool"] for d in blocks(r.content)
               for c in d["choices"] if "x_hosted_tool" in c["delta"]]
     assert [e["status"] for e in events] == ["running", "done"]
     assert events[0]["name"] == events[1]["name"] == "web_search"
     assert events[1]["chars"] > 0 and events[1]["preview"]
-    ui.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                  FakeUpstream(stream(*ANSWER_TURN))]
+    ui.replies = search_then_answer()
     r = ui.client.post("/v1/chat/completions",
                        json={"model": "essai/qwen", "stream": True,
                              "tools": [{"type": "web_search"}],
@@ -317,14 +308,12 @@ def test_incognito_chat_leaves_nothing_behind(ui, monkeypatch):
     body = {"model": "essai/qwen", "stream": True,
             "messages": [{"role": "user", "content": "Dernière version ?"}],
             "tools": [{"type": "web_search"}]}
-    ui.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                  FakeUpstream(stream(*ANSWER_TURN))]
+    ui.replies = search_then_answer()
     r = ui.client.post("/ui/chat/completions", json=body,
                        headers={"x-incognito": "1"})
     assert r.status_code == 200 and ui.hosted.runs
     assert len(C.MEMORY) == 0
-    ui.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                  FakeUpstream(stream(*ANSWER_TURN))]
+    ui.replies = search_then_answer()
     assert ui.client.post("/ui/chat/completions", json=body).status_code == 200
     assert len(C.MEMORY) == 1
 

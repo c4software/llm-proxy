@@ -1,6 +1,8 @@
 """Le champ model d'un formulaire multipart : lu pour router, réécrit pour
 retirer le préfixe de backend, le reste du corps recopié tel quel."""
 
+import pytest
+
 from llm_proxy import multipart as M
 
 CT = "multipart/form-data; boundary=----b0undary"
@@ -21,16 +23,25 @@ def test_is_multipart():
     assert not M.is_multipart("")
 
 
-def test_model_field_read():
-    assert M.model_field(corps(), CT) == "bigchuck/qwen3-asr-1.7b"
+SANS_MODEL = (b"------b0undary\r\n"
+              b'Content-Disposition: form-data; name="file"; filename="a.wav"\r\n\r\n'
+              b"x\r\n------b0undary--\r\n")
+# Un champ dont le nom COMMENCE par «model» n'est pas le champ model.
+HOMONYME = (b"--abc\r\n"
+            b'Content-Disposition: form-data; name="model_version"\r\n\r\nv2\r\n'
+            b"--abc\r\n"
+            b'Content-Disposition: form-data; name="model"\r\n\r\nbigchuck/x\r\n'
+            b"--abc--\r\n")
 
 
-def test_model_field_absent_or_unparsable():
-    sans = (b"------b0undary\r\n"
-            b'Content-Disposition: form-data; name="file"; filename="a.wav"\r\n\r\n'
-            b"x\r\n------b0undary--\r\n")
-    assert M.model_field(sans, CT) is None
-    assert M.model_field(corps(), "multipart/form-data") is None  # pas de boundary
+@pytest.mark.parametrize("raw, ct, model", [
+    (corps(), CT, "bigchuck/qwen3-asr-1.7b"),
+    (SANS_MODEL, CT, None),
+    (corps(), "multipart/form-data", None),                 # pas de boundary
+    (HOMONYME, "multipart/form-data; boundary=abc", "bigchuck/x"),
+])
+def test_model_field(raw, ct, model):
+    assert M.model_field(raw, ct) == model
 
 
 def test_rewrite_keeps_everything_else():
@@ -55,12 +66,3 @@ def test_model_after_file_and_quoted_boundary():
     out = M.rewrite_model_field(raw, ct, "Qwen-Image-2.1")
     assert M.model_field(out, ct) == "Qwen-Image-2.1"
     assert b"\x89PNG\r\n--abc-not-a-boundary" in out
-
-
-def test_field_named_like_model_is_not_model():
-    raw = (b"--abc\r\n"
-           b'Content-Disposition: form-data; name="model_version"\r\n\r\nv2\r\n'
-           b"--abc\r\n"
-           b'Content-Disposition: form-data; name="model"\r\n\r\nbigchuck/x\r\n'
-           b"--abc--\r\n")
-    assert M.model_field(raw, "multipart/form-data; boundary=abc") == "bigchuck/x"

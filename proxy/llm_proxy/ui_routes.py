@@ -56,18 +56,15 @@ from .usage_api import usage_page
 
 router = APIRouter()
 
-# La page du tableau de bord : du HTML statique, sans moteur de template —
-# tout est rempli par ses modules (web/static/app.js).
+# HTML statique, sans moteur de template : rempli par web/static/app.js.
 UI_HTML = os.path.join(ui_static.WEB_DIR, "templates", "index.html")
 
 
-# Le chat du tableau de bord (POST /ui/chat/completions) : le cookie de la
-# page y DÉPENSE des tokens. Absent du TOML = inactif — sans lui, le cookie
-# ne sert qu'à lire (statistiques, mémoire).
+# Le chat du tableau de bord : le cookie de la page y DÉPENSE des tokens.
+# Inactif par défaut ; sans lui, le cookie ne sert qu'à lire.
 UI_CHAT = config.flag("ui.chat", False)
-# Le modèle présélectionné dans le chat de la page (<backend>/<modèle>) :
-# chaque nouvelle conversation part sur lui, s'il est au catalogue. Vide :
-# le dernier modèle choisi dans ce navigateur, sinon le premier.
+# Modèle présélectionné (<backend>/<modèle>) pour chaque nouvelle
+# conversation. Vide : le dernier choisi dans ce navigateur, sinon le premier.
 UI_CHAT_MODEL = config.text("ui.chat_model", "").strip()
 
 
@@ -91,9 +88,8 @@ def drop_legacy_cookie(response: Response, request: Request) -> None:
                                secure=scope_https(request.scope))
 
 
-# Le service worker de l'application installable (manifest.webmanifest).
-# Il ne garde RIEN : chaque requête va au proxy comme avant ; seule une
-# navigation qui échoue (proxy injoignable) reçoit une page « hors ligne ».
+# Le service worker de l'application installable. Il ne garde RIEN : seule
+# une navigation qui échoue (proxy injoignable) reçoit une page « hors ligne ».
 # Servi sous /ui (pas /ui/static) avec Service-Worker-Allowed, pour que sa
 # portée couvre /ui lui-même.
 SERVICE_WORKER = """// llm-proxy : service worker de l'application installable.
@@ -235,12 +231,10 @@ def admin_only(request: Request) -> JSONResponse | None:
 
 @router.get("/ui/admin/backup")
 async def ui_backup(request: Request):
-    """Une sauvegarde de data/, à télécharger (admin) : la même archive que
-    `python -m llm_proxy.backup` — les trois bases copiées à chaud,
-    client.secret et config.toml —, faite à la demande dans un dossier
-    temporaire, effacé une fois l'archive partie. Réservée aux admins des
-    comptes OIDC : elle contient le secret des condensés et la mémoire de
-    tous ; sans comptes, pas d'admin, pas de téléchargement."""
+    """Une sauvegarde de data/ à télécharger, la même archive que
+    `python -m llm_proxy.backup`, faite dans un dossier temporaire effacé
+    une fois l'archive partie. Réservée aux admins OIDC : elle contient le
+    secret des condensés et la mémoire de tous."""
     if (bad := admin_only(request)) is not None:
         return bad
     tmp = tempfile.mkdtemp(prefix="llm-proxy-backup-")
@@ -411,7 +405,6 @@ async def ui_session(request: Request):
     return {
         "auth_required": auth_required(),
         "login": ui_login_mode(),
-        # Le compte OIDC connecté (rôle compris), None sans comptes.
         "account": user,
         # Un fragment du condensé, pour dire «c'est bien vous» sans rien
         # dire de la clé.
@@ -422,16 +415,10 @@ async def ui_session(request: Request):
             "hosted_tools": chat_tools,
             "tools": chat_tool_groups() if chat_tools else [],
             "always": always_shown() if chat_tools else [],
-            # Les tailles qu'un modèle d'images peut recevoir du chat :
-            # celles de l'outil image_generation.
             "image_sizes": list(tools.image_generation.SIZES),
             "image_size": tools.image_generation.SIZE,
         },
-        # La mémoire persistante (outil `memory`) : son panneau, à côté du
-        # chat comme dans les statistiques.
         "memory": tools.memory.ENABLED,
-        # Le partage équitable : la part du client connecté (None =
-        # illimitée) et ce qu'il en a consommé sur l'heure glissante.
         # None : proxy ouvert, personne n'est compté.
         "fair_share": await fair_share_state(),
     }
@@ -448,15 +435,10 @@ async def fair_share_state() -> dict | None:
 
 @router.get("/ui/models")
 async def ui_models(request: Request):
-    """Les modèles de CONVERSATION du catalogue (ni image, ni voix, ni
-    embeddings — CHAT_TYPES), sous /ui pour le cookie ; `vision` : le
-    catalogue le dit capable de lire une image. Pour le chat et pour le
-    générateur de configuration : servi même chat fermé (c'est ce que
-    /v1/models dit déjà à la même clé). `?all=1` : tout le catalogue, avec
-    le type de chaque modèle (`chat` : un modèle de conversation) — la page
-    ne lit que lui, une fois, et y trouve le chat, la voix, l'OCR, les
-    images. `?images=1` : les modèles
-    d'images en plus (`image`), que le chat sait faire générer."""
+    """Les modèles de conversation du catalogue (CHAT_TYPES), sous /ui pour
+    le cookie. Servi même chat fermé : /v1/models le dit déjà à la même
+    clé. `?all=1` : tout le catalogue, avec le type de chaque modèle ;
+    `?images=1` : les modèles d'images en plus."""
     every = request.query_params.get("all") in ("1", "true")
     images = request.query_params.get("images") in ("1", "true")
     entries = await catalog.merged_models(request)
@@ -467,14 +449,12 @@ async def ui_models(request: Request):
     for entry in entries:
         name, _, plain = str(entry.get("id", "")).partition("/")
         b = BACKENDS.get(name)
-        # Le type que le catalogue normalisé publie (celui du backend, sinon
-        # déduit du nom) ; à défaut, les corrections de la configuration.
+        # Le type du catalogue normalisé, à défaut celui de la configuration.
         kind = entry.get("type") or (
             b.model_types.get(plain, "text-generation") if b else "")
         if every or kind in CHAT_TYPES or (images and kind == IMAGE_TYPE):
             data.append({"id": entry["id"], "type": kind,
-                         # La fenêtre de contexte, si le backend la dit :
-                         # le générateur la donne à Codex, qui l'ignore.
+                         # Pour le générateur de configuration.
                          "context": entry.get("max_context_length"),
                          "chat": kind in CHAT_TYPES,
                          "vision": kind == "image-text-to-text",
@@ -484,11 +464,10 @@ async def ui_models(request: Request):
 
 @router.post("/ui/chat/completions")
 async def ui_chat(request: Request):
-    """Le chat de la page : /v1/chat/completions, sous /ui pour le cookie
-    — donc compté à la clé de la personne connectée. Les outils hébergés
-    y sont ceux que la page DÉCLARE ([chat].always ne s'y ajoute pas :
-    les interrupteurs de la page font foi), et leur exécution est
-    annoncée dans le flux (chat_api.Context.progress)."""
+    """/v1/chat/completions sous /ui pour le cookie, compté à la personne
+    connectée. Les outils hébergés y sont ceux que la page DÉCLARE
+    ([chat].always ne s'y ajoute pas), leur exécution annoncée dans le flux
+    (chat_api.Context.progress)."""
     if not UI_CHAT:
         return error_response("openai", 404, "unknown_route",
                               "chat de la page désactivé ([ui].chat)")
@@ -507,10 +486,8 @@ def incognito(request: Request) -> None:
 
 @router.post("/ui/images/generations")
 async def ui_images(request: Request):
-    """Le chat de la page, quand son modèle est un modèle d'images :
-    /v1/images/generations, sous /ui pour le cookie — comptée à la clé
-    connectée, comme le chat. Relayée telle quelle : la page lit
-    `b64_json` (ou une `url` absolue)."""
+    """/v1/images/generations sous /ui pour le cookie, quand le modèle du
+    chat est un modèle d'images. Relayée telle quelle."""
     if not UI_CHAT:
         return error_response("openai", 404, "unknown_route",
                               "chat de la page désactivé ([ui].chat)")
@@ -520,9 +497,8 @@ async def ui_images(request: Request):
     return await forward_post(request, "/v1/images/generations", "openai")
 
 
-# La VOIX du chat : la lecture à voix haute (synthèse), relayée comme
-# /v1/audio/* — sous /ui pour le cookie, donc comptée à la clé connectée.
-# Le modèle est choisi par la page.
+# La voix du chat (synthèse), relayée comme /v1/audio/*, comptée à la clé
+# connectée.
 def _chat_closed():
     if not UI_CHAT:
         return error_response("openai", 404, "unknown_route",
@@ -549,17 +525,15 @@ async def ui_voices(request: Request):
     return await relay_routes.audio_voices(request)
 
 
-# Une image à retoucher, en data URL, du chat de la page.
 DATA_URL = re.compile(r"data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)\Z")
 
 
 @router.post("/ui/images/edits")
 async def ui_images_edits(request: Request):
-    """La retouche d'une image du chat de la page : un corps JSON
-    (`model`, `prompt`, `image` en data URL, `size` facultatif) → le
-    formulaire de /v1/images/edits, relayé comme lui (routage au préfixe,
-    quota, statistiques à la clé connectée). JSON et non formulaire : une
-    page tierce ne peut pas l'envoyer (json_only)."""
+    """La retouche d'une image du chat : un corps JSON (`model`, `prompt`,
+    `image` en data URL, `size`) converti en formulaire /v1/images/edits et
+    relayé comme lui. JSON et non formulaire : une page tierce ne peut pas
+    l'envoyer (json_only)."""
     if not UI_CHAT:
         return error_response("openai", 404, "unknown_route",
                               "chat de la page désactivé ([ui].chat)")
@@ -615,10 +589,8 @@ async def ui_images_edits(request: Request):
 
 @router.get("/ui/usage")
 async def ui_usage(request: Request):
-    """La route d'Usage API ci-dessus, mais sous /ui : le cookie posé par
-    la page y suffit comme authentification (un fetch de navigateur ne
-    peut pas porter le Bearer). Auth active : les seules requêtes de la
-    clé connectée."""
+    """La route d'usage (usage_api), sous /ui pour le cookie. Auth active :
+    les seules requêtes de la clé connectée."""
     return await usage_page(request, own=True)
 
 
@@ -678,6 +650,8 @@ async def ui_memory_read(request: Request, path: str = ""):
 async def ui_memory_write(request: Request):
     if (off := memory_disabled()) is not None:
         return off
+    if (bad := json_only(request)) is not None:
+        return bad
     body = parse_json(await request.body())
     if not isinstance(body, dict):
         return error_response("openai", 400, "invalid_request_error",
@@ -707,6 +681,8 @@ async def ui_memory_delete(request: Request, path: str = ""):
 async def ui_memory_rename(request: Request):
     if (off := memory_disabled()) is not None:
         return off
+    if (bad := json_only(request)) is not None:
+        return bad
     body = parse_json(await request.body())
     if not isinstance(body, dict):
         return error_response("openai", 400, "invalid_request_error",

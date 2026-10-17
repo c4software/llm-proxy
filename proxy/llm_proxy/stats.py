@@ -2,14 +2,10 @@
 Statistiques d'usage du proxy, agrégées PAR MODÈLE tel que le client l'a
 demandé (nom préfixé : « albert/openweight-large », « bigchuck/qwen3 »).
 
-PERSISTANTES : une ligne SQLite par requête servie (table `requests`),
-donc les compteurs survivent au redémarrage et toute fenêtre temporelle
-est calculable après coup — c'est ce qui rend possibles les vues
-All / Week / Day du tableau de bord.
-
-La lecture se fait par UNE SEULE route, à la forme de l'Usage API
-d'OpenAI (`/v1/organization/usage/completions`) : le tableau de bord
-consomme la même chose qu'un client tiers.
+Une ligne SQLite par requête servie (table `requests`) : toute fenêtre
+temporelle est calculable après coup. La lecture suit la forme de
+l'Usage API d'OpenAI (`/v1/organization/usage/completions`) : le tableau
+de bord consomme la même chose qu'un client tiers.
 
 L'écriture ne touche jamais la boucle d'événements : record() dépose la
 ligne dans une file et rend la main ; un unique thread écrivain vide la
@@ -17,20 +13,12 @@ file par lots et purge les lignes trop vieilles (stats.retention_days).
 La base est en WAL, les lecteurs ouvrent leur propre connexion et ne
 bloquent donc pas l'écrivain.
 
-Le retour reste DYNAMIQUE — un modèle n'apparaît que s'il a réellement
-servi au moins une requête dans la fenêtre demandée.
-
-Les exécutions d'OUTILS HÉBERGÉS (paquet tools/) ont leur propre table,
-`tool_calls` : une ligne par exécution, déposée par tools.Hosted.run —
-le point unique par où passent /v1/responses, /v1/messages et /v1/tools —
-dans la même file, écrite par le même thread, purgée par la même règle.
-Elle ne porte QUE des mesures (outil, route d'appel, modèle, issue, durée,
-taille du résultat) : ni la requête de recherche, ni l'URL lue, ni le
-résultat — ce que les utilisateurs cherchent ou lisent n'a pas à survivre
-dans une base de statistiques. Lecture par une route sœur, de même forme
-(`/v1/organization/usage/tools`, voir usage_tools). La table `requests`
-n'en est pas changée : une réponse qui a utilisé des outils y garde UNE
-ligne, avec son usage de tokens cumulé.
+Les exécutions d'outils hébergés ont leur table, `tool_calls`, déposée
+par tools.Hosted.run dans la même file. Elle ne porte QUE des mesures :
+ni requête de recherche, ni URL, ni résultat — ce que les utilisateurs
+cherchent ou lisent n'a pas à survivre dans une base de statistiques.
+Une réponse qui a utilisé des outils garde UNE ligne dans `requests`,
+avec son usage de tokens cumulé.
 
 Comptage des tokens, par ordre de préférence :
   1. le bloc `usage` renvoyé par l'upstream (exact) — présent sur les
@@ -42,14 +30,10 @@ Comptage des tokens, par ordre de préférence :
 Les deux sont comptés séparément (`num_estimated_requests` dans la
 réponse) pour que le chiffre affiché reste honnête.
 
-PAR CLÉ : chaque ligne porte `api_key_id`, le condensé de la clé du proxy
-que le client a présentée (tools.owner : jamais la clé elle-même), «» pour
-un proxy ouvert. Il n'est passé à aucune fonction : la requête le pose
-dans CLIENT (une variable de contexte, auth.require_proxy_key), record()
-et record_tool() l'y lisent — l'enregistrement se fait loin de la route,
-dans le relais ou un outil, et tout ce qui y mène hérite du contexte. Le
-tableau de bord ne montre ainsi à chacun que SES requêtes ; l'Usage API
-filtre (`api_key_ids`) et groupe (`group_by=api_key_id`) dessus.
+Chaque ligne porte `api_key_id`, le condensé de la clé présentée
+(jamais la clé elle-même), «» pour un proxy ouvert. Il n'est passé à
+aucune fonction : l'auth le pose dans CLIENT (variable de contexte),
+record() et record_tool() l'y lisent, loin de la route.
 
 Ce module ne connaît ni FastAPI ni httpx2.
 """
@@ -76,11 +60,9 @@ CLIENT: contextvars.ContextVar[str] = contextvars.ContextVar(
 DB_PATH = config.resolve(config.text("stats.database", "stats.db"))
 # Purge des lignes plus vieilles que N jours (0 = conservation illimitée).
 RETENTION_DAYS = config.num("stats.retention_days", 90)
-# Réponse non streamée : seuls la TÊTE et la QUEUE du corps sont
-# retenues, TAIL_BYTES chacune — `usage` vit à l'une ou l'autre (OpenAI,
-# vLLM/Albert et llama.cpp le sérialisent après `choices`/`data`), jamais
-# au milieu d'une réponse volumineuse. 64 Kio couvrent largement l'objet
-# et ce qui l'entoure.
+# Réponse non streamée : seules la TÊTE et la QUEUE du corps sont
+# retenues, TAIL_BYTES chacune — `usage` vit à l'une ou l'autre, jamais au
+# milieu d'une réponse volumineuse.
 TAIL_BYTES = 64 << 10
 # Flux SSE : une ligne sans retour chariot ne peut pas dépasser ceci —
 # au-delà ce n'est pas du SSE, on cesse de l'inspecter.
@@ -88,16 +70,13 @@ MAX_LINE_BYTES = 1 << 20
 # Même approximation que le limiteur (albert.CHARS_PER_TOKEN).
 CHARS_PER_TOKEN = 4
 
-STARTED_AT = time.time()
-_started_mono = time.monotonic()
-
 
 def _est(chars: int) -> int:
     return max(chars // CHARS_PER_TOKEN, 1) if chars else 0
 
 
 # Ce qu'on cherche dans le flux, SANS le parser : json.loads sur chaque
-# événement SSE coûtait ~4 µs par token généré, sur la boucle d'événements.
+# événement SSE pèse sur la boucle d'événements à chaque token.
 #   * _CONTENT_RE : la valeur de `content` quand c'est une chaîne — on
 #     n'en retient que la longueur. `"content":null` ne matche pas, ni
 #     `"reasoning_content"` (le guillemet ouvrant est exigé), ni un
@@ -277,9 +256,7 @@ INSERT INTO requests (ts, model_key, backend, model, endpoint, status,
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
-# Une ligne par exécution d'outil hébergé. Table à part, créée par le même
-# `CREATE TABLE IF NOT EXISTS` au démarrage : une base d'avant les outils
-# (qui n'a que `requests`) la reçoit sans rien perdre ni rien rejouer.
+# Une ligne par exécution d'outil hébergé.
 #   endpoint   la route par où l'outil a été appelé : /v1/responses,
 #              /v1/messages (les boucles du proxy) ou /v1/tools (direct) ;
 #   model_key  le modèle PRÉFIXÉ de la conversation ; vide pour l'appel
@@ -317,9 +294,7 @@ TOOL_OUTCOMES = ("ok", "error", "limit")
 TABLES = ("requests", "tool_calls")
 
 # Colonnes ajoutées après coup : une base existante les reçoit par ALTER
-# TABLE au démarrage, avec leur défaut — aucune migration à jouer à la
-# main. Les lignes d'avant `api_key_id` n'appartiennent à aucune clé («»).
-# (table, nom, définition)
+# TABLE au démarrage, avec leur défaut. (table, nom, définition)
 ADDED_COLUMNS = (
     ("requests", "cached_tokens", "INTEGER NOT NULL DEFAULT 0"),
     ("requests", "api_key_id", "TEXT NOT NULL DEFAULT ''"),
@@ -519,28 +494,18 @@ def _enqueue(sql: str, row: tuple) -> None:
 # ── Usage API (forme OpenAI) ────────────────────────────────────────────
 #
 # Deux écarts au schéma, tous deux additifs (un SDK OpenAI ignore ce
-# qu'il ne connaît pas, la compatibilité reste entière) :
-#   * bucket_width accepte « all » : un seul seau couvrant toute la
-#     plage, pour obtenir un total sans agréger soi-même ;
-#   * chaque `result` porte en plus num_errors, num_streamed_requests,
-#     num_estimated_requests, num_anthropic_requests, les latences
-#     (total / moyenne / maximum) et first_request_time /
-#     last_request_time.
-#
-# Les latences exposées s'additionnent ou se maximisent, donc un client
-# peut agréger plusieurs seaux SANS perte : c'est ce qui permet au tableau
-# de bord de tout tirer d'un seul appel. Un percentile n'aurait pas cette
-# propriété.
+# qu'il ne connaît pas) :
+#   * bucket_width accepte « all » : un seul seau couvrant toute la plage ;
+#   * chaque `result` porte des champs en plus (erreurs, flux, estimations,
+#     latences, première et dernière requête).
 
 BUCKET_WIDTHS = {"1m": 60, "1h": 3600, "1d": 86_400}
 # Défauts d'OpenAI : une journée de minutes, une journée d'heures, une
 # semaine de jours.
 DEFAULT_LIMITS = {"1m": 60, "1h": 24, "1d": 7, "all": 1}
 MAX_LIMIT = 180
-# Le proxy n'a ni projets, ni comptes utilisateurs : `model` et
-# `api_key_id` (le condensé de la clé, «» sur un proxy ouvert) portent de
-# l'information. Les autres sont acceptés — pour ne pas casser un client —
-# mais rendent une valeur nulle.
+# Seuls `model` et `api_key_id` portent de l'information. Les autres sont
+# acceptés, pour ne pas casser un client, mais rendent une valeur nulle.
 GROUP_FIELDS = ("model", "project_id", "user_id", "api_key_id", "batch",
                 "service_tier")
 
@@ -739,11 +704,8 @@ def usage_completions(start_time: int, end_time: int | None = None,
                 "object": "organization.usage.completions.result",
                 "input_tokens": prompt or 0,
                 "output_tokens": completion or 0,
-                # Tokens d'entrée servis depuis le cache de préfixe du
-                # backend, quand l'upstream le dit (prompt_tokens_details.
-                # cached_tokens — llama.cpp, vLLM, OpenAI) ; 0 sinon, jamais
-                # une valeur inventée. Inclus dans input_tokens, comme chez
-                # OpenAI. L'audio, lui, reste inconnu : 0.
+                # Inclus dans input_tokens, comme chez OpenAI (cached_tokens).
+                # L'audio reste inconnu : 0.
                 "input_cached_tokens": cached or 0,
                 "input_audio_tokens": 0,
                 "output_audio_tokens": 0,
@@ -757,12 +719,9 @@ def usage_completions(start_time: int, end_time: int | None = None,
                 "num_errors": errors or 0,
                 "num_streamed_requests": streamed or 0,
                 "num_estimated_requests": estimated or 0,
-                # Requêtes arrivées par la surface Anthropic (/v1/messages,
-                # c'est-à-dire Claude Code) : la colonne `endpoint` suffit.
                 "num_anthropic_requests": anthropic or 0,
-                # Latences EXACTEMENT recomposables d'un seau à l'autre : la
-                # somme s'additionne, le maximum se maximise. Un percentile,
-                # lui, ne se recompose pas — c'est pourquoi il n'y en a pas.
+                # Latences recomposables d'un seau à l'autre (somme, maximum) :
+                # un percentile ne le serait pas, il n'y en a donc pas.
                 "total_latency_seconds": round(latency_sum or 0.0, 3),
                 "avg_latency_seconds": round((latency_sum or 0.0) / requests, 3)
                 if requests else 0.0,
@@ -777,19 +736,11 @@ def usage_completions(start_time: int, end_time: int | None = None,
 
 # ── Usage des outils hébergés ───────────────────────────────────────────
 #
-# L'Usage API d'OpenAI a une route par nature d'usage, toutes de la même
-# forme (completions, embeddings, images, web_search_calls,
-# file_search_calls, code_interpreter_sessions…). Aucune ne couvre «les
-# appels d'outils» en général : `web_search_calls` ne compte que des
-# recherches (num_requests, par modèle et `context_level`), sans issue ni
-# durée, et rien n'existe pour une lecture de page. `/tools` est donc une
-# route SŒUR, propre au proxy, à la forme commune : même page, mêmes
-# seaux, mêmes paramètres. `num_requests` y est le nombre d'appels, comme
-# dans les résultats web_searches / file_searches d'OpenAI ; `tool` et
-# `endpoint` sont des dimensions du proxy.
-#
-# Mêmes propriétés que les latences des requêtes : tout s'additionne ou se
-# maximise, un client recompose une période depuis des seaux plus fins.
+# Aucune route de l'Usage API d'OpenAI ne couvre les appels d'outils en
+# général (`web_search_calls` ne compte que des recherches, sans issue ni
+# durée) : `/tools` est une route SŒUR, propre au proxy, à la forme
+# commune. `num_requests` y est le nombre d'appels ; `tool` et `endpoint`
+# sont des dimensions du proxy. Tout s'additionne ou se maximise.
 
 TOOL_GROUP_FIELDS = ("tool", "endpoint", "model", "project_id", "user_id",
                      "api_key_id")

@@ -1,7 +1,6 @@
 /*
-  L'onglet « Chat » du tableau de bord : un composant à part, enregistré
-  par app.js sous <chat-panel>, comme la mémoire (memory.js). Il a ses
-  propres appels et ne touche pas aux statistiques.
+  L'onglet « Chat » : un composant enregistré par app.js sous
+  <chat-panel>, avec ses propres appels.
 
   Routes (même cookie que /ui/usage — la clé de la personne connectée) :
     GET  /ui/models?all=1       le catalogue (/v1/models), lib/catalog.js
@@ -11,53 +10,31 @@
   lui vient de /ui/session, par la prop `session`.
 
   CONVERSATIONS : gardées par le proxy, liées au compte connecté
-  (chat/history.js, GET/PUT/DELETE /ui/conversations) ; leurs images
-  (jointes, générées) à part, sous /ui/assets. Chacune garde son modèle,
-  son prompt système, sa température, ses outils, ses artifacts et ses
-  fichiers produits.
+  (chat/history.js, /ui/conversations ; leurs images sous /ui/assets).
 
   OUTILS HÉBERGÉS : un interrupteur par TYPE déclarable
   (`{"type": "web_search"}` présente web_search, web_fetch, web_grep). Le
   proxy exécute les appels et les annonce dans le flux (`x_hosted_tool`,
-  propre au chat de la page) : lancé, puis fini avec le début du résultat.
-  L'échange caché (appels et résultats) n'est jamais dans l'historique de
-  la page : c'est la mémoire du proxy ([chat].memory) qui le réinsère,
-  tant que la réponse est renvoyée telle qu'elle a été reçue.
-
-  MÉMOIRE : le panneau de la mémoire (memory.js, `compact`), à
-  droite du fil, relu dès que le modèle a appelé l'outil `memory`.
+  propre au chat de la page). L'échange caché n'est jamais dans
+  l'historique de la page : la mémoire du proxy ([chat].memory) le
+  réinsère, tant que la réponse est renvoyée telle qu'elle a été reçue.
 
   FILE D'ATTENTE : pendant une réponse, Entrée met le message en file
-  (conv.queue, gardée avec la conversation) au lieu de l'envoyer. À la fin
-  d'une réponse RÉUSSIE, le premier message de la file part tout seul ;
-  une réponse arrêtée ou en erreur met la file en pause (« Envoyer la
-  suite » la relance) — enchaîner sur un échec n'aurait pas de sens. Un
-  message en file se modifie (il revient dans la zone de saisie) ou se
-  retire.
+  (conv.queue, gardée avec la conversation). Seule une réponse RÉUSSIE
+  enchaîne sur le suivant ; un arrêt ou une erreur met la file en pause
+  (« Envoyer la suite ») — enchaîner sur un échec n'aurait pas de sens.
 
-  PIÈCES JOINTES : les images partent en `image_url` (data URL) — au
-  modèle de les lire ; les fichiers texte sont joints au message, entre
-  balises <file name="…">. Le reste est refusé.
-
-  INCOGNITO : une conversation marquée `incognito` n'est jamais envoyée
-  à l'historique, et disparaît dès qu'on la quitte (ou
-  qu'on recharge la page). Ses requêtes portent `X-Incognito: 1` : le
+  INCOGNITO : jamais envoyée à l'historique, disparaît dès qu'on la
+  quitte (ou qu'on recharge). Ses requêtes portent `X-Incognito: 1` : le
   proxy n'en garde rien (ni échange d'outils, ni cache web, pas l'outil
   `memory`), et un fichier rendu ne vit que le temps de s'afficher. Les
   statistiques (des comptes, sans contenu) restent.
 
-  MODÈLES D'IMAGES : ceux du catalogue (`image`) s'ajoutent à la
-  liste. Choisi, un tel modèle reçoit le dernier message, précédé des
-  demandes de la même suite d'images (le contexte : « plus sombre » suit
-  ce qu'il retouche), par
-    POST /ui/images/generations   /v1/images/generations
-    POST /ui/images/edits         /v1/images/edits, si une image est
-                                  jointe (ou « Retoucher » une image rendue)
-  de 1 à 4 images, une requête chacune, à la taille choisie (celles de
-  [tools.image_generation].sizes). L'image rendue (`b64_json`, ou une
-  `url` absolue) devient une pièce jointe de la réponse : gardée comme
-  celles des messages, et retirée de même si le stockage déborde. Un clic
-  l'agrandit.
+  MODÈLES D'IMAGES (`image` au catalogue) : le dernier message, précédé
+  des demandes de la même suite d'images (chat/images.js), part à
+  /ui/images/generations — ou /ui/images/edits si une image est jointe.
+  Une requête par image, à la taille choisie ([tools.image_generation]
+  .sizes) ; l'image rendue devient une pièce jointe de la réponse.
 */
 import { ChatStore } from "./store.js";
 import { inline, dataUrl, ownImage } from "./history.js";
@@ -234,7 +211,6 @@ export const ChatPanel = {
 
     // ── modèles ─────────────────────────────────────────────────────────
     const modelIds = computed(() => models.value.filter((m) => !m.image).map((m) => m.id));
-    // Le modèle de la conversation est-il un modèle d'images ?
     // Les modèles : ceux du catalogue du proxy (de conversation et
     // d'images ; lib/catalog.js, gardé dans le navigateur), puis ceux du
     // navigateur (browser.js), décrits avec ce qu'ils savent faire.
@@ -499,7 +475,6 @@ export const ChatPanel = {
       respond(c);
     }
 
-    // Le premier message de la file part.
     function resume() {
       const c = current.value;
       if (!c || streaming.value || !c.queue || !c.queue.length) return;
@@ -618,7 +593,6 @@ export const ChatPanel = {
             }
             live.step = { content: live.content.slice(start), calls: [], queue: asked };
           }
-          // Les appels du tour, un à un.
           while (live.step.queue.length) {
             const c = live.step.queue[0];
             let chip = live.tools.find((t) => t.id === c.id);
@@ -990,7 +964,7 @@ export const ChatPanel = {
 
     function stop() { if (controller) controller.abort(); }
 
-    // Régénérer : la dernière réponse est remplacée, la question reste.
+    // La dernière réponse est remplacée, la question reste.
     function regenerate() {
       const c = current.value;
       if (streaming.value || !c) return;
@@ -1083,9 +1057,6 @@ export const ChatPanel = {
     // Une image chargée après le rendu allonge le fil : il la suit aussi.
     const onImageLoad = toEnd;
 
-    // La dernière ligne non vide d'un raisonnement, sans les marques de
-    // Markdown, et son rang (la clé de l'animation : elle ne se rejoue qu'à
-    // une NOUVELLE ligne, pas à chaque mot).
     // L'aperçu d'un raisonnement plié : UNE ligne lisible, remplacée au plus
     // toutes les REASON_PACE ms (à son rythme, pas à celui du modèle).
     // `n` change à chaque remplacement : c'est la clé de la transition.

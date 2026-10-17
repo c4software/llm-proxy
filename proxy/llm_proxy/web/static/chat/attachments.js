@@ -4,11 +4,11 @@
   Le reste est refusé. readAttachment(fichier) → la pièce jointe, ou lève
   une Error dont le message se montre à côté de son nom.
 */
-export const MAX_TEXT_FILE = 256 * 1024;
-export const MAX_IMAGE = 8 * 1024 * 1024;
-export const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|ya?ml|toml|ini|cfg|conf|log|xml|html?|css|js|mjs|ts|tsx|jsx|py|rb|go|rs|java|kt|c|h|cc|cpp|hpp|cs|php|sh|bash|zsh|sql|r|lua|swift|vue|svelte|tex|env|dockerfile|makefile)$/i;
+const MAX_TEXT_FILE = 256 * 1024;
+const MAX_IMAGE = 8 * 1024 * 1024;
+const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|ya?ml|toml|ini|cfg|conf|log|xml|html?|css|js|mjs|ts|tsx|jsx|py|rb|go|rs|java|kt|c|h|cc|cpp|hpp|cs|php|sh|bash|zsh|sql|r|lua|swift|vue|svelte|tex|env|dockerfile|makefile)$/i;
 
-export const readAs = (file, how) => new Promise((resolve, reject) => {
+const readAs = (file, how) => new Promise((resolve, reject) => {
   const r = new FileReader();
   r.onload = () => resolve(r.result);
   r.onerror = () => reject(r.error);
@@ -16,7 +16,7 @@ export const readAs = (file, how) => new Promise((resolve, reject) => {
 });
 
 // Un fichier qui se lit comme du texte : par son type, ou son extension.
-export const isText = (file) => file.type.startsWith("text/") || TEXT_EXT.test(file.name)
+const isText = (file) => file.type.startsWith("text/") || TEXT_EXT.test(file.name)
   || /json|xml|yaml|javascript|toml|csv/.test(file.type);
 
 export async function readAttachment(file) {

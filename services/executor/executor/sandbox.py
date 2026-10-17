@@ -19,8 +19,7 @@ point d'entrée a pu le faire, `writable-cgroups=true`) :
   * toujours : pas de réseau (--network none : ni interface ni DNS —
     la sortie vers les dépôts de paquets, quand SANDBOX_EGRESS l'ouvre,
     passe par UNE prise Unix jugée hors du bac, egress.py), racine en
-    lecture seule,
-    aucune capacité, no-new-privileges, un uid sans droit PROPRE au bac,
+    lecture seule, aucune capacité, no-new-privileges, un uid sans droit PROPRE au bac,
     /work et /tmp en tmpfs de taille fixe, RLIMIT_NPROC et RLIMIT_NOFILE,
     la durée d'une exécution (`timeout` DANS le bac, puis un délai de
     garde ici qui détruit le bac), la durée de vie du conteneur
@@ -29,10 +28,10 @@ point d'entrée a pu le faire, `writable-cgroups=true`) :
   * si le cgroup est délégué — `probe` le VÉRIFIE au démarrage plutôt
     que de le déduire : mémoire (--memory), CPU (--cpus), processus
     (--pids-limit). Une borne n'est dite tenue que si le bac la lit dans
-    son propre cgroup ; une borne non tenue n'est plus posée, et l'état
-    le dit (`Sandboxes.cgroup`) : le plafond
-    du conteneur exécuteur lui-même (docker-compose : mem_limit, cpus,
-    pids_limit) est alors le seul filet pour cette ressource.
+    son propre cgroup ; une borne non tenue n'est pas posée, et l'état le
+    dit (`Sandboxes.cgroup`) : le plafond du conteneur exécuteur lui-même
+    (docker-compose : mem_limit, cpus, pids_limit) est alors le seul filet
+    pour cette ressource.
 
 Tout ce qui revient d'un bac (sortie, liste de fichiers, archive) est une
 donnée HOSTILE : lue sous plafond, jamais interprétée.
@@ -78,8 +77,8 @@ INPUT_NAME = re.compile(r"\w[\w.-]{0,79}")
 #   --unlink-first : ce qui porte déjà ce nom est RETIRÉ avant l'écriture
 #     — un lien symbolique posé là par un programme précédent du bac est
 #     remplacé, jamais suivi (GNU tar ne traverse un lien existant qu'avec
-#     --dereference, qui n'est pas demandé ; vu avec tar 1.35). Un dossier
-#     non vide de ce nom ne se retire pas : le fichier est refusé ;
+#     --dereference, qui n'est pas demandé). Un dossier non vide de ce nom
+#     ne se retire pas : le fichier est refusé ;
 #   --touch : la date est celle du dépôt, pas celle de l'archive.
 # `find` sans -L ne suit pas non plus : seul un fichier ordinaire compte.
 # Tout cela tourne sous l'uid du bac, DANS le bac : un lien suivi n'aurait
@@ -319,8 +318,8 @@ class Sandboxes:
         podman les refuse en bloc — une à une. `podman info` ne suffit
         pas : dans un conteneur, il liste des contrôleurs que l'on ne peut
         pas écrire. Et un drapeau ACCEPTÉ ne suffit pas non plus : sans
-        cgroup délégué podman le prend sans rien borner (vu sur Docker
-        29, cgroup v2 : `--memory 512m` accepté, 1 Go alloué). Une borne
+        cgroup délégué podman le prend sans rien borner (`--memory 512m`
+        accepté, 1 Go alloué sous Docker, cgroup v2). Une borne
         n'est donc dite tenue que si le bac LIT, dans son propre cgroup,
         une autre valeur que sans le drapeau. Lève SandboxError si rien
         ne démarre."""
@@ -385,7 +384,7 @@ class Sandboxes:
             # taille. Seuls /work et /tmp s'écrivent, bornés.
             "--read-only", "--read-only-tmpfs=false",
             # `exec` : podman monte un tmpfs en noexec, et un programme
-            # compilé ici doit pouvoir tourner. Ce n'était pas une
+            # compilé ici doit pouvoir tourner. Ce ne serait pas une
             # barrière : un interpréteur exécute déjà ce qu'on lui écrit.
             "--tmpfs", f"{WORKDIR}:rw,exec,size={lim.work_size},mode=1777",
             "--tmpfs", f"/tmp:rw,exec,size={lim.tmp_size},mode=1777",
@@ -465,7 +464,7 @@ class Sandboxes:
             "MISE_STATE_DIR": "/opt/devbox/state", "MISE_YES": "1",
             "MISE_COLOR": "0",
             # Zig : sa source officielle seulement, pas les miroirs de la
-            # communauté (hors liste : 17 essais refusés avant elle).
+            # communauté (hors liste, chacun serait essayé puis refusé).
             "MISE_ZIG_USE_COMMUNITY_MIRRORS": "false",
         })
         env["PATH"] = "/opt/devbox/mise/shims:" + env["PATH"]

@@ -17,10 +17,12 @@
   Appliqué : écrit dans le dossier quand le navigateur le permet (Chrome,
   Edge : dossier ouvert par showDirectoryPicker, accès en écriture demandé
   à la première écriture), sinon le fichier modifié est téléchargé. Dans
-  les deux cas, le modèle relit ensuite la nouvelle version. Ignorés à l'ouverture : .git,
-  node_modules, environnements Python et caches. Un dossier n'est gardé
-  qu'en mémoire : après un rechargement, la conversation dit son nom et
-  demande de le rouvrir (le navigateur ne rend pas l'accès tout seul).
+  les deux cas, le modèle relit ensuite la nouvelle version.
+  
+  Ignorés à l'ouverture : .git, node_modules, environnements Python et
+  caches. Un dossier n'est gardé qu'en mémoire : après un rechargement, la
+  conversation dit son nom et demande de le rouvrir (le navigateur ne rend
+  pas l'accès tout seul).
 
   Chaque résultat est un TEXTE pour le modèle ; une erreur commence par
   « Error: », comme ceux des outils du proxy.

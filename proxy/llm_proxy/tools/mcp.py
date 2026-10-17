@@ -36,13 +36,10 @@ ou un flux SSE (`text/event-stream`) qui se termine par elle — les deux
 sont lus, les notifications du flux sont ignorées, sauf
 `notifications/tools/list_changed` qui avance la prochaine découverte.
 
-DÉCOUVERTE. Le registre des outils se remplit à l'import ; celle-ci est
-asynchrone, peut échouer, et la liste change. D'où `start()` au
-démarrage de l'application et `stop()` à son arrêt : une tâche par
-serveur redemande `tools/list` à période fixe (`refresh`, jamais plus
-souvent que le `ttlMs` annoncé, avec aléa, et un recul quand le serveur
-ne répond pas). Un serveur éteint au démarrage ne bloque rien : ses
-outils apparaissent quand il répond. Le registre ne sait pas retirer :
+DÉCOUVERTE. Asynchrone, elle peut échouer, et la liste change : `start()`
+au démarrage, `stop()` à l'arrêt ; une tâche par serveur redemande
+`tools/list` à période fixe (voir pause()). Un serveur éteint au démarrage
+ne bloque rien : ses outils apparaissent quand il répond. Le registre ne sait pas retirer :
 un outil enregistré le reste, et c'est son `enabled` qui suit la liste
 du serveur — il garde ainsi sa place parmi les fonctions présentées au
 modèle, donc le préfixe d'un backend à cache.
@@ -73,8 +70,7 @@ from ..settings import log
 from .contract import Call, Result, Source, Tool, ToolError
 
 # Délai (s) d'un appel, tout compris (session rouverte incluse), et de
-# chaque requête. C'est le délai de l'outil (McpTool.timeout), à la place
-# de [tools].run_timeout.
+# chaque requête.
 TIMEOUT = config.num("tools.mcp.timeout", 30)
 # Ce que l'exécuteur laisse de plus : le temps de rendre l'erreur de délai
 # d'ici, qui nomme l'outil et sa durée.
@@ -333,9 +329,8 @@ class McpTool(Tool):
 
     @property
     def timeout(self) -> float:
-        """Le délai de l'exécuteur pour cet outil (contrat : Tool.timeout),
-        à la place de [tools].run_timeout : celui du serveur, tenu dans
-        run(), plus de quoi rendre son erreur."""
+        """Celui du serveur, tenu dans run(), plus de quoi rendre son
+        erreur."""
         return self.server.timeout + GRACE
 
     @property

@@ -4,7 +4,7 @@
   de retouche (/ui/images/edits), rendue en pièce jointe.
 */
 // Le type d'une image rendue en base64, lu dans ses premiers octets.
-export function b64Type(b64) {
+function b64Type(b64) {
   return b64.startsWith("/9j/") ? "image/jpeg" : b64.startsWith("R0lG") ? "image/gif"
     : b64.startsWith("UklGR") ? "image/webp" : "image/png";
 }
@@ -15,7 +15,7 @@ export function b64Type(b64) {
 // réponse de conversation), puis la dernière. « Plus sombre » suit
 // donc « un phare au coucher du soleil ». Une retouche n'en a pas
 // besoin : l'image porte le contexte.
-export const MAX_PROMPT = 4000;
+const MAX_PROMPT = 4000;
 export function imagePrompt(conv, edit) {
   const msgs = conv.messages;
   const parts = [];

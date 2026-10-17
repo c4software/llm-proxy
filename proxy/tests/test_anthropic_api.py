@@ -2,9 +2,8 @@
 réseau, aucun serveur — anthropic_api ne connaît ni FastAPI ni httpx2.
 Les outils hébergés (outils serveur `web_search_…` et `web_fetch_…`) sont
 testés en fin de fichier, jusqu'à la route entière par le client de test
-de Starlette ;
-la boucle d'app.py, commune aux deux surfaces traduites, est déroulée
-scénario par scénario dans test_responses_api.py."""
+de Starlette ; la boucle de tool_loop.py, commune aux deux surfaces
+traduites, est déroulée scénario par scénario dans test_responses_api.py."""
 
 import asyncio
 import json
@@ -14,9 +13,10 @@ import types
 import httpx2
 import pytest
 
-from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, RESULTS, SEARCH_DOC,
+from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
                    SEARCH_TURN, SEARCHED, FakeUpstream, chat_doc, chunk,
-                   failed, feed, hosted_tools, sse, stream, tool_call, usage)
+                   failed, feed, hosted_tools, search_then_answer, sse, stream,
+                   tool_call, usage)
 from fakes import sse_events as events
 from llm_proxy import anthropic_api as A
 from llm_proxy import anthropic_api, backends, stats
@@ -165,22 +165,19 @@ IMG = {"type": "image", "source": {"type": "base64", "media_type": "image/png",
                                    "data": "A" * 4096}}
 
 
-def test_to_openai_image_base64_when_backend_accepts():
+@pytest.mark.parametrize("images, content", [
+    (True, [{"type": "image_url",
+             "image_url": {"url": "data:image/png;base64," + "A" * 4096}},
+            {"type": "text", "text": "Quoi ?"}]),
+    # Backend texte seul : tout est texte → une chaîne, la forme que tout
+    # backend accepte.
+    (False, "[image ignorée : image/png, 3 Ko]Quoi ?"),
+])
+def test_to_openai_image_selon_le_backend(images, content):
     out = A.to_openai({"model": "m", "messages": [{"role": "user", "content": [
         IMG, {"type": "text", "text": "Quoi ?"},
-    ]}]}, images=True)
-    parts = out["messages"][0]["content"]
-    assert parts[0] == {"type": "image_url",
-                        "image_url": {"url": "data:image/png;base64," + "A" * 4096}}
-    assert parts[1] == {"type": "text", "text": "Quoi ?"}
-
-
-def test_to_openai_image_placeholder_when_text_only_backend():
-    out = A.to_openai({"model": "m", "messages": [{"role": "user", "content": [
-        IMG, {"type": "text", "text": "Quoi ?"},
-    ]}]})
-    # Tout est texte → une chaîne, la forme que tout backend accepte.
-    assert out["messages"][0]["content"] == "[image ignorée : image/png, 3 Ko]Quoi ?"
+    ]}]}, images=images)
+    assert out["messages"][0]["content"] == content
 
 
 def test_to_openai_tool_result_with_image():
@@ -514,7 +511,7 @@ def search_error(code):
 
 def claude_code_search(**extra):
     """Le corps réel de la sous-requête que l'outil WebSearch de Claude
-    Code 2.1.287 envoie (capture du 05/10/2026, `metadata` raccourci)."""
+    Code 2.1.287 envoie (`metadata` raccourci)."""
     return {
         "model": "bigchuck/qwen3.8-flash-next",
         "messages": [{"role": "user", "content": [{
@@ -573,7 +570,7 @@ def test_to_openai_declares_hosted_search_from_claude_code_request():
     assert list(ctx.hosted) == ["web_search"]
     assert ctx.limits == {"web_search": 8} and ctx.options == {}
 
-    # Sans annuaire, ou annuaire sans recherche : ignoré, comme avant.
+    # Sans annuaire, ou annuaire sans recherche : ignoré.
     for h in (None, tools.Hosted(tools=[]),
               tools.Hosted(tools=hosted.tools[1:])):
         out = A.to_openai(request, hosted=h)
@@ -862,7 +859,7 @@ def test_to_openai_replays_search_blocks_without_memory():
     ]
     assert len(hosted.memory) == 0
     # Sans recherche hébergée — ou si la requête ne déclare plus l'outil —,
-    # les blocs sont ignorés comme avant : un seul message assistant.
+    # les blocs sont ignorés : un seul message assistant.
     plain = [{"role": "assistant", "content": "Je cherche.b6789."},
              {"role": "user", "content": "Merci. Et la précédente ?"}]
     assert A.to_openai(request)["messages"][2:] == plain
@@ -880,7 +877,7 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
     t = translator(request, hosted)
     turn(t, chunk({"reasoning_content": "Hum."}), *SEARCH_TURN)
     t.resolve(t.pending[0], SEARCHED)
-    # Tour 2, comme app.messages le reconstruit.
+    # Tour 2, comme surfaces.messages le reconstruit.
     rebuilt = lambda: A.to_openai(
         {**request, "messages": request["messages"] + [
             {"role": "assistant", "content": t.content}]},
@@ -1189,7 +1186,7 @@ def test_fetch_loop_turn_and_client_replay_send_the_same_bytes():
 
 
 # ── la route /v1/messages ───────────────────────────────────────────────
-# La boucle d'app.py est commune aux deux surfaces traduites : ses
+# La boucle de tool_loop.py est commune aux deux surfaces traduites : ses
 # scénarios sont déroulés dans test_responses_api.py. Ici, par la route
 # entière (fixture `proxy` de conftest.py), ce qui est propre à celle-ci :
 # les blocs rendus, les réglages du client sur son outil, la forme des
@@ -1202,9 +1199,7 @@ def post(proxy, **extra):
 
 def searching(proxy, streamed=True):
     """Le décor : un tour où le modèle cherche, puis celui où il conclut."""
-    proxy.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                     FakeUpstream(stream(*ANSWER_TURN))] if streamed \
-        else [FakeUpstream(SEARCH_DOC), FakeUpstream(ANSWER_DOC)]
+    proxy.replies = search_then_answer(streamed)
     return list(proxy.replies)
 
 
@@ -1370,7 +1365,7 @@ def test_app_failure_takes_the_anthropic_error_form(proxy):
     r = post(proxy)
     assert r.status_code == 500 and r.json() == error("api_error", "non")
     # Erreur DANS le flux d'un tour : la recherche qu'il demandait n'est
-    # pas exécutée, le message est clos comme avant.
+    # pas exécutée, le message est clos.
     proxy.replies = [FakeUpstream(stream(
         tool_call(0, "call_x", "web_search", "{}"),
         {"error": {"message": "GPU perdu"}}))]

@@ -1,162 +1,89 @@
 """
-Les outils hébergés sur /v1/chat/completions : ce qu'il faut pour qu'un
-client qui ne parle QUE cette API (pi, omp, Hermes, tout SDK OpenAI)
-déclare un outil que le proxy exécute — ou le reçoive d'office —, sans
-rien porter d'autre : ni extension, ni boucle. Les deux autres surfaces ont ça par leur API
-(`{"type": "web_search"}` de Responses, outil serveur d'Anthropic) ;
-chat/completions n'a PAS de forme standard pour le dire.
+Les outils hébergés sur /v1/chat/completions, pour un client qui ne parle
+que cette API : il déclare un outil que le proxy exécute, ou le reçoit
+d'office, sans rien porter d'autre (ni extension, ni boucle). Voir
+docs/outils-heberges.md.
 
-La déclaration retenue, dans `tools` : la forme de l'API Responses, telle
-quelle — `{"type": "web_search"}` (tous les types que déclarent les
-outils de tools/ : ceux de leur liaison Responses, ou leur nom pour un
-outil qui n'en a pas). Un backend chat/completions ne
-connaît que `function` dans `tools` et refuse le reste : le proxy peut
-donc la reconnaître sans ambiguïté, et ce qu'il remplace n'aurait de
-toute façon pas marché. Ce qui existe ailleurs, au 05/10/2026 :
-  * OpenAI, chat/completions : `web_search_options` (champ racine), sur
-    ses seuls modèles de recherche, et des annotations `url_citation` en
-    retour. Accepté ici comme SYNONYME de `{"type": "web_search"}` —
-    c'est le seul champ que le SDK OpenAI sait écrire pour cette API ;
-    ses réglages (`search_context_size`, `user_location`) sont ignorés,
-    et le modèle reste libre de ne pas chercher ;
-  * OpenRouter : `plugins: [{"id": "web"}]`, le suffixe `:online`, et un
-    outil serveur dans `tools`, `{"type": "openrouter:web_search"}` —
-    même idée qu'ici (un type qui n'est pas `function`), sous un nom à
-    lui ; retour en annotations `url_citation` ;
-  * LiteLLM : relaie `web_search_options` aux modèles qui cherchent
-    nativement ; son interception (boucle côté passerelle) vise l'outil
-    serveur d'Anthropic, pas chat/completions.
-Aucune convention commune pour la DÉCLARATION, donc ; une pour le RETOUR,
-les annotations `url_citation`, reprise ici.
+DÉCLARATION, dans `tools` : la forme de l'API Responses, telle quelle —
+`{"type": "web_search"}` (les types que déclarent les outils de tools/).
+chat/completions n'a pas de forme standard pour cela ; un backend ne
+connaît que `function` et refuse le reste, donc le proxy la reconnaît sans
+ambiguïté. `web_search_options` (champ racine d'OpenAI, le seul que son SDK
+sait écrire) en est un SYNONYME ; ses réglages sont ignorés. Le RETOUR suit
+la convention commune : des annotations `url_citation`.
 
-Ce module ne s'applique qu'à une requête qui DÉCLARE, sur un proxy où
-[chat].hosted_tools est vrai. Toute autre requête ne passe pas par lui :
-relais brut des octets, comme avant (surfaces.chat_completions).
+Ce module ne s'applique qu'à une requête à qui un outil hébergé est
+présenté, sur un proxy où [chat].hosted_tools est vrai ; toute autre
+requête est relayée octet pour octet (surfaces.chat_completions).
 
-PRÉSENTATION D'OFFICE ([chat].always, `ALWAYS`, `unasked`). Une interface
-de chat (Open WebUI) ne déclarera jamais rien : la liste nomme des outils
-du registre présentés à TOUTE requête, comme si elle les avait déclarés —
-même boucle, même réponse, même mémoire. Vide par défaut : rien ne change.
-  * Par NOM d'outil (`web_fetch` n'a pas de type à lui), à la suite des
-    outils du client. Un outil que la requête déclare aussi n'est
-    présenté qu'une fois, à la place de sa déclaration ; une fonction du
-    client garde son nom, comme pour une déclaration.
-  * `mcp:<serveur>` vaut TOUS les outils de ce serveur MCP, ceux qu'il
-    annoncera plus tard compris (`offered`) : la liste d'un serveur n'est
-    pas connue de qui écrit la configuration. Pas de `mcp` nu pour « tous
-    les serveurs » : ce qui entre d'office dans toutes les conversations
-    se nomme, serveur par serveur.
-  * Un nom inconnu du registre ou d'un outil désactivé est ignoré, pas
-    refusé : le client n'a rien demandé. La liste est relue à chaque
-    requête contre les outils actifs à ce moment-là — un outil
-    enregistré après le démarrage est présenté dès qu'il existe.
-  * Rien n'est présenté d'office à une requête qui dit `tool_choice:
-    "none"` (le client ne veut pas d'appel), ni à `n` > 1 (une
-    déclaration y est refusée : ici le client n'a rien déclaré, il garde
-    ses `n` réponses), ni à un modèle que le catalogue de son backend ne
-    dit pas de conversation (catalog._converses). Une telle requête, et celle
-    à qui il ne reste rien à présenter, repart en relais brut.
-  * Les autres `tool_choice` sont ceux du client, intacts : une fonction
-    forcée est appelée (les outils d'office sont présentés quand même —
-    la liste d'outils, donc le préfixe, ne change pas d'une requête à
-    l'autre) ; `required` sans outil du client force un outil hébergé au
-    premier tour, `auto` ensuite (tool_loop.hosted_loop).
-  * Le proxy ne sait PAS d'une requête qu'elle est de service (titre,
-    tags, suggestions qu'une interface demande après chaque réponse) :
-    rien dans son corps ne le dit. Elle reçoit les outils aussi — sauf
-    si son MODÈLE est listé dans [chat].always_except (`excepted`) : des
-    motifs sur le nom préfixé, pour le « modèle de tâches » qu'une
-    interface sait réserver à ces requêtes. Ce modèle-là ne reçoit jamais
-    rien d'office ; ce qu'un client lui DÉCLARE reste honoré.
+PRÉSENTATION D'OFFICE ([chat].always, `ALWAYS`, `unasked`) : pour une
+interface qui ne déclare jamais rien, des outils du registre présentés à
+toute requête, comme si elle les avait déclarés.
+  * Par NOM d'outil, à la suite des outils du client ; `mcp:<serveur>` vaut
+    tous les outils de ce serveur, ceux qu'il annoncera plus tard compris
+    (`offered`). Pas de `mcp` nu : ce qui entre partout se nomme.
+  * Un nom inconnu ou désactivé est ignoré, pas refusé : le client n'a rien
+    demandé. Relu à chaque requête contre les outils actifs.
+  * Rien d'office à `tool_choice: "none"`, à `n` > 1, ni à un modèle que
+    le catalogue ne dit pas de conversation (catalog._converses) : relais
+    brut.
+  * Les autres `tool_choice` du client restent intacts (les outils d'office
+    sont présentés quand même : le préfixe ne change pas d'une requête à
+    l'autre).
+  * Une requête de service (titre, tags) ne se distingue pas à son corps :
+    seul son MODÈLE, s'il est dans [chat].always_except (`excepted`), la
+    prive de la présentation d'office ; ce qu'on lui déclare reste honoré.
 
-Ce que le client reçoit : UNE réponse chat/completions ordinaire, quel
-que soit le nombre de tours upstream (voir `Translator`). Les appels
-hébergés ne lui arrivent JAMAIS en `tool_calls` — il tenterait de les
-exécuter. Les FICHIERS qu'un outil produit (tools.Result.files : le graphique
-d'une exécution de code) sont rangés au magasin (files.py) et leurs
-liens ajoutés à la FIN du contenu, par le proxy — le modèle ne les écrit
-pas. Conséquence : son historique ne les contient pas. À la requête
-suivante il renvoie `[…, user, assistant « réponse », user]` : sans rien
-de plus le modèle retrouverait sa réponse, pas ce qu'il avait lu, et le
-début de la conversation ne serait plus celui que le backend a vu pendant
-la boucle (son cache de préfixe ne servirait que jusqu'au dernier message
-d'avant la recherche).
+Le client reçoit UNE réponse chat/completions ordinaire, quel que soit le
+nombre de tours upstream (`Translator`). Les appels hébergés ne lui
+arrivent JAMAIS en `tool_calls` — il tenterait de les exécuter. Les
+fichiers produits par un outil sont rangés au magasin (files.py) et leurs
+liens ajoutés par le proxy à la fin du contenu.
 
-MÉMOIRE DES ÉCHANGES CACHÉS (`Memory`, `restore`, [chat].memory). Rien
-dans une requête chat/completions n'identifie la conversation : elle est
-reconnue À SON CONTENU. Quand une réponse se conclut après au moins un
-tour d'outils hébergés, l'échange caché — les messages assistant à
-`tool_calls` et les messages `tool`, tels que le backend les a reçus —
-est rangé sous un condensé de ce que le client en reverra : les messages
-de SA requête (ceux d'avant, sans rien de réinséré) et la réponse finale.
-À la requête suivante, pour chaque message assistant de l'historique, le
-condensé est recalculé ; s'il est connu, l'échange est réinséré juste
-avant ce message, dont le contenu redevient le texte du DERNIER tour (le
-client, lui, a reçu les textes de tous les tours bout à bout : le premier
-est déjà dans l'échange réinséré). Le backend reçoit alors, à l'octet
-près, ce qu'il a reçu au dernier tour de la boucle, suivi de ce qu'il a
-répondu — puis la suite.
-  * Ce qui entre dans le condensé (`_canon`) : par message, le rôle, le
-    TEXTE (une chaîne et une liste de parties `text` disent la même
-    chose ; espaces de début et de fin retirés), les identifiants de ses
-    `tool_calls`, son `tool_call_id`. Tout autre champ est ignoré
-    (`annotations`, `reasoning_content`, `images`, `name`…) : un client
-    qui les retire ou les ajoute retrouve son échange. Les messages
-    `system` / `developer` n'y entrent PAS : bien des clients y écrivent
-    l'heure, et ce que le modèle a lu ne dépend pas d'eux.
-  * Dans le doute, rien n'est réinséré — c'est le comportement d'avant,
-    jamais pire : texte de la réponse modifié (résumé, traduit, coupé,
-    régénéré : la nouvelle réponse a son propre échange, ou aucun),
-    contenu assistant qui porte autre chose que du texte, historique
-    tronqué ou compacté (tout ce qui précède change, donc toutes les
-    clés), entrée expirée ou sortie de la borne, proxy redémarré, autre
-    client. Un condensé ne peut désigner que l'endroit exact où l'échange
-    a eu lieu : pas de réinsertion « au mauvais endroit ».
-  * Une réponse que la limite dure a close (le modèle n'a pas conclu) ne
-    range rien : ses derniers résultats n'ont jamais été lus.
-  * L'entrée porte aussi la SESSION sous laquelle les outils ont tourné
-    (tools.Call.session : le bac d'une exécution de code). C'est ce qui
-    tient lieu d'identifiant de conversation : tiré à chaque requête,
-    remplacé par celui du dernier échange reconnu dans l'historique. Une
-    conversation garde donc son bac aux conditions exactes où elle
-    retrouve ses échanges ; sinon, ou sans [chat].memory, un bac neuf.
-    L'identifiant ne sort jamais du proxy.
-  * Le condensé porte la réponse telle que le client l'a reçue, liens
-    des fichiers compris ; le texte rejoué au backend, lui, est sans eux
-    (c'est celui qu'il a écrit).
-  * Cloisonnée par client comme tools.Memory (le condensé de la clé du
-    proxy fait partie de la clé d'entrée), en mémoire vive seulement,
-    bornée en entrées, en durée ET en caractères — un échange porte
-    jusqu'à 8 résultats de 24 000 caractères. Rien n'en est journalisé
-    que des comptes.
-  * Seule une requête à qui un outil hébergé est PRÉSENTÉ — déclaré, ou
-    d'office — est relue ainsi. Un
-    client qui cesse de déclarer en cours de conversation repasse au
-    relais brut : rien n'est réinséré (le modèle n'a plus que ses
-    réponses), rien n'est perdu non plus — les entrées restent, et
-    servent de nouveau s'il redéclare, les clés ne dépendant que de ce
-    que LUI envoie.
+MÉMOIRE DES ÉCHANGES CACHÉS (`Memory`, `restore`, [chat].memory). Le
+client ne renvoie que ses messages et les réponses finales : sans rien de
+plus, le modèle perdrait ce qu'il avait lu et le cache de préfixe du
+backend ne servirait plus. Rien n'identifie la conversation : elle est
+reconnue À SON CONTENU. Une réponse conclue après au moins un tour d'outils
+hébergés range l'échange caché (messages assistant à `tool_calls` et
+messages `tool`, tels qu'envoyés au backend) sous un condensé des messages
+de la requête et de la réponse finale. À la requête suivante, l'échange
+est réinséré avant chaque message assistant dont le condensé est connu, et
+ce message reprend le texte du DERNIER tour : le backend reçoit à l'octet
+près ce qu'il a vu pendant la boucle.
+  * Le condensé (`_canon`) ne retient par message que le rôle, le texte
+    (chaîne ou parties `text`, espaces de bord retirés), les identifiants
+    de `tool_calls` et le `tool_call_id`. Les messages `system` /
+    `developer` n'y entrent pas : bien des clients y écrivent l'heure.
+  * Dans le doute, rien n'est réinséré — jamais pire que sans mémoire :
+    réponse modifiée, historique tronqué, entrée expirée, redémarrage… Un
+    condensé ne désigne que l'endroit exact de l'échange.
+  * Une réponse que la limite dure a close ne range rien : ses derniers
+    résultats n'ont jamais été lus.
+  * L'entrée porte la SESSION des outils (tools.Call.session : le bac
+    d'exécution de code) : c'est l'identifiant de conversation, repris du
+    dernier échange reconnu, sinon neuf. Il ne sort jamais du proxy.
+  * Le condensé porte la réponse telle que le client l'a reçue, liens des
+    fichiers compris ; le texte rejoué au backend est sans eux.
+  * Cloisonnée par client comme tools.Memory, en mémoire vive, bornée en
+    entrées, en durée ET en caractères. Rien n'en est journalisé que des
+    comptes.
+  * Seule une requête à qui un outil hébergé est présenté est relue ainsi ;
+    les entrées d'un client qui cesse de déclarer restent et resservent.
 
-Tour MIXTE (le modèle appelle dans un même tour un outil hébergé et un
-outil du client) : la règle des deux autres surfaces — exécuter, puis
-rendre la main — perdrait ici le résultat, que le client ne peut pas
-rejouer. Le PREMIER appel du tour décide :
-  * hébergé d'abord : les appels hébergés sont exécutés, ceux du client
-    de ce tour ne lui sont pas transmis, et le backend est relancé ; le
-    modèle les réémettra, résultat de la recherche sous les yeux. Coût :
-    leurs arguments sont générés deux fois ;
-  * client d'abord : ses appels sont déjà partis vers lui au fil de
-    l'eau (les retenir jusqu'à la fin du tour priverait tous les clients
-    du flux de leurs arguments, et les laisserait sans un octet le temps
-    d'une longue écriture) ; les appels hébergés qui suivent ne sont pas
-    exécutés, le modèle les redemandera à la requête suivante. Coût : une
-    requête de recherche, quelques tokens.
-Dans les deux cas le client et le backend gardent des historiques
-cohérents, et rien d'exécuté n'est perdu.
+TOUR MIXTE (un outil hébergé et un outil du client dans le même tour) :
+exécuter puis rendre la main perdrait le résultat, que le client ne peut
+pas rejouer. Le PREMIER appel du tour décide :
+  * hébergé d'abord : les appels hébergés sont exécutés, ceux du client ne
+    lui sont pas transmis, le backend est relancé et les réémettra ;
+  * client d'abord : ses appels sont partis au fil de l'eau (les retenir
+    priverait le client du flux) ; les appels hébergés qui suivent ne sont
+    pas exécutés, le modèle les redemandera.
+Les historiques du client et du backend restent cohérents.
 
 Même contrat de robinet que responses_api.Translator et
-anthropic_api.Translator : c'est tool_loop.hosted_loop qui mène la boucle.
-Ce module ne connaît ni FastAPI ni httpx2.
+anthropic_api.Translator : tool_loop.hosted_loop mène la boucle. Ce module
+ne connaît ni FastAPI ni httpx2.
 """
 
 import fnmatch
@@ -170,30 +97,22 @@ from collections import OrderedDict
 from . import config, files
 from .settings import log
 
-# Absente du TOML = inactif : un déploiement existant ne change pas de
-# comportement sans l'avoir demandé (un backend peut avoir SA lecture de
-# `{"type": "web_search"}` dans `tools` — Zhipu en a une).
+# Inactif par défaut : un backend peut avoir SA lecture de
+# `{"type": "web_search"}` dans `tools` (Zhipu en a une).
 ENABLED = config.flag("chat.hosted_tools", False)
 # Annotations `url_citation` en fin de réponse : les URL que les outils
 # ont rendues ET que le modèle a écrites dans sa réponse.
 ANNOTATIONS = config.flag("chat.annotations", True)
-# La mémoire des échanges cachés (tête de module). false = le comportement
-# d'avant : rien n'est gardé, rien n'est réinséré.
+# La mémoire des échanges cachés (tête de module).
 MEMORY_ENABLED = config.flag("chat.memory", True)
-# Les outils présentés D'OFFICE, par nom, sans doublon (tête de module).
-# Des NOMS seulement : ce qu'ils désignent se lit dans l'annuaire de
-# chaque requête, pas ici — le registre peut encore grandir.
+# Les outils présentés D'OFFICE (tête de module) : des NOMS seulement, résolus
+# dans l'annuaire de chaque requête — le registre peut encore grandir.
 ALWAYS = list(dict.fromkeys(config.strings("chat.always")))
-# Ce qui, dans ALWAYS, désigne les outils d'un serveur MCP : «mcp:<serveur>».
 SERVER = "mcp:"
-# Les modèles à qui RIEN n'est présenté d'office : motifs à jokers shell
-# sur le nom préfixé «<backend>/<modèle>», casse ignorée — la syntaxe des
-# [backends.<nom>.model_types].
+# Motifs (jokers shell, casse ignorée) sur «<backend>/<modèle>».
 ALWAYS_EXCEPT = [p.lower() for p in config.strings("chat.always_except")]
-# Ses bornes en entrées et en durée sont celles de la mémoire des
-# résultats ([tools], lues ici sans importer le paquet) ; celle-ci a en
-# plus une borne en CARACTÈRES, toutes entrées confondues : une entrée de
-# tools.Memory est UN résultat, une entrée d'ici peut en porter 8.
+# Bornes en entrées et en durée de la mémoire des résultats ([tools]), plus
+# une borne en CARACTÈRES : une entrée d'ici peut porter 8 résultats.
 MEMORY_ENTRIES = config.integer("tools.cache_entries", 512)
 MEMORY_TTL = config.num("tools.cache_ttl", 24 * 3600)
 MEMORY_CHARS = config.integer("chat.memory_chars", 8_000_000)
@@ -212,23 +131,20 @@ class Context:
     """Ce que la réponse doit savoir de la requête."""
 
     def __init__(self):
-        # Fonctions exécutées par le proxy : nom → outil de tools/.
+        # nom → outil de tools/
         self.hosted: dict = {}
         # Le client a-t-il demandé `stream_options.include_usage` ? Le
         # proxy, lui, le demande toujours au backend (stats exactes).
         self.include_usage = False
         self.annotations = ANNOTATIONS
-        # Mémoire des échanges cachés, posés par restore() : où ranger,
-        # pour quel client (tools.owner), et le condensé des messages de
-        # la requête tels que le client les a envoyés. `state` None =
-        # rien ne sera rangé.
+        # Posés par restore() : où ranger, pour quel client (tools.owner),
+        # et le condensé des messages de la requête. `state` None = rien ne
+        # sera rangé.
         self.memory: Memory | None = None
         self.client = ""
         self.state = None
-        # L'identifiant de la CONVERSATION pour un outil à état
-        # (tools.Call.session : le bac de code_execution). Tiré ici ;
-        # restore() le remplace par celui du dernier échange caché que la
-        # mémoire reconnaît — la conversation continue dans son bac.
+        # Identifiant de conversation (tools.Call.session) ; restore() le
+        # remplace par celui du dernier échange reconnu.
         self.session = uuid.uuid4().hex
         # Annoncer l'exécution des outils hébergés dans le flux (le chat
         # du tableau de bord, ui_routes.ui_chat) : voir Translator.start.
@@ -237,8 +153,7 @@ class Context:
 
 def declares(payload: dict, kinds) -> bool:
     """La requête déclare-t-elle un outil hébergé ? `kinds` : tous les
-    types que le paquet tools/ connaît, actifs ou non. Le corps est déjà
-    désérialisé par la route : un parcours de `tools`, rien de plus."""
+    types que le paquet tools/ connaît, actifs ou non."""
     if "web_search_options" in payload:
         return True
     # Un `tool_choice` à la forme Responses (`{"type": "web_search"}`)
@@ -253,9 +168,8 @@ def declares(payload: dict, kinds) -> bool:
 
 
 def unasked(payload: dict) -> bool:
-    """Présenter à cette requête les outils de [chat].always, qu'elle
-    n'a pas demandés ? Non si `tool_choice` vaut `none` ou si `n` > 1
-    (tête de module). Ce que le proxy sait du MODÈLE est l'affaire de la
+    """Présenter à cette requête les outils de [chat].always ? Non si
+    `tool_choice` vaut `none` ou si `n` > 1. Le MODÈLE est l'affaire de la
     route."""
     n = payload.get("n")
     return bool(ALWAYS) and payload.get("tool_choice") != "none" \
@@ -264,11 +178,8 @@ def unasked(payload: dict) -> bool:
 
 def offered(active) -> list[str]:
     """Les NOMS des outils que [chat].always présente à l'instant, parmi
-    `active` (les outils actifs du registre), dans l'ordre de la liste :
-    une entrée est un nom d'outil, ou `mcp:<serveur>` — tous les outils
-    dont c'est un type de déclaration (Tool.kinds), c'est-à-dire ceux de
-    ce serveur. Relu à chaque requête : un outil découvert après le
-    démarrage y entre dès qu'il existe."""
+    `active`, dans l'ordre de la liste. `mcp:<serveur>` désigne les outils
+    dont c'est un type de déclaration (Tool.kinds)."""
     names: dict[str, None] = {}
     for entry in ALWAYS:
         for tool in active:
@@ -289,26 +200,20 @@ def prepare(payload: dict, hosted, kinds, always=()) -> Context:
     """Remplace, DANS `payload`, chaque déclaration d'outil hébergé par
     les fonctions du paquet tools/ et rend le contexte de la réponse.
     `hosted` : l'annuaire tools.Hosted (vide si aucun outil n'est actif).
-    `always` : les noms des outils à présenter d'office à cette requête
-    (offered), à la suite de ceux du client ; ceux que l'annuaire
-    n'a pas, ou dont le nom est pris, sont passés. Une requête à qui rien
-    n'est ajouté ni remplacé n'est pas touchée.
+    `always` : les noms des outils à présenter d'office (offered), à la
+    suite de ceux du client ; ceux que l'annuaire n'a pas, ou dont le nom
+    est pris, sont passés.
 
     Un outil déclaré que le proxy connaît mais n'a pas activé est REFUSÉ
-    (400) : le retirer en silence ferait répondre le modèle sans
-    recherche à un client qui l'a demandée, et le laisser passer rendrait
-    l'erreur d'un backend qui ne dit rien de la cause. (La surface
-    Responses, elle, l'ignore : Codex le déclare d'office.) Un type que
-    le paquet ne connaît pas n'est pas touché : c'est l'affaire du
-    backend.
+    (400) : le retirer en silence ferait répondre le modèle sans recherche,
+    le laisser passer rendrait une erreur de backend muette sur la cause.
+    (La surface Responses l'ignore : Codex le déclare d'office.) Un type
+    inconnu du paquet est laissé au backend.
 
-    `tool_choice` à la forme Responses (`{"type": "web_search"}`) :
-    traduit vers la fonction présentée pour ce type — la première,
-    `web_search` pour la recherche. Il ne
-    vaut que pour le premier tour (tool_loop.hosted_loop ramène un choix forcé
-    à `auto` ensuite). S'il vise un outil désactivé, ou que la requête ne
-    déclare pas (ou dont une fonction du client a pris le nom) : 400 —
-    le backend, lui, refuserait sans dire pourquoi."""
+    `tool_choice` à la forme Responses : traduit vers la première fonction
+    présentée pour ce type, au premier tour seulement (tool_loop.hosted_loop
+    ramène un choix forcé à `auto` ensuite). S'il vise un outil désactivé
+    ou non déclaré : 400."""
     if isinstance(payload.get("n"), int) and payload["n"] > 1:
         raise Refused("`n` > 1 n'est pas pris en charge avec un outil "
                       "hébergé : une réponse, une boucle")
@@ -391,11 +296,9 @@ def prepare(payload: dict, hosted, kinds, always=()) -> Context:
 # ── mémoire des échanges cachés ─────────────────────────────────────────
 
 class Memory:
-    """Les échanges cachés, par client et condensé de contexte (tête de
-    module) : la logique de tools.Memory — LRU bornée en entrées, durée,
-    `owner` dans la clé — plus une borne en caractères, toutes entrées
-    confondues. Un échange plus gros que la borne à lui seul n'est pas
-    rangé."""
+    """Les échanges cachés, par client et condensé (tête de module) : la
+    LRU de tools.Memory plus une borne en caractères, toutes entrées
+    confondues. Un échange plus gros que la borne n'est pas rangé."""
 
     def __init__(self, entries: int, ttl: float, chars: int):
         self.entries, self.ttl, self.chars = entries, ttl, chars
@@ -495,10 +398,9 @@ def _key(state, text: str, ids: list[str]) -> str:
 
 
 def restore(payload: dict, ctx: Context, client: str) -> int:
-    """Réinsère, DANS `payload`, les échanges cachés que la mémoire
-    reconnaît (tête de module), et pose sur `ctx` de quoi ranger celui de
-    cette réponse. Rend le nombre d'échanges réinsérés. Sans effet si
-    [chat].memory est faux. `client` : tools.owner() de la clé présentée,
+    """Réinsère, DANS `payload`, les échanges cachés reconnus (tête de
+    module) et pose sur `ctx` de quoi ranger celui de cette réponse. Rend
+    le nombre d'échanges réinsérés. `client` : tools.owner() de la clé,
     «» pour un proxy ouvert."""
     messages = payload.get("messages")
     if not MEMORY_ENABLED or not isinstance(messages, list):
@@ -571,14 +473,11 @@ DONE = b"data: [DONE]\n\n"
 
 
 class Translator:
-    """Le robinet de réponse de /v1/chat/completions quand un outil
-    hébergé est déclaré : même interface que responses_api.Translator
-    (feed / finish / tokens / cached / sse / ok, puis `pending`,
-    `client_calls`, resolve, next_turn, finalize, fail, `turns`), menée
-    par tool_loop.hosted_loop. Les octets rendus restent du chat/completions.
+    """Le robinet de réponse de /v1/chat/completions avec outils hébergés :
+    même interface que responses_api.Translator, menée par
+    tool_loop.hosted_loop.
 
-    UNE réponse pour PLUSIEURS tours upstream. En flux, le client lit un
-    flux continu :
+    UNE réponse pour PLUSIEURS tours upstream. En flux :
       * l'`id` et le `created` du premier tour sur tous les blocs ;
       * les deltas de contenu (et de raisonnement) des tours successifs à
         la suite, GAP entre deux textes ; `role` une seule fois ;
@@ -602,8 +501,7 @@ class Translator:
         self.ok = 200 <= status < 300
         self.sse = self.ok and "text/event-stream" in ct
         self.ctx = ctx
-        # Statut HTTP de l'issue, pour la route en JSON : 200, ou celui
-        # que fail() a reçu.
+        # Statut HTTP de l'issue, pour la route en JSON.
         self.status = 200
         self.usage: dict | None = None    # usage upstream du tour en cours
         self._past: list[dict] = []       # usages des tours précédents
@@ -631,8 +529,7 @@ class Translator:
         self._history: list[dict] = []    # messages des tours clos
         self._ids: list[str] = []         # id des appels client du tour
         self._sources: dict[str, str] = {}        # URL → titre
-        # Liens des fichiers rendus par les outils (files.py), à écrire
-        # à la fin de la réponse.
+        # Liens des fichiers rendus par les outils, écrits à la fin.
         self._links: list[str] = []
         # JSON : dernier corps upstream, appels client et raisonnement.
         self._doc: dict = {}
@@ -743,16 +640,13 @@ class Translator:
 
     @property
     def session(self) -> str:
-        """L'identifiant de conversation que la boucle passe aux outils
-        (tools.Call.session)."""
+        """tools.Call.session"""
         return self.ctx.session
 
     def resolve(self, call: dict, result) -> bytes:
-        """Le résultat (tools.Result) d'un appel de `pending`, exécuté par
-        la boucle : son TEXTE est gardé pour le tour suivant, ses sources
-        notées pour les annotations, ses FICHIERS rangés au magasin
-        (files.py) — leurs liens partiront à la fin de la réponse. Le
-        client n'en voit rien d'autre, sauf le chat de la page (start)."""
+        """Le résultat (tools.Result) d'un appel de `pending` : texte gardé
+        pour le tour suivant, sources pour les annotations, fichiers rangés
+        au magasin. Le client n'en voit rien, sauf le chat de la page."""
         self.pending = [c for c in self.pending if c is not call]
         self._done.append((call, result.text))
         self._links += [stored.markdown for stored in
@@ -782,7 +676,6 @@ class Translator:
         self.turns += 1
 
     def finalize(self) -> bytes:
-        """Clôt la réponse. Sans effet si elle l'est déjà."""
         if self._finished:
             return b""
         if self.sse:
@@ -942,18 +835,14 @@ class Translator:
                          list(self._history), tail, ctx.client, ctx.session)
 
     def _annotations(self) -> list[dict]:
-        """Annotations `url_citation`, la forme d'OpenAI : une par
-        OCCURRENCE, dans le contenu, d'une URL rendue par un outil — où
-        elle l'est, en caractères du contenu rendu (tous les tours, GAP
-        compris). Une source que le modèle n'a pas écrite n'est pas une
-        citation : rien n'est inventé.
+        """Annotations `url_citation` : une par OCCURRENCE, dans le contenu
+        rendu (tous les tours, GAP compris), d'une URL rendue par un outil.
+        Une source que le modèle n'a pas écrite n'est pas citée.
 
-        Une URL n'est citée que si elle est écrite EN ENTIER : `text.find`
-        seul trouvait aussi `…/llama.cpp` (la page du dépôt, rendue par la
-        recherche) au début de `…/llama.cpp/releases`, d'où deux
-        annotations au même endroit pour une URL écrite une fois. Les plus
-        longues d'abord, une occurrence ne servant qu'une fois ; et une
-        occurrence qui continue (`_MORE`) est une autre URL."""
+        Une URL n'est citée qu'écrite EN ENTIER (`…/llama.cpp` ne doit pas
+        matcher au début de `…/llama.cpp/releases`) : les plus longues
+        d'abord, une occurrence ne servant qu'une fois, et une occurrence
+        qui continue (`_MORE`) est une autre URL."""
         if not self.ctx.annotations or not self._sources:
             return []
         text = "".join(self._all)

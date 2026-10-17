@@ -43,7 +43,7 @@ export const ConfigPanel = {
       try { return localStorage.getItem(STORE_PART) || "clients"; }
       catch { return "clients"; }
     })());
-    // « settings » : l'ancien onglet Paramètres, fondu dans Proxy.
+    // « settings », encore gardé par un navigateur : la partie Proxy.
     const part = computed(() => {
       const want = stored.value === "settings" ? "proxy" : stored.value;
       return parts.value.some((p) => p.id === want) ? want : "clients";

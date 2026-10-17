@@ -1,18 +1,8 @@
 """
-La surface Responses du proxy : ce qu'il faut pour qu'un client écrit
-pour l'API Responses d'OpenAI — Codex CLI en premier lieu — parle à un
-backend qui ne connaît que /v1/chat/completions. UNIQUEMENT dans ce
-sens, comme pour la surface Anthropic : aucun backend n'a besoin de
-servir /v1/responses, et le proxy ne dépend pas de ce que chacun en
-implémente.
-
-Ce qu'un client Responses appelle, et ce qu'il reçoit :
-  POST /v1/responses  → traduit en /v1/chat/completions, réponse
-                        retraduite (objet Response, ou flux d'événements
-                        `response.*`)
-
-Le routage ne change pas : le modèle porte le préfixe du backend
-(`bigchuck/qwen3.8-flash-next`), à poser dans la configuration du client.
+La surface Responses du proxy : POST /v1/responses traduit en
+/v1/chat/completions, réponse retraduite (objet Response, ou flux
+d'événements `response.*`). UNIQUEMENT dans ce sens, comme la surface
+Anthropic : aucun backend n'a besoin de servir /v1/responses.
 
 La tolérance de la requête reprend celle de gufo (gufo-org/gufo#434),
 écrite sur les corps que Codex envoie réellement :
@@ -26,9 +16,8 @@ La tolérance de la requête reprend celle de gufo (gufo-org/gufo#434),
     (deux namespaces, ou un namespace et le premier niveau) est refusé ;
   * `custom` et `local_shell` ne sont pas hébergés non plus : ce sont des
     outils que le CLIENT exécute, sous une forme que chat/completions n'a
-    pas (entrée en texte libre ; élément `local_shell_call`). Chacun est
-    présenté au modèle comme une fonction, et son appel rendu au client
-    dans sa forme d'origine — voir « Outils du client hors `function` » ;
+    pas. Chacun est présenté au modèle comme une fonction, et son appel
+    rendu au client dans sa forme d'origine (voir plus bas) ;
   * les champs sans effet ici (`include`, `reasoning.summary`,
     `text.verbosity`, `prompt_cache_key`, `client_metadata`, `store`…)
     sont tolérés : le corps upstream est RECONSTRUIT, rien d'inconnu ne
@@ -38,44 +27,33 @@ La tolérance de la requête reprend celle de gufo (gufo-org/gufo#434),
 
 Ce qui demanderait un état côté serveur est refusé (400) plutôt que
 perdu en silence : `previous_response_id`, `conversation`, `background`,
-`item_reference`. Codex renvoie tout l'historique à chaque tour.
+`item_reference`.
 
 Outils hébergés (paquet tools/) : quand le proxy sait exécuter un outil
-que le client déclare — `web_search` —, il présente au modèle les
-fonctions correspondantes, et leurs appels ne sont PAS rendus au client
-en `function_call` : le robinet les met de côté (`pending`), tool_loop.py les
-exécute et relance le backend, et le client ne voit qu'un élément
-`web_search_call` terminé. Au tour suivant le client renvoie cet élément
-sans son résultat : il est relu dans la mémoire du paquet tools/ et
-redevient, à l'identique, un appel suivi de son résultat. Ce module ne
-fait aucune requête : il reçoit un objet `Hosted` et s'en sert comme
-d'un annuaire.
+que le client déclare (`web_search`), il présente au modèle les fonctions
+correspondantes ; leurs appels ne sont PAS rendus au client : le robinet
+les met de côté (`pending`), tool_loop.py les exécute et relance le
+backend, et le client ne voit qu'un élément `web_search_call` terminé. Au
+tour suivant le client renvoie cet élément sans son résultat : il est relu
+dans la mémoire du paquet tools/ et redevient, à l'identique, un appel
+suivi de son résultat. Ce module ne fait aucune requête : `Hosted` lui
+sert d'annuaire.
 
-Outils du client hors `function` (formes lues dans le code de Codex CLI
-rust-v0.157.1 — protocol/src/models.rs, tools/src/responses_api.rs,
-codex-api/src/sse/responses.rs — et dans les types du SDK openai-python) :
-  * `{"type": "custom", name, description, format}` — outil « freeform »,
-    dont l'entrée est un TEXTE, pas du JSON (Codex : `apply_patch`, avec
-    une grammaire lark, pour les modèles dont le catalogue dit
-    `apply_patch_tool_type = "freeform"`). Devient une fonction à un seul
-    champ `input` ; la grammaire rejoint la description, c'est tout ce
-    qu'un backend chat peut en faire. L'appel est rendu en
-    `custom_tool_call` (`call_id`, `name`, `input`), rejoué par le client
-    avec un `custom_tool_call_output` ;
-  * `{"type": "local_shell"}` — devient une fonction `local_shell`
-    (`command` en tableau d'arguments…), l'appel est rendu en
-    `local_shell_call` avec son `action` `exec`, rejoué avec un
+Outils du client hors `function` (formes de Codex CLI et du SDK
+openai-python) :
+  * `custom` — outil « freeform » dont l'entrée est un TEXTE (Codex :
+    `apply_patch`). Devient une fonction à un seul champ `input` ; la
+    grammaire rejoint la description. L'appel est rendu en
+    `custom_tool_call`, rejoué avec un `custom_tool_call_output` ;
+  * `local_shell` — devient une fonction `local_shell`, l'appel est rendu
+    en `local_shell_call` avec son `action` `exec`, rejoué avec un
     `local_shell_call_output` (SDK) ou un `function_call_output` (Codex).
-    Codex 0.157.1 ne DÉCLARE plus cet outil (son `ToolSpec` n'en a plus la
-    variante) : il n'est là que pour un autre client Responses.
-La fonction prend le nom de l'outil, ou ce nom suffixé (`_2`…) si une
-fonction du client le porte déjà : c'est la fonction du client qui garde
-le sien.
+La fonction prend le nom de l'outil, suffixé (`_2`…) si une fonction du
+client le porte déjà : c'est la fonction du client qui garde le sien.
 
-Même robinet que anthropic_api.Translator (feed / finish / tokens /
-cached / sse / ok) : un flux OpenAI (deltas plats, outils fragmentés par
-index) devient la séquence d'événements Responses, éléments ouverts et
-fermés un à un, numérotés (`sequence_number`).
+Même robinet que anthropic_api.Translator : un flux OpenAI (deltas plats,
+outils fragmentés par index) devient la séquence d'événements Responses,
+éléments ouverts et fermés un à un, numérotés (`sequence_number`).
 
 Ce module ne connaît ni FastAPI ni httpx2.
 """
@@ -86,8 +64,7 @@ import uuid
 
 from . import config
 
-# Absente du TOML = surface inactive : un déploiement existant n'expose
-# rien de nouveau sans l'avoir demandé.
+# Surface inactive par défaut.
 ENABLED = config.flag("responses.enabled", False)
 # `reasoning_content` d'un backend → élément `reasoning` (résumé) pour le
 # client. Codex le renvoie au tour suivant, on le jette à la traduction.
@@ -118,11 +95,10 @@ class Context:
         self.model = str(request.get("model", "") or "")
         self.namespaces: dict[str, str] = {}
         self.ignored: list[str] = []
-        # Fonctions exécutées par le proxy : nom → outil de tools/.
+        # nom → outil de tools/
         self.hosted: dict = {}
         self.memory = None
-        # Le client, pour la mémoire des résultats : tools.owner() de la
-        # clé présentée au proxy, «» pour un proxy ouvert.
+        # tools.owner() de la clé présentée, «» pour un proxy ouvert.
         self.client = ""
         # Outils du CLIENT présentés au modèle comme des fonctions : nom de
         # la fonction → (nom de l'outil `custom`, son namespace ou None),
@@ -915,8 +891,7 @@ def error_body(doc, status: int) -> dict:
 
 class Translator:
     """Le robinet de réponse pour /v1/responses : même interface que
-    stats.UsageCollector et anthropic_api.Translator (feed / finish /
-    tokens / cached / sse / ok), mais les octets rendus sont la réponse
+    stats.UsageCollector, mais les octets rendus sont la réponse
     Responses, pas ceux de l'upstream.
 
     Trois modes, fixés à l'ouverture par le statut et le content-type
@@ -953,7 +928,6 @@ class Translator:
         # s'il y en a, la main revient au client, pas de tour suivant.
         self.client_calls = 0
         self.turns = 1
-        # État du flux.
         self._started = False
         self._finished = False
         self._seq = 0
@@ -1031,10 +1005,9 @@ class Translator:
         return list(self._output)
 
     def resolve(self, call: dict, result) -> bytes:
-        """Le résultat (tools.Result) d'un appel de `pending`, exécuté par
-        l'appelant : son TEXTE est rangé en mémoire sous l'id de l'élément
-        (le client le rejouera sans son résultat), et l'élément est clos —
-        le client n'en voit que l'action."""
+        """Le résultat (tools.Result) d'un appel de `pending` : son TEXTE est
+        rangé en mémoire sous l'id de l'élément (le client le rejouera sans
+        son résultat), et l'élément est clos."""
         tool = self.ctx.hosted[call["name"]]
         self.ctx.memory.store(call["item_id"], call["name"],
                               call["arguments"], result.text,
@@ -1077,12 +1050,10 @@ class Translator:
                           ensure_ascii=False).encode()
 
     def fail(self, message: str, status: int = 500) -> bytes:
-        """Échec d'un tour ULTÉRIEUR (quota, backend injoignable, statut
-        d'erreur) : la réponse HTTP est déjà partie, il ne reste que
-        `response.failed` en flux, ou un objet Response `failed` en JSON.
-        `status` : sans effet ici (l'objet `failed` n'a qu'un code) ; le
-        robinet Anthropic, piloté par la même boucle, en tire son type
-        d'erreur."""
+        """Échec d'un tour ULTÉRIEUR : la réponse HTTP est déjà partie, il
+        ne reste que `response.failed` en flux, ou un objet Response
+        `failed` en JSON. `status` est ignoré ici (l'interface est commune
+        aux robinets)."""
         if self._finished:
             return b""
         if self.sse:
@@ -1333,7 +1304,6 @@ class Translator:
         out = bytearray(self._start({}))
         out += self._close()
         self._finished = True
-        # Plus rien à exécuter : la réponse est close, en échec.
         self.pending = []
         out += self._event("response.failed", {"response": self._snapshot(
             "failed", {"code": "server_error",

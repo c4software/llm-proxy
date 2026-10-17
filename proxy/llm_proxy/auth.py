@@ -34,9 +34,8 @@ from .httputil import dialect_of, error_response
 
 
 UI_PREFIX = "/ui"
-# L'ancien cookie de /ui, qui portait la clé EN CLAIR : plus jamais posé,
-# effacé à l'entrée et à la sortie. La page tient désormais une session
-# signée (UISession), qui ne porte que le condensé de la clé.
+# Cookie de /ui qui portait la clé EN CLAIR : jamais posé, effacé à
+# l'entrée et à la sortie s'il traîne dans un navigateur.
 LEGACY_COOKIE = "proxy_key"
 # Ce que /ui sert SANS clé, même l'auth active : la page (c'est elle qui
 # demande la clé quand il en faut une), ses fichiers, l'entrée et la sortie.
@@ -238,9 +237,9 @@ def ui_key(request: Request) -> str:
 
 def scope_https(scope) -> bool:
     """Le navigateur parle-t-il HTTPS ? Directement, ou derrière un reverse
-    proxy qui termine le TLS (Nginx Proxy Manager) et le dit par
-    `X-Forwarded-Proto` — uvicorn ne le croit que de 127.0.0.1, et NPM est
-    un autre conteneur. L'en-tête ne sert QU'À cela : poser `Secure` sur le
+    proxy qui termine le TLS et le dit par `X-Forwarded-Proto` — uvicorn
+    ne le croit que de 127.0.0.1, et le reverse proxy est souvent un autre
+    conteneur. L'en-tête ne sert QU'À cela : poser `Secure` sur le
     cookie de /ui. Un client qui le falsifie ne peut que rendre son propre
     cookie plus strict."""
     proto = next((v.decode("latin-1") for k, v in scope.get("headers", ())

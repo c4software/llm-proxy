@@ -50,11 +50,10 @@ def _model_max_context(m: dict) -> int | None:
 CHAT_TYPES = ("text-generation", "image-text-to-text")
 IMAGE_TYPE = "text-to-image"
 
-# Un catalogue sans `type` ni `architecture` (llama-swap devant gufo ou
-# llama.cpp) : le nom est le seul indice. Sans cela un modèle d'image, de
-# voix ou de transcription était publié «text-generation» et proposé à un
-# client de chat. Un mot entier du nom, jamais une sous-chaîne ; pour un nom
-# qui trompe, [backends.<nom>.model_types] tranche.
+# Un catalogue sans `type` ni `architecture` (llama-swap) : le nom est le
+# seul indice, pour ne pas proposer un modèle d'image ou de voix à un
+# client de chat. Un mot entier du nom, jamais une sous-chaîne ; pour un
+# nom qui trompe, [backends.<nom>.model_types] tranche.
 _NAME_TYPES = (
     (("image", "flux", "sdxl", "diffusion", "imagen"), "text-to-image"),
     (("tts", "speech", "voice"), "text-to-speech"),
@@ -177,11 +176,9 @@ async def _read_models(b: Backend, headers: dict) -> list | None:
     except Exception as exc:
         log.warning("/v1/models %s injoignable : %s", b.name, exc)
         return None
-    # Entrées NORMALISÉES sur un schéma UNIFORME (celui d'Albert),
-    # id/aliases préfixés, champs manquants dérivés ou par défaut.
-    # Le reste (status, args, preset, chemins de .gguf, meta… —
-    # détail interne llama.cpp) est écarté : illisible pour les
-    # clients, et à ne pas publier.
+    # Entrées NORMALISÉES sur le schéma d'Albert, id/aliases préfixés.
+    # Le reste (status, args, chemins de .gguf, meta… — détail interne
+    # llama.cpp) est écarté : à ne pas publier.
     entries = []
     types: dict[str, str] = {}
     for m in data:

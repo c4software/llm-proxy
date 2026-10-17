@@ -91,7 +91,7 @@ export const AccountsPart = {
           <code>config.toml</code>. Elle contient le secret des condensés et la mémoire
           de tous : à garder comme un mot de passe. Le <code>.env</code> n'y est pas.
           Restauration : <code>python -m llm_proxy.backup --restore &lt;archive&gt;</code>,
-          proxy arrêté (voir le README).</p>
+          proxy arrêté (voir docs/deploiement.md).</p>
       </section>
     </div>
 

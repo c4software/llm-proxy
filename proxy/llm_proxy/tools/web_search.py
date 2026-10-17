@@ -1,9 +1,7 @@
 """
 `web_search` : une recherche web, par une instance SearXNG auto-hébergée
-(métamoteur libre, API JSON, sans clé — le service `searxng` du
-docker-compose). Le schéma et la forme de la sortie reprennent ceux de
-l'outil web_search d'oh-my-pi (can1357/oh-my-pi) : `query`, `recency`,
-`limit` ; une entrée numérotée par résultat — titre, date, URL, extrait.
+(API JSON, sans clé). Arguments `query`, `recency`, `limit` ; une entrée
+numérotée par résultat — titre, date, URL, extrait.
 
 Ce que la recherche rend existe sous deux formes qui disent la même
 chose, et `run` rend les deux (contract.Result) : le texte du modèle
@@ -43,11 +41,9 @@ SNIPPET_CHARS = 240
 
 NAME = "web_search"
 
-# La description dit au modèle de lire une page par `web_fetch` : vrai
-# seulement là où `web_fetch` lui est présenté aussi (`present` de prompt).
-# Un client Anthropic qui ne déclare que la recherche (Claude Code, qui
-# lit les pages sur le poste du client) reçoit la description sans cette
-# phrase, pour que le modèle n'appelle pas une fonction qui n'existe pas.
+# La description dit au modèle de lire une page par `web_fetch` : seulement
+# là où `web_fetch` lui est présenté aussi (`present` de prompt), pour
+# qu'il n'appelle pas une fonction qui n'existe pas.
 _FETCH = "web_fetch"
 _FETCH_HINT = f"Use {_FETCH} to read a result page. "
 
@@ -164,9 +160,8 @@ class WebSearch(Tool):
         return render(str(args.get("query") or "").strip(), sources)
 
     async def run(self, args: dict, call: Call, transport=None) -> Result:
-        """Les listes de domaines de `call.settings` (`allowed_domains`,
-        `blocked_domains`) sont celles que le CLIENT pose sur son outil
-        serveur (surface Anthropic) : jamais le modèle."""
+        """Les listes de domaines de `call.settings` sont celles que le
+        CLIENT pose sur son outil serveur : jamais le modèle."""
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
             raise ToolError("invalid_input", "`query` is required.")
@@ -183,11 +178,8 @@ class WebSearch(Tool):
             params["language"] = LANGUAGE
         if CATEGORIES:
             params["categories"] = CATEGORIES
-        # Le cache web (webcache.py) : les résultats BRUTS de SearXNG pour
-        # cette requête — limite et listes de domaines s'appliquent après,
-        # à chaque appel. Une recherche identique dans les minutes qui
-        # suivent ne repart pas chez les moteurs, qui bloquent vite une
-        # adresse trop pressante.
+        # Le cache web garde les résultats BRUTS de SearXNG : limite et
+        # listes de domaines s'appliquent après, à chaque appel.
         key = ("search", SEARXNG_URL, tuple(sorted(params.items())))
         cached = webcache.CACHE.get(key)
         if cached is not None:

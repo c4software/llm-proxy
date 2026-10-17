@@ -27,13 +27,9 @@ export const ProxyPart = {
     const { copied, copy } = useCopy();
     const px = reactive(newForm());
     // ── la configuration complète : UN fichier ───────────────────────────
-    // GET /ui/config : tout ce que le proxy lit, valeurs du fichier ou
-    // défauts (« # défaut »), secrets masqués, et ces valeurs pour
-    // préremplir le formulaire. Le formulaire s'y applique (POST
-    // /ui/config/merge) : `generated`, le fichier complet qu'il donne.
-    // `text` : ce qu'affiche la page — `generated`, tant qu'on ne l'a pas
-    // modifié à la main. Vérifié par le proxy (POST /ui/config/check),
-    // copié, téléchargé — jamais écrit sur lui.
+    // `generated` : le fichier complet que donne le formulaire (POST
+    // /ui/config/merge) ; `text` : ce qu'affiche la page — `generated`, tant
+    // qu'on ne l'a pas modifié à la main.
     const settings = reactive({ loaded: false, path: "", defaults: 0, values: null,
                                 defaultPaths: [], original: "",
                                 generated: "", text: "", error: "", check: null, checking: false });
@@ -76,8 +72,7 @@ export const ProxyPart = {
     const proxyOut = computed(() => buildProxy(px));
 
     // Le formulaire change → le fichier complet se recalcule (un instant
-    // après la dernière frappe). Modifié à la main : il n'est plus écrasé,
-    // « Réappliquer le formulaire » le rend au formulaire.
+    // après la dernière frappe), sauf s'il a été modifié à la main.
     let mergeTimer = 0;
     async function mergeForm() {
       if (!prefilled.value) return;

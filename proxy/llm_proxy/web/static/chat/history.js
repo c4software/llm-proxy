@@ -15,7 +15,7 @@
 import { call } from "../lib/http.js";
 
 const ASSET = "/ui/assets/";
-export const isAsset = (url) => typeof url === "string" && url.startsWith(ASSET);
+const isAsset = (url) => typeof url === "string" && url.startsWith(ASSET);
 // Une image que la page tient elle-même (et peut donc retoucher).
 export const ownImage = (url) => typeof url === "string" && (url.startsWith("data:") || isAsset(url));
 

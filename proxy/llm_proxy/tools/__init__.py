@@ -1,73 +1,31 @@
 """
 Les outils HÉBERGÉS du proxy : ceux qu'il exécute lui-même, au lieu de
-rendre la main au client. Un client de l'API Responses (Codex CLI)
-déclare `{"type": "web_search"}` en comptant qu'OpenAI fera la recherche ;
-derrière ce proxy il n'y a pas d'OpenAI — c'est donc ici qu'elle se fait.
-Même chose pour un client de l'API Messages (Claude Code) et son outil
-serveur `{"type": "web_search_20250305"}`, qu'Anthropic exécuterait — ou
-`{"type": "web_fetch_20250910"}`, pour un client du SDK.
+rendre la main au client. Un client de l'API Responses déclare
+`{"type": "web_search"}` en comptant qu'OpenAI fera la recherche ; un
+client de l'API Messages, `{"type": "web_search_20250305"}` ou
+`{"type": "web_fetch_20250910"}`, qu'Anthropic exécuterait. Derrière ce
+proxy il n'y a ni l'un ni l'autre : c'est donc ici qu'elle se fait.
 
-Un outil = un OBJET qui tient le contrat de contract.py (docs/outils.md
-le décrit membre par membre, avec un exemple complet) :
-  name                    le nom de la fonction présentée au modèle
-  enabled                 actif ? ([tools.<nom>].enabled pour ceux d'ici)
-  prompt(present) → str   son PROMPT : ce que le modèle lit pour savoir
-                          quand et comment l'appeler (la `description`
-                          de la fonction) ; `present` : les outils
-                          présentés avec lui
-  parameters(present) → dict
-                          le schéma JSON de ses arguments, dont les
-                          descriptions font partie du prompt
-  spec(present) → dict    la fonction, à la forme chat/completions :
-                          assemblée des trois par la classe de base,
-                          aucun outil ne l'écrit
-  async run(args, call) → Result
-                          l'exécution. `call` (Call) porte ce qui ne
-                          vient pas du modèle : réglages du client, route,
-                          modèle. Rend un Result — `text` pour le modèle,
-                          `error` (un code d'ERRORS, None = succès),
-                          `sources`, `meta`, `files` — ou lève ToolError(code,
-                          message). Une erreur est un texte «Error: …»
-                          que le modèle lit, et s'adapte
-  summary(args, result) → dict
-                          ce que le client affiche de l'appel
-  timeout, max_calls      son délai et son nombre d'appels par réponse,
-                          s'il a les siens (None = ceux de [tools])
-  responses, anthropic    ses LIAISONS aux protocoles, en données : quels
-                          types d'outil l'activent, quel élément ou quel
-                          bloc rend compte de l'appel. Sans liaison,
-                          l'outil reste exécutable par /v1/tools et
-                          présentable sur /v1/chat/completions
+Un outil = un objet qui tient le contrat de contract.py (décrit membre par
+membre dans docs/outils.md, « Écrire un outil »). mcp.py est un
+FOURNISSEUR : il apporte au registre, au démarrage puis à chaque
+découverte, les outils des serveurs MCP de la configuration.
 
-Ajouter un outil : une classe, `register(...)`, une table [tools.<nom>]
-dans config.example.toml — voir docs/outils.md, « Écrire un outil ».
-mcp.py, lui, est un FOURNISSEUR : il apporte au registre, après l'import
-(au démarrage de l'application, puis à chaque découverte), les outils des
-serveurs MCP de la configuration.
+Ce module porte ce qui est commun : le REGISTRE, l'exécution bornée
+(Hosted.run : nombre d'appels, délai, taille du résultat — tout échec est
+un Result), la ligne de statistiques de chaque exécution (des mesures,
+jamais le contenu) et la MÉMOIRE des résultats. Le client Responses
+renvoie au tour suivant l'élément `web_search_call` SANS son résultat
+(OpenAI le garde côté serveur) : il faut le rendre au modèle à
+l'identique, sinon il perd ce qu'il a lu et le préfixe change sous un
+backend à cache. Cette mémoire ne garde que du texte, bornée, en mémoire
+(un redémarrage l'oublie, le modèle reçoit alors EXPIRED), et CLOISONNÉE
+par client (`owner`). La surface Anthropic n'y range rien : son client
+renvoie le résultat avec l'appel.
 
-Ce module porte ce qui est commun : le REGISTRE (register, enabled),
-l'exécution bornée (Hosted.run : nombre d'appels, délai, taille du
-résultat — rien n'en remonte, tout échec est un Result), la ligne de
-STATISTIQUES de chaque exécution (stats.record_tool, depuis Hosted.run :
-des mesures, jamais le contenu) et la MÉMOIRE des résultats. Cette
-mémoire est, avec celle des échanges cachés de chat_api (même logique,
-pour un client /v1/chat/completions), tout ce que le proxy conserve entre
-deux requêtes — et elle ne garde que du TEXTE : le client renvoie au tour
-suivant l'élément `web_search_call` SANS son résultat (OpenAI le garde
-côté serveur), et il faut le rendre au modèle à l'identique — sinon il
-perd ce qu'il a lu, et le préfixe change sous un backend à cache. Bornée
-(entrées, durée), en mémoire : un redémarrage du proxy l'oublie, le
-modèle reçoit alors un mot qui le dit. CLOISONNÉE par client : une entrée
-ne se relit qu'avec le condensé de la clé qui l'a rangée (`owner`),
-l'identifiant de l'élément ne suffit pas. La surface Anthropic n'y range
-RIEN : son client renvoie le résultat avec l'appel (blocs
-`web_search_tool_result` et `web_fetch_tool_result`), le texte se
-reconstruit de là.
-
-La boucle qui relance le backend après un appel vit dans tool_loop.py ; la
-traduction des éléments, dans responses_api.py, anthropic_api.py et
-chat_api.py — qui ne connaissent de ce paquet que l'objet `Hosted` qu'on
-leur passe, et le contrat.
+La boucle qui relance le backend vit dans tool_loop.py ; la traduction
+des éléments, dans responses_api.py, anthropic_api.py et chat_api.py, qui
+ne connaissent de ce paquet que `Hosted` et le contrat.
 """
 
 import asyncio
@@ -83,7 +41,6 @@ from .. import config, stats
 from ..settings import log
 from . import (code_execution, image_generation, mcp, memory, net,  # noqa: F401
                ocr, transcribe, web_fetch, web_grep, web_search, webcache)
-# Le contrat, tel que le reste du proxy et un outil l'importent d'ici.
 from .contract import (ERRORS, Anthropic, Artifact, Call,  # noqa: F401
                        Responses, Result, Source, Tool, ToolError, failure)
 
@@ -93,9 +50,8 @@ REGISTRY: list[Tool] = []
 
 
 def register(tool: Tool) -> Tool:
-    """Ajoute un outil au registre. Un fournisseur qui en apporte
-    plusieurs (découverts au démarrage) les enregistre un à un. Le nom
-    est la clé : deux outils ne le partagent pas."""
+    """Ajoute un outil au registre. Le nom est la clé : deux outils ne le
+    partagent pas."""
     if not tool.name or any(t.name == tool.name for t in REGISTRY):
         raise ValueError(f"outil hébergé sans nom, ou nom déjà pris : "
                          f"{tool.name!r}")
@@ -139,11 +95,10 @@ def kinds() -> frozenset:
     return frozenset(k for t in REGISTRY for k in t.kinds) | mcp.kinds()
 
 
-# Secret du condensé des clés clientes : tiré UNE fois, gardé à côté de
-# config.toml (data/client.secret, lisible du seul propriétaire). Le
-# condensé d'une clé est donc STABLE d'un démarrage à l'autre — ce dont
-# a besoin ce qui survit au processus (la mémoire persistante,
-# tools/memory.py) ; il ne dit rien de la clé sans ce fichier.
+# Secret du condensé des clés clientes : tiré UNE fois, gardé dans
+# data/client.secret (0600). Le condensé d'une clé est donc STABLE d'un
+# démarrage à l'autre — ce dont a besoin la mémoire persistante
+# (tools/memory.py) ; il ne dit rien de la clé sans ce fichier.
 SECRET_PATH = config.resolve("client.secret")
 _secret: bytes | None = None
 
@@ -190,14 +145,11 @@ def owner(token: str) -> str:
 
 class Memory:
     """Résultats des appels hébergés, par client et identifiant d'élément :
-    ce qu'il faut pour rejouer l'appel À L'IDENTIQUE au tour suivant (nom,
-    arguments tels que le modèle les a écrits, résultat). LRU bornée, avec
+    de quoi rejouer l'appel À L'IDENTIQUE au tour suivant. LRU bornée, avec
     durée.
 
-    `owner` : le client (voir owner() — un condensé, «» pour un proxy
-    ouvert). Il fait partie de la CLÉ : un identifiant d'élément présenté
-    par un autre client ne trouve rien, exactement comme un identifiant
-    inconnu. La borne, elle, est commune à tous les clients."""
+    `owner` (voir owner()) fait partie de la CLÉ : un identifiant présenté
+    par un autre client ne trouve rien. La borne est commune à tous."""
 
     def __init__(self, entries: int, ttl: float):
         self.entries, self.ttl = entries, ttl
@@ -240,7 +192,6 @@ class Hosted:
         self.tools = list(enabled() if tools is None else tools)
         self.memory = MEMORY if memory is None else memory
         self.by_name = {t.name: t for t in self.tools}
-        # Résultat rendu au modèle pour un appel rejoué que la mémoire a perdu.
         self.expired = EXPIRED
 
     def __bool__(self) -> bool:
@@ -298,25 +249,16 @@ class Hosted:
                   endpoint: str = "", model: str = "",
                   client: str = "", session: str = "") -> Result:
         """Exécute la fonction `name`. `used` : appels déjà exécutés pour
-        cette réponse AU COMPTE dont relève l'outil — le sien s'il en a un
-        (own()), sinon le compte commun ; `limit` : voir cap(). `session` :
-        l'identifiant de conversation de la surface, «» si elle n'en a
-        pas. `options` : ce que le CLIENT
-        a réglé sur son outil, par nom de fonction (les listes de domaines
-        et la taille de contenu des outils serveur Anthropic) — l'outil
-        les reçoit dans `call.settings`, à côté des arguments du modèle,
-        qui ne peut donc pas s'en affranchir. `endpoint` / `model` /
-        `client` : la route par où l'appel arrive, le modèle PRÉFIXÉ de
-        la conversation (aucun pour l'appel direct) et le condensé de la
-        clé du client — le reste de `call`.
+        cette réponse AU COMPTE dont relève l'outil (own()) ; `limit` : voir
+        cap(). `options` : ce que le CLIENT a réglé sur son outil, par nom
+        de fonction — l'outil le reçoit dans `call.settings`, à part des
+        arguments du modèle, qui ne peut donc pas s'en affranchir. Le reste
+        (`endpoint`, `model` préfixé, `client`, `session`) complète `call`.
         Ne lève jamais : tout échec est un Result, avec son code.
 
-        C'est LE point par où passent tous les chemins (boucles de
-        /v1/responses, /v1/messages et /v1/chat/completions, appel direct
-        /v1/tools) : la ligne de statistiques de l'exécution s'écrit donc
-        ici, une fois. Elle ne retient que des mesures — nom, route,
-        modèle, issue, durée, taille du résultat — jamais les arguments
-        ni le résultat."""
+        Tous les chemins passent par ici : la ligne de statistiques s'écrit
+        donc ici, une fois — des mesures, jamais les arguments ni le
+        résultat."""
         tool = self.by_name.get(name)
         if tool is None:
             # Pas de ligne de statistiques : ce nom n'est celui d'aucun
@@ -364,7 +306,6 @@ class Hosted:
             return failure("invalid_input",
                            "the tool arguments are not a JSON object.")
         started = time.monotonic()
-        # Le délai de l'outil s'il a le sien (Tool.timeout), sinon le commun.
         delay = RUN_TIMEOUT if tool.timeout is None else tool.timeout
         try:
             result = await asyncio.wait_for(tool.run(args, call), delay)

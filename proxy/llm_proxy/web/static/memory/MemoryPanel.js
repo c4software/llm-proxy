@@ -1,9 +1,7 @@
 /*
-  La section « Mémoire » du tableau de bord : ce que l'outil `memory` a
-  gardé pour la clé CONNECTÉE (celle du cookie de la page), à lire,
-  corriger, renommer ou effacer. Un composant à part, enregistré par
-  app.js sous <memory-panel> : il a ses propres appels et ne touche
-  pas aux statistiques.
+  La section « Mémoire » : ce que l'outil `memory` a gardé pour la clé
+  CONNECTÉE (celle du cookie de la page), à lire, corriger, renommer ou
+  effacer. Enregistrée par app.js sous <memory-panel>.
 
   Routes (même cookie que /ui/usage) :
     GET    /ui/memory               la liste et l'occupation
@@ -14,15 +12,14 @@
   Mémoire désactivée sur le proxy (404) : la section ne s'affiche pas.
 
   Rien ne se rafraîchit tout seul : une modification en cours ne doit
-  jamais être écrasée par la liste. Elle se relit à l'ouverture de la
-  section, après chaque action, et par « Actualiser ».
+  jamais être écrasée par la liste. Elle se relit à l'ouverture, après
+  chaque action, et par « Actualiser ».
 
-  Deux présentations, le même contenu : la partie « Mémoire » de la
-  configuration (`expanded` : ouverte d'emblée), et (`compact`) le panneau
-  latéral du chat. Là, `stamp`
-  change quand le modèle vient d'appeler l'outil `memory` : la liste se
-  relit, et le fichier ouvert aussi s'il n'est pas en cours de
-  modification.
+  Deux présentations : la partie « Mémoire » de la configuration
+  (`expanded` : ouverte d'emblée), et le panneau latéral du chat
+  (`compact`), où `stamp` change quand le modèle vient d'appeler l'outil
+  `memory` : la liste se relit, et le fichier ouvert aussi s'il n'est pas
+  en cours de modification.
 */
 import { call } from "../lib/http.js";
 import { num, stamp as when } from "../lib/format.js";

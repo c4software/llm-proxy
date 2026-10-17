@@ -6,7 +6,6 @@ import time
 
 import pytest
 
-from llm_proxy import ui_routes
 from llm_proxy import stats
 
 
@@ -138,15 +137,12 @@ def test_tool_run_recorded_from_each_of_the_three_paths(proxy, db):
     """Une exécution par /v1/responses, /v1/messages et /v1/tools : une
     ligne chacune, avec SA route et le modèle préfixé de la conversation
     (aucun pour l'appel direct) — et rien de ce qui a été cherché ou lu."""
-    from fakes import (ANSWER_TURN, FOUND, QUERY, SEARCH_TURN, FakeUpstream,
-                       stream)
-    turns = lambda: [FakeUpstream(stream(*SEARCH_TURN)),
-                     FakeUpstream(stream(*ANSWER_TURN))]
-    proxy.replies = turns()
+    from fakes import FOUND, QUERY, search_then_answer
+    proxy.replies = search_then_answer()
     assert proxy.client.post("/v1/responses", json={
         "model": "essai/qwen", "input": "x", "stream": True,
         "tools": [{"type": "web_search"}]}).status_code == 200
-    proxy.replies = turns()
+    proxy.replies = search_then_answer()
     assert proxy.client.post("/v1/messages", json={
         "model": "essai/qwen", "max_tokens": 64, "stream": True,
         "messages": [{"role": "user", "content": "x"}],
@@ -177,8 +173,8 @@ def test_tool_run_outcome_ok_error_limit(db):
     """Succès, échec (le résultat porte un code d'erreur, quelle qu'en
     soit la cause — et pas son texte : un succès peut commencer par
     «Error:») et refus par limite d'appels sont trois issues distinctes ;
-    un refus n'a pas de durée. Un nom
-    inconnu ne laisse pas de ligne : ce n'est pas un outil."""
+    un refus n'a pas de durée. Un nom inconnu ne laisse pas de ligne : ce
+    n'est pas un outil."""
     import asyncio
     from fakes import outil
     from llm_proxy import tools

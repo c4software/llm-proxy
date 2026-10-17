@@ -10,7 +10,7 @@
 */
 const { ref, computed } = Vue;
 
-export const THEME_KEY = "llm-proxy-theme";
+const THEME_KEY = "llm-proxy-theme";
 const ORDER = ["auto", "light", "dark"];
 const LABELS = { auto: "auto", light: "clair", dark: "sombre" };
 const BAR = { light: "#faf9f5", dark: "#1a1917" };

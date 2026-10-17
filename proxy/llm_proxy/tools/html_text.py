@@ -1,7 +1,6 @@
 """
-HTML → texte lisible par un modèle, avec la seule bibliothèque standard
-(pas de dépendance de plus pour cela). Pas un
-navigateur : pas de JavaScript, pas de mise en page. Ce qui est gardé —
+HTML → texte lisible par un modèle, avec la seule bibliothèque standard.
+Pas un navigateur : pas de JavaScript, pas de mise en page. Ce qui est gardé —
 titres, paragraphes, listes, liens, blocs de code — suffit pour lire une
 documentation, un article ou une page de dépôt.
 """
@@ -10,8 +9,7 @@ import re
 from html.parser import HTMLParser
 
 # Contenu jamais montré au lecteur. `form` n'y est pas : des sites
-# entiers (ASP.NET WebForms) tiennent dans un seul <form>, et la page
-# sortait vide ; ses boutons et listes, eux, restent ignorés.
+# entiers (ASP.NET WebForms) tiennent dans un seul <form>.
 SKIP = {"script", "style", "noscript", "svg", "template", "iframe",
         "head", "button", "select", "nav", "footer"}
 BLOCK = {"p", "div", "section", "article", "main", "header", "aside",
@@ -51,7 +49,7 @@ class _Text(HTMLParser):
 
     def _break_link(self, tag) -> None:
         """Un bloc DANS un lien sépare les mots du libellé (le saut de
-        ligne, lui, part dans `out`) : sans quoi ils se collaient."""
+        ligne, lui, part dans `out`)."""
         if self._href is not None and (
                 tag in BLOCK or tag in HEADINGS or tag in ("li", "td", "th")):
             self._link.append(" ")
@@ -63,8 +61,8 @@ class _Text(HTMLParser):
             self._in_title = not self._title_done
             return
         if tag == "body":
-            # </head> est facultatif en HTML : sans lui, <head> restait
-            # « ouvert » et tout le corps de la page était ignoré.
+            # </head> est facultatif en HTML : sans lui, <head> resterait
+            # « ouvert » et tout le corps serait ignoré.
             self._skip = 0
             return
         if tag in SKIP and tag not in VOID:
@@ -84,7 +82,7 @@ class _Text(HTMLParser):
             self.out.append(" | ")
         elif tag == "a":
             href = dict(attrs).get("href") or ""
-            # Un <a> jamais fermé retenait tout le texte qui suit : le
+            # Un <a> jamais fermé retiendrait tout le texte qui suit : le
             # lien suivant (ou la fin du document) le ferme.
             self._close_link()
             if href.startswith(("http://", "https://")):

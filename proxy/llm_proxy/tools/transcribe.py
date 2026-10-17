@@ -6,28 +6,21 @@ transcription d'un de ses backends (API OpenAI `/v1/audio/transcriptions`,
 multipart) et rend le texte.
 
 La cible est choisie par le modèle : elle passe par le téléchargement
-gardé commun (net.download, [tools.net]) — listes de domaines, adresses
-publiques, à CHAQUE saut de redirection. Le fichier n'arrive QUE par
-URL : ni pièce jointe, ni envoi.
+gardé commun (net.download). Le fichier n'arrive QUE par URL.
 
-Le modèle de transcription, lui, est une adresse de CONFIGURATION
+Le modèle de transcription est une adresse de CONFIGURATION
 ([tools.transcribe].model = "<backend>/<modèle>") : il part par le client
-HTTP du backend (backends.py), comme une requête relayée, sans passer par
-relaying.py — pas de cycle d'import. Ce que relaying.py fait autour d'un
-relais est
-refait ici, en petit : la porte de quota (backend à quotas dont
-`/audio/transcriptions` n'est pas exempté) et la ligne de statistiques.
+HTTP du backend, sans passer par relaying.py (cycle d'import), dont la
+porte de quota et la ligne de statistiques sont refaites ici en petit.
 
 Une transcription coûte des secondes de GPU par minute d'audio : le TEXTE
-est gardé en cache (le sien, plus long que le cache web — un
-enregistrement ne change pas comme une page d'actualité), et chaque
-morceau (`offset`) en sort sans rien refaire. L'audio, lui, n'est jamais
-gardé.
+est gardé dans un cache à lui, plus long que le cache web, et chaque
+morceau (`offset`) en sort sans rien refaire. L'audio n'est jamais gardé.
 
-CONVERSION ([tools.transcribe].convert, `convert`). Un modèle de
-transcription ne lit pas tout — Qwen3-ASR sous gufo, que du WAV. Ce que
-`formats` ne liste pas est converti ici en WAV 16 kHz mono par ffmpeg,
-puis envoyé. ffmpeg décode alors des octets HOSTILES, venus du web :
+CONVERSION ([tools.transcribe].convert). Un modèle de transcription ne lit
+pas tout (certains que du WAV). Ce que `formats` ne liste pas est converti
+ici en WAV 16 kHz mono par ffmpeg. ffmpeg décode alors des octets
+HOSTILES, venus du web :
   * un sous-processus sans shell, aux arguments FIXES — rien n'y vient de
     l'URL ni du fichier —, sans entrée standard, sans environnement que
     PATH, dans un dossier temporaire à lui (0700), supprimé dans tous les
@@ -67,9 +60,8 @@ ENABLED = config.flag("tools.transcribe.enabled", False)
 # «<backend>/<modèle>», préfixé comme tout modèle du proxy. Vide → l'outil
 # répond au modèle que la transcription n'est pas configurée.
 MODEL = config.text("tools.transcribe.model", "").strip()
-# Délai (s) de la requête de transcription. Avec celui du téléchargement,
-# il fait le délai de l'outil (Transcribe.timeout), à la place de
-# [tools].run_timeout : une heure d'audio ne se transcrit pas en 60 s.
+# Délai (s) de la requête de transcription : une heure d'audio ne se
+# transcrit pas en 60 s.
 TIMEOUT = config.num("tools.transcribe.timeout", 300)
 # Délai (s) du téléchargement, redirections comprises.
 DOWNLOAD_TIMEOUT = config.num("tools.transcribe.download_timeout", 60)
@@ -86,9 +78,8 @@ USER_AGENT = "llm-proxy transcribe (+https://github.com/c4software/llm-proxy)"
 ACCEPT = "audio/*,video/*;q=0.8,*/*;q=0.5"
 PATH = "/v1/audio/transcriptions"
 # L'endpoint des lignes de statistiques des requêtes au modèle de
-# transcription : la route du proxy d'où elles naissent, pas celle du
-# backend — ce que l'outil consomme d'un modèle se distingue ainsi de ce
-# que les clients en consomment.
+# transcription : la route du proxy, pas celle du backend — ce que l'outil
+# consomme se distingue ainsi de ce que les clients consomment.
 ENDPOINT = "/v1/tools/transcribe"
 
 NAME = "transcribe"
@@ -117,9 +108,8 @@ _HEAD = 12
 
 def _accepted() -> list[str]:
     """[tools.transcribe].formats : les formats que le modèle de
-    transcription lit TELS QUELS, parmi FORMATS. Un modèle qui ne lit que
-    le WAV — Qwen3-ASR sous gufo, vu le 07/10/2026 — ne recevra que du
-    WAV : le reste est converti (convert), ou refusé."""
+    transcription lit TELS QUELS, parmi FORMATS. Le reste est converti
+    (convert), ou refusé."""
     names = [f.lower().lstrip(".") for f in config.strings(
         "tools.transcribe.formats", FORMATS)]
     unknown = [f for f in names if f not in FORMATS]
@@ -132,14 +122,13 @@ def _accepted() -> list[str]:
 
 ACCEPTED = _accepted()
 # Le `response_format` demandé au backend. «verbose_json» rend, en plus du
-# texte, la langue entendue et la durée (vu sous gufo : `language`,
-# `duration`) ; «json» ne rend que le texte — pour un backend qui refuse
-# l'autre.
+# texte, la langue entendue et la durée ; «json» ne rend que le texte —
+# pour un backend qui refuse l'autre.
 RESPONSE_FORMAT = config.text("tools.transcribe.response_format",
                               "verbose_json").strip() or "json"
 
 
-# Convertir en WAV ce que `formats` ne liste pas (tête de module).
+# Convertir en WAV ce que `formats` ne liste pas.
 CONVERT = config.flag("tools.transcribe.convert", True)
 # Le binaire : un nom cherché dans PATH, ou un chemin. Cherché UNE fois, à
 # l'import : «» = pas de conversion, dit au démarrage (startup.py). Sans objet
@@ -308,7 +297,7 @@ def _take(path: str, limit: int) -> bytes:
 
 async def convert(url: str, body: bytes, kind: str) -> bytes:
     """`body` (un fichier de format `kind`) en WAV 16 kHz mono, par ffmpeg
-    (tête de module). Lève ToolError : `unsupported` si ffmpeg ne le
+    (voir l'en-tête du module). Lève ToolError : `unsupported` si ffmpeg ne le
     décode pas ou si le WAV dépasse CONVERT_MAX_BYTES, `timeout` au-delà
     de CONVERT_TIMEOUT."""
     started = time.monotonic()
@@ -378,10 +367,8 @@ def _backend() -> tuple[backends.Backend, str]:
 
 
 def _count(backend, model: str, status: int, started: float, usage) -> None:
-    """La ligne de statistiques de la requête au backend, celle qu'écrit
-    relaying.Call.done pour une transcription relayée : le modèle de
-    transcription apparaît dans l'usage, qu'il serve un client ou l'outil.
-    (L'exécution de l'outil, elle, a sa ligne à part : Hosted.run.)"""
+    """La ligne de statistiques de la requête au backend, comme pour une
+    transcription relayée (l'exécution de l'outil a sa ligne à part)."""
     usage = usage if isinstance(usage, dict) else {}
 
     def tokens(*names) -> int:
@@ -404,9 +391,8 @@ async def _transcribe(name: str, content_type: str, body: bytes,
     """Le fichier → (texte, langue, durée en secondes ou None), par le
     modèle de transcription configuré."""
     backend, model = _backend()
-    # La porte de quota de relaying.gate, pour un backend à quotas dont le
-    # chemin n'est pas exempté (il l'est par défaut : exempt_paths). Une
-    # requête, coût 1 : des octets d'audio ne sont pas des tokens.
+    # Porte de quota, si le chemin n'est pas exempté (il l'est par défaut).
+    # Une requête, coût 1 : des octets d'audio ne sont pas des tokens.
     if backend.quotas and not is_exempt(PATH):
         try:
             await backend.quota_state.get_limiter({"model": model}).acquire(1)
@@ -504,9 +490,7 @@ def render(entry, offset: int = 0, max_chars: int | None = None) -> Result:
 
 class Transcribe(Tool):
     name = NAME
-    # Pas de liaison : ni l'API Responses ni l'API Messages n'ont d'outil
-    # hébergé de transcription à remplacer. L'outil se déclare par son nom
-    # sur /v1/chat/completions et s'appelle par /v1/tools/transcribe.
+    # Pas de liaison : aucun protocole n'a d'outil serveur de transcription.
 
     @property
     def enabled(self) -> bool:
@@ -514,9 +498,8 @@ class Transcribe(Tool):
 
     @property
     def timeout(self) -> float:
-        """Le délai de l'outil (contrat : Tool.timeout), à la place de
-        [tools].run_timeout : le téléchargement, la conversion s'il y en
-        a une, puis la transcription."""
+        """Le téléchargement, la conversion s'il y en a une, puis la
+        transcription."""
         return DOWNLOAD_TIMEOUT + TIMEOUT + (CONVERT_TIMEOUT if FFMPEG else 0)
 
     def prompt(self, present) -> str:

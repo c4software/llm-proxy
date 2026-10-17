@@ -10,8 +10,7 @@ import types
 
 import pytest
 
-# La racine du DÉPÔT (proxy/tests/ → deux crans plus haut) : data/ et
-# docs/ y sont restés.
+# La racine du DÉPÔT (proxy/tests/ → deux crans plus haut).
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 os.environ.setdefault(

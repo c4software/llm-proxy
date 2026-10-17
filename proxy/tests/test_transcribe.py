@@ -14,7 +14,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import sys
 import tempfile
 
@@ -23,34 +22,19 @@ import pytest
 
 import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
 
-from llm_proxy import albert, backends, multipart, tools
+from fakes import (PUBLIC, FakeWeb, fake_backend, fake_dns, go, net_guard,
+                   quotas, rendu, sans_liaison)
+from llm_proxy import multipart, tools
 from llm_proxy.tools import net, transcribe
 
-PUBLIC = "93.184.216.34"
 WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
 MP3 = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 32
 
 
-def go(coro):
-    return asyncio.run(coro)
-
-
 @pytest.fixture(autouse=True)
 def dns(monkeypatch):
-    """Résolution sans réseau : nom → adresses ; hors table, seul un
-    littéral numérique est résolu (aucune requête DNS)."""
-    table = {"site.test": [PUBLIC], "autre.test": ["1.1.1.1"],
-             "intern.test": ["10.0.0.5"]}
-    real = socket.getaddrinfo
-
-    def fake(host, port, family=0, type=0, proto=0, flags=0):
-        if host in table:
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))
-                    for ip in table[host]]
-        return real(host, port, family, type, proto,
-                    flags | socket.AI_NUMERICHOST)
-
-    monkeypatch.setattr(socket, "getaddrinfo", fake)
+    fake_dns(monkeypatch, {"site.test": [PUBLIC], "autre.test": ["1.1.1.1"],
+                           "intern.test": ["10.0.0.5"]})
 
 
 class Asr:
@@ -82,11 +66,9 @@ def asr(monkeypatch):
     quota) vers lequel pointe [tools.transcribe].model. `asr.lines` : les
     lignes de statistiques écrites pour les requêtes au backend."""
     env = Asr()
-    b = backends.Backend("asr", {"url": "http://asr.invalid", "api_key": "k"})
-    b.client = httpx2.AsyncClient(base_url=b.url,
-                                 transport=httpx2.MockTransport(env.handler))
-    env.backend, env.lines = b, []
-    monkeypatch.setitem(backends.BACKENDS, "asr", b)
+    env.backend = fake_backend(monkeypatch, "asr", {
+        "url": "http://asr.invalid", "api_key": "k"}, env.handler)
+    env.lines = []
     monkeypatch.setattr(transcribe, "MODEL", "asr/whisper-test")
     monkeypatch.setattr(transcribe, "MAX_BYTES", 25_000_000)
     monkeypatch.setattr(transcribe, "MAX_CHARS", 20_000)
@@ -97,10 +79,7 @@ def asr(monkeypatch):
     monkeypatch.setattr(transcribe, "DOWNLOAD_TIMEOUT", 60)
     # Pas de conversion, que ffmpeg soit installé ici ou non.
     monkeypatch.setattr(transcribe, "FFMPEG", "")
-    # Le garde-fou commun ([tools.net]).
-    monkeypatch.setattr(net, "ALLOW_PRIVATE", False)
-    monkeypatch.setattr(net, "ALLOWED_DOMAINS", [])
-    monkeypatch.setattr(net, "BLOCKED_DOMAINS", [])
+    net_guard(monkeypatch)
     monkeypatch.setattr(transcribe.stats, "record",
                         lambda *a: env.lines.append(a))
     transcribe.CACHE.clear()
@@ -108,28 +87,13 @@ def asr(monkeypatch):
     return env
 
 
-class Web:
-    """Un faux web : `pages[(hôte, chemin)]` → réponse (ou fonction)."""
-
-    def __init__(self, pages=None):
-        self.pages, self.requests = pages or {}, []
-
-    def handler(self, request: httpx2.Request) -> httpx2.Response:
-        self.requests.append(request)
-        page = self.pages.get((request.headers["host"], request.url.path))
-        if page is None:
-            return httpx2.Response(404, text="rien")
-        return page(request) if callable(page) else page
+class Web(FakeWeb):
+    """Le faux web de fakes.py, lu par l'outil."""
 
     def run(self, url, settings=None, **args) -> tools.Result:
-        """Ce que l'exécuteur (tools.Hosted) fait d'un `run` : son Result,
-        ou celui de l'échec prévu (ToolError)."""
-        try:
-            return go(transcribe.TOOL.run(
-                {"url": url, **args}, tools.Call(settings or {}),
-                transport=httpx2.MockTransport(self.handler)))
-        except tools.ToolError as exc:
-            return tools.failure(exc.code, exc.message)
+        return rendu(transcribe.TOOL.run(
+            {"url": url, **args}, tools.Call(settings or {}),
+            transport=self.transport))
 
 
 def audio(body=WAV, ct="audio/wav", status=200, **headers):
@@ -266,11 +230,7 @@ def test_cible_absente_ou_refusee_erreur_sans_aucune_requete(asr):
            ({"url": "https://site.test/a.wav", "language": "fr-FR"},
             "invalid_input", "ISO 639-1")]
     for args, code, mot in cas:
-        try:
-            out = go(transcribe.TOOL.run(
-                args, tools.Call(), transport=httpx2.MockTransport(web.handler)))
-        except tools.ToolError as exc:
-            out = tools.failure(exc.code, exc.message)
+        out = web.run(**args)
         assert (out.error, mot in out.text) == (code, True), (args, out)
     assert web.requests == [] and asr.requests == []
 
@@ -417,19 +377,8 @@ def test_modele_non_configure_dit_avant_tout_telechargement(monkeypatch, asr):
 
 def test_backend_a_quotas_passe_par_son_limiteur_sauf_chemin_exempte(
         monkeypatch, asr):
-    """Ce que fait app.gate pour une transcription relayée."""
-    pris = []
-
-    class Limiteur:
-        async def acquire(self, cost, wait_gone=None):
-            pris.append(cost)
-            if len(pris) > 1:
-                raise albert.QuotaWaitTooLong(1200, "minute")
-            return 0.0
-
-    monkeypatch.setattr(asr.backend, "quotas", True)
-    monkeypatch.setattr(asr.backend, "quota_state", type("Q", (), {
-        "get_limiter": lambda self, payload: Limiteur()})())
+    """Ce que fait relaying.gate pour une transcription relayée."""
+    pris = quotas(monkeypatch, asr.backend)
     web = un_son()
     # Exempté (le défaut de proxy.exempt_paths) : pas de limiteur.
     monkeypatch.setattr(transcribe, "is_exempt", lambda path: True)
@@ -479,20 +428,11 @@ def test_au_registre_presente_sur_chat_completions_et_tools_seulement(
     """Enregistré après web_fetch ; sans liaison : déclarable sur
     /v1/chat/completions et exécutable par /v1/tools, ignoré des surfaces
     Responses et Anthropic."""
-    from llm_proxy import anthropic_api, responses_api
     names = [t.name for t in tools.REGISTRY]
     assert names.index("transcribe") > names.index("web_fetch")
     assert "transcribe" in tools.kinds()
     monkeypatch.setattr(transcribe, "ENABLED", True)
-    h = tools.Hosted()
-    assert h.for_kind("transcribe") == [transcribe.TOOL]
-    assert transcribe.TOOL not in h.for_responses("web_search")
-    assert h.for_server("transcribe_20260101") is None
-    ctx = responses_api.to_chat({"model": "m", "input": "x", "tools": [
-        {"type": "transcribe"}]}, hosted=h)[1]
-    assert "transcribe" not in ctx.hosted and ctx.ignored == ["transcribe"]
-    assert not anthropic_api.Context({"tools": [
-        {"type": "transcribe_20260101", "name": "transcribe"}]}, h).hosted
+    sans_liaison(transcribe.TOOL)
     monkeypatch.setattr(transcribe, "ENABLED", False)
     assert transcribe.TOOL not in tools.enabled()
 
@@ -670,10 +610,9 @@ def test_conversion_par_le_vrai_ffmpeg(monkeypatch, asr, tmp_path):
 
 
 def test_ce_que_rend_un_vrai_backend_langue_duree_et_refus_en_500(asr):
-    """Les réponses de gufo (Qwen3-ASR), relevées le 07/10/2026 :
-    `verbose_json` rend la langue par son NOM et la durée en secondes ;
-    un fichier qu'il ne lit pas vaut un 500 dont le corps dit
-    `invalid_request_error` — le fichier est en cause, pas le backend."""
+    """Les réponses de gufo (Qwen3-ASR) : `verbose_json` rend la langue
+    par son NOM et la durée en secondes ; un fichier qu'il ne lit pas vaut
+    un 500 dont le corps dit `invalid_request_error` — le fichier est en cause, pas le backend."""
     asr.reply = {"text": "And so, my fellow Americans.", "task": "transcribe",
                  "language": "english", "duration": 11, "segments": []}
     out = un_son().run("https://site.test/a.wav", language="en")

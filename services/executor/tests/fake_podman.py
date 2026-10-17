@@ -65,7 +65,16 @@ elif cmd == "exec":
     if not os.path.isdir(path):
         refuse(f"no such container {name}")
     os.chdir(path)
-    os.execvp(command[0], command)
+    # La locale est celle que `run` a demandée (LANG=C.UTF-8), pas celle de
+    # la machine du test : sinon `ls` ou `sort` trient selon en_US.UTF-8
+    # (ponctuation ignorée) et non comme dans un vrai bac.
+    with open(os.path.join(root, name, ".args")) as fh:
+        recorded = json.load(fh)
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("LC_") or k in ("LANG", "LANGUAGE"))}
+    env.update(pair.split("=", 1) for flag, pair in zip(recorded, recorded[1:])
+               if flag == "--env" and pair.startswith(("LANG=", "LC_")))
+    os.execvpe(command[0], command, env)
 elif cmd == "inspect":
     if not os.path.isdir(os.path.join(root, args[-1])):
         refuse(f"no such object {args[-1]}")

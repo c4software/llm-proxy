@@ -106,12 +106,11 @@ BUDGET_SPENT = ("[No more tool calls are available for this answer: the "
 
 def _drop_exhausted(chat_payload: dict, names) -> bool:
     """Retire du corps du tour suivant les fonctions hébergées `names`,
-    dont le budget d'appels est épuisé. Sans cela le modèle les voit
-    encore, les rappelle, ne reçoit que des refus, et la limite dure
-    close la réponse SANS réponse : le petit modèle qui cherche encore
-    n'écrit jamais. Plus aucun outil : `tools` et `tool_choice` partent,
-    et le tour ne peut qu'être une réponse. Rend vrai si quelque chose
-    a été retiré."""
+    dont le budget d'appels est épuisé : sinon le modèle les rappelle, ne
+    reçoit que des refus, et la limite dure close la réponse sans qu'il
+    ait écrit. Plus aucun outil : `tools` et `tool_choice` partent, le
+    tour ne peut qu'être une réponse. Rend vrai si quelque chose a été
+    retiré."""
     tools_ = chat_payload.get("tools")
     if not isinstance(tools_, list):
         return False
@@ -158,14 +157,13 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                       prompt_estimate: int, rebuild,
                       limit: int | dict | None = None,
                       options: dict | None = None, ping: bytes | None = None):
-    """Une réponse avec outils hébergés, pour les deux surfaces traduites
-    (/v1/responses, /v1/messages) : relaie le tour upstream ouvert,
+    """Une réponse avec outils hébergés, pour les trois surfaces : relaie le tour upstream ouvert,
     exécute les appels que le robinet a mis de côté (`pending`), en rend
     le compte au client, puis relance le backend — jusqu'à un tour sans
     appel hébergé, que le robinet clôt lui-même.
 
-    Ce que la boucle demande à un robinet, et que responses_api.Translator
-    et anthropic_api.Translator offrent tous deux : feed / finish,
+    Ce que la boucle demande à un robinet (les Translator de
+    responses_api, anthropic_api et chat_api) : feed / finish,
     `pending` (appels à exécuter : `name`, `arguments`), `client_calls`,
     resolve(appel, résultat — un tools.Result), next_turn(), finalize(), fail(message,
     statut), `turns`, tokens / cached / sse. Ce qui diffère d'une surface
@@ -199,7 +197,6 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
     used = 0                          # appels comptés au plafond COMMUN
     ran = 0                           # tous les appels exécutés
     spent: dict[str, int] = {}        # appels exécutés, par fonction
-    # Le client, pour l'outil (tools.Call) : le condensé de sa clé.
     client = request_owner(request)
     # L'attente en cours (exécution d'un outil, ou porte de quota + envoi
     # du tour suivant) : une tâche, pour pouvoir émettre des pings pendant
@@ -235,7 +232,7 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                     # atteinte.
                     count, cap = (used, None) if used >= hosted.cap() \
                         else (spent.get(name, 0), limits.get(name))
-                # Un robinet qui annonce l'exécution (le chat de la page).
+                # Seul le robinet du chat de la page annonce l'exécution.
                 begin = getattr(robinet, "start", None)
                 out = begin(pending) if begin else b""
                 if out:

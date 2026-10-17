@@ -3,11 +3,9 @@ Le champ « model » d'un corps multipart/form-data (transcription audio,
 édition d'image) : le lire pour router, le réécrire pour retirer le préfixe
 de backend.
 
-Le routage du proxy se fait sur le préfixe du modèle (« bigchuck/… »). Pour un
-corps JSON, backends.route_backend le lit directement ; un formulaire
-multipart, lui, n'est pas du JSON : sans ce module, la requête partait vers le
-backend de repli (Albert) quel que soit le modèle demandé. Seule la valeur du
-champ « model » est touchée ; les autres parties (fichiers compris) sont
+Le routage du proxy se fait sur le préfixe du modèle, que
+backends.route_backend lit dans un corps JSON ; ce module fait de même pour
+un formulaire multipart. Seule la valeur du champ « model » est touchée ; les autres parties (fichiers compris) sont
 recopiées octet pour octet. La longueur change, mais Content-Length n'est
 jamais relayé (HOP_BY_HOP) : httpx2 recalcule la bonne.
 """

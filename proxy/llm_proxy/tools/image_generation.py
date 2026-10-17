@@ -1,54 +1,40 @@
 """
 `image_generation` : le modèle décrit une image, le proxy la fait générer
-par le modèle d'images d'un de ses backends (API OpenAI
-`POST /v1/images/generations`) et la REND à l'utilisateur comme fichier
-(`Result.files`) : la surface la range (files.py) et écrit son lien — une
-image en markdown — à la fin de la réponse. Le modèle, lui, ne reçoit
-qu'une phrase : le nom du fichier, son type, ses dimensions. Jamais de
-base64 ni d'URL dans ce qu'il lit, et que la mémoire garde.
+par le modèle d'images d'un de ses backends (`POST /v1/images/generations`)
+et la REND à l'utilisateur comme fichier (`Result.files`). Le modèle ne
+reçoit qu'une phrase : nom du fichier, type, dimensions. Jamais de base64
+ni d'URL dans ce qu'il lit, et que la mémoire garde.
 
 Le modèle d'images est une adresse de CONFIGURATION
 ([tools.image_generation].model = "<backend>/<modèle>") : la requête part
-par le client HTTP du backend (backends.py), comme une requête relayée,
-sans passer par relaying.py. Ce que relaying.py fait autour d'un relais
-est refait
-ici, en petit, comme dans transcribe.py : la porte de quota et la ligne
-de statistiques « requête », sous l'endpoint «/v1/tools/image_generation».
+par le client HTTP du backend, sans passer par relaying.py, dont la porte
+de quota et la ligne de statistiques sont refaites ici en petit, comme
+dans transcribe.py.
 
-Ce que le backend rend. `{"data": [{"b64_json": …}]}` (gufo, relevé le
-07/10/2026 : un PNG, sans qu'on le demande) ou `{"data": [{"url": …}]}`
-(le défaut d'autres serveurs). `response_format` n'est PAS envoyé : plus
-d'un modèle le refuse ; les deux formes sont lues. Une `url` est une
-adresse que le BACKEND écrit — ni le modèle, ni la configuration :
-  * de la MÊME origine que le backend (ou relative) : c'est l'adresse de
-    configuration, déjà jointe pour générer — lue par son client, avec sa
-    clé, sans le garde-fou des adresses publiques (un backend local est
-    une adresse privée, et c'est voulu) ;
-  * de toute AUTRE origine (un stockage, un CDN) : une adresse que
-    personne ici n'a choisie — lue par le téléchargement gardé
-    (net.download, [tools.net]) comme une cible du modèle : adresses
-    publiques seulement. Un backend ne fait pas lire au proxy un autre
-    service du réseau local.
+Ce que le backend rend : `{"data": [{"b64_json": …}]}` ou
+`{"data": [{"url": …}]}`. `response_format` n'est PAS envoyé : plus d'un
+modèle le refuse ; les deux formes sont lues. Une `url` est une adresse
+que le BACKEND écrit :
+  * de la MÊME origine que le backend (ou relative) : lue par son client,
+    avec sa clé, sans le garde-fou des adresses publiques (un backend
+    local est une adresse privée, et c'est voulu) ;
+  * de toute AUTRE origine : lue par le téléchargement gardé
+    (net.download) comme une cible du modèle. Un backend ne fait pas lire
+    au proxy un autre service du réseau local.
 Le type de l'image se lit dans ses OCTETS, jamais dans ce que le backend
-en dit ; ce qui n'est pas une image matricielle n'est pas rendu.
+en dit.
 
-RETOUCHE ([tools.image_generation].edits, inactive par défaut) : avec
-`image_url`, l'image est téléchargée sous le garde-fou — c'est une cible
-choisie par le modèle — puis envoyée avec le prompt à
-`POST /v1/images/edits` (multipart). Elle n'arrive QUE par URL publique :
-une image que le proxy vient de rendre ne se retouche donc que si son
-adresse publique ([files].public_url) est jointe du proxy sans être
-privée.
+RETOUCHE ([tools.image_generation].edits) : `image_url` est téléchargée
+sous le garde-fou — une cible choisie par le modèle — puis envoyée à
+`POST /v1/images/edits` (multipart). Elle n'arrive QUE par URL publique.
 
-Une génération coûte des dizaines de secondes de GPU — et, sur un backend
-qui ne tient qu'un modèle en mémoire, le déchargement du modèle de la
-conversation : un délai à lui (Tool.timeout), un compte d'appels à lui et
-bas (Tool.max_calls), une image par appel, et rien n'est demandé au
-backend si l'image ne pourrait pas être remise (pas d'adresse publique).
+Une génération coûte des dizaines de secondes de GPU (et parfois le
+déchargement du modèle de la conversation) : un délai et un compte
+d'appels à lui, une image par appel, et rien n'est demandé au backend si
+l'image ne pourrait pas être remise.
 
-Sans liaison à l'API Responses ni à l'API Messages : l'outil se déclare
-par {"type": "image_generation"} sur /v1/chat/completions (ou
-[chat].always) et s'appelle par POST /v1/tools/image_generation.
+Sans liaison Responses ni Messages : {"type": "image_generation"} sur
+/v1/chat/completions, ou POST /v1/tools/image_generation.
 """
 
 import asyncio
@@ -86,8 +72,8 @@ MAX_CALLS = config.integer("tools.image_generation.max_calls", 2)
 # Octets de l'image rendue, au plus ; au-delà elle n'est pas remise. La
 # borne du magasin ([files].max_file_bytes) vaut aussi.
 MAX_BYTES = config.integer("tools.image_generation.max_bytes", 10_000_000)
-# La retouche d'une image donnée par URL (tête de module), et les octets
-# de cette image au plus : refusée au-delà, pas coupée.
+# La retouche d'une image donnée par URL, et les octets de cette image au
+# plus : refusée au-delà, pas coupée.
 EDITS = config.flag("tools.image_generation.edits", False)
 MAX_INPUT_BYTES = config.integer("tools.image_generation.max_input_bytes",
                                  10_000_000)
@@ -151,10 +137,9 @@ def _backend() -> tuple[backends.Backend, str]:
 async def _ask(path: str, fields: dict, image=None) -> dict:
     """Une requête au modèle d'images — JSON, ou multipart avec `image`
     (nom, octets, type) pour une retouche — → le premier élément de
-    `data`. Même parcours qu'une requête relayée par relaying.py : le limiteur
-    d'un backend à quotas, puis une ligne de statistiques, quelle que
-    soit l'issue. Le corps d'une erreur du backend va au journal, pas au
-    modèle."""
+    `data`. Le limiteur d'un backend à quotas, puis une ligne de
+    statistiques, quelle que soit l'issue. Le corps d'une erreur du
+    backend va au journal, pas au modèle."""
     backend, model = _backend()
     if backend.quotas and not is_exempt(path):
         try:    # une requête, coût 1 : une image n'est pas des tokens
@@ -216,9 +201,9 @@ async def _ask(path: str, fields: dict, image=None) -> dict:
 
 async def _collect(item: dict, transport) -> bytes:
     """Les octets de l'image d'un élément de `data` : son `b64_json`, ou
-    ce qu'on lit à son `url` (tête de module : par le client du backend
-    si elle est de son origine, sous le garde-fou sinon). Lus jusqu'à
-    MAX_BYTES + 1 : de quoi savoir qu'elle dépasse."""
+    ce qu'on lit à son `url` (par le client du backend si elle est de son
+    origine, sous le garde-fou sinon). Lus jusqu'à MAX_BYTES + 1 : de quoi
+    savoir qu'elle dépasse."""
     b64, url = item.get("b64_json"), item.get("url")
     if isinstance(b64, str) and b64:
         try:
@@ -321,9 +306,8 @@ class ImageGeneration(Tool):
 
     @property
     def timeout(self) -> float:
-        """Le délai de l'outil (contrat : Tool.timeout), à la place de
-        [tools].run_timeout : la génération, et les deux téléchargements
-        possibles — l'image à retoucher, l'image rendue par `url`."""
+        """La génération, et les deux téléchargements possibles — l'image
+        à retoucher, l'image rendue par `url`."""
         return TIMEOUT + 2 * DOWNLOAD_TIMEOUT
 
     @property

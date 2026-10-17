@@ -2,17 +2,13 @@
 Le proxy en SERVEUR MCP : ses outils hébergés actifs (web_search,
 web_fetch, web_grep, ocr, code_execution, memory… et ceux des serveurs MCP
 de [tools.mcp], qu'il relaie) offerts à tout client qui parle le Model
-Context Protocol — Claude Code, Codex, et tout agent qui sait joindre un
-serveur MCP distant — par une seule route, `POST /mcp`, au transport
+Context Protocol par une seule route, `POST /mcp`, au transport
 « streamable HTTP ». C'est l'INVERSE de tools/mcp.py, où le proxy est
 CLIENT de serveurs MCP.
 
-Pourquoi : chaque client a sa façon de recevoir un outil du proxy. Codex
-et les clients chat/completions déclarent `web_search` (ou le reçoivent
-d'office, [chat].always) et le proxy fait la boucle ; Claude Code ne passe
-par le proxy que pour la sous-requête de son WebSearch, et lit les pages
-sur son poste — sa boucle principale n'a aucun outil du proxy. MCP, tous
-le parlent : un outil ajouté au registre y paraît, sans rien de plus.
+Pourquoi : un client dont la boucle principale ne reçoit aucun outil du
+proxy par les surfaces y accède quand même ; un outil ajouté au registre
+y paraît, sans rien de plus.
 
 Ce que ce module sert, et seulement cela :
   initialize                 version négociée, capacité `tools`
@@ -31,9 +27,8 @@ annonce accepter JSON et SSE, et un appel d'outil du proxy ne pousse rien
 en cours de route. Chaque POST se suffit : un redémarrage du proxy ne
 casse aucune session.
 
-L'authentification est celle de tout le proxy (middleware d'auth.py) :
-le client pose `Authorization: Bearer <clé du proxy>` dans la
-configuration de son serveur MCP. La clé dit aussi QUI appelle
+L'authentification est celle de tout le proxy (middleware d'auth.py). La
+clé dit aussi QUI appelle
 (`call.client`, tools.owner) — ce qui cloisonne la mémoire persistante,
 le bac de code_execution, les fichiers rendus.
 

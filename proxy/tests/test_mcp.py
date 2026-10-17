@@ -14,6 +14,7 @@ import json
 import httpx2
 import pytest
 
+from fakes import go
 from llm_proxy import tools
 from llm_proxy.tools import mcp
 
@@ -23,10 +24,6 @@ SEARCH = {"name": "search", "description": "Search the docs.",
               "q": {"type": "string"}}, "required": ["q"]}}
 READ = {"name": "page.read", "title": "Read a page",
         "inputSchema": {"type": "object"}}
-
-
-def go(coro):
-    return asyncio.run(coro)
 
 
 def text(value: str, **more) -> dict:

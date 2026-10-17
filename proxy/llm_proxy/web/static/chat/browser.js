@@ -28,7 +28,7 @@
 import { GEMINI_NANO } from "./models/gemini-nano.js";
 
 // Ce que sait faire un modèle du catalogue (du proxy) : tout.
-export const MODEL_CAPS = {
+const MODEL_CAPS = {
   hostedTools: true,      // les outils du proxy (recherche, mémoire…)
   pageTools: null,        // les outils de la page : null = tous, sinon leurs noms
   reasoning: true,        // le niveau de réflexion
@@ -38,7 +38,7 @@ export const MODEL_CAPS = {
 // Ce que sait faire `entry` (une entrée de la liste, ou rien).
 export const modelCaps = (entry) => ({ ...MODEL_CAPS, ...((entry && entry.caps) || {}) });
 
-export const BROWSER_MODELS = [GEMINI_NANO];
+const BROWSER_MODELS = [GEMINI_NANO];
 
 export const browserModel = (id) => BROWSER_MODELS.find((m) => m.id === id) || null;
 

@@ -5,27 +5,23 @@
   tiers.
 
   UN SEUL appel par rafraîchissement : les seaux de la période, groupés
-  par modèle. Tout le reste — totaux, ligne par modèle, courbe — s'en
-  déduit, et la courbe se lit indifféremment en requêtes ou en tokens :
-  la même réponse porte les deux grandeurs, changer de mesure ne
-  redemande rien, parce que chaque grandeur exposée s'additionne (requêtes,
-  tokens, erreurs, somme des latences) ou se maximise (latence max). La
-  borne de départ est ALIGNÉE sur la largeur des seaux : les chiffres du
-  tableau portent alors exactement sur ce que montre la courbe.
+  par modèle ; totaux, lignes et courbe s'en déduisent. Chaque grandeur
+  s'additionne (requêtes, tokens, erreurs, somme des latences) ou se
+  maximise (latence max) : changer de mesure ne redemande rien. La borne
+  de départ est ALIGNÉE sur la largeur des seaux : le tableau porte
+  exactement sur ce que montre la courbe.
 
-  Un second appel, léger, sert uniquement à savoir jusqu'où remonte
-  l'historique — au chargement et au changement de période, jamais dans
-  la boucle. La vue « Tout » en a besoin pour choisir son découpage.
+  Un second appel, léger, dit jusqu'où remonte l'historique — au
+  chargement et au changement de période, jamais dans la boucle : la vue
+  « Tout » en a besoin pour son découpage.
 
-  La section « Outils » a son propre appel, à la route sœur
-  (/ui/usage/tools = /v1/organization/usage/tools) : UN seau sur la même
-  période, groupé par outil et par route d'appel. Elle disparaît quand
-  aucun outil hébergé n'a servi dans la fenêtre. Le cache web et les
-  serveurs MCP viennent de `health` (/ui/health, lu par app.js).
+  La section « Outils » lit la route sœur (/ui/usage/tools =
+  /v1/organization/usage/tools) : UN seau sur la même période, groupé par
+  outil et route d'appel ; elle disparaît si aucun outil hébergé n'a
+  servi. Le cache web et les serveurs MCP viennent de `health`.
 
   Rien n'est demandé tant que la vue n'est pas affichée (`active`) ou que
-  l'onglet est masqué. Le rafraîchissement ne clignote pas : Vue rapproche
-  les listes par leur clé et ne réécrit que ce qui a changé.
+  l'onglet est masqué.
 */
 import { ask } from "../lib/http.js";
 import { num, ms, dur, ago, moment } from "../lib/format.js";
@@ -148,11 +144,8 @@ export const StatsView = {
         }
       }
       // Ordre ALPHABÉTIQUE : le seul qui ne dépende ni du trafic ni de la
-      // période. Trier par ordre d'apparition rangeait les modèles
-      // différemment dans chaque vue — les lignes se réordonnaient en
-      // changeant de période, les segments de la barre se croisaient au
-      // lieu de glisser, et un même modèle changeait de couleur puisque
-      // celle-ci suit le rang.
+      // période — les lignes et les segments ne se réordonnent pas d'une vue
+      // à l'autre, et un modèle garde sa couleur (elle suit le rang).
       const list = [...acc.values()].sort((a, b) => a.id.localeCompare(b.id));
       const grand = list.reduce((s, m) => s + m.prompt + m.completion, 0);
       return list.map((m, i) => {
@@ -411,9 +404,7 @@ export const StatsView = {
       if (met) { e.preventDefault(); selectMetric(met.id); }
     }
 
-    // Onglet masqué : plus aucune requête. Au retour, on rafraîchit
-    // immédiatement plutôt que d'afficher des chiffres vieux de plusieurs
-    // minutes.
+    // Onglet masqué : plus aucune requête ; rafraîchi dès son retour.
     function onVisibility() { if (!document.hidden) poll(); }
 
     // La vue revient à l'écran : rafraîchie aussitôt.

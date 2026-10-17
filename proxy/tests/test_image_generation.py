@@ -8,19 +8,18 @@ configuration est posée par monkeypatch sur les constantes des modules.
 Un test par comportement ; les familles d'entrées sont des tables, et
 l'assertion nomme l'entrée fautive."""
 
-import asyncio
 import base64
 import json
-import socket
 import struct
 
 import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
 import httpx2
 import pytest
 
-from llm_proxy import albert, backends, files, tools
+from fakes import (PUBLIC, fake_backend, fake_dns, go, net_guard, quotas,
+                   rendu as run)
+from llm_proxy import files, tools
 from llm_proxy.tools import image_generation as ig
-from llm_proxy.tools import net
 
 # Un PNG de 512×512 (l'en-tête suffit : rien ne le décode) et un JPEG.
 PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 512, 512) \
@@ -29,10 +28,6 @@ JPEG = b"\xff\xd8\xff\xe0\x00\x04JF\xff\xc0\x00\x11\x08" \
     + struct.pack(">HH", 300, 400) + bytes(20)
 NAME = "image-f53131.png"
 TOOL = ig.TOOL
-
-
-def go(coro):
-    return asyncio.run(coro)
 
 
 def b64(data: bytes) -> dict:
@@ -66,11 +61,9 @@ def img(monkeypatch):
     [tools.image_generation].model, et un DNS sans réseau. `img.lines` :
     les lignes de statistiques des requêtes au backend."""
     env = Backend()
-    b = backends.Backend("img", {"url": "http://10.0.0.9:8009", "api_key": "k"})
-    b.client = httpx2.AsyncClient(base_url=b.url,
-                                 transport=httpx2.MockTransport(env.handler))
-    env.backend, env.lines = b, []
-    monkeypatch.setitem(backends.BACKENDS, "img", b)
+    env.backend = fake_backend(monkeypatch, "img", {
+        "url": "http://10.0.0.9:8009", "api_key": "k"}, env.handler)
+    env.lines = []
     for name, value in {
             "ENABLED": True, "MODEL": "img/qwen-image", "SIZE": "512x512",
             "SIZES": ["512x512", "1024x1024"], "TIMEOUT": 300,
@@ -80,21 +73,9 @@ def img(monkeypatch):
     monkeypatch.setattr(ig.stats, "record", lambda *a: env.lines.append(a))
     monkeypatch.setattr(files, "PUBLIC_URL", "https://proxy.test")
     monkeypatch.setattr(files, "STORE", files.Store(3600, 100_000, 50_000))
-    monkeypatch.setattr(net, "ALLOW_PRIVATE", False)
-    monkeypatch.setattr(net, "ALLOWED_DOMAINS", [])
-    monkeypatch.setattr(net, "BLOCKED_DOMAINS", [])
-    table = {"site.test": "93.184.216.34", "cdn.test": "1.1.1.1",
-             "intern.test": "10.0.0.5"}
-    real = socket.getaddrinfo
-
-    def resolve(host, port, family=0, type=0, proto=0, flags=0):
-        if host in table:
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "",
-                     (table[host], port))]
-        return real(host, port, family, type, proto,
-                    flags | socket.AI_NUMERICHOST)
-
-    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    net_guard(monkeypatch)
+    fake_dns(monkeypatch, {"site.test": [PUBLIC], "cdn.test": ["1.1.1.1"],
+                           "intern.test": ["10.0.0.5"]})
     return env
 
 
@@ -108,12 +89,9 @@ def rendu(args=None, web=None, seen=None, **more) -> tools.Result:
         return httpx2.Response(404) if body is None \
             else httpx2.Response(200, content=body)
 
-    try:
-        return go(TOOL.run({"prompt": "un bateau rouge", **(args or {}), **more},
-                           tools.Call(endpoint="/v1/tools"),
-                           transport=httpx2.MockTransport(handler)))
-    except tools.ToolError as exc:
-        return tools.failure(exc.code, exc.message)
+    return run(TOOL.run({"prompt": "un bateau rouge", **(args or {}), **more},
+                        tools.Call(endpoint="/v1/tools"),
+                        transport=httpx2.MockTransport(handler)))
 
 
 def test_contrat_de_l_outil(monkeypatch):
@@ -265,19 +243,8 @@ def test_image_rendue_par_url_lue_chez_le_backend_ou_sous_le_garde_fou(img):
 
 
 def test_backend_a_quotas_passe_par_son_limiteur(monkeypatch, img):
-    """Ce que fait app.gate pour une génération relayée."""
-    pris = []
-
-    class Limiteur:
-        async def acquire(self, cost, wait_gone=None):
-            pris.append(cost)
-            if len(pris) > 1:
-                raise albert.QuotaWaitTooLong(1200, "minute")
-            return 0.0
-
-    monkeypatch.setattr(img.backend, "quotas", True)
-    monkeypatch.setattr(img.backend, "quota_state", type("Q", (), {
-        "get_limiter": lambda self, payload: Limiteur()})())
+    """Ce que fait relaying.gate pour une génération relayée."""
+    pris = quotas(monkeypatch, img.backend)
     assert rendu().error is None and pris == [1]
     assert rendu().error == "too_many_requests" and len(img.requests) == 1
 

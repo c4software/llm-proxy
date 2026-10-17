@@ -1,41 +1,21 @@
 """
-Tout ce qui est SPÉCIFIQUE À ALBERT : le limiteur de quotas, qui
-temporise les requêtes pour rester sous ses limites — fenêtres MINUTE
-(rpm/tpm) et JOUR (rpd/tpd), limites exactes du compte chargées depuis
-GET /v1/me/info.
+Limiteur de quotas propre à Albert : temporise les requêtes pour rester
+sous les fenêtres MINUTE (rpm/tpm) et JOUR (rpd/tpd) du compte, chargées
+depuis GET /v1/me/info.
 
-Le limiteur retarde plutôt que rejeter — sauf si l'attente nécessaire
-dépasse MAX_QUEUE_SECONDS (quota JOURNALIER épuisé) : l'appelant reçoit
-QuotaWaitTooLong et renvoie un 429 local avec Retry-After.
+Il retarde plutôt que rejeter, sauf si l'attente dépasse
+MAX_QUEUE_SECONDS (quota journalier épuisé) : QuotaWaitTooLong, que
+l'appelant traduit en 429 local avec Retry-After.
 
-── Association routeurs ↔ modèles ──────────────────────────────────────
-/v1/me/info donne les limites par router_id ; /v1/models donne les modèles
-(id + aliases) mais PAS leur router_id (vérifié sur l'API réelle). Le
-mapping est donc reconstruit ainsi, par priorité :
+/v1/me/info donne les limites par router_id, /v1/models les modèles
+(id + aliases) mais pas leur router_id : l'association est reconstruite
+(voir _associate_routers). id et aliases partagent un même bucket.
 
-  1. [quotas.router_models] (config.toml, <router_id> = ["préfixe", ...])
-     — mapping manuel explicite, prioritaire sur tout ;
-  2. signature : chaque groupe de modèles est rattaché à une famille
-     ([quotas.family_limits], préfixes testés sur le nom complet, sa partie après
-     « / », et chaque alias) ; si un seul routeur du compte porte les
-     (rpm, tpm) de cette famille, l'association est certaine. Si plusieurs
-     routeurs candidats existent mais ont TOUTES leurs limites identiques
-     (minute ET jour), l'attribution arbitraire est numériquement sans
-     effet et acceptée ; sinon la famille reste sur ses limites statiques
-     (sans fenêtres jour).
+Sur /v1/chat/completions, Albert ne compte que les tokens des messages
+envoyés, pas la sortie.
 
-Dans tous les cas, /v1/models sert à unifier id et aliases dans un même
-bucket : « openai/gpt-oss-120b » et « openweight-large » partagent le même
-compteur.
-
-Note comptage : sur /v1/chat/completions Albert ne comptabilise QUE les
-tokens des messages envoyés (~4 chars/token estimés ici), pas la sortie.
-
-Ce module ne connaît ni FastAPI ni httpx2. Chaque backend à quotas de
-main.py instancie SA QuotaState : deux backends « albert » avec des clés
-différentes ont chacun leurs limiteurs, leur association routeurs et
-leur refresh. refresh() reçoit le Backend (attributs .client,
-.auth_headers() et .meta_timeout).
+Chaque backend à quotas a SA QuotaState (deux clés Albert = deux jeux de
+limiteurs). Ce module ne connaît ni FastAPI ni httpx2.
 """
 
 import asyncio
@@ -70,11 +50,9 @@ DEFAULT_FAMILY_LIMITS = {
     "gptoss": {"rpm": 10, "tpm": 128_000, "models": ["openweight-large", "gpt-oss"]},
 }
 
-# ── Constantes internes (modifiables ici, pas d'env dédiée) ──────────────
-# Estimation de tokens : Albert compte les tokens des messages envoyés ;
-# faute de tokenizer, on approxime à N caractères par token.
+# Faute de tokenizer, estimation à N caractères par token.
 CHARS_PER_TOKEN = 4
-# Longueur max des extraits JSON bruts loggés en cas de schéma non reconnu.
+# Extraits JSON loggés quand le schéma n'est pas reconnu.
 LOG_EXCERPT_CHARS = 280
 
 MINUTE = 60.0
@@ -235,7 +213,7 @@ class Limiter:
                             if watcher.exception() is None:
                                 raise ClientGone()
                             # Surveillance en échec : on continue d'attendre
-                            # comme avant, sans elle.
+                            # sans elle.
                             log.debug("surveillance de déconnexion perdue : %r",
                                       watcher.exception())
                             wait_gone, watcher = None, None
@@ -335,8 +313,7 @@ def _associate_routers(
 ) -> tuple[dict[int, list[str]], dict[str, str], dict[str, str]]:
     """Associe chaque GROUPE de modèles (id + aliases) à un routeur.
 
-    Sur l'API réelle, un routeur = un modèle (vérifié : autant de routeurs
-    que d'entrées au catalogue). L'association se fait par priorité :
+    Sur l'API réelle, un routeur = un modèle. Par priorité :
       1. ROUTER_MODELS (mapping manuel, préfixes) ;
       2. signature (rpm, tpm) de la famille du groupe : bijection entre
          les groupes d'une signature et les routeurs qui la portent,
@@ -352,7 +329,6 @@ def _associate_routers(
         key=lambda x: len(x[0]), reverse=True,
     )
 
-    # Routeurs regroupés par signature (rpm, tpm), avec test d'uniformité.
     sig_pool: dict[tuple[int, int], list[int]] = {}
     for rid, l in rlimits.items():
         sig_pool.setdefault((l["rpm"], l["tpm"]), []).append(rid)
@@ -429,8 +405,7 @@ def _associate_routers(
 
 class QuotaState:
     """Quotas d'UN backend Albert (un compte / une clé) : limiteurs,
-    association routeurs ↔ modèles, refresh périodique. Chaque backend
-    à quotas de main.py possède la sienne."""
+    association routeurs ↔ modèles, refresh périodique."""
 
     def __init__(self, name: str):
         self.name = name

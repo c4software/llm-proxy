@@ -9,24 +9,19 @@ d'entrée (`files`) téléchargés d'un faux web, sous le garde-fou et leurs
 bornes ; les bornes du magasin et les en-têtes sous lesquels un fichier
 est servi. L'exécuteur lui-même est dans test_executor.py."""
 
-import asyncio
 import base64
 import json
-import socket
 
 import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
 import httpx2
 import pytest
 
+from fakes import PUBLIC, fake_dns, go, net_guard, rendu as run
 from llm_proxy import files, tools
-from llm_proxy.tools import code_execution, net
+from llm_proxy.tools import code_execution
 
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(40)
 TOOL = code_execution.TOOL
-
-
-def go(coro):
-    return asyncio.run(coro)
 
 
 @pytest.fixture(autouse=True)
@@ -42,14 +37,9 @@ def reglages(monkeypatch):
     monkeypatch.setattr(code_execution, "MAX_FILES_BYTES", 2500)
     monkeypatch.setattr(code_execution, "DOWNLOAD_TIMEOUT", 60)
     # Le garde-fou commun ([tools.net]), et un DNS sans réseau.
-    monkeypatch.setattr(net, "ALLOW_PRIVATE", False)
-    monkeypatch.setattr(net, "ALLOWED_DOMAINS", [])
-    monkeypatch.setattr(net, "BLOCKED_DOMAINS", ["interdit.test"])
-    table = {"site.test": "93.184.216.34", "interdit.test": "1.1.1.1",
-             "intern.test": "10.0.0.5"}
-    monkeypatch.setattr(
-        socket, "getaddrinfo", lambda host, port, *a, **k: [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (table[host], port))])
+    net_guard(monkeypatch, blocked=["interdit.test"])
+    fake_dns(monkeypatch, {"site.test": [PUBLIC], "interdit.test": ["1.1.1.1"],
+                           "intern.test": ["10.0.0.5"]})
     monkeypatch.setattr(files, "PUBLIC_URL", "https://proxy.test")
     monkeypatch.setattr(files, "STORE", files.Store(3600, 10_000, 4_000))
     monkeypatch.setattr(tools, "MAX_RESULT_CHARS", 24_000)
@@ -106,12 +96,9 @@ def web(request):
 def rendu(args, reply=None, session="conv", seen=None) -> tools.Result:
     """Ce que tools.Hosted fait d'un `run` appelé à la main."""
     call = tools.Call(client="clientA", session=session, endpoint="/v1/tools")
-    try:
-        return go(TOOL.run(args, call, transport=executor(
-            answer() if reply is None else reply, seen),
-            downloads=httpx2.MockTransport(web)))
-    except tools.ToolError as exc:
-        return tools.failure(exc.code, exc.message)
+    return run(TOOL.run(args, call, transport=executor(
+        answer() if reply is None else reply, seen),
+        downloads=httpx2.MockTransport(web)))
 
 
 CODE = {"language": "python", "code": "print(6 * 7)"}
@@ -120,9 +107,8 @@ CODE = {"language": "python", "code": "print(6 * 7)"}
 def test_contrat_de_l_outil():
     assert (TOOL.name, TOOL.kinds) == ("code_execution", ("code_execution",))
     assert TOOL.responses is None and TOOL.anthropic is None
-    # Son délai couvre celui du programme et le travail de l'exécuteur ;
-    # ses appels sont comptés à part.
-    # … et, avant lui, le téléchargement des fichiers d'entrée.
+    # Son délai couvre le téléchargement des fichiers d'entrée, le programme
+    # et le travail de l'exécuteur ; ses appels sont comptés à part.
     assert TOOL.timeout == 30 + 120 + 60 + 45
     assert TOOL.max_calls == 8 and TOOL.enabled
     fn = TOOL.spec({"code_execution"})["function"]
@@ -209,11 +195,12 @@ def test_fichiers_d_entree():
         "Output:\nok\n")
     assert r.meta["inputs"] == ["ventes.csv", "rapport_2026.xlsx",
                                 "ventes-2.csv"]
-    # Sans `files` : la requête d'avant, sans le champ.
+    # Sans `files` : la requête ne porte pas le champ.
     for none in ([], None):
         rendu({**CODE, "files": none}, seen=seen)
         assert "inputs" not in json.loads(seen[-1].content)
-    # Un exécuteur d'avant le dépôt ignore le champ : le texte le dit.
+    # Un exécuteur qui ne connaît pas le dépôt ignore le champ : le texte
+    # le dit.
     r = rendu({**CODE, "files": [f"{here}/data/ventes.csv"]}, session="")
     assert r.error is None and r.text == (
         "Exit code: 0\n"

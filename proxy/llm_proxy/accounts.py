@@ -1,7 +1,7 @@
 """
 Les COMPTES et leurs CLÉS : ce qui existe quand la page se connecte par
 OIDC ([oidc], voir oidc.py). Sans [oidc], ce module ne sert pas : les clés
-du proxy sont celles du TOML (proxy.api_keys), comme avant.
+du proxy sont celles du TOML (proxy.api_keys).
 
 UN COMPTE = une identité OIDC (issuer, sub), avec un rôle :
   * admin   — tout ce qu'a un utilisateur, plus les comptes et les clés de
@@ -96,9 +96,9 @@ def _connect() -> sqlite3.Connection:
         digest TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
         created REAL NOT NULL)""")
-    # Ajouts de colonnes, idempotents (une base d'avant les reçoit sans
-    # rien perdre) : `share`, la part du compte dans le partage équitable
-    # (fairshare.py) — NULL = la part par défaut, 0 = illimitée.
+    # Ajouts de colonnes, idempotents : `share`, la part du compte dans le
+    # partage équitable (fairshare.py) — NULL = la part par défaut,
+    # 0 = illimitée.
     have = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
     if "share" not in have:
         conn.execute("ALTER TABLE users ADD COLUMN share INTEGER")

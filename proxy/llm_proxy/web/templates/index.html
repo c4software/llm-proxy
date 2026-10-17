@@ -1,12 +1,8 @@
 <!doctype html>
 <!--
-  Le tableau de bord : le SQUELETTE de la page — menu latéral, écran
-  d'entrée, et les trois vues, chacune un composant (web/static, modules
-  ES chargés par app.js) : <stats-view>, <chat-panel>, <config-panel>.
-  Vue compile ce gabarit au chargement (build complet, embarqué
-  localement — aucun CDN, aucune étape de compilation).
-
-  Auth active sans clé valide : l'écran d'entrée, à la place des vues.
+  Squelette du tableau de bord : menu, écran d'entrée et les trois vues
+  (composants chargés par app.js). Vue compile ce gabarit au chargement
+  (build complet embarqué : ni CDN ni étape de compilation).
 -->
 <html lang="fr">
 <head>
@@ -17,8 +13,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <meta name="robots" content="noindex">
 <title>llm-proxy</title>
-<!-- Installable (application de bureau, écran d'accueil) : manifeste,
-     icônes, couleur de la barre, service worker (/ui/sw.js). -->
+<!-- Installable : manifeste, icônes, couleur de barre ; service worker /ui/sw.js. -->
 <link rel="manifest" href="/ui/static/manifest.webmanifest">
 <link rel="icon" href="/ui/static/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/ui/static/icon-192.png">
@@ -27,8 +22,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="llm-proxy">
 <link rel="stylesheet" href="/ui/static/dashboard.css">
-<!-- Le thème choisi (lib/theme.js), posé AVANT le premier rendu : pas
-     d'éclair de l'autre thème au chargement. -->
+<!-- Thème posé AVANT le premier rendu : pas d'éclair de l'autre thème. -->
 <script>try { const t = localStorage.getItem("llm-proxy-theme");
   if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}</script>
 <script src="/ui/static/vue.global.prod.js"></script>
@@ -39,13 +33,8 @@
      qui suit la vue est donc sur l'enveloppe intérieure. -->
 <div id="app" v-cloak>
 <div class="shell" :class="{ 'has-nav': session, 'nav-open': navOpen }">
-  <!-- Le menu latéral : une colonne fixe sur grand écran, un tiroir ouvert
-       par ☰ sur mobile. Les vues, puis la clé connectée en bas. -->
   <aside class="sidenav" v-if="session" aria-label="Navigation">
     <div class="brand"><span class="dot"></span> llm-proxy</div>
-    <!-- En haut : le chat et ses conversations (chat/store.js), la liste
-         défile ; en bas, fixés : Statistiques, Configuration, le thème,
-         la personne connectée. -->
     <button type="button" class="nav-item" :aria-current="view === 'chat' ? 'page' : null"
             @click="setView('chat')">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>
@@ -113,7 +102,6 @@
 
 <div class="wrap" :class="{ 'is-chat': session && view === 'chat', 'is-stats': session && view === 'stats' }">
   <header>
-    <!-- Sur mobile (et sans session) : la marque, et ☰ pour le menu. -->
     <div class="mobilebar">
       <button type="button" class="icon menu-btn" v-if="session" @click="navOpen = true"
               aria-label="Menu" title="Menu">
@@ -126,8 +114,6 @@
     <h1 v-else-if="view === 'config'">Configuration</h1>
   </header>
 
-  <!-- Auth active, pas de clé valide : on la demande. Elle part à
-       /ui/login, qui ouvre une session signée (cookie HttpOnly). -->
   <div class="panel login" v-if="needLogin && authMode === 'oidc'">
     <p>Connectez-vous avec votre compte : vous y gérez <b>vos</b> clés pour
       vos clients, et ne voyez que <b>vos</b> statistiques et <b>vos</b> conversations.</p>
@@ -137,7 +123,6 @@
     </div>
   </div>
 
-  <!-- Compte OIDC connecté mais pas encore accepté (ou bloqué). -->
   <div class="panel login" v-if="inactive">
     <p v-if="inactive.role === 'pending'">Compte <b>{{ inactive.email || inactive.name }}</b>
       créé : il attend qu'un admin l'accepte. Revenez ensuite sur cette page.</p>

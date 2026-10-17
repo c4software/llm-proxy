@@ -45,7 +45,6 @@ def health_detail() -> dict:
     """L'état du déploiement : backends, surfaces, outils, caches."""
     return {
         "status": "ok",
-        # Le partage équitable : part par défaut, clients suivis, en attente.
         "fair_share": fairshare.snapshot(),
         "tool_choice": TOOL_CHOICE,
         "auth_required": auth_required(),
@@ -57,8 +56,6 @@ def health_detail() -> dict:
             "model_map": anthropic_api.MODEL_MAP,
         },
         "responses": {"enabled": responses_api.ENABLED},
-        # Le serveur MCP (POST /mcp) : de quoi savoir, sans clé, si un
-        # client MCP (pi, omp, Claude Code) peut s'y brancher.
         "mcp_server": {"enabled": mcp_server.ENABLED},
         "chat": {"hosted_tools": chat_api.ENABLED,
                  # Présentés d'office EN CE MOMENT : les noms de
@@ -83,10 +80,10 @@ def health_detail() -> dict:
                           "bytes": tools.webcache.CACHE.size,
                           "hits": tools.webcache.CACHE.hits,
                           "misses": tools.webcache.CACHE.misses},
-            # Cache des transcriptions (le texte, jamais l'audio).
             # Serveurs MCP de la configuration : joints ou non, leur
             # protocole, leurs outils — jamais leurs en-têtes.
             "mcp": tools.mcp.status(),
+            # Cache des transcriptions (le texte, jamais l'audio).
             "transcribe_cache": {"ttl": tools.transcribe.CACHE.ttl,
                                  "entries": len(tools.transcribe.CACHE),
                                  "hits": tools.transcribe.CACHE.hits,

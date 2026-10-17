@@ -1,13 +1,10 @@
 """
 `web_fetch` : lire une page web, pour que le modèle puisse ouvrir un
-résultat de `web_search` (c'est l'action `open_page` de la recherche web
-d'OpenAI ; chez oh-my-pi, la lecture d'URL de l'outil `read`, sans ses
-extracteurs par site).
+résultat de `web_search` (l'action `open_page` de la recherche web
+d'OpenAI).
 
 La cible est choisie par le modèle : elle passe par le téléchargement
-gardé (net.download, [tools.net]) — listes de domaines, adresses publiques
-seulement, connexion vers l'adresse vérifiée, à CHAQUE saut de
-redirection. Le corps est lu jusqu'à `max_bytes`, rendu en texte (HTML →
+gardé (net.download). Le corps est lu jusqu'à `max_bytes`, rendu en texte (HTML →
 texte, JSON et texte tels quels) et coupé à `max_chars`.
 
 Un PDF est lu aussi : téléchargé jusqu'à `pdf_max_bytes`, son texte est
@@ -48,9 +45,8 @@ ACCEPT = ("text/html,application/xhtml+xml,application/json,"
 
 NAME = "web_fetch"
 
-# La description renvoie le modèle à `web_search` : vrai seulement là où
-# `web_search` lui est présenté aussi (`present` de prompt) — un client
-# Anthropic qui ne déclare que la lecture la reçoit sans cette phrase.
+# La description renvoie le modèle à `web_search` : seulement là où
+# `web_search` lui est présenté aussi (`present` de prompt).
 _SEARCH = "web_search"
 _SEARCH_HINT = f"Use it to read a page found with {_SEARCH}. "
 
@@ -79,8 +75,7 @@ def pdf_text(body: bytes) -> tuple[str, str]:
     abandonne l'attente mais n'arrête pas un fil : c'est ici qu'il s'arrête,
     entre deux pages. Un texte incomplet le dit, à la fin."""
     try:
-        # Importé ici : le proxy démarre sans pypdf, seule la lecture d'un
-        # PDF le demande.
+        # Importé ici : le proxy démarre sans pypdf.
         from pypdf import PdfReader
     except ImportError:
         return "", ("is a PDF, which this proxy cannot read (pypdf is not "
@@ -156,13 +151,11 @@ def page_text(url: str, content_type: str, body: bytes | str,
 def render(url: str, content_type: str, body: bytes | str,
            encoding: str | None, offset: int = 0,
            max_chars: int | None = None) -> Result:
-    """`body` en octets : la page telle que téléchargée. En `str` : un texte
-    déjà extrait par run() (PDF), rendu tel quel. `max_chars` : une taille
-    de morceau plus PETITE que MAX_CHARS (voir run), jamais plus grande.
-    Rend le texte du modèle et, dans `meta`, ce que son en-tête dit de la
-    page : `url` (celle réellement lue, après redirections), `title`,
-    `content_type`, `total` (caractères de la page) et `range` — la plage
-    rendue, seulement si ce n'est pas la page entière."""
+    """`body` en octets : la page telle que téléchargée ; en `str` : le
+    texte déjà extrait d'un PDF. `max_chars` : une taille de morceau plus
+    PETITE que MAX_CHARS, jamais plus grande. `meta` reprend l'en-tête :
+    `url` (réellement lue), `title`, `content_type`, `total` et `range`
+    (seulement si ce n'est pas la page entière)."""
     ct, title, text = page_text(url, content_type, body, encoding)
     total = len(text)
     offset = min(max(offset, 0), total)
@@ -224,12 +217,10 @@ class WebFetch(Tool):
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         """Une page longue est lue en plusieurs morceaux (`offset`) : sans
-        rien pour les distinguer, le client montre trois fois « Opened
-        <même URL> » et l'on croit à une boucle. La plage de caractères
-        réellement rendue suit donc l'URL affichée — « <url> [20000,
-        40000] » —, prise dans `meta` du résultat ; une page rendue d'un
-        seul tenant garde son URL nue. Le modèle, lui, ne voit que ses
-        propres arguments."""
+        rien pour les distinguer, le client montrerait trois fois « Opened
+        <même URL> ». La plage réellement rendue suit donc l'URL affichée —
+        « <url> [20000, 40000] » ; une page d'un seul tenant garde son URL
+        nue."""
         url = str(args.get("url") or "")
         span = result.meta.get("range") if url and result is not None else None
         if span:
@@ -239,10 +230,8 @@ class WebFetch(Tool):
     async def run(self, args: dict, call: Call, transport=None) -> Result:
         """`call.settings` — `allowed_domains`, `blocked_domains`,
         `max_chars` — ne vient jamais du modèle : ce sont les réglages que
-        le CLIENT pose sur son outil serveur (surface Anthropic —
-        `max_chars` y est tiré de `max_content_tokens`). Ses listes
-        s'AJOUTENT à celles de la configuration ([tools.net]), elles n'en
-        lèvent rien : voir net.check."""
+        le CLIENT pose sur son outil serveur. Ses listes s'AJOUTENT à celles
+        de la configuration (net.check)."""
         asked = args.get("url")
         url = target(asked)
         offset = args.get("offset")
@@ -273,11 +262,9 @@ async def load(url: str, settings, transport=None) -> tuple:
     encodage), depuis le cache web ou téléchargée sous les garde-fous ;
     le corps d'un PDF est déjà son TEXTE. Lève ToolError. `settings` :
     les réglages du client (listes de domaines), voir run."""
-    # Le cache web (webcache.py) : la page telle qu'elle a été
-    # téléchargée, d'où chaque morceau (`offset`) est rendu sans la
-    # redemander. Les listes de domaines passent AVANT ; le contrôle
-    # d'adresse et celui de chaque redirection ont été faits au
-    # téléchargement.
+    # Le cache web : chaque morceau (`offset`) est rendu sans redemander la
+    # page. Les listes de domaines passent AVANT ; le contrôle d'adresse a
+    # été fait au téléchargement.
     key = ("fetch", url.split("#", 1)[0])
     net.check(url, settings)
     hit = webcache.CACHE.get(key)
@@ -299,8 +286,6 @@ async def load(url: str, settings, transport=None) -> tuple:
             raise ToolError("unsupported", (
                 f"{url} is a PDF larger than {PDF_MAX_BYTES} "
                 f"bytes, which this tool does not download."))
-        # Dans un fil : l'extraction est du CPU, la boucle asyncio (les
-        # autres requêtes du proxy) ne l'attend pas.
         text, why = await asyncio.to_thread(pdf_text, body)
         if why:
             raise ToolError("unsupported", f"{url} {why}.")

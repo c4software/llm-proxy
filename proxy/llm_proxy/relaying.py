@@ -129,10 +129,8 @@ class Call:
         self._done = True
         self.status = status
         # Erreur sans `usage` upstream (500, 429 local, client parti…) :
-        # rien n'a été consommé de mesurable. Compter le corps envoyé en
-        # tokens «estimés» gonflait l'entrée de ~20 k tokens par erreur
-        # de Claude Code et faisait passer ces lignes pour des mesures
-        # approximatives — ce sont des zéros exacts.
+        # rien n'a été consommé de mesurable — des zéros exacts, pas le
+        # corps envoyé compté en tokens estimés.
         if status >= 400 and not exact:
             prompt_tokens = completion_tokens = cached_tokens = 0
             exact = True
@@ -269,8 +267,7 @@ async def send_upstream(call: Call, request: Request, path: str,
         content=body or None,
         headers=clean_headers(request, b.api_key),
         # Un client Anthropic ajoute «?beta=true» et consorts à SES URLs :
-        # sans sens pour l'upstream. Un client OpenAI, lui, est relayé
-        # tel quel.
+        # sans sens pour l'upstream.
         params=request.query_params if call.dialect == "openai" else None,
     )
     try:
@@ -338,8 +335,8 @@ async def forward(call: Call, request: Request, path: str, body: bytes,
     """Relaie `body` vers `path` du backend de `call` et rend la réponse
     en flux. `tap(status, content_type)` fabrique le robinet par lequel
     passent les octets upstream : stats.UsageCollector (identité, lit
-    l'usage au passage) par défaut, anthropic_api.Translator pour
-    réécrire la réponse."""
+    l'usage au passage) par défaut, un Translator pour réécrire la
+    réponse."""
     upstream = await send_upstream(call, request, path, body)
     if isinstance(upstream, JSONResponse):
         return upstream

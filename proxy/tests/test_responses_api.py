@@ -1,10 +1,9 @@
 """Le traducteur Responses ↔ OpenAI chat, testé sur des octets : aucun
 réseau, aucun serveur — responses_api ne connaît ni FastAPI ni httpx2.
-Les corps de requête ont la forme de ceux que Codex CLI 0.157 envoie
-(capture du 05/10/2026), réduits.
-Les outils hébergés sont testés en fin de fichier, jusqu'à la route
-entière. La boucle d'app.py (`hosted_loop`) est commune aux deux surfaces
-traduites : c'est ICI qu'elle est déroulée, scénario par scénario ;
+Les corps de requête ont la forme de ceux que Codex CLI 0.157 envoie,
+réduits. Les outils hébergés sont testés en fin de fichier, jusqu'à la
+route entière. La boucle de tool_loop.py (`hosted_loop`) est commune aux
+deux surfaces traduites : c'est ICI qu'elle est déroulée, scénario par scénario ;
 test_anthropic_api.py n'en garde que ce qui est propre à la sienne."""
 
 import asyncio
@@ -12,9 +11,10 @@ import json
 
 import pytest
 
-from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
+from fakes import (ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
                    SEARCH_TURN, SEARCHED, FakeUpstream, chat_doc, chunk, feed,
-                   hosted_tools, sse, sse_events, stream, tool_call, usage)
+                   hosted_tools, search_then_answer, sse, sse_events, stream,
+                   tool_call, usage)
 from llm_proxy import auth, relaying, tool_loop
 from llm_proxy import responses_api as R
 from llm_proxy import anthropic_api, backends, tools
@@ -798,7 +798,7 @@ def test_to_chat_replays_hosted_call_from_memory(monkeypatch):
             "name": "web_fetch", "arguments": "{\"url\": \"https://gufo.org\"}"}}]
     assert out["messages"][6] == {"role": "tool", "tool_call_id": "ws_2",
                                   "content": hosted.expired}
-    # Sans annuaire, l'élément est écarté comme avant.
+    # Sans annuaire, l'élément est écarté.
     out, ctx = R.to_chat(p)
     assert [m["role"] for m in out["messages"][3:]] == ["assistant", "user"]
     assert ctx.ignored.count("web_search_call") == 2
@@ -814,7 +814,7 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
     t = R.Translator(200, "text/event-stream", ctx)
     turn(t, chunk({"reasoning_content": "Hum."}), *SEARCH_TURN)
     t.resolve(t.pending[0], SEARCHED)
-    # Tour 2, comme app.hosted_stream le reconstruit.
+    # Tour 2, comme tool_loop.hosted_stream le reconstruit.
     looped, _ = R.to_chat({**request, "input": request["input"] + t.output},
                           hosted=hosted)
     assert looped["messages"][:3] == first["messages"]
@@ -865,7 +865,7 @@ def test_to_chat_replay_is_scoped_to_the_client():
     assert "alice" not in repr(hosted.memory._data) and "alice" not in alice
 
 
-# ── la boucle d'app.py ──────────────────────────────────────────────────
+# ── la boucle de tool_loop.py ───────────────────────────────────────────
 # La route entière (fixture `proxy` de conftest.py) : seul l'envoi au
 # backend est remplacé.
 
@@ -875,7 +875,7 @@ def post(proxy, **extra):
 
 
 def test_app_loop_runs_hosted_calls_until_the_answer(proxy):
-    ups = [FakeUpstream(stream(*SEARCH_TURN)), FakeUpstream(stream(*ANSWER_TURN))]
+    ups = search_then_answer()
     proxy.replies = list(ups)
     r = post(proxy)
     assert r.status_code == 200
@@ -908,7 +908,7 @@ def test_app_loop_runs_hosted_calls_until_the_answer(proxy):
 
 
 def test_app_loop_json_mode(proxy):
-    proxy.replies = [FakeUpstream(SEARCH_DOC), FakeUpstream(ANSWER_DOC)]
+    proxy.replies = search_then_answer(streamed=False)
     resp = post(proxy, stream=False).json()
     assert resp["object"] == "response" and resp["status"] == "completed"
     assert resp["created_at"] == 1700000000

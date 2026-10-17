@@ -1,54 +1,37 @@
 """
 `code_execution` : le modèle écrit un programme, le proxy le fait tourner
 dans un BAC À SABLE et lui rend le code de sortie, la sortie et la liste
-des fichiers produits.
+des fichiers produits (voir docs/execution-de-code.md).
 
 Le proxy n'exécute RIEN lui-même : il appelle en HTTP le service
-`executor` du docker-compose (services/executor/ dans le dépôt), le seul à
-avoir un moteur de conteneurs — sur un réseau interne, sans sortie, sans
-aucun secret ni volume du proxy. Cet outil en est le client, et écrit le
-texte que lit le modèle. Entre les deux, un jeton partagé
-([tools.code_execution].token).
+`executor` (services/executor/), le seul à avoir un moteur de conteneurs —
+sur un réseau interne, sans sortie, sans aucun secret ni volume du proxy.
+Entre les deux, un jeton partagé ([tools.code_execution].token).
 
-Un bac PAR CONVERSATION. `call.session` (posé par la surface : la mémoire
-des échanges cachés de chat_api) et `call.client` nomment le bac ; il
-garde ses FICHIERS d'un appel au suivant — pas ses variables, chaque
-appel est un processus neuf. Sans session (appel direct par /v1/tools),
-le bac ne vit que le temps de l'appel. Un bac expire (inactivité, durée
-de vie, place à faire) : le suivant est neuf, et le texte le dit au
-modèle, qui sinon chercherait ses fichiers.
+Un bac PAR CONVERSATION (`call.session` et `call.client`) : il garde ses
+FICHIERS d'un appel au suivant, pas ses variables. Sans session, il ne vit
+que le temps de l'appel. Un bac expiré est remplacé par un neuf, et le
+texte le dit au modèle, qui sinon chercherait ses fichiers.
 
-Les fichiers que le programme écrit dans son dossier de travail
-reviennent dans `Result.files` : la surface les range (files.py) et
-ajoute leurs liens à la réponse. Le modèle n'en reçoit que les NOMS — pas
-d'URL à recopier de travers, ni de jeton dans la mémoire. Un fichier que
-le magasin ne garderait pas (trop gros, pas d'adresse publique) n'est pas
-annoncé comme rendu.
+Les fichiers produits reviennent dans `Result.files` ; le modèle n'en
+reçoit que les NOMS — pas d'URL à recopier de travers, ni de jeton dans la
+mémoire. Un fichier que le magasin ne garderait pas n'est pas annoncé
+comme rendu.
 
-Des fichiers peuvent y ENTRER : `files`, des URL que le PROXY télécharge
-— le bac n'a pas de réseau — sous le garde-fou commun (net.download,
-[tools.net]) et ses propres bornes, puis passe à l'exécuteur, qui les
-dépose dans le dossier de travail avant le programme. Ils y restent pour
-les appels suivants de la conversation, et ne repartent pas chez
-l'utilisateur (sauf modifiés par le programme : ce sont alors des
-fichiers produits). Un fichier qui n'a pas pu entrer n'empêche pas
-l'exécution — le texte dit lequel, et pourquoi ; si AUCUN n'entre, rien
-n'est exécuté : le programme était écrit pour eux. Leur contenu vient du
-web et sera lu par un programme du modèle : rien de plus à isoler que ce
-que le bac isole, mais ce que le programme en IMPRIME est lu par le
-modèle — un texte hostile de plus, comme une page de web_fetch.
+Des fichiers peuvent ENTRER (`files`) : des URL que le PROXY télécharge —
+le bac n'a pas de réseau — sous le garde-fou commun (net.download), puis
+que l'exécuteur dépose avant le programme. Un fichier refusé n'empêche pas
+l'exécution, le texte dit pourquoi ; si AUCUN n'entre, rien n'est exécuté.
+Ce que le programme en IMPRIME est lu par le modèle : un texte hostile de
+plus, comme une page de web_fetch.
 
 Un programme qui sort en erreur, ou que son délai tue, n'est PAS une
 erreur de l'outil : c'est un résultat, que le modèle lit et corrige. Les
-codes d'erreur ne disent que les pannes d'ICI : arguments inutilisables
-(`invalid_input`), exécuteur non configuré, injoignable ou en panne
-(`unavailable`), tous les bacs occupés (`too_many_requests`) — et, quand
-aucun des fichiers demandés n'a pu entrer, le code de leur refus
-(`not_allowed`, `not_accessible`, `unsupported`…).
+codes d'erreur ne disent que les pannes d'ICI (exécuteur non configuré,
+injoignable, occupé, arguments, fichiers d'entrée tous refusés).
 
-Sans liaison à l'API Responses ni à l'API Messages : l'outil se déclare
-par {"type": "code_execution"} sur /v1/chat/completions (ou
-[chat].always) et s'appelle par POST /v1/tools/code_execution.
+Sans liaison Responses ni Messages : {"type": "code_execution"} sur
+/v1/chat/completions, ou POST /v1/tools/code_execution.
 """
 
 import asyncio
@@ -68,8 +51,7 @@ from . import net
 from .contract import Artifact, Call, Result, Tool, ToolError
 
 ENABLED = config.flag("tools.code_execution.enabled", False)
-# Base de l'exécuteur : une adresse de CONFIGURATION, privée (le nom du
-# service sur le réseau du compose).
+# Base de l'exécuteur : une adresse de CONFIGURATION, privée.
 URL = config.text("tools.code_execution.url", "").rstrip("/")
 TOKEN = config.text("tools.code_execution.token", "")
 # Délai (s) d'UN programme, demandé à l'exécuteur — qui a le sien, plus
@@ -118,12 +100,10 @@ NAME = "code_execution"
 _READERS = ("web_fetch", "ocr")
 
 # Ce que le modèle écrit → le langage de l'exécuteur (sandbox.LANGS).
-# Les langages COMPILÉS (Go, Rust : à installer d'abord par `devbox
-# dev-env`) ont leur valeur, plutôt que de passer par `bash` :
-# le modèle donne son source comme pour Python, l'exécuteur le compile
-# hors du dossier de travail (ni le source ni le binaire ne partent chez
-# l'utilisateur) et l'exécute, dans le même délai. `bash` reste là pour un
-# projet à plusieurs fichiers, avec make, cargo ou `go build`.
+# Go et Rust ont leur valeur plutôt que de passer par `bash` : l'exécuteur
+# compile le source hors du dossier de travail (ni source ni binaire ne
+# partent chez l'utilisateur). `bash` reste là pour un projet à plusieurs
+# fichiers.
 LANGUAGES = {
     "python": "python", "python3": "python", "py": "python",
     "bash": "bash", "shell": "bash", "sh": "sh",
@@ -132,9 +112,8 @@ LANGUAGES = {
     "go": "go", "golang": "go", "rust": "rust", "rs": "rust",
 }
 # Ceux que la fonction annonce (`enum`) ; les autres écritures sont
-# acceptées sans être promises. Go et Rust ne sont pas dans le bac de
-# base : `devbox dev-env` les installe, par la sortie vers les dépôts —
-# sans elle (`packages`), ils ne sont pas offerts.
+# acceptées sans être promises. Go et Rust s'installent par `devbox
+# dev-env`, qui a besoin de la sortie vers les dépôts (`packages`).
 OFFERED = ("python", "bash", "javascript", "php") \
     + (("go", "rust") if PACKAGES else ())
 _KILLED = {137: "killed — most likely out of memory",
@@ -188,13 +167,12 @@ def _announced(r) -> int:
 
 
 def input_name(asked: str, url: str, r) -> str:
-    """Le nom d'un fichier d'entrée dans le bac, assaini (files.safe_name :
-    ni chemin, ni caractère qui ait un sens pour un shell). Dans l'ordre :
-    celui que le modèle a DEMANDÉ ; le dernier élément du chemin de l'URL
-    telle qu'il l'a écrite, s'il a une extension — le modèle écrit son
-    programme dans le même appel, il doit pouvoir prévoir le nom ; celui
-    de Content-Disposition ; à défaut le dernier élément tel quel, ou
-    «file», avec l'extension du type annoncé."""
+    """Le nom d'un fichier d'entrée dans le bac, assaini (files.safe_name).
+    Dans l'ordre : celui que le modèle a DEMANDÉ ; le dernier élément du
+    chemin de l'URL s'il a une extension — le modèle écrit son programme
+    dans le même appel, il doit pouvoir prévoir le nom ; celui de
+    Content-Disposition ; à défaut le dernier élément, ou «file», avec
+    l'extension du type annoncé."""
     last = unquote(urlsplit(url).path).rstrip("/").rsplit("/", 1)[-1]
     name = asked or ("." in last.strip(".") and last)
     if not name:
@@ -216,12 +194,11 @@ def input_name(asked: str, url: str, r) -> str:
 
 async def download(asked: list[Input], settings, transport=None) -> None:
     """Télécharge les fichiers d'entrée, PARALLEL à la fois, sous le
-    garde-fou commun (net.download : adresses publiques, listes de
-    domaines, à chaque redirection) et dans DOWNLOAD_TIMEOUT pour tous.
+    garde-fou commun (net.download) et dans DOWNLOAD_TIMEOUT pour tous.
     Complète chaque Input : `data` et `name`, ou `code` et `why`. Un
-    fichier trop gros — annoncé ou constaté —, ou qui ferait dépasser le
-    total de l'appel, est REFUSÉ, jamais coupé : la moitié d'un tableur ne
-    s'ouvre pas, celle d'un CSV se lit sans erreur. Ne lève pas."""
+    fichier trop gros, ou qui ferait dépasser le total de l'appel, est
+    REFUSÉ, jamais coupé : la moitié d'un CSV se lit sans erreur. Ne lève
+    pas."""
     deadline = time.monotonic() + DOWNLOAD_TIMEOUT
     gate = asyncio.Semaphore(PARALLEL)
     taken = 0       # octets des fichiers déjà retenus
@@ -305,10 +282,9 @@ def render(doc: dict, timeout: float, session: bool, inputs=()) -> Result:
         lines.append("Sandbox: new and empty — no file from an earlier call "
                      "exists here.")
 
-    # Les fichiers d'entrée : ceux que l'exécuteur DIT avoir déposés, parmi
-    # ceux qui lui ont été envoyés. Sans liste `inputs` dans sa réponse,
-    # c'est un exécuteur d'avant le dépôt : il a ignoré le champ et lancé
-    # le programme sans eux.
+    # Les fichiers d'entrée : ceux que l'exécuteur DIT avoir déposés. Sans
+    # liste `inputs` dans sa réponse, l'exécuteur ne connaît pas le dépôt :
+    # il a lancé le programme sans eux.
     placed = doc.get("inputs")
     placed = {f.get("name") for f in placed if isinstance(f, dict)} \
         if isinstance(placed, list) else None
@@ -428,11 +404,9 @@ class CodeExecution(Tool):
                "other access (a website, an API, a download, with requests, "
                "urllib, curl or wget) fails. ")
             + ((
-                # Dit en ordre, pas en possibilité : joué le 07/10/2026,
-                # un modèle à qui l'on disait seulement « list it in
-                # `files` » a d'abord téléchargé depuis le bac (échec),
-                # puis lu le fichier par web_fetch pour le recopier dans
-                # son programme.
+                # Dit en ordre, pas en possibilité : un modèle à qui l'on
+                # disait seulement « list it in `files` » téléchargeait
+                # depuis le bac, puis recopiait le fichier lu par web_fetch.
                 "To work on a file that is at a URL (a CSV, a "
                 "spreadsheet, a PDF, an image, an archive), you MUST "
                 "list its URL in `files`: it is downloaded for you and "
@@ -531,8 +505,7 @@ class CodeExecution(Tool):
         ready = [item for item in inputs if not item.why]
         if inputs and not ready:
             # Le programme était écrit pour ces fichiers : sans aucun
-            # d'eux il ne ferait qu'échouer, en consommant un appel. Le
-            # code : celui de leur refus s'il est unique.
+            # d'eux il ne ferait qu'échouer, en consommant un appel.
             codes = {item.code for item in inputs}
             raise ToolError(
                 codes.pop() if len(codes) == 1 else "not_accessible",
@@ -542,8 +515,7 @@ class CodeExecution(Tool):
         body = {"client": call.client, "session": call.session,
                 "language": language, "code": code, "timeout": TIMEOUT}
         if ready:
-            # Absent sans fichier : la requête d'avant, pour un exécuteur
-            # d'avant.
+            # Absent sans fichier : un exécuteur sans dépôt reste compatible.
             body["inputs"] = [
                 {"name": item.name,
                  "data": base64.b64encode(item.data).decode("ascii")}

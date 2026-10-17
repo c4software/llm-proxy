@@ -8,11 +8,11 @@ Rien de ce que les tests du dépôt vérifient ne touche un vrai moteur de
 conteneurs (tests/fake_podman.py n'isole rien) : ce script est ce qui dit
 si l'ISOLATION tient ici. Il crée ses propres bacs, à côté de ceux du
 serveur (mêmes réglages SANDBOX_*, mais des délais courts), déroule les
-cas de la maquette — état gardé, sortie bornée, délai, réseau, bombe de
-processus, mémoire, racine en lecture seule, cloisonnement entre clients,
-expiration, langages compilés, processus laissés derrière soi, fichiers
-d'entrée déposés —, juge
-chacun, mesure le démarrage à froid et à chaud, puis détruit ses bacs.
+cas — état gardé, sortie bornée, délai, réseau, bombe de processus,
+mémoire, racine en lecture seule, cloisonnement entre clients, expiration,
+langages compilés, processus laissés derrière soi, fichiers d'entrée
+déposés —, juge chacun, mesure le démarrage à froid et à chaud, puis
+détruit ses bacs.
 Code de sortie 0 si aucun cas n'ÉCHOUE. Il n'a besoin ni du jeton, ni du
 proxy, ni du réseau : il parle à podman, pas au serveur. Ses bacs ont
 leurs propres uid (UID_BASE + 1000…) : ils ne pèsent pas sur ceux d'une
@@ -23,16 +23,17 @@ pas activer l'outil) ; NON BORNÉ (une limite que rien ne tient par bac :
 mémoire, CPU ou processus si le cgroup du conteneur n'est pas délégué —
 `writable-cgroups=true` manque — et alors seul le plafond du conteneur
 exécuteur protège ; ou un processus laissé en arrière-plan, attendu : voir
-le README).
+docs/execution-de-code.md).
 
     --podman CMD   la commande podman (défaut : podman)
     --light        sans les cas qui chargent la machine ou veulent un vrai
                    bac (bombe de processus, mémoire, lecture seule,
-                   contenu, compilateurs) — obligatoire contre la doublure.
+                   contenu du bac, processus laissé derrière soi) —
+                   obligatoire contre la doublure.
 
-La dernière ligne, « VERDICT : … », est celle à relever ; avec la ligne
-« MESURES » et celles des cas 13, elle dit tout ce que la procédure du
-README demande de noter.
+La dernière ligne, « VERDICT : … », est celle à relever, avec les lignes
+« MESURES » et celles du cas 6quinquies (Go) : ce que la procédure de
+docs/execution-de-code.md demande de noter.
 """
 
 import argparse
@@ -102,16 +103,15 @@ async def main() -> int:
     a = ap.parse_args()
 
     base = Limits.from_env()
-    # 180 s au plus par programme (le contrôle du bac compile quatre
-    # langages à froid) ; chaque cas demande le sien (3 s).
+    # 180 s au plus par programme (le contrôle du bac, l'installation de
+    # Go) ; chaque cas demande le sien (3 s par défaut).
     limits = Limits(**{**base.__dict__, "timeout": 180, "idle": 2.0,
                        "max_output": 2000, "max_file_bytes": 50_000,
                        "max_sessions": 4, "max_sessions_per_client": 4})
     image = os.environ.get("SANDBOX_IMAGE", "").strip()
     rootfs = "" if image else os.environ.get(
         "SANDBOX_ROOTFS", "/opt/sandbox/rootfs").strip()
-    # La sortie vers les dépôts de paquets, si l'exécuteur l'ouvre : ses
-    # prises dans un dossier à part de celui du serveur.
+    # Les prises de la sortie dans un dossier à part de celui du serveur.
     relay = Egress("/tmp/sbx-egress-validate", parse_hosts(base.egress_hosts),
                    max_bytes=base.egress_max_bytes) if base.egress else None
     box = Sandboxes(rootfs, image, limits, podman=shlex.split(a.podman),

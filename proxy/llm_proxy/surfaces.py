@@ -3,7 +3,7 @@ Les trois surfaces de conversation : /v1/chat/completions (relais brut,
 ou boucle des outils hébergés si la requête en déclare), /v1/messages et
 /v1/messages/count_tokens (Anthropic, traduits par anthropic_api), et
 /v1/responses (traduit par responses_api). Toutes passent par le même
-relais (relay.py) et, pour les outils, la même boucle (hosted.py).
+relais (relaying.py) et, pour les outils, la même boucle (tool_loop.py).
 """
 
 import asyncio
@@ -91,13 +91,9 @@ async def chat(request: Request, page: bool = False):
         ctx.progress = page
         modified = declared or bool(ctx.hosted)
         if ctx.hosted:
-            # Les échanges cachés des réponses précédentes, que le client
-            # n'a pas dans son historique, reprennent leur place (mémoire
-            # de chat_api, [chat].memory) — cloisonnée par client comme
-            # celle de la surface Responses : le condensé de la clé
-            # présentée, «» pour un proxy ouvert.
-            # Incognito : rien n'est réinséré ni rangé (ctx.memory reste
-            # vide).
+            # Les échanges cachés des réponses précédentes, absents de
+            # l'historique du client, reprennent leur place ([chat].memory),
+            # cloisonnés par client. Incognito : rien n'est réinséré ni rangé.
             found = 0 if INCOGNITO.get() else chat_api.restore(
                 payload, ctx, request_owner(request))
             if found:
@@ -132,17 +128,15 @@ async def chat(request: Request, page: bool = False):
 
 async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
                       hosted, raw: bytes) -> Response:
-    """Une requête chat/completions à qui un outil hébergé est présenté
-    (déclaré par elle, ou d'office) : même
-    départ que `forward` (statut et en-têtes du PREMIER upstream), puis la
-    boucle commune (`hosted_loop`) avec le robinet chat_api.Translator,
-    qui rend au client UNE réponse chat/completions.
+    """Une requête chat/completions à qui un outil hébergé est présenté :
+    même départ que `forward` (statut et en-têtes du PREMIER upstream),
+    puis la boucle commune (`hosted_loop`) avec le robinet
+    chat_api.Translator, qui rend au client UNE réponse chat/completions.
 
-    Chaque tour suivant repart du corps d'origine — déclaration déjà
-    remplacée — et de ses messages, suivis de ce que le robinet a gardé
-    des tours faits (appels hébergés et résultats). Le client, lui, ne
-    les aura pas dans son historique : le robinet les range à la
-    conclusion, chat_api.restore les réinsère à la requête suivante."""
+    Chaque tour suivant repart du corps d'origine suivi de ce que le
+    robinet a gardé des tours faits. Le client ne les aura pas dans son
+    historique : le robinet les range à la conclusion, chat_api.restore
+    les réinsère à la requête suivante."""
     upstream = await relaying.send_upstream(call, request, "v1/chat/completions", raw)
     if isinstance(upstream, JSONResponse):
         return upstream
@@ -218,10 +212,9 @@ async def messages(request: Request):
     images = False
     if backend.images and anthropic_api.has_images(payload):
         images = await accepts_images(backend, resolved[len(backend.name) + 1:])
-    # Les outils que le proxy exécute lui-même (aucun outil hébergé =
-    # None : les outils serveur `web_search_…` et `web_fetch_…` du client
-    # sont ignorés, comme avant). `ctx.hosted` n'est rempli que de ceux
-    # que la requête DÉCLARE.
+    # Aucun outil hébergé = None : les outils serveur `web_search_…` et
+    # `web_fetch_…` du client sont ignorés. `ctx.hosted` n'est rempli que
+    # de ceux que la requête DÉCLARE.
     hosted = tools.Hosted() or None
     ctx = anthropic_api.Context(payload, hosted)
     openai_payload = anthropic_api.to_openai(payload, images=images,
@@ -238,7 +231,6 @@ async def messages(request: Request):
     call = Call(backend, resolved, "/v1/messages", dialect)
     cost = albert.estimate_chat_cost(raw)
     tap = lambda status, ct: anthropic_api.Translator(status, ct, resolved, ctx)
-    body = None
     if ctx.hosted:
         base = payload.get("messages")
         base = list(base) if isinstance(base, list) else []
@@ -261,6 +253,8 @@ async def messages(request: Request):
             return hosted_loop(call, request, hosted, robinet, upstream, cost,
                                rebuild, limit=ctx.limits, options=ctx.options,
                                ping=ping)
+    else:
+        body = None
 
     if openai_payload.get("stream") and backend.quotas \
             and anthropic_api.PING_INTERVAL > 0:
@@ -367,9 +361,8 @@ async def pinged_stream(call: Call, request: Request, payload: dict,
 async def count_tokens(request: Request):
     """Aucun équivalent OpenAI. Exact si le backend visé expose un
     endpoint de tokenisation ([backends.<nom>].tokenize_path — llama.cpp
-    a /tokenize) ; estimation locale sinon, ou s'il ne répond pas.
-    Claude Code s'en sert pour sa jauge de contexte (et le moment de
-    son /compact) : un chiffre juste évite qu'elle dérive."""
+    a /tokenize) ; estimation locale sinon, ou s'il ne répond pas. Un
+    chiffre juste évite que la jauge de contexte du client dérive."""
     if not anthropic_api.ENABLED:
         return anthropic_disabled("anthropic")
     payload = parse_json(await request.body())
@@ -442,12 +435,10 @@ async def responses(request: Request):
     images = False
     if backend.images and responses_api.has_images(payload):
         images = await accepts_images(backend, model_key[len(backend.name) + 1:])
-    # Les outils que le proxy exécute lui-même (aucun = None : le client
-    # qui déclare `web_search` le voit ignoré, comme avant).
+    # Aucun outil hébergé = None : un `web_search` déclaré est ignoré.
     hosted = tools.Hosted() or None
-    # À qui appartiendront les résultats gardés en mémoire : le client de
-    # la requête (request_owner — jamais la clé). Proxy ouvert = un seul
-    # client, quel que soit le Bearer — personne ne l'a vérifié.
+    # Propriétaire des résultats gardés en mémoire (jamais la clé). Proxy
+    # ouvert = un seul client, quel que soit le Bearer.
     client = request_owner(request)
     try:
         chat_payload, ctx = responses_api.to_chat(payload, images=images,
@@ -507,8 +498,7 @@ async def forward_post(request: Request, normalized: str, dialect: str):
     content_type = request.headers.get("content-type", "")
     if payload is None and multipart.is_multipart(content_type):
         # Formulaire (transcription audio, édition d'image) : le préfixe du
-        # champ model route aussi, et se retire comme en JSON. Sans lui, la
-        # requête partait vers le backend de repli quel que soit le modèle.
+        # champ model route aussi, et se retire comme en JSON.
         model_key = multipart.model_field(raw, content_type) or ""
         backend, prefixed = route_backend({"model": model_key} if model_key else None)
         if backend is None:

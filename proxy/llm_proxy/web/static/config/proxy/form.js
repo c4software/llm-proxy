@@ -47,7 +47,7 @@ export function newForm() {
 
 // ${VAR} : le nom de la variable ; toute autre valeur : "".
 const VAR_REF = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
-export const varOf = (v) => (typeof v === "string" && (VAR_REF.exec(v) || [])[1]) || "";
+const varOf = (v) => (typeof v === "string" && (VAR_REF.exec(v) || [])[1]) || "";
 
 export function prefillForm(px, c) {
   const g = (path, d) => {
@@ -191,9 +191,6 @@ export function buildProxy(px) {
   if (px.always && !px.hostedTools) warn.push("[chat].always est sans effet sans hosted_tools.");
   return {
     warn,
-    // Le fichier PARTIEL du formulaire : le proxy l'applique sur la
-    // configuration en vigueur (POST /ui/config/merge) — la page ne
-    // montre que le fichier complet.
     partial: L.join("\n").replace(/\n{3,}/g, "\n\n"),
     files: [
       { name: ".env", download: "llm-proxy.env", lang: "sh",

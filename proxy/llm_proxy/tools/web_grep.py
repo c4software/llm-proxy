@@ -5,10 +5,9 @@ donne une URL et un motif, il reçoit les lignes qui y répondent, avec
 quelques lignes autour — sur une documentation de 200 000 caractères,
 deux mille au lieu de dix appels à `web_fetch`.
 
-La page est lue par web_fetch.load : mêmes garde-fous ([tools.net],
-listes de domaines), même conversion en texte (PDF compris), même cache
-web — chercher, puis lire par `web_fetch` à l'offset d'une
-correspondance, ne retélécharge pas la page.
+La page est lue par web_fetch.load : mêmes garde-fous, même conversion
+en texte, même cache web — chercher, puis lire par `web_fetch` à l'offset
+d'une correspondance, ne retélécharge pas la page.
 
 Le motif est une expression régulière, écrite par le modèle : elle passe
 par la bibliothèque `regex` et non `re`, parce que `regex` a un délai
@@ -162,8 +161,7 @@ class WebGrep(Tool):
                 "pattern": str(args.get("pattern") or "")}
 
     async def run(self, args: dict, call: Call, transport=None) -> Result:
-        # Importé ici : le proxy démarre sans `regex`, seul cet outil le
-        # demande.
+        # Importé ici : le proxy démarre sans `regex`.
         import regex
 
         asked = args.get("url")

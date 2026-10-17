@@ -19,6 +19,7 @@ from joserfc import jwt
 from joserfc.jwk import RSAKey
 from fastapi.testclient import TestClient
 
+from fakes import bearer
 from llm_proxy import accounts, oidc
 from llm_proxy import app as A
 from llm_proxy import auth, tools
@@ -119,9 +120,6 @@ def new_key(browser, label="pi") -> dict:
     assert r.status_code == 200, r.text
     return r.json()
 
-
-def bearer(key):
-    return {"authorization": f"Bearer {key}"}
 
 
 def test_first_account_is_admin_next_ones_wait(idp):

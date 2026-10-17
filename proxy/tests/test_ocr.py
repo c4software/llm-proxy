@@ -12,47 +12,28 @@ parcourues dans le test, et l'assertion nomme l'entrée fautive."""
 import asyncio
 import base64
 import json
-import socket
 import threading
 import zlib
 
 import httpx2
 import pytest
 
+from fakes import (PUBLIC, FakeWeb, fake_backend, fake_dns, go, net_guard,
+                   pdf_bytes, rendu, sans_liaison)
 from llm_proxy import albert, backends, tools
 from llm_proxy.tools import ocr, webcache
 
-PUBLIC = "93.184.216.34"
 PNG = b"\x89PNG\r\n\x1a\n" + b"image png"
 JPEG = b"\xff\xd8\xff\xe0" + b"image jpeg"
 GIF = b"GIF89a" + b"image gif"
 WEBP = b"RIFF\x10\x00\x00\x00WEBP" + b"image webp"
 
 
-def go(coro):
-    return asyncio.run(coro)
-
-
 @pytest.fixture(autouse=True)
 def dns(monkeypatch):
-    """Résolution sans réseau : une table nom → adresses (None :
-    introuvable) ; hors table, seul un littéral numérique est résolu
-    (AI_NUMERICHOST)."""
-    table = {"site.test": [PUBLIC], "autre.test": ["1.1.1.1"],
-             "intern.test": ["10.0.0.5"], "absent.test": None}
-    real = socket.getaddrinfo
-
-    def fake(host, port, family=0, type=0, proto=0, flags=0):
-        if host in table:
-            if table[host] is None:
-                raise socket.gaierror(socket.EAI_NONAME, "introuvable")
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))
-                    for ip in table[host]]
-        return real(host, port, family, type, proto,
-                    flags | socket.AI_NUMERICHOST)
-
-    monkeypatch.setattr(socket, "getaddrinfo", fake)
-    return table
+    return fake_dns(monkeypatch, {
+        "site.test": [PUBLIC], "autre.test": ["1.1.1.1"],
+        "intern.test": ["10.0.0.5"], "absent.test": None})
 
 
 class Vision:
@@ -103,47 +84,28 @@ def env(monkeypatch):
             MAX_IMAGE_BYTES=5_000_000, MAX_PAGES=4, MAX_CHARS=20_000,
             MAX_TOKENS=4096, CONCURRENCY=2).items():
         monkeypatch.setattr(ocr, name, value)
-    # Le garde-fou commun ([tools.net]).
-    for name, value in dict(ALLOW_PRIVATE=False, ALLOWED_DOMAINS=[],
-                            BLOCKED_DOMAINS=[]).items():
-        monkeypatch.setattr(ocr.net, name, value)
+    net_guard(monkeypatch)
     webcache.CACHE.clear()
     monkeypatch.setattr(webcache.CACHE, "ttl", 0)
     vision = Vision()
-    backend = backends.Backend("vision", {
-        "url": "http://vision.invalid", "images": True, "api_key": "clef"})
-    backend.client = httpx2.AsyncClient(
-        base_url=backend.url, transport=httpx2.MockTransport(vision.handler))
-    monkeypatch.setitem(backends.BACKENDS, "vision", backend)
-    vision.backend, vision.lines = backend, []
+    vision.backend = fake_backend(monkeypatch, "vision", {
+        "url": "http://vision.invalid", "images": True, "api_key": "clef"},
+        vision.handler)
+    vision.lines = []
     monkeypatch.setattr(ocr.stats, "record",
                         lambda *a: vision.lines.append(a))
     return vision
 
 
-class Web:
-    """Un faux web : `pages[chemin]` → réponse (ou fonction) sur
-    site.test ; garde les requêtes reçues."""
-
-    def __init__(self, pages=None, default=None):
-        self.pages, self.default, self.requests = pages or {}, default, []
-
-    def handler(self, request: httpx2.Request) -> httpx2.Response:
-        self.requests.append(request)
-        got = self.pages.get(request.url.path, self.default)
-        if got is None:
-            return httpx2.Response(404, text="rien")
-        return got(request) if callable(got) else got
+class Web(FakeWeb):
+    """Le faux web de fakes.py (ici, des chemins de site.test), lu par
+    l'outil."""
 
     def ocr(self, url, call=None, **args) -> str:
         """Le texte rendu au modèle — ce que l'exécuteur ferait d'un
         échec prévu compris ; le résultat entier reste dans `last`."""
-        try:
-            self.last = go(ocr.TOOL.run(
-                {"url": url, **args}, call or tools.Call(),
-                transport=httpx2.MockTransport(self.handler)))
-        except tools.ToolError as exc:
-            self.last = tools.failure(exc.code, exc.message)
+        self.last = rendu(ocr.TOOL.run(
+            {"url": url, **args}, call or tools.Call(), transport=self.transport))
         return self.last.text
 
 
@@ -178,16 +140,7 @@ def scan(*pages):
     objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
             b"<< /Type /Pages /Count %d /Kids [%s] >>" % (
                 len(kids), b" ".join(b"%d 0 R" % k for k in kids))] + objs
-    out, places = bytearray(b"%PDF-1.4\n"), []
-    for i, obj in enumerate(objs, 1):
-        places.append(len(out))
-        out += b"%d 0 obj\n%s\nendobj\n" % (i, obj)
-    xref = len(out)
-    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
-    out += b"".join(b"%010d 00000 n \n" % place for place in places)
-    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
-        len(objs) + 1, xref)
-    return bytes(out)
+    return pdf_bytes(objs)
 
 
 def jpeg(n):
@@ -695,7 +648,6 @@ def test_ocr_au_registre_et_renvoi_de_web_fetch_vers_ocr(monkeypatch):
     """Enregistré après web_fetch, dont il est le recours ; web_fetch y
     renvoie le modèle là où `ocr` lui est présenté, et là seulement. Sans
     liaison : ignoré des surfaces Responses et Anthropic."""
-    from llm_proxy import anthropic_api, responses_api
     from llm_proxy.tools import web_fetch
     names = [t.name for t in tools.REGISTRY]
     assert names.index("ocr") == names.index("web_fetch") + 1
@@ -706,12 +658,4 @@ def test_ocr_au_registre_et_renvoi_de_web_fetch_vers_ocr(monkeypatch):
     assert ("For an image, or a PDF with no extractable text (a scan), use "
             "ocr with the same URL. ") in avec["description"]
     monkeypatch.setattr(ocr, "ENABLED", True)
-    h = tools.Hosted()
-    assert h.for_kind("ocr") == [ocr.TOOL]
-    assert ocr.TOOL not in h.for_responses("web_search")
-    assert h.for_server("ocr_20260101") is None
-    ctx = responses_api.to_chat({"model": "m", "input": "x", "tools": [
-        {"type": "ocr"}]}, hosted=h)[1]
-    assert "ocr" not in ctx.hosted and ctx.ignored == ["ocr"]
-    assert not anthropic_api.Context({"tools": [
-        {"type": "ocr_20260101", "name": "ocr"}]}, h).hosted
+    sans_liaison(ocr.TOOL)

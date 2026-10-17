@@ -6,27 +6,13 @@ est écrit ici — décrit membre par membre dans docs/outils.md.
 
 Ce module n'importe rien du paquet : un outil l'importe sans cycle.
 
-CE QU'UN OUTIL FAIT LIRE AU MODÈLE — tout, et rien d'autre. Toujours en
-anglais :
-  le prompt                    `Tool.prompt(present)` : la `description`
-                               de la fonction, lue à CHAQUE requête où
-                               l'outil est présenté ;
-  les descriptions de          dans `Tool.parameters(present)`, le schéma
-  paramètres                   des arguments : elles font partie du
-                               prompt, au même titre ;
-  le texte d'un résultat       `Result.text` ;
-  le texte d'une erreur        `failure(code, message)`, ou ToolError :
-                               «Error: <message>» ;
-  les textes de l'exécuteur    écrits AU NOM de l'outil par tools/
-                               __init__.py, pas par lui : limite d'appels
-                               atteinte (Hosted._refusal), délai dépassé,
-                               panne, arguments illisibles et troncature
-                               «[truncated]» (Hosted._execute), outil
-                               inconnu (Hosted.run), résultat expiré de
-                               la mémoire (EXPIRED).
-Le nom de la fonction (`Tool.name`) et les noms des paramètres sont lus
-aussi : ce sont des identifiants, pas de la prose. Ce qui est EN VIGUEUR
-se relit par GET /v1/tools.
+CE QU'UN OUTIL FAIT LIRE AU MODÈLE, toujours en anglais : son prompt
+(`Tool.prompt`, lu à CHAQUE requête où l'outil est présenté), les
+descriptions de ses paramètres (`Tool.parameters`), `Result.text`, le
+texte d'une erreur («Error: <message>»), et les textes que tools/
+__init__.py écrit en son nom (limite d'appels, délai, panne, arguments
+illisibles, «[truncated]», EXPIRED). Ce qui est en vigueur se relit par
+GET /v1/tools.
 """
 
 from dataclasses import dataclass, field
@@ -79,14 +65,12 @@ class Result:
                 erreur commence par «Error: » (voir failure) ; le code
                 voyage à côté, il ne se déduit jamais du texte.
     `sources` : les pages citées, pour le client (annotations, blocs).
-    `meta`    : des faits pour l'affichage du client — l'URL réellement
-                lue, un titre, une plage de caractères… Rien que le
-                modèle doive lire, rien qui soit gardé.
-    `files`   : des fichiers produits (Artifact), que /v1/chat/completions
-                et /v1/tools rendent au client en LIENS (files.py).
-                Aucune mémoire ne les garde : seul `text` continue de
-                l'être — il doit donc les NOMMER pour que le modèle
-                sache qu'ils existent."""
+    `meta`    : des faits pour l'affichage du client (URL réellement lue,
+                titre…). Rien que le modèle doive lire, rien de gardé.
+    `files`   : des fichiers produits (Artifact), rendus au client en
+                LIENS (files.py). Aucune mémoire ne les garde : `text`
+                doit donc les NOMMER pour que le modèle sache qu'ils
+                existent."""
     text: str
     error: str | None = None
     sources: tuple[Source, ...] = ()
@@ -125,13 +109,10 @@ class Call:
                  direct.
     `client`   : le condensé de la clé du client (tools.owner), «» pour
                  un proxy ouvert — jamais la clé. STABLE d'un démarrage
-                 à l'autre : un outil peut y attacher ce qu'il garde
-                 (la mémoire persistante, tools/memory.py).
-    `session`  : l'identifiant de la CONVERSATION, fourni par la surface
-                 — de quoi retrouver un état d'un appel au suivant (le
-                 bac de code_execution). Seule /v1/chat/completions en a
-                 un (chat_api) ; «» = la surface n'en a pas, un outil à
-                 état s'en passe alors (un état par appel)."""
+                 à l'autre : un outil peut y attacher ce qu'il garde.
+    `session`  : l'identifiant de la CONVERSATION, de quoi retrouver un
+                 état d'un appel au suivant (le bac de code_execution).
+                 «» = la surface n'en a pas : un état par appel."""
     settings: Mapping = field(default_factory=dict)
     endpoint: str = ""
     model: str = ""
@@ -211,9 +192,8 @@ class Tool:
 
     def spec(self, present) -> dict:
         """La fonction présentée au modèle, à la forme chat/completions,
-        ASSEMBLÉE de `name`, `prompt` et `parameters` — la seule fabrique
-        de la définition envoyée au modèle (les trois surfaces) et listée
-        par /v1/tools. Un outil ne la réécrit pas."""
+        ASSEMBLÉE de `name`, `prompt` et `parameters`. Un outil ne la
+        réécrit pas."""
         return {"type": "function", "function": {
             "name": self.name,
             "description": self.prompt(present),

@@ -1,5 +1,5 @@
 """Les outils hébergés sur /v1/chat/completions (chat_api.py, et
-app.chat_hosted) : la route entière, par la fixture `proxy` de
+surfaces.chat_hosted) : la route entière, par la fixture `proxy` de
 conftest.py — seul l'envoi au backend est remplacé. Aucun réseau."""
 
 import json
@@ -7,8 +7,9 @@ import json
 import pytest
 
 from fakes import (
-    ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, SEARCH_DOC, SEARCH_TURN,
-    FakeUpstream, chat_doc, chunk, stream, tool_call, usage,
+    ANSWER_TURN, FOUND, QUERY, SEARCH_DOC, SEARCH_TURN,
+    FakeUpstream, chat_doc, chunk, hosted_chat, search_then_answer, stream, tool_call,
+    usage,
 )
 from llm_proxy import auth, relaying, tool_loop
 from llm_proxy import chat_api as C
@@ -42,8 +43,7 @@ def chat(proxy, monkeypatch):
         return await inner(call, request, path, body)
 
     monkeypatch.setattr(relaying, "send_upstream", send_upstream)
-    monkeypatch.setattr(C, "ENABLED", True)
-    monkeypatch.setattr(C, "MEMORY", C.Memory(8, 60, 100_000))
+    hosted_chat(monkeypatch)
     monkeypatch.setattr(stats, "record_tool",
                         lambda *a: proxy.tool_lines.append(a))
     return proxy
@@ -73,8 +73,7 @@ def ask(proxy, messages, key=None, **extra):
 def searched(proxy, messages=(Q1,), key=None):
     """Le tour d'une réponse AVEC recherche : après lui, l'échange caché
     de A1 est en mémoire."""
-    proxy.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                     FakeUpstream(stream(*ANSWER_TURN))]
+    proxy.replies = search_then_answer()
     return ask(proxy, list(messages), key)
 
 
@@ -94,9 +93,9 @@ def deltas(docs: list[dict]) -> list[dict]:
 
 
 def test_request_without_declaration_is_relayed_byte_for_byte(chat, monkeypatch):
-    """Le chemin de toujours : mêmes octets vers le backend, mêmes octets
-    vers le client, clé active ou non — et la clé inactive laisse passer
-    jusqu'à la déclaration elle-même."""
+    """Mêmes octets vers le backend, mêmes octets vers le client, clé
+    active ou non — et la clé inactive laisse passer jusqu'à la
+    déclaration elle-même."""
     raws = []
     inner = relaying.send_upstream
 
@@ -146,7 +145,7 @@ def test_declaration_is_replaced_by_the_hosted_functions(chat):
 
 
 def test_stream_of_two_upstream_turns_reads_as_one(chat):
-    ups = [FakeUpstream(stream(*SEARCH_TURN)), FakeUpstream(stream(*ANSWER_TURN))]
+    ups = search_then_answer()
     chat.replies = list(ups)
     r = post(chat, stream_options={"include_usage": True})
     assert r.status_code == 200
@@ -184,13 +183,12 @@ def test_stream_of_two_upstream_turns_reads_as_one(chat):
     assert all(u.closed for u in ups)
 
     # Le client n'a pas demandé `include_usage` : pas de bloc d'usage.
-    chat.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                    FakeUpstream(stream(*ANSWER_TURN))]
+    chat.replies = search_then_answer()
     assert not any("usage" in d for d in blocks(post(chat).content))
 
 
 def test_json_mode(chat):
-    chat.replies = [FakeUpstream(SEARCH_DOC), FakeUpstream(ANSWER_DOC)]
+    chat.replies = search_then_answer(streamed=False)
     r = post(chat, stream=False)
     doc = r.json()
     assert r.status_code == 200 and doc["id"] == "chatcmpl-1"
@@ -383,7 +381,7 @@ def test_next_request_gets_the_hidden_exchange_back_byte_for_byte(chat):
         assert sent[4] == {**rewritten, "content": "Voilà."}
 
     # En JSON aussi l'échange est rangé.
-    chat.replies = [FakeUpstream(SEARCH_DOC), FakeUpstream(ANSWER_DOC)]
+    chat.replies = search_then_answer(streamed=False)
     ask(chat, [Q2], stream=False)
     assert roles(ask(chat, [Q2, A1, Q1])) == "user assistant tool assistant user"
 
@@ -520,8 +518,7 @@ def test_one_annotation_per_written_occurrence_of_a_source(chat):
 def test_responses_shaped_tool_choice_names_the_hosted_function(chat):
     forced = {"type": "function", "function": {"name": "web_search"}}
     for choice in (WEB, {"type": "web_search_preview"}):
-        chat.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                        FakeUpstream(stream(*ANSWER_TURN))]
+        chat.replies = search_then_answer()
         assert post(chat, tool_choice=choice).status_code == 200
         assert [s["tool_choice"] for s in chat.sent[-2:]] == [forced, "auto"]
     sent = len(chat.sent)
@@ -591,8 +588,7 @@ def test_always_presents_the_hosted_tools_to_a_request_that_declares_nothing(
 
     # La boucle, en flux : appel caché, exécuté, compté ; puis la mémoire.
     chat.lines.clear()
-    chat.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                    FakeUpstream(stream(*ANSWER_TURN))]
+    chat.replies = search_then_answer()
     docs = blocks(bare(chat)[0].content)
     assert not any("tool_calls" in d for d in deltas(docs))
     assert "".join(d.get("content") or "" for d in deltas(docs)) == A1["content"]
@@ -711,8 +707,7 @@ def test_files_come_back_as_links_and_the_session_follows_the_conversation(
                 f"\n\n[table.csv](https://proxy.test/v1/files/{b.token}/table.csv)")
 
     # En flux : un delta de contenu de plus, avant le bloc de fin.
-    chat.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                    FakeUpstream(stream(*ANSWER_TURN))]
+    chat.replies = search_then_answer()
     r = post(chat)
     docs = blocks(r.content)
     text = "".join(d.get("content") or "" for d in deltas(docs))
@@ -729,8 +724,7 @@ def test_files_come_back_as_links_and_the_session_follows_the_conversation(
     # Requête suivante : le client renvoie la réponse AVEC les liens ;
     # l'échange caché est reconnu, le backend relit son texte SANS eux,
     # et l'outil retrouve sa session.
-    chat.replies = [FakeUpstream(stream(*SEARCH_TURN)),
-                    FakeUpstream(stream(*ANSWER_TURN))]
+    chat.replies = search_then_answer()
     sent = ask(chat, [Q1, {"role": "assistant", "content": text}, Q2])
     assert roles(sent[:5]) == "user assistant tool assistant user"
     assert sent[3]["content"] == "Voilà."
@@ -741,7 +735,7 @@ def test_files_come_back_as_links_and_the_session_follows_the_conversation(
 
     # En JSON : les liens à la fin du contenu.
     files.STORE.clear()
-    chat.replies = [FakeUpstream(SEARCH_DOC), FakeUpstream(ANSWER_DOC)]
+    chat.replies = search_then_answer(streamed=False)
     r = post(chat, stream=False)
     assert r.json()["choices"][0]["message"]["content"] == \
         "Je cherche.\n\nVoilà.\n\n" + links()

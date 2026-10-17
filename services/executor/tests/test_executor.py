@@ -4,10 +4,9 @@ de Starlette, contre une DOUBLURE de podman (tests/fake_podman.py) — un
 test, SANS aucune isolation. Ce qui est vérifié ici : la logique —
 sessions et leur clé, état gardé, dépôt des fichiers d'entrée, récolte
 et plafonds des fichiers, délais, quotas, expiration, orphelins, sonde
-des cgroups, jeton. Ce qui
-ne l'est PAS : tout ce que podman fait des drapeaux qu'on lui passe
-(réseau, mémoire, processus, lecture seule, uid) — un test vérifie
-seulement qu'ils sont demandés.
+des cgroups, jeton. Ce qui ne l'est PAS : tout ce que podman fait des
+drapeaux qu'on lui passe (réseau, mémoire, processus, lecture seule,
+uid) — un test vérifie seulement qu'ils sont demandés.
 
 Les programmes d'essai sont minuscules et n'écrivent que dans le dossier
 du « conteneur », sous tmp_path."""

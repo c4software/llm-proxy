@@ -15,15 +15,11 @@ seul le jeton — 192 bits tirés par `secrets`, un par fichier — protège le
 fichier. Qui a le lien a le fichier, jusqu'à son expiration ; qui ne l'a
 pas ne peut ni le deviner ni lister le magasin.
 
-En MÉMOIRE VIVE, comme tout ce que le proxy garde entre deux requêtes
-(tools.Memory, chat_api.Memory, le cache web) : des fichiers de quelques
-heures n'ont pas à survivre au processus, et le volume data/ ne porte que
-la configuration et les statistiques — pas de dossier à purger au
-démarrage, ni de contenu écrit par un modèle sur le disque de l'hôte. Le
-prix : un redémarrage du proxy casse les liens déjà rendus (404), et la
-borne en octets se prend sur la mémoire du proxy. Bornée en durée, en
-octets (les plus anciens sortent) et par fichier. Un seul processus : le
-proxy n'a qu'un worker.
+En MÉMOIRE VIVE : des fichiers de quelques heures n'ont pas à survivre au
+processus, et rien d'écrit par un modèle ne touche le disque de l'hôte.
+Le prix : un redémarrage casse les liens déjà rendus (404). Bornée en
+durée, en octets (les plus anciens sortent) et par fichier. Un seul
+processus : le proxy n'a qu'un worker.
 
 SERVIR SANS RISQUE. Le contenu est écrit par un programme qu'un modèle a
 écrit : hostile. Il est servi depuis l'origine du proxy — celle du
@@ -137,10 +133,9 @@ class Stored:
     @property
     def markdown(self) -> str:
         """Ce que le proxy ajoute à la réponse : l'image, ou un lien.
-        L'image est elle-même un LIEN vers son fichier : une interface de
-        chat l'affiche, cliquable ; un client en terminal (omp, pi), qui
-        ne rend d'une image que son texte de remplacement, montre alors
-        un lien au lieu d'un simple nom de fichier."""
+        L'image est elle-même un LIEN vers son fichier : un client en
+        terminal, qui ne rend d'une image que son texte de remplacement,
+        montre alors un lien au lieu d'un simple nom de fichier."""
         link = f"[{self.name}]({self.url})"
         return f"[!{link}]({self.url})" if self.inline else link
 

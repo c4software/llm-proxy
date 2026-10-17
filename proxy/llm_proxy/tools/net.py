@@ -27,16 +27,15 @@ import httpx2
 from .. import config
 from .contract import ToolError
 
-# Ce qui a été lu à l'ancienne place, [tools.web_fetch] — où ces trois
-# clés vivaient quand web_fetch était seul à télécharger —, et ce qui y
-# est resté alors que [tools.net] le règle : dit au démarrage (startup.py).
+# Clés lues dans [tools.web_fetch] faute d'être dans [tools.net], et clés
+# qui y restent alors que [tools.net] les règle : dit au démarrage
+# (startup.py).
 LEGACY: list[str] = []
 SHADOWED: list[str] = []
 
 
 def _setting(key: str, read):
-    """[tools.net].<clé> ; à défaut celle de [tools.web_fetch], pour un
-    déploiement d'avant la table commune."""
+    """[tools.net].<clé> ; à défaut celle de [tools.web_fetch]."""
     new, old = f"tools.net.{key}", f"tools.web_fetch.{key}"
     if config.get(old) is not None:
         if config.get(new) is None:
@@ -130,11 +129,10 @@ async def public_target(url: str, allow_private: bool = False
 
 def domain_match(url: str, domains) -> bool:
     """`url` relève-t-elle d'une des entrées de `domains` ? Règles de
-    l'outil serveur d'Anthropic, reprises pour toutes les listes de domaines : domaine nu,
-    sans schéma ; les sous-domaines sont couverts (`example.com` couvre
-    `docs.example.com`, l'inverse non) ; un chemin restreint à ce qui le
-    prolonge (`example.com/blog`). Les jokers de chemin ne sont pas lus :
-    le chemin s'arrête au premier `*`."""
+    l'outil serveur d'Anthropic : domaine nu, sans schéma ; les
+    sous-domaines sont couverts (`example.com` couvre `docs.example.com`,
+    l'inverse non) ; un chemin restreint à ce qui le prolonge
+    (`example.com/blog`). Le chemin s'arrête au premier `*`."""
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
     for d in domains:

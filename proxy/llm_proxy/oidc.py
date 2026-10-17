@@ -7,7 +7,7 @@ validation de l'id_token (signature par le JWKS du fournisseur, iss, aud,
 exp, nonce). Rien n'est réécrit à la main.
 
 Actif quand [oidc].issuer et [oidc].client_id sont posés. Alors :
-  * /ui ne s'ouvre plus avec une clé du proxy, seulement par une session
+  * /ui ne s'ouvre pas avec une clé du proxy, seulement par une session
     OIDC (cookie signé, SESSION_COOKIE) ;
   * chaque compte (accounts.py) gère ses propres clés, des uuid4, valables
     sur /v1, /mcp… à côté de celles du TOML (proxy.api_keys), qui restent.

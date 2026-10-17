@@ -155,8 +155,8 @@ async def lifespan(app: FastAPI):
         else:
             log.warning("[chat].always sans effet : [chat].hosted_tools "
                         "absent ou false")
-    # Garde-fou de téléchargement ([tools.net]) : ses clés lues à leur
-    # ancienne place, [tools.web_fetch].
+    # Garde-fou de téléchargement ([tools.net]) : ses clés encore écrites
+    # sous [tools.web_fetch] sont lues, avec un avertissement.
     if tools.net.LEGACY:
         log.warning(
             "[tools.web_fetch].%s : ces clés sont celles du garde-fou "

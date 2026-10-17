@@ -1,60 +1,36 @@
 """
-La surface Anthropic du proxy : ce qu'il faut pour qu'un client écrit
-pour l'API Messages — Claude Code en premier lieu — parle à un backend
-OpenAI sans le savoir. UNIQUEMENT dans ce sens : le proxy ne sait pas
-parler à un backend Anthropic, et n'en a pas besoin.
+La surface Anthropic du proxy : un client de l'API Messages parle à un
+backend OpenAI sans le savoir. Dans ce sens uniquement : le proxy ne
+parle pas à un backend Anthropic.
 
-Ce qu'un client Anthropic appelle, et ce qu'il reçoit :
   POST /v1/messages               → traduit en /v1/chat/completions,
                                     réponse retraduite (JSON ou flux SSE)
-  POST /v1/messages/count_tokens  → estimation locale (aucun équivalent
-                                    OpenAI), même approximation que le
-                                    limiteur : ~4 caractères par token
-  GET  /v1/models                 → le catalogue fusionné, à la forme
-                                    Anthropic (discriminé sur l'en-tête
-                                    `anthropic-version`, que le SDK
-                                    Anthropic pose sur CHAQUE requête et
-                                    que le SDK OpenAI ne pose jamais)
+  POST /v1/messages/count_tokens  → estimation locale, ~4 caractères par
+                                    token (même ratio que le limiteur)
+  GET  /v1/models                 → le catalogue à la forme Anthropic,
+                                    choisi sur l'en-tête
+                                    `anthropic-version` (le SDK Anthropic
+                                    le pose toujours, le SDK OpenAI jamais)
 
-Le routage ne change pas : le modèle demandé est d'abord passé par
-[anthropic.model_map], parce que Claude Code envoie des noms Claude en
-dur (ses tâches d'arrière-plan ignorent ANTHROPIC_MODEL) — la table les
-traduit en noms PRÉFIXÉS, que backends.py route comme d'habitude.
+Le modèle demandé passe d'abord par [anthropic.model_map] : certains
+clients (Claude Code) envoient des noms Claude en dur ; la table les
+traduit en noms préfixés, routés comme d'habitude.
 
-La traduction de la RÉPONSE est la seule partie délicate : le relais
-(relaying.forward) ne connaît que des octets, il les fait passer par un
-«robinet» (tap) — feed(chunk) rend ce qu'il faut émettre, finish() le
-reliquat, tokens() ce que les stats doivent compter. stats.UsageCollector
-est le robinet identité ; Translator, ici, celui qui réécrit. Un flux
-OpenAI (deltas plats, outils fragmentés par index) devient la séquence
-d'événements Anthropic (message_start, blocs ouverts/fermés un à un,
-message_delta, message_stop). Contrairement au relais brut, CE chemin
-désérialise chaque événement : on ne peut pas réécrire sans lire.
+La réponse passe par un «robinet» (tap) du relais (relaying.forward) :
+feed(chunk) rend ce qu'il faut émettre, finish() le reliquat, tokens() ce
+que les stats comptent. Translator réécrit un flux OpenAI en événements
+Anthropic ; contrairement au relais brut, il désérialise chaque événement.
 
-Recherche web hébergée (paquet tools/) : l'outil `WebSearch` de Claude
-Code ne cherche pas lui-même. Il envoie une sous-requête /v1/messages à
-part, qui déclare l'outil SERVEUR `{"type": "web_search_20250305",
-"name": "web_search"}`, et compte qu'Anthropic exécutera la recherche :
-il lit dans la réponse les blocs `server_tool_use` puis
-`web_search_tool_result`. Quand le proxy héberge `web_search`, cet outil
-serveur devient la fonction `web_search` présentée au modèle ; ses appels
-ne sont PAS rendus en `tool_use` : le robinet les met de côté (`pending`),
-tool_loop.py les exécute et relance le backend — même boucle que la surface
-Responses —, et le client reçoit les deux blocs qu'il attend. Rien n'est
-conservé entre deux requêtes : le bloc `web_search_tool_result` porte
-tout le résultat, un client qui le rejoue rend au modèle le même texte
-(voir _assistant_messages). Ce module ne fait aucune requête : il reçoit
-un objet `Hosted` et s'en sert comme d'un annuaire.
+Outils serveur hébergés (`web_search_…`, `web_fetch_…`, paquet tools/) :
+l'outil serveur déclaré par le client devient une fonction présentée au
+modèle ; ses appels ne sont pas rendus en `tool_use` mais mis de côté
+(`pending`), exécutés par tool_loop.py qui relance le backend, et le
+client reçoit `server_tool_use` puis le bloc de résultat. Rien n'est
+conservé entre deux requêtes : le bloc de résultat porte tout, son rejeu
+rend au modèle le même texte (voir _assistant_messages). Un outil n'est
+présenté que si le client le déclare.
 
-Lecture de page hébergée : l'outil serveur `{"type": "web_fetch_20250910",
-"name": "web_fetch"}` suit le même chemin, vers la fonction `web_fetch` —
-blocs `server_tool_use` puis `web_fetch_tool_result`, dont le document
-porte le texte ENTIER rendu au modèle. Chaque outil n'est présenté que si
-le client le déclare : Claude Code ne déclare que la recherche (son
-`WebFetch` lit les pages sur le poste du client), un client du SDK peut
-déclarer l'un, l'autre ou les deux.
-
-Ce module ne connaît ni FastAPI ni httpx2.
+Ce module ne fait aucune requête et ne connaît ni FastAPI ni httpx2.
 """
 
 import datetime as _dt
@@ -78,23 +54,21 @@ MODEL_MAP: dict[str, str] = {
 # rien de nouveau sans l'avoir demandé.
 ENABLED = config.flag("anthropic.enabled", False)
 # Une ligne de log par réponse /v1/messages : stop_reason, outils appelés
-# (nom + extrait des arguments), tokens. C'est ce qui manque quand un
-# agent s'emballe — les compteurs disent «754 requêtes», pas ce que le
-# modèle répétait. Coût : quelques centaines d'octets par réponse.
+# (nom + extrait des arguments), tokens — pour voir ce qu'un agent qui
+# s'emballe répète.
 TRACE = config.flag("anthropic.trace", False)
 # En flux, pendant l'attente du limiteur : un `event: ping` toutes les N
-# secondes garde la connexion vivante (Claude Code coupe un flux muet ;
-# l'API Anthropic elle-même envoie ces pings). 0 = attendre AVANT de
-# répondre, comme pour un client OpenAI.
+# secondes garde la connexion vivante (certains clients coupent un flux
+# muet ; l'API Anthropic envoie aussi ces pings). 0 = attendre AVANT de
+# répondre.
 PING_INTERVAL = config.num("anthropic.ping_interval", 10)
-# `reasoning_content` d'un backend → bloc `thinking` pour le client. Le
-# bloc part sans signature (Claude Code le renvoie, on le jette à la
-# traduction) ; à couper si un client s'en plaint.
+# `reasoning_content` d'un backend → bloc `thinking` pour le client, sans
+# signature (rejoué par le client, il est jeté à la traduction).
 REASONING_AS_THINKING = config.flag("anthropic.reasoning_as_thinking", True)
 CHARS_PER_TOKEN = 4
 
 # «claude-opus-5[1m]» : le suffixe entre crochets est un choix de
-# contexte côté Claude Code, pas un modèle. Ignoré pour la recherche.
+# contexte du client, pas un modèle. Ignoré pour la recherche.
 _BRACKET_SUFFIX = re.compile(r"\[[^\]]*\]$")
 
 STOP_REASONS = {
@@ -105,14 +79,12 @@ STOP_REASONS = {
     "content_filter": "refusal",
 }
 
-# Les outils serveur d'Anthropic que le proxy exécute sont ceux des outils
-# de tools/ qui portent une liaison `anthropic` (tools.Anthropic) : le
-# préfixe du type de l'outil serveur, toutes versions datées
-# (`web_search_20250305`, `web_search_20260209`, `web_fetch_20250910`…),
-# et le bloc qui rend le résultat au client — son erreur est un objet
-# `<bloc>_error`, son compteur dans `usage.server_tool_use` est
-# `<préfixe>_requests`. Ce module-ci ne connaît que le FORMAT de ces
-# blocs, que le protocole nomme (voir _CONTENT et _REPLAY, plus bas).
+# Les outils serveur exécutés par le proxy sont ceux de tools/ qui portent
+# une liaison `anthropic` (tools.Anthropic) : préfixe du type, toutes
+# versions datées confondues, et bloc de résultat — erreur en
+# `<bloc>_error`, compteur `<préfixe>_requests` dans
+# `usage.server_tool_use`. Ce module ne connaît que le format de ces blocs
+# (_CONTENT et _REPLAY, plus bas).
 
 # Codes d'erreur du contrat des outils (tools.ERRORS) → `error_code` des
 # outils serveur d'Anthropic. Le modèle lit le texte de l'erreur ; le
@@ -172,9 +144,8 @@ def error_body(message: str, type_: str) -> dict:
 
 
 def prompt_text(payload) -> str:
-    """count_tokens : ce qui est compté. Le corps sérialisé (system +
-    messages + tools) — c'est aussi ce que le limiteur approxime, et ce
-    qu'un /tokenize de backend reçoit."""
+    """count_tokens : le corps sérialisé (system + messages + tools), ce
+    que le limiteur approxime et qu'un /tokenize de backend reçoit."""
     doc = {k: payload.get(k) for k in ("system", "messages", "tools")
            if isinstance(payload, dict) and payload.get(k) is not None}
     return json.dumps(doc, ensure_ascii=False)
@@ -239,8 +210,7 @@ def _image_part(block: dict) -> dict | None:
 
 
 def has_images(payload: dict) -> bool:
-    """Y a-t-il au moins un bloc image dans la requête (messages, y
-    compris à l'intérieur des tool_result) ? Évite de charger un
+    """Au moins un bloc image (tool_result compris) ? Évite de charger un
     catalogue pour rien."""
     for m in payload.get("messages") or []:
         content = m.get("content") if isinstance(m, dict) else None
@@ -259,8 +229,7 @@ def has_images(payload: dict) -> bool:
 
 
 def _placeholder(block: dict, what: str) -> dict:
-    """Ce qu'un backend texte seul reçoit à la place d'un média : un mot
-    qui dit qu'il manque quelque chose, plutôt que rien."""
+    """Ce qu'un backend texte seul reçoit à la place d'un média."""
     src = block.get("source") or {}
     media = src.get("media_type") if isinstance(src, dict) else None
     size = len(src.get("data") or "") * 3 // 4 if isinstance(src, dict) else 0
@@ -306,10 +275,10 @@ def _content_of(parts: list[dict]):
 
 def _user_message(content, images: bool) -> list[dict]:
     """Un message user Anthropic peut mêler n tool_result et du contenu
-    libre. OpenAI veut un message `tool` PAR résultat, placés juste après
+    libre. OpenAI veut un message `tool` PAR résultat, juste après
     l'assistant qui les a demandés — donc avant le reste. Un `tool`
-    OpenAI n'a qu'un contenu TEXTE : les images d'un tool_result (Claude
-    Code lisant un .png) suivent dans un message user à part."""
+    OpenAI n'a qu'un contenu TEXTE : les images d'un tool_result suivent
+    dans un message user à part."""
     if isinstance(content, str):
         return [{"role": "user", "content": content}]
     if not isinstance(content, list):
@@ -346,8 +315,6 @@ def _user_message(content, images: bool) -> list[dict]:
 
 
 def _prepend_text(msg: dict, text: str) -> None:
-    """Glisse `text` en tête du contenu d'un message user OpenAI (chaîne
-    ou liste de parties)."""
     content = msg.get("content")
     if isinstance(content, list):
         content.insert(0, {"type": "text", "text": text + "\n\n"})
@@ -359,26 +326,19 @@ def _prepend_text(msg: dict, text: str) -> None:
 
 class Context:
     """Ce que la requête dit des outils hébergés, pour to_openai, le
-    robinet et la boucle de tool_loop.py. Vide (`hosted` = {}) tant que le proxy
-    n'héberge ni `web_search` ni `web_fetch`, ou que le client ne déclare
-    aucun des deux outils serveur : tout se passe alors comme avant, ils
-    sont ignorés.
+    robinet et tool_loop.py. Vide (`hosted` = {}) si aucun outil serveur
+    déclaré n'est hébergé : ils sont alors ignorés.
 
-    `hosted` : nom de fonction → outil de tools/, pour chaque outil
-               serveur déclaré ET hébergé (`web_search`, `web_fetch`) ;
-    `limits` : par fonction, appels exécutés au plus pour cette réponse —
-               le `max_uses` que le client a posé sur CET outil, borné
-               par tools.MAX_CALLS ;
-    `cap`    : appels exécutés au plus, toutes fonctions confondues
-               (tools.MAX_CALLS) ;
-    `options`: par nom de fonction, ce que le client a réglé sur son outil
-               et que l'exécution doit respecter (`allowed_domains`,
-               `blocked_domains` ; `max_chars`, tiré du
-               `max_content_tokens` d'un outil de lecture). Anthropic
-               refuse les deux listes à la fois (400) ; ici elles
-               s'appliquent toutes les deux ;
-    `order`  : les fonctions hébergées dans l'ordre du registre — celui
-               des compteurs de `usage.server_tool_use`."""
+    `hosted` : nom de fonction → outil de tools/, déclaré ET hébergé ;
+    `limits` : par fonction, appels au plus pour cette réponse (le
+               `max_uses` du client, borné par tools.MAX_CALLS) ;
+    `cap`    : appels au plus, toutes fonctions confondues ;
+    `options`: par fonction, réglages du client que l'exécution respecte
+               (`allowed_domains`, `blocked_domains`, `max_chars`).
+               Anthropic refuse les deux listes à la fois (400) ; ici
+               elles s'appliquent toutes les deux ;
+    `order`  : les fonctions dans l'ordre du registre, celui des
+               compteurs de `usage.server_tool_use`."""
 
     def __init__(self, request: dict, hosted=None):
         self.hosted: dict = {}
@@ -402,12 +362,8 @@ class Context:
             options: dict = {k: [str(d) for d in t[k]]
                              for k in ("allowed_domains", "blocked_domains")
                              if isinstance(t.get(k), list) and t[k]}
-            # `max_content_tokens` (outil serveur web fetch) : la taille
-            # du contenu rendu, que l'outil compte en caractères — même
-            # approximation que partout ici, et l'outil d'Anthropic dit
-            # lui-même sa limite approximative. Il ne fait que BAISSER la
-            # borne du proxy ; un outil qui ne rend pas un contenu
-            # l'ignore.
+            # `max_content_tokens` (web fetch), converti en caractères :
+            # il ne fait que BAISSER la borne du proxy.
             size = t.get("max_content_tokens")
             if isinstance(size, int) and not isinstance(size, bool) \
                     and size > 0:
@@ -430,15 +386,13 @@ def server_tool(tool, hosted=None):
 
 def _replayed_error(tool, code) -> str:
     """Texte rendu au modèle pour un résultat en erreur REJOUÉ par le
-    client : le bloc n'en garde que le code (`the web search failed`,
-    `the web fetch failed` — le nom de la fonction, en mots)."""
+    client : le bloc n'en garde que le code."""
     return (f"Error: the {tool.name.replace('_', ' ')} failed "
             f"({code or 'unavailable'}).")
 
 
 def _search_sources(content) -> tuple:
-    """Contenu d'un bloc `web_search_tool_result` → les sources du
-    résultat (l'inverse de _search_content)."""
+    """L'inverse de _search_content."""
     return tuple(Source(str(r.get("url") or ""), str(r.get("title") or ""),
                         str(r.get("page_age") or ""),
                         str(r.get("encrypted_content") or ""))
@@ -447,10 +401,9 @@ def _search_sources(content) -> tuple:
 
 
 def _search_text(tool, use: dict, result: dict) -> str:
-    """Le texte qu'avait lu le modèle, reconstruit depuis les deux blocs
-    que le client rejoue — sans mémoire : le bloc de résultat porte tout
-    (titre, URL, date dans `page_age`, extrait dans `encrypted_content`),
-    et l'outil sait le remettre en texte, à l'octet près (Tool.render)."""
+    """Le texte qu'avait lu le modèle, reconstruit sans mémoire depuis les
+    deux blocs rejoués : le bloc de résultat porte tout, et Tool.render le
+    remet en texte à l'octet près."""
     content = result.get("content")
     if not isinstance(content, list):
         code = content.get("error_code") if isinstance(content, dict) else None
@@ -460,11 +413,10 @@ def _search_text(tool, use: dict, result: dict) -> str:
 
 
 def _fetch_text(tool, use: dict, result: dict) -> str:
-    """Le texte qu'avait lu le modèle, relu du bloc `web_fetch_tool_result`
-    que le client rejoue : c'est la `data` du document, où _fetch_content
-    l'a mis ENTIER — rien à reconstruire, donc rien qui puisse différer.
-    Un document qui n'est pas du texte (le PDF en base64 d'une conversation
-    commencée chez Anthropic) est rendu comme une lecture en échec."""
+    """Le texte qu'avait lu le modèle : la `data` du document rejoué, où
+    _fetch_content l'a mis ENTIER. Un document qui n'est pas du texte (PDF
+    d'une conversation commencée chez Anthropic) rend une lecture en
+    échec."""
     content = result.get("content")
     content = content if isinstance(content, dict) else {}
     doc = content.get("content")
@@ -487,24 +439,19 @@ def _assistant_messages(content, hosted=None, results=None) -> list[dict]:
     les rejoue, et leur signature n'a de sens que chez Anthropic.
 
     Un message assistant Anthropic donne UN message OpenAI — sauf s'il
-    porte des appels que le proxy a exécutés (`hosted` : nom de fonction →
-    outil de tools/, pour les outils serveur que la requête déclare).
-    Chaque paire `server_tool_use` + `web_search_tool_result` (ou
-    `web_fetch_tool_result`) redevient alors un appel suivi de son
-    message `tool`, et ce qui vient APRÈS un résultat ouvre
-    un nouveau message assistant : c'est un autre tour du backend. Un
-    message [texte, recherche, résultat, texte] rend donc assistant(texte
-    + appel), tool, assistant(texte) — ce que le backend a réellement vu
-    pendant la boucle, que tool_loop.py reconstruit par ce même chemin : le
-    préfixe reste le même d'un tour à l'autre et d'une requête à l'autre.
-    Ajouter des blocs à la fin ne change aucun message déjà rendu.
+    porte des appels exécutés par le proxy (`hosted`). Chaque paire
+    `server_tool_use` + bloc de résultat redevient un appel suivi de son
+    message `tool`, et ce qui suit un résultat ouvre un nouveau message
+    assistant (un autre tour du backend) : [texte, recherche, résultat,
+    texte] rend assistant(texte + appel), tool, assistant(texte). C'est ce
+    que le backend a vu pendant la boucle, et tool_loop.py le reconstruit
+    par ce même chemin : le préfixe reste stable d'un tour et d'une requête
+    à l'autre.
 
-    `results` : id d'appel → texte exact rendu au modèle, pour les appels
-    de la réponse EN COURS (tool_loop.py) ; un bloc rejoué par le client est
-    relu par _search_text ou _fetch_text. Sans `hosted`, pour un outil
-    que la requête ne déclare pas, ou pour un `server_tool_use` sans le
-    résultat de son type, les blocs sont ignorés comme avant : un appel
-    sans message `tool` serait refusé par le backend."""
+    `results` : id d'appel → texte exact rendu au modèle, pour la réponse
+    EN COURS ; un bloc rejoué est relu par _REPLAY. Un `server_tool_use`
+    non hébergé ou sans son résultat est ignoré : un appel sans message
+    `tool` serait refusé par le backend."""
     if isinstance(content, str):
         return [{"role": "assistant", "content": content}]
     blocks = [b for b in content if isinstance(b, dict)] \
@@ -579,36 +526,28 @@ def _tool_choice(value, payload: dict) -> None:
 
 def to_openai(p: dict, images: bool = False, hosted=None,
               results: dict | None = None) -> dict:
-    """Corps /v1/messages → corps /v1/chat/completions. `model` est
-    recopié tel quel : l'appelant l'a déjà résolu (resolve_model).
-    `images` : le backend accepte les `image_url` (sinon, texte de
-    remplacement). Tout ce qui n'a pas d'équivalent (thinking, top_k,
-    cache_control, metadata hors user_id, output_config,
-    context_management…) est ignoré plutôt que relayé à un backend qui
-    le refuserait.
-    `hosted` : l'annuaire des outils que le proxy exécute (tools.Hosted),
-    ou None — avec lui, les outils serveur `web_search_…` et `web_fetch_…`
-    du client deviennent les fonctions `web_search` et `web_fetch` (voir
-    Context). `results` : textes des appels hébergés de la réponse en
-    cours (voir _assistant_messages)."""
+    """Corps /v1/messages → corps /v1/chat/completions. `model` est déjà
+    résolu (resolve_model). Ce qui n'a pas d'équivalent (thinking, top_k,
+    cache_control, output_config…) est ignoré plutôt que relayé à un
+    backend qui le refuserait.
+    `images` : le backend accepte les `image_url`. `hosted` : l'annuaire
+    des outils exécutés par le proxy (tools.Hosted), ou None. `results` :
+    voir _assistant_messages."""
     ctx = Context(p, hosted)
     out: dict = {"model": p.get("model", "")}
     messages: list[dict] = []
     system = _text_of(p.get("system"))
     if system:
         messages.append({"role": "system", "content": system})
-    # Un message `system` EN COURS de conversation (Claude Code s'en sert
-    # pour ses rappels) : beaucoup de gabarits de chat (Qwen, Mistral…)
-    # n'acceptent un system qu'en tête et répondent 500 sinon. Son texte
-    # est donc fondu en tête du message user qui le suit — l'ordre des
-    # tours reste strict, rien n'est perdu.
+    # Un message `system` EN COURS de conversation (rappels de certains
+    # clients) : beaucoup de gabarits de chat (Qwen, Mistral…) n'acceptent
+    # un system qu'en tête et répondent 500 sinon. Son texte est fondu en
+    # tête du message user qui le suit.
     # Suivi d'un assistant, il est posé en message user À SA PLACE, avant
     # lui : c'est là qu'il était au tour précédent, quand il fermait la
-    # requête (voir la fin de la boucle). Reporté après le tool_result
-    # suivant, il changeait de position d'un tour à l'autre : le préfixe
-    # rendu divergeait juste avant la dernière génération, et un backend à
-    # cache de préfixe (gufo, llama.cpp) recalculait le dernier échange à
-    # chaque tour (64k tokens sur 125k en session réelle Claude Code).
+    # requête. Le déplacer ferait diverger le préfixe d'un tour à l'autre,
+    # et un backend à cache de préfixe (llama.cpp…) recalculerait le
+    # dernier échange à chaque tour.
     pending: list[str] = []
     for m in p.get("messages") or []:
         if not isinstance(m, dict):
@@ -667,11 +606,9 @@ def to_openai(p: dict, images: bool = False, hosted=None,
                 or {"type": "object", "properties": {}},
             }})
         elif (tool := server_tool(t, hosted)) and tool.name in left:
-            # L'outil que le proxy exécute : sa fonction à la place de
-            # l'outil serveur, à la même position, une seule fois. Chaque
-            # description ne renvoie à une autre fonction que si le client
-            # l'a déclarée aussi (`present`) : le modèle n'appelle pas ce
-            # qui ne lui est pas présenté.
+            # Sa fonction à la place de l'outil serveur, à la même
+            # position, une seule fois. Une description ne renvoie à une
+            # autre fonction que si elle est présentée aussi (`present`).
             tools.append(left.pop(tool.name).spec(present))
         # Les autres outils serveur Anthropic (code_execution, bash,
         # text_editor…) ont un `type` et pas d'input_schema : rien à
@@ -706,7 +643,7 @@ def _cached(u) -> int:
 def _usage(u) -> dict:
     """Usage Anthropic. Chez Anthropic, input_tokens EXCLUT les tokens
     lus en cache ; chez OpenAI, prompt_tokens les inclut — on soustrait,
-    pour que le client (Claude Code) additionne juste."""
+    pour que le client additionne juste."""
     u = u if isinstance(u, dict) else {}
     cached = _cached(u)
     prompt = int(u.get("prompt_tokens") or 0)
@@ -785,8 +722,8 @@ def _message(msg_id: str, model: str, content: list[dict], stop: str,
 
 
 def from_openai(doc: dict, model: str) -> dict:
-    """Réponse non streamée /v1/chat/completions → objet Message. Sans
-    outil hébergé (le robinet, lui, les met de côté : Translator.finish)."""
+    """Réponse non streamée /v1/chat/completions → objet Message, sans
+    outil hébergé (ceux-là passent par Translator.finish)."""
     choice = (doc.get("choices") or [{}])[0]
     content, _ = _message_blocks(choice.get("message") or {}, {})
     stop = _stop_reason(choice.get("finish_reason"),
@@ -798,22 +735,18 @@ def from_openai(doc: dict, model: str) -> dict:
 # ── outils hébergés : ce que le client en voit ──
 
 def _pending(name: str, arguments: str) -> dict:
-    """Un appel hébergé à exécuter : ce que Translator.pending contient.
-    `id` : celui des deux blocs (`srvtoolu_…`, comme chez Anthropic) ;
-    `arguments` : tels que le modèle les a écrits, c'est ce texte-là que
-    l'exécution reçoit."""
+    """Un appel hébergé à exécuter (Translator.pending). `id` : celui des
+    deux blocs ; `arguments` : tels que le modèle les a écrits, c'est ce
+    texte que l'exécution reçoit."""
     return {"id": _server_tool_id(), "name": name,
             "arguments": arguments or "{}", "announced": False}
 
 
 def _search_content(call: dict, result) -> list[dict]:
-    """Résultat d'une recherche → contenu du bloc `web_search_tool_result` :
-    un `web_search_result` par source.
-    `encrypted_content` : chez Anthropic, un blob chiffré que le client
-    doit renvoyer tel quel pour que l'API retrouve le résultat au tour
-    suivant. Ici rien n'est à cacher et le rôle est le même : on y met
-    l'EXTRAIT, en clair — avec lui le bloc porte tout ce que le modèle a
-    lu, et son rejeu n'a besoin d'aucune mémoire côté proxy.
+    """Résultat d'une recherche → contenu du bloc `web_search_tool_result`.
+    `encrypted_content` : chez Anthropic, un blob opaque que le client
+    renvoie tel quel. Ici on y met l'EXTRAIT, en clair : le bloc porte
+    tout ce que le modèle a lu, et son rejeu n'a besoin d'aucune mémoire.
     `page_age` : la date du résultat (AAAA-MM-JJ), ou null."""
     return [{"type": "web_search_result", "title": s.title,
              "url": s.url, "encrypted_content": s.snippet,
@@ -822,14 +755,10 @@ def _search_content(call: dict, result) -> list[dict]:
 
 
 def _fetch_content(call: dict, result) -> dict:
-    """Résultat d'une lecture → contenu du bloc `web_fetch_tool_result` :
-    un `web_fetch_result`, dont le document est du texte brut.
-    `data` : le texte ENTIER que le modèle a lu, en-tête compris (URL
-    finale, type, plage de caractères lue et `offset` de la suite) — pas
-    le seul corps de la page. C'est ce qui rend le rejeu exact sans
-    mémoire : _fetch_text n'a qu'à le relire, quoi que l'en-tête porte.
-    `url` (celle réellement lue, après redirections) et `title` sont
-    ceux de `meta` du résultat ; `citations` n'est pas rendu (ignoré)."""
+    """Résultat d'une lecture → contenu du bloc `web_fetch_tool_result`.
+    `data` : le texte ENTIER que le modèle a lu, en-tête compris, pas le
+    seul corps de la page — ce qui rend le rejeu exact sans mémoire.
+    `url` : celle réellement lue, après redirections."""
     return {"type": "web_fetch_result",
             "url": str(result.meta.get("url") or "")
             or str(_parse_args(call["arguments"]).get("url") or ""),
@@ -882,37 +811,24 @@ def sse_error(body: dict) -> bytes:
 class Translator:
     """Le robinet de réponse pour /v1/messages : même interface que
     stats.UsageCollector (feed / finish / tokens / sse), mais les octets
-    rendus sont la réponse Anthropic, pas ceux de l'upstream.
+    rendus sont la réponse Anthropic.
 
-    Trois modes, fixés à l'ouverture par le statut et le content-type
-    upstream :
-      * erreur (statut ≠ 2xx) : le corps est bufferisé, finish() rend
-        une erreur Anthropic ;
-      * JSON : bufferisé, finish() rend le Message traduit ;
-      * SSE : traduit au fil de l'eau, événement par événement.
+    Trois modes, fixés par le statut et le content-type upstream : erreur
+    (bufferisé, finish() rend une erreur Anthropic), JSON (bufferisé,
+    finish() rend le Message), SSE (traduit événement par événement).
 
-    Outils hébergés (`ctx.hosted` non vide) : UNE réponse peut couvrir
-    PLUSIEURS tours upstream — même contrat que responses_api.Translator,
-    c'est la même boucle (tool_loop.py) qui pilote les deux. Un appel à la
-    fonction hébergée n'est pas rendu en `tool_use` : il est rangé dans
-    `pending`, et finish() ne clôt alors PAS le message (ni
-    `message_delta` ni `message_stop`, b"" en JSON). L'appelant exécute
-    chaque appel et en rend le compte par resolve(), puis soit
-    next_turn() et un nouveau flux upstream dans feed()/finish(), soit
-    finalize(). `pending` vide après finish() = message clos. L'identité
-    du message (id, index des blocs, `content`) traverse les tours ;
-    l'usage est CUMULÉ.
+    Outils hébergés : UNE réponse peut couvrir PLUSIEURS tours upstream —
+    même contrat que responses_api.Translator, piloté par tool_loop.py.
+    Un appel hébergé est rangé dans `pending`, et finish() ne clôt alors
+    PAS le message. L'appelant exécute chaque appel, le rend par
+    resolve(), puis next_turn() et un nouveau flux, ou finalize().
+    `pending` vide après finish() = message clos. L'identité du message
+    traverse les tours ; l'usage est CUMULÉ.
 
-    Ce que le client voit d'une recherche, à la forme d'Anthropic : un
-    bloc `server_tool_use` (ouvert, son `input` en un `input_json_delta`,
-    fermé) JUSTE AVANT l'exécution, puis un bloc `web_search_tool_result`
-    complet dès le résultat connu — pour une lecture de page, les deux
-    mêmes, le second étant un `web_fetch_tool_result`. Pendant le tour
-    du backend, l'appel hébergé ne produit rien : ses arguments sont
-    retenus jusqu'à la fin du tour, et les blocs sortent par paires,
-    chaque résultat à la suite de son appel — y compris quand le modèle
-    lance deux recherches d'un coup, ou une recherche et un outil du
-    client.
+    Pendant le tour du backend, un appel hébergé ne produit rien ; à la
+    fin du tour, les blocs sortent par paires (`server_tool_use` juste
+    avant l'exécution, bloc de résultat dès qu'il est connu), chaque
+    résultat à la suite de son appel.
     """
 
     def __init__(self, status: int, content_type: str, model: str,
@@ -940,7 +856,6 @@ class Translator:
         self.results: dict[str, str] = {}
         # Par fonction : appels hébergés qui ont abouti (usage).
         self._done: dict[str, int] = {}
-        # État du flux.
         self._started = False
         self._finished = False
         self._msg_id = ""
@@ -1022,24 +937,18 @@ class Translator:
     # ── recherche hébergée : plusieurs tours upstream pour un message ──
     @property
     def content(self) -> list[dict]:
-        """Les blocs du message, dans l'ordre : c'est avec eux, en message
-        assistant ajouté aux `messages` d'origine, que le tour suivant se
-        reconstruit (to_openai les relit comme il relira ceux que le
-        client rejouera)."""
+        """Les blocs du message : en message assistant ajouté aux
+        `messages` d'origine, ils reconstruisent le tour suivant (to_openai
+        les relit comme ceux qu'un client rejoue)."""
         return list(self._content)
 
     def _announce(self) -> bytes:
-        """Le bloc `server_tool_use` du prochain appel à exécuter : rangé
-        dans `content`, et dit au client — qui voit ainsi la requête
-        avant que la recherche ne parte. Un seul à la fois : celui du
-        suivant sortira après le résultat de celui-ci, pour que chaque
+        """Le bloc `server_tool_use` du prochain appel à exécuter, rangé
+        dans `content` et émis. Un seul à la fois, pour que chaque
         résultat suive son appel.
-        `input` : les arguments du modèle, relus (`query`, et `recency` /
-        `limit` s'il les a donnés ; `url`, et `offset` pour la suite d'une
-        page longue — les outils d'Anthropic ne connaissent que `query`
-        et `url`, mais c'est l'appel réel qu'un rejeu doit redonner) ;
-        illisibles → {}. Ils partent en UN `input_json_delta`, du JSON
-        valide, jamais les fragments bruts du modèle."""
+        `input` : les arguments réels du modèle (même ceux que les outils
+        d'Anthropic ne connaissent pas : un rejeu doit les redonner),
+        illisibles → {}, en UN `input_json_delta` de JSON valide."""
         if not self.pending or self.pending[0]["announced"]:
             return b""
         call = self.pending[0]
@@ -1055,16 +964,10 @@ class Translator:
                            {"type": "input_json_delta", "partial_json": args})
 
     def resolve(self, call: dict, result) -> bytes:
-        """Le résultat (tools.Result) d'un appel de `pending`, exécuté par
-        l'appelant : le bloc de la liaison de l'outil
-        (`web_search_tool_result`, `web_fetch_tool_result`) suit celui de
-        l'appel. Un résultat en erreur donne l'objet d'erreur d'Anthropic
-        à la place du contenu : le client n'en reçoit que le code
-        (ERROR_CODES — `max_uses_exceeded` au-delà de la limite de la
-        requête, `invalid_tool_input` pour des arguments inutilisables,
-        `unavailable` pour une panne…), le modèle, lui, lit le texte.
-        Rien n'est rangé en mémoire : seul le texte est gardé, pour le
-        tour suivant de CETTE réponse."""
+        """Le résultat (tools.Result) d'un appel de `pending` : son bloc
+        suit celui de l'appel. En erreur, le client n'en reçoit que le code
+        (ERROR_CODES), le modèle lit le texte. Le texte n'est gardé que
+        pour le tour suivant de CETTE réponse."""
         name = call["name"]
         kind = self.hosted[name].anthropic.block
         self.results[call["id"]] = result.text
@@ -1112,15 +1015,13 @@ class Translator:
             ensure_ascii=False).encode()
 
     def fail(self, message: str, status: int = 500) -> bytes:
-        """Échec d'un tour ULTÉRIEUR (quota, backend injoignable, statut
-        d'erreur) : en flux le 200 est parti, il ne reste que
-        l'`event: error` ; en JSON rien n'est parti, c'est le corps
-        d'erreur — tool_loop.py lui donne son vrai statut HTTP."""
+        """Échec d'un tour ULTÉRIEUR : en flux le 200 est parti, il ne
+        reste que l'`event: error` ; en JSON c'est le corps d'erreur, dont
+        tool_loop.py fixe le statut HTTP."""
         if self._finished:
             return b""
         out = (self._start({}) + self._close()) if self.sse else b""
         self._finished = True
-        # Plus rien à exécuter : la réponse est close, en échec.
         self.pending, self._held = [], {}
         body = error_body(message, error_type(status))
         if self.sse:
@@ -1143,10 +1044,8 @@ class Translator:
         }
 
     def _final_usage(self) -> dict:
-        """L'usage Anthropic du message. `server_tool_use` n'apparaît que
-        si une recherche ou une lecture a abouti (chez Anthropic, une
-        recherche en erreur n'est pas comptée), avec le compteur de
-        chaque fonction qui a servi."""
+        """L'usage Anthropic du message. `server_tool_use` ne compte que
+        les appels hébergés aboutis (comme chez Anthropic)."""
         usage = _usage(self._total())
         if self._done:
             usage["server_tool_use"] = {
@@ -1236,9 +1135,8 @@ class Translator:
         })
 
     def _whole(self, block: dict, delta: dict | None = None) -> bytes:
-        """Un bloc entier d'un coup — ouvert, son éventuel delta, fermé :
-        les deux blocs d'un appel hébergé. Aucun bloc n'est ouvert
-        à ce moment-là (le tour upstream est fini)."""
+        """Un bloc entier d'un coup (blocs d'un appel hébergé). Aucun bloc
+        n'est ouvert à ce moment-là : le tour upstream est fini."""
         index = self._next_block
         self._next_block += 1
         out = _sse("content_block_start", {
@@ -1260,9 +1158,8 @@ class Translator:
         if not isinstance(doc, dict):
             return b""
         if "error" in doc and "choices" not in doc:
-            # Erreur en cours de flux : l'événement `error`, puis on
-            # clôt proprement ce qui était ouvert. Les recherches que le
-            # tour demandait ne seront pas exécutées.
+            # Erreur en cours de flux : on clôt ce qui était ouvert ; les
+            # appels hébergés du tour ne seront pas exécutés.
             err = from_openai_error(doc, 500)["error"]
             self._held = {}
             return (self._start(doc) + self._close()
