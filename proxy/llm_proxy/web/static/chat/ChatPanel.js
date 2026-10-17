@@ -151,8 +151,13 @@ export const ChatPanel = {
     // sinon le premier du catalogue.
     const asrModel = computed(() => (voiceList.asr.includes(voicePrefs.asr) && voicePrefs.asr)
       || (voiceList.asr.includes(chat.value.asr_model) && chat.value.asr_model) || voiceList.asr[0] || "");
+    // La lecture, par défaut : un modèle à voix toutes faites — pas le
+    // clonage (« base », il lui faut un enregistrement de référence) ni la
+    // conception de voix (« design », il lui faut une description).
+    const ttsDefault = computed(() => voiceList.tts.find((m) => /custom/i.test(m))
+      || voiceList.tts.find((m) => !/base|design|clone/i.test(m)) || voiceList.tts[0] || "");
     const ttsModel = computed(() => (voiceList.tts.includes(voicePrefs.tts) && voicePrefs.tts)
-      || voiceList.tts[0] || "");
+      || ttsDefault.value);
     async function loadVoices() {
       try { Object.assign(voiceList, await voice.voiceModels()); } catch { /* pas de voix */ }
     }
@@ -916,7 +921,7 @@ export const ChatPanel = {
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
-             voicePrefs, voiceList, asrModel, ttsModel, dictation, toggleDictation, playing, listen,
+             voicePrefs, voiceList, asrModel, ttsModel, ttsDefault, dictation, toggleDictation, playing, listen,
              canDictate: !!(navigator.mediaDevices && window.MediaRecorder),
              askReady, togglePick, answerAsk, skipAsk, applyWrite, refuseWrite, writeDiff, diffCounts,
              download, fileOf: (f) => ({ name: f.name, content: f.content }),
@@ -1004,7 +1009,7 @@ export const ChatPanel = {
               <select v-model="voicePrefs.asr"><option value="">{{ asrModel }} (défaut)</option>
                 <option v-for="m in voiceList.asr" :key="m" :value="m">{{ m }}</option></select></label>
             <label v-if="voiceList.tts.length">lecture
-              <select v-model="voicePrefs.tts"><option value="">{{ voiceList.tts[0] }} (défaut)</option>
+              <select v-model="voicePrefs.tts"><option value="">{{ ttsDefault }} (défaut)</option>
                 <option v-for="m in voiceList.tts" :key="m" :value="m">{{ m }}</option></select></label>
             <label v-if="voiceList.voices.length">voix
               <select v-model="voicePrefs.voice">
