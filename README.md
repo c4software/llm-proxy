@@ -595,8 +595,8 @@ rôle.
 
 **Les clés** : chacun crée les siennes dans *Configuration → Clés*
 (`POST /ui/keys`), une par client, avec un libellé. Ce sont des
-**uuid4**, montrés **une seule fois** à la création (avec la ligne
-`export`) : le proxy n'en garde que le condensé (le même que pour les
+**uuid4**, montrés **une seule fois** à la création (avec la
+commande qui la pose dans `~/.config/llm-proxy.key`) : le proxy n'en garde que le condensé (le même que pour les
 clés du TOML) et les 8 premiers caractères, pour les reconnaître. Une
 clé se révoque (`DELETE /ui/keys/<id>`) ; elle reste listée, ses
 statistiques aussi. Elles valent partout où vaut une clé du proxy
@@ -784,9 +784,15 @@ navigateur — rien n'est écrit sur le proxy.
   [serveur MCP](#serveur-mcp--mcp). La page produit les fichiers à poser,
   avec leur chemin (`~/.claude/settings.json`, `~/.codex/config.toml`,
   `~/.pi/agent/mcp.json`…), un bouton *Copier* et un bouton
-  *Télécharger*, et les étapes. **La clé n'y figure jamais** : elle passe
-  par une variable d'environnement (`LLM_PROXY_API_KEY` par défaut),
-  dont la page donne la ligne `export`. Elle prévient si la surface que
+  *Télécharger*, et les étapes. **La clé n'y figure jamais** : elle vit
+  dans `~/.config/llm-proxy.key` (mode 600, posée une fois par une saisie
+  masquée, hors de l'historique du shell), que le profil du shell exporte
+  dans une variable (`LLM_PROXY_API_KEY` par défaut). Codex reçoit en plus
+  la fenêtre de contexte du modèle (`model_context_window`, d'après le
+  catalogue), ses outils MCP approuvés d'office avec un délai de 600 s, et
+  l'avertissement sur son démon `codex app-server`, qui garde la clé de
+  son lancement ; pi et omp, chacun leur `mcp.json` (délai en secondes
+  pour pi, en millisecondes pour omp). Elle prévient si la surface que
   vise le client, ou le serveur MCP, est désactivée.
 - **Clés** et **Comptes** : avec les [comptes OIDC](#comptes-oidc)
   seulement — créer et révoquer ses clés, et pour un admin, les comptes

@@ -484,6 +484,9 @@ async def ui_models(request: Request):
             b.model_types.get(plain, "text-generation") if b else "")
         if every or kind in CHAT_TYPES or (images and kind == IMAGE_TYPE):
             data.append({"id": entry["id"], "type": kind,
+                         # La fenêtre de contexte, si le backend la dit :
+                         # le générateur la donne à Codex, qui l'ignore.
+                         "context": entry.get("max_context_length"),
                          "vision": kind == "image-text-to-text",
                          "image": kind == IMAGE_TYPE})
     return {"object": "list", "data": data}

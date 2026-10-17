@@ -200,7 +200,8 @@ def test_models_for_chat_or_the_whole_catalogue(ui, monkeypatch):
     """/ui/models : les modèles de conversation ; `?all=1` : tout le
     catalogue, chacun avec son type (le générateur de configuration)."""
     async def merged(request):
-        return [{"id": "essai/qwen"}, {"id": "essai/whisper"},
+        return [{"id": "essai/qwen", "max_context_length": 262144},
+                {"id": "essai/whisper"},
                 # Le type du catalogue fait foi : un modèle d'image n'est
                 # pas proposé au chat.
                 {"id": "essai/Qwen-Image-2.1", "type": "text-to-image"}]
@@ -215,6 +216,9 @@ def test_models_for_chat_or_the_whole_catalogue(ui, monkeypatch):
     assert ids("?images=1") == ["essai/qwen", "essai/Qwen-Image-2.1"]
     assert [m["image"] for m in ui.client.get("/ui/models?images=1")
             .json()["data"]] == [False, True]
+    # La fenêtre de contexte, quand le catalogue la dit (Codex la reçoit).
+    assert [m["context"] for m in ui.client.get("/ui/models?all=1")
+            .json()["data"]] == [262144, None, None]
 
 
 def test_chat_generates_an_image_with_an_image_model(ui, monkeypatch):

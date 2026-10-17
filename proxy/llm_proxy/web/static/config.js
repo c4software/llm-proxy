@@ -7,9 +7,9 @@
   curl, Open WebUI, tout client OpenAI), le modèle du catalogue
   (/ui/models), et s'il prend aussi les outils du proxy par son serveur
   MCP (/mcp). La page produit les fichiers à poser, avec leur chemin, et
-  les étapes. La CLÉ n'y figure jamais : elle passe par une variable
-  d'environnement (LLM_PROXY_API_KEY par défaut), dont la page donne la
-  ligne `export`.
+  les étapes. La CLÉ n'y figure jamais : elle vit dans un fichier à part
+  (~/.config/llm-proxy.key, mode 600, posé une fois), que le profil du
+  shell exporte dans une variable (LLM_PROXY_API_KEY par défaut).
 
   PROXY. Un formulaire guidé pour data/config.toml : accès, backends,
   surfaces, outils, chat. Prérempli d'après /healthz (l'état public du
@@ -25,6 +25,11 @@
   comptes (/ui/users) : accepter un compte en attente, bloquer, promouvoir.
   Le générateur « Proxy » est alors réservé aux admins.
 */
+// Où vit la clé du proxy sur le poste, et comment l'y poser sans
+// qu'elle passe par l'historique du shell.
+const KEYFILE = "~/.config/llm-proxy.key";
+const KEY_SETUP = `(umask 077; read -rsp "Clé du proxy : " k && echo && printf '%s' "$k" > ${KEYFILE})\n`;
+
 window.ConfigPanel = {
   props: {
     session: { type: Object, required: true },
@@ -204,10 +209,14 @@ window.ConfigPanel = {
 
     // ── catalogue ───────────────────────────────────────────────────────
     const models = ref([]);
+    const contexts = ref({});         // id → fenêtre de contexte, si connue
     async function loadModels() {
       try {
         const r = await fetch("/ui/models", { headers: { accept: "application/json" } });
-        if (r.ok) models.value = ((await r.json()).data || []).map((m) => m.id).sort();
+        if (!r.ok) return;
+        const data = (await r.json()).data || [];
+        models.value = data.map((m) => m.id).sort();
+        contexts.value = Object.fromEntries(data.filter((m) => m.context).map((m) => [m.id, m.context]));
       } catch { /* hors ligne : saisie libre */ }
     }
     // Le catalogue complet (images, voix, OCR compris) pour les outils
@@ -253,8 +262,12 @@ window.ConfigPanel = {
     const clientOut = computed(() => {
       const model = form.model || "<backend>/<modèle>";
       const env = envName(form.env) || "LLM_PROXY_API_KEY";
-      const keyValue = auth.value ? "<votre clé du proxy>" : "unused";
-      const exportLine = `export ${env}=${keyValue}`;
+      // La clé : dans KEYFILE (mode 600, hors de tout dépôt de dotfiles),
+      // lue par le profil du shell. Proxy ouvert : «unused» suffit (pi et
+      // Codex refusent une variable vide).
+      const exportLine = auth.value
+        ? `export ${env}="$(cat ${KEYFILE} 2>/dev/null || echo unused)"`
+        : `export ${env}=unused`;
       const files = [];
       const steps = [];
       const warn = [];
@@ -264,6 +277,10 @@ window.ConfigPanel = {
           + "les outils ne seront pas joignables.");
       }
       const shell = (name, content, note) => files.push({ name, content, note, lang: "sh" });
+      if (auth.value && form.client !== "openwebui") {
+        shell("La clé, une fois", KEY_SETUP,
+          "Saisie masquée, hors de l'historique du shell ; une clé se crée dans l'onglet Clés.");
+      }
 
       switch (form.client) {
         case "claude": {
@@ -298,33 +315,45 @@ window.ConfigPanel = {
         case "codex": {
           if (!responsesOn.value) warn.push("La surface Responses est désactivée sur ce proxy "
             + "([responses] enabled = false) : Codex ne pourra pas s'y connecter.");
-          let toml = `model = ${q(model)}\nmodel_provider = "llm-proxy"\n\n`
+          const ctx = contexts.value[form.model];
+          let toml = `model = ${q(model)}\n`
+            + (ctx ? `# Contexte du modèle (catalogue du proxy) : Codex ne le connaît pas.\n`
+              + `model_context_window = ${ctx}\n` : "")
+            + `model_provider = "llm-proxy"\n\n`
             + `[model_providers.llm-proxy]\nname = "llm-proxy"\nbase_url = ${q(origin + "/v1")}\n`
             + `wire_api = "responses"\n` + (auth.value ? `env_key = ${q(env)}\n` : "");
           if (mcp) {
             toml += `\n[mcp_servers.llmproxy]\nurl = ${q(origin + "/mcp")}\n`
-              + (auth.value ? `bearer_token_env_var = ${q(env)}\n` : "");
+              + (auth.value ? `bearer_token_env_var = ${q(env)}\n` : "")
+              + `# Exécutés sur le proxy, pas sur le poste ; \`codex exec\` ne peut rien\n`
+              + `# demander et refuserait chaque appel.\ndefault_tools_approval_mode = "approve"\n`
+              + `# Transcription, images : jusqu'à 7 min côté proxy.\ntool_timeout_sec = 600\n`;
           }
           files.push({ name: "~/.codex/config.toml", download: "config.toml", lang: "toml",
             note: "À fusionner si le fichier existe déjà.", content: toml });
           if (auth.value) shell("~/.bashrc (ou ~/.zshrc)", exportLine + "\n", "La clé, par l'environnement.");
-          steps.push("Poser config.toml" + (auth.value ? ", exporter la clé" : "") + ", lancer `codex`.");
+          steps.push("Poser config.toml" + (auth.value ? ", exporter la clé, rouvrir le terminal" : "")
+            + ", lancer `codex`.");
+          if (auth.value) steps.push("Codex interactif passe par un démon (`codex app-server`) qui garde "
+            + "l'environnement de son lancement : après un changement de clé, le relancer — "
+            + "`pkill -f 'codex app-server'`, puis `codex`. Sinon : 401 malgré la bonne clé.");
           if (!mcp) steps.push("La recherche web de Codex passe déjà par le proxy, sans MCP.");
           break;
         }
         case "pi": {
-          const json = JSON.stringify({ mcpServers: { llmproxy: {
+          // Le délai des outils longs du proxy (jusqu'à 7 min) : pi le compte
+          // en secondes, omp en millisecondes (30 s par défaut).
+          const server = (extra) => JSON.stringify({ mcpServers: { llmproxy: {
             url: origin + "/mcp",
-            headers: { Authorization: "Bearer ${" + env + "}" },
-            exposure: "direct",
+            headers: { Authorization: "Bearer ${" + env + "}" }, ...extra,
           } } }, null, 2) + "\n";
           if (mcp) {
             files.push({ name: "~/.pi/agent/mcp.json", download: "mcp.json", lang: "json",
-              note: "pi exige \"exposure\": \"direct\" pour déclarer les outils au modèle.",
-              content: json });
+              note: "pi exige \"exposure\": \"direct\" pour déclarer les outils au modèle ; timeout en secondes.",
+              content: server({ exposure: "direct", timeout: 600 }) });
             files.push({ name: "~/.omp/agent/mcp.json", download: "mcp.json", lang: "json",
-              note: "Le même fichier pour omp (il ignore exposure). Désactiver son web_search "
-                + "intégré pour que la recherche soit celle du proxy.", content: json });
+              note: "omp : timeout en millisecondes. Désactiver son web_search "
+                + "intégré pour que la recherche soit celle du proxy.", content: server({ timeout: 600000 }) });
           }
           shell("~/.bashrc (ou ~/.zshrc)",
             `export LLM_PROXY_URL=${origin}\n${exportLine}\n`
@@ -574,7 +603,7 @@ window.ConfigPanel = {
       };
     });
 
-    return { part, parts, setPart, account, isAdmin, keys, tomlKeys, allKeys,
+    return { KEYFILE, part, parts, setPart, account, isAdmin, keys, tomlKeys, allKeys,
              keyLabel, fresh, keyError, armed, createKey, revokeKey, loadKeys,
              users, userError, bindToml, ROLES, fair, num, shareMode,
              customShare, pickShare, typeShare, roleLabel, pendingCount, setRole, when,
@@ -622,7 +651,9 @@ window.ConfigPanel = {
           <code>{{ fresh.key }}</code>
           <button type="button" class="btn ghost" @click="copy({ name: fresh.id, content: fresh.key })">{{ copied === fresh.id ? "Copié" : "Copier" }}</button>
         </div>
-        <pre>export {{ form.env || "LLM_PROXY_API_KEY" }}={{ fresh.key }}</pre>
+        <pre>(umask 077; printf '%s' '{{ fresh.key }}' > {{ KEYFILE }})</pre>
+        <p class="note">Le profil du shell la lit (onglet Clients) :</p>
+        <pre>export {{ form.env || "LLM_PROXY_API_KEY" }}="$(cat {{ KEYFILE }} 2>/dev/null || echo unused)"</pre>
       </section>
       <section class="panel">
         <div class="panel-head"><h2>{{ allKeys ? "Toutes les clés" : "Vos clés" }}</h2>
