@@ -10,8 +10,11 @@ Organisation du paquet :
   stats.py     compteurs persistés (SQLite) et Usage API OpenAI
   anthropic_api.py  surface Anthropic (Claude Code) : traduction
                Messages ↔ chat/completions, flux SSE compris
-  app.py       l'application FastAPI : démarrage, assemblage des routes,
-               /healthz, /v1/tools, /mcp, le catch-all
+  app.py       l'application FastAPI : assemblage des routes et middlewares
+  startup.py   démarrage et arrêt (lifespan), ce qu'il dit au journal
+  health.py    /healthz, /ui/health
+  tool_routes.py  outils hébergés exposés : /v1/tools, /mcp, fichiers rendus
+  relay_routes.py /v1/audio/voices et le catch-all
   auth.py      clés, session de la page, middleware d'auth
   relaying.py  le relais vers les backends (Call, gate, forward)
   catalog.py   le catalogue des modèles (/v1/models, types)

@@ -45,7 +45,7 @@ puis envoyé. ffmpeg décode alors des octets HOSTILES, venus du web :
 Ce que cela ne fait PAS : isoler ffmpeg du proxy. Une faille de décodeur
 s'exécuterait avec les droits du proxy — d'où `convert = false` pour qui
 préfère refuser.
-ffmpeg absent (lancement hors conteneur) : le proxy démarre, app.py le
+ffmpeg absent (lancement hors conteneur) : le proxy démarre, startup.py le
 dit, et un format à convertir est refusé comme sans conversion.
 """
 
@@ -142,7 +142,7 @@ RESPONSE_FORMAT = config.text("tools.transcribe.response_format",
 # Convertir en WAV ce que `formats` ne liste pas (tête de module).
 CONVERT = config.flag("tools.transcribe.convert", True)
 # Le binaire : un nom cherché dans PATH, ou un chemin. Cherché UNE fois, à
-# l'import : «» = pas de conversion, dit au démarrage (app.py). Sans objet
+# l'import : «» = pas de conversion, dit au démarrage (startup.py). Sans objet
 # pour un backend qui ne lit pas le WAV : c'est en WAV qu'on convertit.
 FFMPEG = (shutil.which(config.text("tools.transcribe.ffmpeg", "ffmpeg")
                        .strip() or "ffmpeg") or "") \

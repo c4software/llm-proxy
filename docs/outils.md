@@ -841,7 +841,7 @@ transport HTTP+SSE (2024-11-05), la reprise d'un flux coupé
 l'élicitation et le sampling, les ressources et les prompts.
 
 **Découverte.** Au démarrage de l'application (`mcp.start()` dans le
-`lifespan` d'`app.py`, attendu `startup_wait` secondes au plus ;
+`lifespan` de `startup.py`, attendu `startup_wait` secondes au plus ;
 `mcp.stop()` à l'arrêt), puis toutes les `refresh` secondes, et sans attendre
 quand le serveur signale un changement dans un flux de réponse ou refuse
 un appel pour outil ou paramètres inconnus. Un serveur éteint ne bloque

@@ -114,7 +114,7 @@ def test_startup_reads_the_last_hour_back(tmp_path, monkeypatch, proxy):
     qu'une heure, ni un backend inconnu."""
     import sqlite3
 
-    from llm_proxy import accounts, app, oidc, stats
+    from llm_proxy import accounts, oidc, startup, stats
     monkeypatch.setattr(stats, "DB_PATH", str(tmp_path / "stats.db"))
     monkeypatch.setattr(accounts, "DB_PATH", str(tmp_path / "accounts.db"))
     monkeypatch.setattr(accounts, "_cache", {})
@@ -140,5 +140,5 @@ def test_startup_reads_the_last_hour_back(tmp_path, monkeypatch, proxy):
                                     200, 1.0, tokens, 0, 1, 0, 0, key))
     conn.commit()
     conn.close()
-    assert app.seed_fair_share() == 3
+    assert startup.seed_fair_share() == 3
     assert fairshare.used(page) == 120 and fairshare.used(toml) == 7

@@ -404,7 +404,7 @@ window.ConfigPanel = {
     ];
     const px = reactive({
       keys: [],                  // [{ name, value }] : name = variable d'env
-      backends: [],              // [{ name, url, key, quotas, images, toolChoice, maxTokens }]
+      backends: [],              // [{ name, url, key, quotas, images, toolChoice, maxTokens, fairShare }]
       anthropic: true, defaultModel: "", responses: true,
       hostedTools: true, always: "", alwaysExcept: "",
       tools: Object.fromEntries(TOOL_LIST.map((t) => [t.id, false])),
@@ -412,6 +412,12 @@ window.ConfigPanel = {
       searxng: "http://searxng:8080", executor: "http://executor:8080",
       maxCalls: 16, mcpServer: true, uiChat: false, publicUrl: "",
       retention: 90, logLevel: "INFO",
+      // Partage équitable : part par défaut (tokens / heure, 0 = aucune
+      // limite) ; routes hors quotas et hors partage ([proxy].exempt_paths).
+      fairShare: 0, exempt: "/embeddings, /rerank, /audio/transcriptions, /ocr",
+      // Comptes ([oidc]) : client_id et client_secret vont dans le .env.
+      oidc: { on: false, issuer: "", redirectUri: "", newAccounts: "pending",
+              sessionDays: 7, maxKeys: 50, label: "Se connecter" },
     });
     const prefilled = ref(false);
 
@@ -422,8 +428,17 @@ window.ConfigPanel = {
       px.backends = Object.entries(h.backends || {}).map(([name, b]) => ({
         name, url: b.url || "", key: !!b.key_injection, quotas: !!b.quotas,
         images: !!b.images, toolChoice: typeof b.tool_choice === "string" ? b.tool_choice : "",
-        maxTokens: b.max_tokens || "",
+        maxTokens: b.max_tokens || "", fairShare: b.fair_share !== false,
       }));
+      px.fairShare = (h.fair_share || {}).tokens_per_hour || 0;
+      if (h.exempt_paths) px.exempt = h.exempt_paths.join(", ");
+      const o = h.oidc || {};
+      if (o.issuer !== undefined) {
+        Object.assign(px.oidc, { on: !!o.enabled, issuer: o.issuer || "",
+          redirectUri: o.redirect_uri || "", newAccounts: o.new_accounts || "pending",
+          sessionDays: o.session_days || 7, maxKeys: o.max_keys_per_account || 50,
+          label: o.label || "Se connecter" });
+      }
       px.anthropic = !!(h.anthropic || {}).enabled;
       px.defaultModel = ((h.anthropic || {}).model_map || {}).default || "";
       px.responses = !!(h.responses || {}).enabled;
@@ -437,7 +452,7 @@ window.ConfigPanel = {
       px.mcpServer = !!(h.mcp_server || {}).enabled;
       px.uiChat = !!(props.session.chat || {}).enabled;
       if ((h.files || {}).public_url) px.publicUrl = origin;
-      if (!px.keys.length && h.auth_required) {
+      if (!px.keys.length && h.auth_required && !px.oidc.on) {
         px.keys = [{ name: "PROXY_API_KEY", value: "" }];
       }
       prefilled.value = true;
@@ -454,7 +469,7 @@ window.ConfigPanel = {
     }
 
     const addBackend = () => px.backends.push({ name: "", url: "http://", key: false,
-      quotas: false, images: false, toolChoice: "", maxTokens: "" });
+      quotas: false, images: false, toolChoice: "", maxTokens: "", fairShare: true });
     const addKey = () => px.keys.push({ name: "PROXY_API_KEY_" + (px.keys.length + 1), value: randomKey() });
     const csv = (s) => String(s || "").split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
 
@@ -467,13 +482,35 @@ window.ConfigPanel = {
              "# Seuls ces réglages sont écrits ; tout autre garde son défaut",
              "# (voir data/config.example.toml).", "");
       L.push("[proxy]", `log_level = ${q(px.logLevel)}`,
-             `api_keys = ${list(keyVars.map((v) => "${" + v + "}"))}`, "");
+             `api_keys = ${list(keyVars.map((v) => "${" + v + "}"))}`,
+             `exempt_paths = ${list(csv(px.exempt))}`, "");
       for (const k of px.keys) {
         const v = envName(k.name);
         if (v) env.push(`${v}=${k.value || ""}`);
       }
-      if (!keyVars.length) warn.push("Aucune clé : le proxy est ouvert à quiconque l'atteint "
+      const oidcOn = px.oidc.on && !!px.oidc.issuer.trim();
+      if (!keyVars.length && !oidcOn) warn.push("Aucune clé : le proxy est ouvert à quiconque l'atteint "
         + (px.uiChat ? "— chat de /ui compris, qui dépense des tokens." : "."));
+
+      const share = Math.max(0, Math.round(Number(px.fairShare) || 0));
+      L.push("[fair_share]", `tokens_per_hour = ${share}`, "");
+      if (share && !keyVars.length && !oidcOn) warn.push("Partage équitable sans effet : proxy ouvert, personne n'est compté.");
+
+      if (px.oidc.on) {
+        const o = px.oidc;
+        L.push("[oidc]", `issuer = ${q(o.issuer.trim().replace(/\/+$/, ""))}`,
+               'client_id = "${OIDC_CLIENT_ID}"', 'client_secret = "${OIDC_CLIENT_SECRET}"');
+        if (o.redirectUri.trim()) L.push(`redirect_uri = ${q(o.redirectUri.trim())}`);
+        L.push(`new_accounts = ${q(o.newAccounts)}`,
+               `session_days = ${Math.max(1, Number(o.sessionDays) || 7)}`,
+               `max_keys_per_account = ${Math.max(1, Number(o.maxKeys) || 50)}`,
+               `label = ${q(o.label || "Se connecter")}`, "");
+        env.push("OIDC_CLIENT_ID=", "OIDC_CLIENT_SECRET=");
+        if (!o.issuer.trim()) warn.push("Comptes OIDC : l'émetteur (issuer) est requis.");
+        if (!o.redirectUri.trim() && !px.publicUrl.trim()) warn.push("Comptes OIDC : sans adresse de retour "
+          + "ni adresse publique, elle est déduite de la requête — en http:// derrière un reverse proxy, "
+          + "que le fournisseur refuse.");
+      }
 
       L.push("[anthropic]", `enabled = ${px.anthropic}`);
       if (px.anthropic && px.defaultModel) L.push("", "[anthropic.model_map]", `default = ${q(px.defaultModel)}`);
@@ -518,6 +555,7 @@ window.ConfigPanel = {
         if (b.images) L.push("images = true");
         if (b.toolChoice) L.push(`force_tool_choice = ${q(b.toolChoice)}`);
         if (Number(b.maxTokens) > 0) L.push(`max_tokens = ${Number(b.maxTokens)}`);
+        if (!b.fairShare) L.push("fair_share = false");
         L.push("");
       }
       if (!names.size) warn.push("Aucun backend : le proxy n'aurait rien à servir.");
@@ -745,9 +783,40 @@ window.ConfigPanel = {
                     <option value="required">required</option></select></span>
                 <span class="check">max_tokens <input v-model="b.maxTokens" class="num" inputmode="numeric"
                   aria-label="max_tokens" placeholder="—"></span>
+                <label class="check" title="Décoché : ses requêtes ne comptent pas dans la part des clients (fair_share = false)">
+                  <input type="checkbox" v-model="b.fairShare"> partage équitable</label>
               </div>
             </div>
             <button type="button" class="btn ghost" @click="addBackend">Ajouter un backend</button>
+          </fieldset>
+          <fieldset><legend>Partage équitable</legend>
+            <p class="note">Une part de tokens par client sur une heure glissante : au-delà, ses requêtes
+              attendent, rien n'est refusé. La part de chaque compte se règle dans Comptes.</p>
+            <label class="field"><span>Part par défaut (tokens / heure, 0 = aucune limite)</span>
+              <input v-model.number="px.fairShare" type="number" min="0" step="10000" class="num"></label>
+            <label class="field"><span>Routes exemptées (quotas et partage)</span>
+              <input v-model="px.exempt" placeholder="/embeddings, /ocr" spellcheck="false" class="mono"></label>
+          </fieldset>
+          <fieldset><legend>Comptes (OIDC)</legend>
+            <label class="check"><input type="checkbox" v-model="px.oidc.on"> connexion par un fournisseur OIDC</label>
+            <template v-if="px.oidc.on">
+              <p class="note">client_id et client_secret vont dans le .env. Chez le fournisseur : un client
+                confidentiel, retour sur &lt;adresse publique&gt;/ui/auth/callback.</p>
+              <label class="field"><span>Émetteur (issuer)</span>
+                <input v-model="px.oidc.issuer" placeholder="https://auth.example.org/realms/x" spellcheck="false" class="mono"></label>
+              <label class="field"><span>Adresse de retour (vide : adresse publique + /ui/auth/callback)</span>
+                <input v-model="px.oidc.redirectUri" placeholder="https://llm.example.org/ui/auth/callback" spellcheck="false" class="mono"></label>
+              <label class="field"><span>Nouveaux comptes</span>
+                <select v-model="px.oidc.newAccounts">
+                  <option value="pending">en attente d'un admin</option>
+                  <option value="user">actifs d'emblée</option></select></label>
+              <label class="field"><span>Durée d'une session (jours)</span>
+                <input v-model.number="px.oidc.sessionDays" type="number" min="1" class="num"></label>
+              <label class="field"><span>Clés actives par compte</span>
+                <input v-model.number="px.oidc.maxKeys" type="number" min="1" class="num"></label>
+              <label class="field"><span>Libellé du bouton</span>
+                <input v-model="px.oidc.label" spellcheck="false"></label>
+            </template>
           </fieldset>
           <fieldset><legend>Clients</legend>
             <label class="check"><input type="checkbox" v-model="px.anthropic"> surface Anthropic (Claude Code)</label>

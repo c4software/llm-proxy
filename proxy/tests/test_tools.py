@@ -1218,7 +1218,7 @@ def test_type_d_un_modele_sans_type_au_catalogue():
          "image-text-to-text"),
     ]:
         assert catalog._model_type(model, b) == attendu, model["id"]
-    assert set(A.CHAT_TYPES) == {"text-generation", "image-text-to-text"}
+    assert set(catalog.CHAT_TYPES) == {"text-generation", "image-text-to-text"}
 
 
 def test_fetch_action_distingue_les_morceaux_d_une_page_longue(monkeypatch):

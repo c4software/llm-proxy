@@ -19,7 +19,7 @@ from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, RESULTS, SEARCH_DOC,
                    failed, feed, hosted_tools, sse, stream, tool_call, usage)
 from fakes import sse_events as events
 from llm_proxy import anthropic_api as A
-from llm_proxy import app
+from llm_proxy import anthropic_api, backends, stats
 from llm_proxy import tools
 from llm_proxy.tools import web_fetch, web_search
 
@@ -1307,7 +1307,7 @@ def test_app_search_then_fetch_each_under_its_own_max_uses(proxy, monkeypatch):
         return PAGE_READ
 
     proxy.hosted.by_name["web_fetch"].run = read
-    monkeypatch.setattr(app.stats, "record_tool", lambda *a: lines.append(a))
+    monkeypatch.setattr(stats, "record_tool", lambda *a: lines.append(a))
     call = lambda name, args: FakeUpstream(chat_doc({"content": None, "tool_calls": [
         {"id": "c", "function": {"name": name, "arguments": args}}]},
         "tool_calls", 10, 1))
@@ -1390,7 +1390,7 @@ def test_app_pings_while_the_search_runs(proxy, monkeypatch):
         return SEARCHED
 
     proxy.hosted.by_name["web_search"].run = slow
-    monkeypatch.setattr(app.anthropic_api, "PING_INTERVAL", 0.02)
+    monkeypatch.setattr(anthropic_api, "PING_INTERVAL", 0.02)
     searching(proxy)
     kinds = [e for e, _ in events(post(proxy).content)]
     assert "ping" in kinds and kinds[-1] == "message_stop"
@@ -1412,7 +1412,7 @@ def test_app_behind_quotas_goes_through_the_pinged_stream(proxy, monkeypatch):
         async def acquire(self, cost, gone=None):
             return 0.0
 
-    backend = app.BACKENDS["essai"]
+    backend = backends.BACKENDS["essai"]
     monkeypatch.setattr(backend, "quotas", True)
     monkeypatch.setattr(backend, "quota_state", types.SimpleNamespace(
         get_limiter=lambda payload: Limiter()), raising=False)

@@ -225,7 +225,11 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `docker-compose.override.example.yml` | Le modèle de `docker-compose.override.yml` (non versionné, fusionné par Docker Compose) : l'exécuteur de code et son réseau interne, les adaptations à la machine — voir [Le compose de base et son override](#le-compose-de-base-et-son-override) |
 | `docs/outils.md` | Le contrat des outils hébergés, membre par membre, et comment en écrire un |
 | `proxy/llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
-| `proxy/llm_proxy/app.py` | L'application FastAPI : démarrage, assemblage des routes et des middlewares, `/healthz`, `/v1/tools`, `/mcp`, le catch-all |
+| `proxy/llm_proxy/app.py` | L'application FastAPI : l'assemblage des routes et des middlewares, le catch-all inclus en dernier |
+| `proxy/llm_proxy/startup.py` | Le démarrage et l'arrêt (`lifespan`) : statistiques, clients upstream, partage équitable relu, serveurs MCP, ce que la configuration dit au journal, limites des backends à quotas |
+| `proxy/llm_proxy/health.py` | `/healthz` et `/ui/health` : l'état détaillé du déploiement, dont se préremplit le générateur de la page |
+| `proxy/llm_proxy/tool_routes.py` | Les outils hébergés exposés tels quels : `/v1/tools`, `/mcp`, les fichiers rendus |
+| `proxy/llm_proxy/relay_routes.py` | `GET /v1/audio/voices` et le catch-all (`forward_post_paths`, `404` local sinon) |
 | `proxy/llm_proxy/auth.py` | Qui parle au proxy : clés (TOML, comptes), session signée de la page, middleware d'auth |
 | `proxy/llm_proxy/relaying.py` | Le relais vers les backends : `Call` (la ligne de stats), la porte de quota, `forward` |
 | `proxy/llm_proxy/catalog.py` | Le catalogue des modèles : `/v1/models` fusionné et préfixé, type et contexte de chaque modèle |
@@ -788,8 +792,11 @@ navigateur — rien n'est écrit sur le proxy.
   seulement — créer et révoquer ses clés, et pour un admin, les comptes
   et les clés de tous.
 - **Proxy** : un formulaire guidé pour `data/config.toml` — clés (une par
-  personne), backends, surfaces, outils hébergés et leur limite, chat,
-  adresse publique, rétention. Prérempli d'après `GET /ui/health` (le
+  personne), backends (et leur part au [partage équitable](#partage-équitable)),
+  surfaces, outils hébergés et leur limite, chat, adresse publique,
+  rétention, partage équitable (part par défaut, routes exemptées) et
+  [comptes OIDC](#comptes-oidc) (`client_id` et `client_secret` dans le
+  `.env`). Prérempli d'après `GET /ui/health` (le
   `/healthz` détaillé, sous la session de la page), l'état du
   déploiement (jamais un secret ; le nombre de clés n'y est
   pas, la liste est à compléter) ; *Réinitialiser* y ramène le

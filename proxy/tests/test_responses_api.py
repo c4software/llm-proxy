@@ -15,10 +15,9 @@ import pytest
 from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
                    SEARCH_TURN, SEARCHED, FakeUpstream, chat_doc, chunk, feed,
                    hosted_tools, sse, sse_events, stream, tool_call, usage)
-from llm_proxy import app as A
 from llm_proxy import auth, relaying, tool_loop
 from llm_proxy import responses_api as R
-from llm_proxy import tools
+from llm_proxy import anthropic_api, backends, tools
 from llm_proxy.tools import web_fetch, web_search
 
 
@@ -1039,14 +1038,14 @@ def test_app_loop_client_gone_closes_everything(proxy, monkeypatch):
             raise
 
     proxy.hosted.by_name["web_search"].run = endless
-    monkeypatch.setattr(A.anthropic_api, "PING_INTERVAL", 0.01)
+    monkeypatch.setattr(anthropic_api, "PING_INTERVAL", 0.01)
     request = codex_request(model="essai/qwen")
 
     async def hang_up(marker: bytes):
         up = FakeUpstream(stream(*SEARCH_TURN))
         _, ctx = R.to_chat(request, hosted=proxy.hosted)
         robinet = R.Translator(200, "text/event-stream", ctx)
-        call = relaying.Call(A.BACKENDS["essai"], "essai/qwen", "/v1/responses")
+        call = relaying.Call(backends.BACKENDS["essai"], "essai/qwen", "/v1/responses")
         loop = tool_loop.hosted_stream(call, None, request, False, proxy.hosted,
                                robinet, up, 0)
         async for out in loop:

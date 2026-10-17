@@ -43,7 +43,7 @@ def proxy(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fakes import hosted_tools
-    from llm_proxy import app
+    from llm_proxy import anthropic_api, app, backends, responses_api, stats, tools
     from llm_proxy import auth, relaying
     from llm_proxy.backends import Backend
 
@@ -55,13 +55,13 @@ def proxy(monkeypatch):
         reply = env.replies.pop(0)
         return call.error(*reply) if isinstance(reply, tuple) else reply
 
-    monkeypatch.setitem(app.BACKENDS, "essai",
+    monkeypatch.setitem(backends.BACKENDS, "essai",
                         Backend("essai", {"url": "http://backend.invalid"}))
     monkeypatch.setattr(auth, "PROXY_API_KEYS", [])
-    monkeypatch.setattr(app.anthropic_api, "ENABLED", True)
-    monkeypatch.setattr(app.responses_api, "ENABLED", True)
-    monkeypatch.setattr(app.tools, "Hosted", lambda: env.hosted)
+    monkeypatch.setattr(anthropic_api, "ENABLED", True)
+    monkeypatch.setattr(responses_api, "ENABLED", True)
+    monkeypatch.setattr(tools, "Hosted", lambda: env.hosted)
     monkeypatch.setattr(relaying, "send_upstream", send_upstream)
-    monkeypatch.setattr(app.stats, "record", lambda *a: env.lines.append(a))
+    monkeypatch.setattr(stats, "record", lambda *a: env.lines.append(a))
     env.client = TestClient(app.app)
     return env

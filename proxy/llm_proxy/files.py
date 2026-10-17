@@ -40,7 +40,7 @@ tableau de bord — et rien ne doit s'y exécuter :
   * le nom servi est refait (`safe_name`) : ni chemin, ni caractère de
     contrôle, ni guillemet dans l'en-tête.
 
-Ce module ne connaît ni FastAPI ni les outils : app.py pose la route,
+Ce module ne connaît ni FastAPI ni les outils : tool_routes.py pose la route,
 une surface range ce qu'un Result porte (`keep`).
 """
 

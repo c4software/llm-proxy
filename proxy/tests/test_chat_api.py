@@ -10,10 +10,9 @@ from fakes import (
     ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, SEARCH_DOC, SEARCH_TURN,
     FakeUpstream, chat_doc, chunk, stream, tool_call, usage,
 )
-from llm_proxy import app as A
 from llm_proxy import auth, relaying, tool_loop
 from llm_proxy import chat_api as C
-from llm_proxy import tools
+from llm_proxy import backends, stats, tools
 from llm_proxy.tools import web_search
 
 WEB = {"type": "web_search"}
@@ -45,7 +44,7 @@ def chat(proxy, monkeypatch):
     monkeypatch.setattr(relaying, "send_upstream", send_upstream)
     monkeypatch.setattr(C, "ENABLED", True)
     monkeypatch.setattr(C, "MEMORY", C.Memory(8, 60, 100_000))
-    monkeypatch.setattr(A.stats, "record_tool",
+    monkeypatch.setattr(stats, "record_tool",
                         lambda *a: proxy.tool_lines.append(a))
     return proxy
 
@@ -617,7 +616,7 @@ def test_always_presents_the_hosted_tools_to_a_request_that_declares_nothing(
     assert "tool_calls" not in message and "stream_options" not in chat.sent[-1]
 
     # /healthz dit ce qui est présenté à l'instant : les outils ACTIFS.
-    monkeypatch.setattr(A.tools, "enabled", lambda: [web_search.TOOL])
+    monkeypatch.setattr(tools, "enabled", lambda: [web_search.TOOL])
     assert chat.client.get("/healthz").json()["chat"]["always"] == ["web_search"]
 
 
@@ -627,7 +626,7 @@ def test_always_leaves_these_requests_untouched(chat, monkeypatch):
     appel `web_search` du modèle est celui du client."""
     upstream = stream(*SEARCH_TURN)
     always = ["web_search", "web_fetch"]
-    backend = A.BACKENDS["essai"]
+    backend = backends.BACKENDS["essai"]
     for case, extra, setup in (
         ("[chat].always vide (le défaut)", {},
          lambda: monkeypatch.setattr(C, "ALWAYS", [])),

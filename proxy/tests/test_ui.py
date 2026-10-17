@@ -9,10 +9,9 @@ import json
 import pytest
 
 from fakes import ANSWER_TURN, SEARCH_TURN, FakeUpstream, stream
-from llm_proxy import app as A
 from llm_proxy import auth, catalog, relaying, ui_routes, usage_api
 from llm_proxy import chat_api as C
-from llm_proxy import stats, tools
+from llm_proxy import backends, oidc, stats, tools
 
 KEY = "sk-alice"
 JSON = {"content-type": "application/json"}
@@ -28,9 +27,9 @@ def ui(proxy, monkeypatch):
     monkeypatch.setattr(C, "ENABLED", True)
     monkeypatch.setattr(C, "MEMORY", C.Memory(8, 60, 100_000))
     proxy.clients = []
-    monkeypatch.setattr(A.stats, "record",
+    monkeypatch.setattr(stats, "record",
                         lambda *a: proxy.clients.append(stats.CLIENT.get()))
-    monkeypatch.setattr(A.stats, "record_tool", lambda *a: None)
+    monkeypatch.setattr(stats, "record_tool", lambda *a: None)
     return proxy
 
 
@@ -73,11 +72,11 @@ def test_installable_app_is_served_without_key(ui):
 
 def test_login_checks_the_key_and_sets_the_cookie(ui):
     r = login(ui, "sk-mallory")
-    assert r.status_code == 401 and A.oidc.SESSION_COOKIE not in r.cookies
+    assert r.status_code == 401 and oidc.SESSION_COOKIE not in r.cookies
     r = login(ui)
     assert r.status_code == 200
     # Une session signée, qui ne porte pas la clé (pas même encodée).
-    cookie = r.cookies[A.oidc.SESSION_COOKIE]
+    cookie = r.cookies[oidc.SESSION_COOKIE]
     assert KEY not in cookie and KEY not in base64.b64decode(
         cookie.split(".")[0] + "==").decode("latin-1")
     session = ui.client.get("/ui/session").json()
@@ -190,7 +189,7 @@ def test_chat_offers_one_switch_per_mcp_server(ui, monkeypatch):
              T(name="web_fetch", kinds=("web_search",)),
              T(name="issues", kinds=("issues", "mcp:github", "mcp")),
              T(name="pulls", kinds=("pulls", "mcp:github", "mcp"))]
-    monkeypatch.setattr(A.tools, "Hosted", lambda: T(tools=found))
+    monkeypatch.setattr(tools, "Hosted", lambda: T(tools=found))
     login(ui)
     assert ui.client.get("/ui/session").json()["chat"]["tools"] == [
         {"type": "web_search", "tools": ["web_search", "web_fetch"]},
@@ -206,7 +205,7 @@ def test_models_for_chat_or_the_whole_catalogue(ui, monkeypatch):
                 # pas proposé au chat.
                 {"id": "essai/Qwen-Image-2.1", "type": "text-to-image"}]
     monkeypatch.setattr(catalog, "merged_models", merged)
-    monkeypatch.setitem(A.BACKENDS["essai"].model_types, "whisper",
+    monkeypatch.setitem(backends.BACKENDS["essai"].model_types, "whisper",
                         "automatic-speech-recognition")
     login(ui)
     ids = lambda q: [m["id"] for m in ui.client.get("/ui/models" + q).json()["data"]]
@@ -381,6 +380,18 @@ def test_healthz_says_only_ok_without_a_key(ui):
     full = ui.client.get("/healthz", headers={
         "authorization": f"Bearer {KEY}"}).json()
     assert full["status"] == "ok" and "backends" in full
+
+
+def test_healthz_says_what_the_proxy_form_prefills(ui):
+    """Le générateur Proxy de la page se préremplit du détail : partage
+    équitable par backend, routes exemptées, réglages [oidc] — jamais
+    client_id ni client_secret."""
+    full = ui.client.get("/healthz", headers={
+        "authorization": f"Bearer {KEY}"}).json()
+    assert all(isinstance(b["fair_share"], bool) for b in full["backends"].values())
+    assert isinstance(full["exempt_paths"], list)
+    assert set(full["oidc"]) == {"enabled", "issuer", "redirect_uri", "new_accounts",
+                                 "session_days", "max_keys_per_account", "label"}
 
 
 def test_the_page_reads_the_detail_under_its_session(ui):

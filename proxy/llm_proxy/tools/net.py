@@ -29,7 +29,7 @@ from .contract import ToolError
 
 # Ce qui a été lu à l'ancienne place, [tools.web_fetch] — où ces trois
 # clés vivaient quand web_fetch était seul à télécharger —, et ce qui y
-# est resté alors que [tools.net] le règle : dit au démarrage (app.py).
+# est resté alors que [tools.net] le règle : dit au démarrage (startup.py).
 LEGACY: list[str] = []
 SHADOWED: list[str] = []
 
