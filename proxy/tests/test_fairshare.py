@@ -105,3 +105,40 @@ def test_the_session_tells_the_share_and_its_use(shared):
     ask(shared)
     s = shared.client.get("/ui/session").json()["fair_share"]
     assert s["share"] == 100 and s["used"] == 150 and s["default"] == 100
+
+
+def test_startup_reads_the_last_hour_back(tmp_path, monkeypatch, proxy):
+    """seed_fair_share : la dernière heure des statistiques, chaque ligne
+    au client de sa clé — le compte d'une clé gérée et de la page, la clé
+    du TOML elle-même sinon ; ni les routes exemptées, ni le plus vieux
+    qu'une heure, ni un backend inconnu."""
+    import sqlite3
+
+    from llm_proxy import accounts, app, oidc, stats
+    monkeypatch.setattr(stats, "DB_PATH", str(tmp_path / "stats.db"))
+    monkeypatch.setattr(accounts, "DB_PATH", str(tmp_path / "accounts.db"))
+    monkeypatch.setattr(accounts, "_cache", {})
+    monkeypatch.setattr(oidc, "ENABLED", True)
+    uid = accounts.login("https://idp", "alice", "a@x")["id"]
+    managed = tools.owner("une-cle-geree")
+    accounts.create_key(uid, "une-cle-geree", managed)
+    page = auth.account_owner(uid)
+    toml = tools.owner("sk-toml")
+    now = time.time()
+    conn = sqlite3.connect(stats.DB_PATH)
+    conn.executescript(stats.SCHEMA)
+    rows = [
+        (now - 60, managed, "essai", "/v1/chat/completions", 100),
+        (now - 50, page, "essai", "/v1/chat/completions", 20),
+        (now - 40, toml, "essai", "/v1/messages", 7),
+        (now - 30, toml, "essai", "/v1/embeddings", 1000),     # exemptée
+        (now - 7200, toml, "essai", "/v1/chat/completions", 1000),  # vieille
+        (now - 20, toml, "inconnu", "/v1/chat/completions", 1000),
+    ]
+    for ts, key, backend, endpoint, tokens in rows:
+        conn.execute(stats.INSERT, (ts, backend + "/m", backend, "m", endpoint,
+                                    200, 1.0, tokens, 0, 1, 0, 0, key))
+    conn.commit()
+    conn.close()
+    assert app.seed_fair_share() == 3
+    assert fairshare.used(page) == 120 and fairshare.used(toml) == 7
