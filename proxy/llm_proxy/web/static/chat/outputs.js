@@ -92,8 +92,10 @@ const CSP = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' ${CDN}
   + `font-src data: ${CDN} https://fonts.gstatic.com; img-src data: blob:; media-src data: blob:`;
 const META = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP}">`;
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const BASE_CSS = `<style>:root{color-scheme:light dark}body{margin:0;padding:20px;
-  font:15px/1.55 ui-sans-serif,system-ui,sans-serif}pre,code{font:13px ui-monospace,monospace}
+// Les documents générés par la page (Markdown, SVG, code) : thème clair,
+// fixé — le cadre est blanc quel que soit celui de la page.
+const BASE_CSS = `<style>:root{color-scheme:light}body{margin:0;padding:20px;background:#fff;
+  color:#1d1c1a;font:15px/1.55 ui-sans-serif,system-ui,sans-serif}pre,code{font:13px ui-monospace,monospace}
   pre{white-space:pre-wrap}table{border-collapse:collapse}td,th{border:1px solid #8884;padding:4px 8px}
   img,svg{max-width:100%}</style>`;
 
@@ -110,7 +112,7 @@ export function artifactDoc(version) {
     : type === "mermaid" ? `<pre class="mermaid">${esc(content)}</pre>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
 <script>mermaid.initialize({ startOnLoad: true,
-  theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default" });</script>`
+  theme: "default" });</script>`
     : `<pre><code>${esc(content)}</code></pre>`;
   return `<!doctype html><html><head>${META}${BASE_CSS}</head><body>${body}</body></html>`;
 }

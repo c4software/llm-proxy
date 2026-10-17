@@ -1107,7 +1107,7 @@ a.btn { display: inline-block; text-decoration: none; }
   border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 45%; }
 .artifact-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .artifact-actions .btn { padding: 4px 9px; font-size: 12.5px; }
-.artifact-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
+.artifact-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; color-scheme: light; }
 .artifact-source { flex: 1; min-height: 0; margin: 0; padding: 12px 14px; overflow: auto;
   font: 12.5px/1.5 ui-monospace, SFMono-Regular, monospace; white-space: pre-wrap; }
 @media (max-width: 1100px) {
@@ -1156,3 +1156,11 @@ a.btn { display: inline-block; text-decoration: none; }
   background: none; border: 0; text-align: left;
 }
 .attach-menu .menu button[role="menuitem"]:hover { background: var(--accent-soft); }
+
+/* ── Chat : voix (chat/voice.js) ── */
+.mic.rec { color: #fff; background: var(--err); border-color: var(--err); }
+.mic.rec .ico { animation: pulse 1.2s ease-in-out infinite; }
+.voice-pick { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; color: var(--muted); }
+.voice-pick label { display: inline-flex; align-items: center; gap: 6px; }
+.voice-pick select { font: inherit; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 260px; }

@@ -70,6 +70,7 @@ import * as notify from "./notify.js";
 import { lineDiff, counts as diffCounts } from "./diff.js";
 import { ArtifactPanel } from "./ArtifactPanel.js";
 import { download } from "../lib/files.js";
+import * as voice from "./voice.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 
@@ -142,6 +143,68 @@ export const ChatPanel = {
       artifactsOpen.value = open;
       if (open) memoryOpen.value = false;
     }
+    // ── voix (voice.js) : dicter, écouter ───────────────────────────────
+    const voicePrefs = reactive({ asr: "", tts: "", voice: "", ...voice.loadPrefs() });
+    const voiceList = reactive({ asr: [], tts: [], voices: [] });
+    watch(voicePrefs, (p) => voice.savePrefs({ ...p }), { deep: true });
+    // Le modèle de dictée : le choisi, sinon celui de l'outil transcribe,
+    // sinon le premier du catalogue.
+    const asrModel = computed(() => (voiceList.asr.includes(voicePrefs.asr) && voicePrefs.asr)
+      || (voiceList.asr.includes(chat.value.asr_model) && chat.value.asr_model) || voiceList.asr[0] || "");
+    const ttsModel = computed(() => (voiceList.tts.includes(voicePrefs.tts) && voicePrefs.tts)
+      || voiceList.tts[0] || "");
+    async function loadVoices() {
+      try { Object.assign(voiceList, await voice.voiceModels()); } catch { /* pas de voix */ }
+    }
+    watch(ttsModel, async (m) => {
+      voiceList.voices = [];
+      if (!m) return;
+      try { voiceList.voices = await voice.voicesOf(m); } catch { /* aucune voix listée */ }
+      if (!voiceList.voices.includes(voicePrefs.voice)) voicePrefs.voice = voiceList.voices[0] || "";
+    });
+    const dictation = ref("idle");             // idle, rec, busy
+    let recorder = null;
+    async function toggleDictation() {
+      if (dictation.value === "busy") return;
+      if (dictation.value === "rec") {
+        dictation.value = "busy";
+        try {
+          const wav = await recorder.stop();
+          const text = await voice.transcribe(wav, asrModel.value, current.value && current.value.incognito);
+          if (text) draft.value = draft.value.trim() ? draft.value.trimEnd() + " " + text : text;
+          nextTick(() => { if (input.value) { input.value.focus(); autosize(); } });
+        } catch (e) { status.value = "Dictée : " + e.message; }
+        recorder = null;
+        dictation.value = "idle";
+        return;
+      }
+      try {
+        recorder = await voice.startRecording();
+        dictation.value = "rec";
+        status.value = "";
+      } catch (e) { status.value = "Micro : " + (e.name === "NotAllowedError" ? "accès refusé" : e.message); }
+    }
+    const playing = reactive({ id: "", loading: false });
+    let audio = null;
+    async function listen(m) {
+      if (audio) { audio.pause(); audio = null; }
+      if (playing.id === m.id) { playing.id = ""; return; }
+      playing.id = m.id;
+      playing.loading = true;
+      try {
+        const url = await voice.speech(voice.speakable(m.final || m.content), ttsModel.value,
+                                       voicePrefs.voice, current.value && current.value.incognito);
+        if (playing.id !== m.id) return;
+        audio = new Audio(url);
+        audio.onended = () => { if (playing.id === m.id) playing.id = ""; URL.revokeObjectURL(url); };
+        await audio.play();
+      } catch (e) {
+        status.value = "Écoute : " + e.message;
+        playing.id = "";
+      } finally { playing.loading = false; }
+    }
+    onUnmounted(() => { if (audio) audio.pause(); if (recorder) recorder.cancel(); });
+
     // Prévenir de la fin d'une réponse (notify.js), réglage du navigateur.
     const notifyOn = ref(notify.enabled());
     async function toggleNotify(e) { notifyOn.value = await notify.setEnabled(e.target.checked); }
@@ -809,6 +872,12 @@ export const ChatPanel = {
     function argSummary(t) {
       let a = {};
       try { a = JSON.parse(t.arguments || "{}"); } catch { return t.arguments; }
+      // Les outils de la page : ce qui les distingue, lisible.
+      if (t.name === "ask_user" && Array.isArray(a.questions)) {
+        return a.questions.map((q) => (q && q.question) || "").filter(Boolean).join(" · ").slice(0, 140);
+      }
+      if (t.name === "show_artifact") return [a.title, a.type].filter(Boolean).join(" · ");
+      if (t.name === "save_file") return a.name || "";
       // La mémoire : la commande et le fichier, pas le texte écrit.
       if (t.name === "memory" && a.command) {
         return [a.command, a.path || a.old_path, a.new_path ? "→ " + a.new_path : ""]
@@ -826,6 +895,7 @@ export const ChatPanel = {
 
     onMounted(async () => {
       if (!S.state.convs.length) S.newConv();
+      loadVoices();
       await loadModels();
       for (const c of S.state.convs) {
         if (!c.model) c.model = defaultModel();
@@ -846,6 +916,8 @@ export const ChatPanel = {
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
+             voicePrefs, voiceList, asrModel, ttsModel, dictation, toggleDictation, playing, listen,
+             canDictate: !!(navigator.mediaDevices && window.MediaRecorder),
              askReady, togglePick, answerAsk, skipAsk, applyWrite, refuseWrite, writeDiff, diffCounts,
              download, fileOf: (f) => ({ name: f.name, content: f.content }),
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
@@ -925,6 +997,20 @@ export const ChatPanel = {
           <label class="check"><input type="checkbox" v-model="current.showReasoning">
             montrer le raisonnement du modèle</label>
         </div>
+        <div class="field" v-if="voiceList.asr.length || voiceList.tts.length">
+          <span>Voix</span>
+          <div class="voice-pick">
+            <label v-if="voiceList.asr.length">dictée
+              <select v-model="voicePrefs.asr"><option value="">{{ asrModel }} (défaut)</option>
+                <option v-for="m in voiceList.asr" :key="m" :value="m">{{ m }}</option></select></label>
+            <label v-if="voiceList.tts.length">lecture
+              <select v-model="voicePrefs.tts"><option value="">{{ voiceList.tts[0] }} (défaut)</option>
+                <option v-for="m in voiceList.tts" :key="m" :value="m">{{ m }}</option></select></label>
+            <label v-if="voiceList.voices.length">voix
+              <select v-model="voicePrefs.voice">
+                <option v-for="v in voiceList.voices" :key="v" :value="v">{{ v }}</option></select></label>
+          </div>
+        </div>
         <div class="field" v-if="notifySupported">
           <span>Notifications</span>
           <label class="check"><input type="checkbox" :checked="notifyOn" @change="toggleNotify">
@@ -990,6 +1076,17 @@ export const ChatPanel = {
                 <pre v-if="t.preview">{{ t.preview }}{{ t.chars > t.preview.length ? "\\n…" : "" }}</pre>
               </details>
             </div>
+            <div class="gen-images" :class="{ multi: m.attachments.length > 1 }" v-if="m.attachments && m.attachments.length">
+              <template v-for="a in m.attachments" :key="a.name">
+                <button v-if="a.data" type="button" class="gen-image" title="Agrandir"
+                        @click="zoom = a"><img :src="a.data" :alt="a.name" @load="onImageLoad"></button>
+                <span v-else class="chip file">{{ a.name }}<span class="dim">
+                  · image retirée de l'historique local</span></span>
+              </template>
+            </div>
+            <details class="gen-prompt" v-if="m.image && m.prompt && m.prompt.includes('\\n')">
+              <summary>prompt envoyé (avec le contexte)</summary><pre>{{ m.prompt }}</pre></details>
+            <div class="md" v-html="html(m)"></div>
             <!-- Une carte qui attend : question (ask_user) ou écriture dans le
                  dossier ; la réponse de l'utilisateur relance le modèle. -->
             <div class="tool-card ask-card" v-if="m.waiting && m.waiting.kind === 'ask'">
@@ -1030,17 +1127,6 @@ export const ChatPanel = {
                       @click="download(fileOf(f), f.type)" title="Télécharger">{{ f.name }}
                 <span class="dim">{{ size(f.size) }}</span></button>
             </div>
-            <div class="gen-images" :class="{ multi: m.attachments.length > 1 }" v-if="m.attachments && m.attachments.length">
-              <template v-for="a in m.attachments" :key="a.name">
-                <button v-if="a.data" type="button" class="gen-image" title="Agrandir"
-                        @click="zoom = a"><img :src="a.data" :alt="a.name" @load="onImageLoad"></button>
-                <span v-else class="chip file">{{ a.name }}<span class="dim">
-                  · image retirée de l'historique local</span></span>
-              </template>
-            </div>
-            <details class="gen-prompt" v-if="m.image && m.prompt && m.prompt.includes('\\n')">
-              <summary>prompt envoyé (avec le contexte)</summary><pre>{{ m.prompt }}</pre></details>
-            <div class="md" v-html="html(m)"></div>
             <div class="typing" v-if="streaming && i === current.messages.length - 1 && !m.error
                  && (m.image ? (m.attachments || []).length < (current.imageCount || 1) : !m.content)">
               <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ (current.imageCount || 1) > 1
@@ -1056,6 +1142,9 @@ export const ChatPanel = {
               <span v-if="m.usage">{{ num(m.usage.prompt_tokens) }} → {{ num(m.usage.completion_tokens) }} tokens</span>
               <span v-if="m.duration">{{ m.duration.toFixed(1) }} s</span>
               <button type="button" class="link" v-if="m.content" @click="copyText(m.content, $event.target)">Copier</button>
+              <button type="button" class="link" v-if="m.content && ttsModel" @click="listen(m)"
+                      :title="'Lire à voix haute (' + ttsModel + ')'">{{ playing.id === m.id
+                        ? (playing.loading ? "Synthèse…" : "Arrêter la lecture") : "Écouter" }}</button>
               <!-- Une image : ses actions ici ; plusieurs : dans l'image agrandie. -->
               <template v-if="m.image && m.attachments.length === 1 && m.attachments[0].data">
                 <a class="link" :href="m.attachments[0].data" :download="m.attachments[0].name">Télécharger</a>
@@ -1128,6 +1217,11 @@ export const ChatPanel = {
                 <input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
             </div>
           </div>
+          <button type="button" class="btn ghost ico-btn mic" v-if="asrModel && canDictate"
+                  :class="dictation" :disabled="dictation === 'busy'" @click="toggleDictation"
+                  :title="dictation === 'rec' ? 'Arrêter et transcrire' : 'Dicter (' + asrModel + ')'">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+            <span class="lbl">{{ dictation === "rec" ? "Arrêter" : dictation === "busy" ? "Transcription…" : "Dicter" }}</span></button>
           <label class="effort" v-if="imageMode" title="Nombre d'images par demande">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
             <select v-model.number="current.imageCount" :disabled="streaming" aria-label="Nombre d'images">

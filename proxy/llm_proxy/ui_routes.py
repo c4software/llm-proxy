@@ -37,6 +37,7 @@ from . import files
 from . import memories
 from . import oidc
 from . import relaying
+from . import relay_routes
 from . import stats
 from . import tools
 from . import ui_static
@@ -424,6 +425,9 @@ async def ui_session(request: Request):
             # Les tailles qu'un modèle d'images peut recevoir du chat :
             # celles de l'outil image_generation.
             "image_sizes": list(tools.image_generation.SIZES),
+            # La dictée : le modèle de transcription de l'outil transcribe,
+            # proposé par défaut (la page en choisit un autre si besoin).
+            "asr_model": tools.transcribe.MODEL or None,
             "image_size": tools.image_generation.SIZE,
         },
         # La mémoire persistante (outil `memory`) : son panneau, à côté du
@@ -515,6 +519,44 @@ async def ui_images(request: Request):
         return bad
     incognito(request)
     return await forward_post(request, "/v1/images/generations", "openai")
+
+
+# La VOIX du chat : dictée (transcription) et lecture à voix haute
+# (synthèse), relayées comme /v1/audio/* — sous /ui pour le cookie, donc
+# comptées à la clé connectée. Le modèle est choisi par la page.
+def _chat_closed():
+    if not UI_CHAT:
+        return error_response("openai", 404, "unknown_route",
+                              "chat de la page désactivé ([ui].chat)")
+    return None
+
+
+@router.post("/ui/audio/transcriptions")
+async def ui_transcriptions(request: Request):
+    """Multipart (model, file) : /v1/audio/transcriptions."""
+    if (bad := _chat_closed()) is not None:
+        return bad
+    incognito(request)
+    return await forward_post(request, "/v1/audio/transcriptions", "openai")
+
+
+@router.post("/ui/audio/speech")
+async def ui_speech(request: Request):
+    """JSON (model, input, voice) : /v1/audio/speech, l'audio relayé."""
+    if (bad := _chat_closed()) is not None:
+        return bad
+    if (bad := json_only(request)) is not None:
+        return bad
+    incognito(request)
+    return await forward_post(request, "/v1/audio/speech", "openai")
+
+
+@router.get("/ui/audio/voices")
+async def ui_voices(request: Request):
+    """?model=<backend>/<modèle> : les voix d'un modèle de synthèse."""
+    if (bad := _chat_closed()) is not None:
+        return bad
+    return await relay_routes.audio_voices(request)
 
 
 # Une image à retoucher, en data URL, du chat de la page.
