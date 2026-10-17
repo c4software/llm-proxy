@@ -2806,14 +2806,12 @@ datée, mode `600` (elle contient le secret) :
     docker compose exec albert-proxy python -m llm_proxy.backup \
       --check /app/data/backups/llm-proxy-20261017-030000.tar.gz
 
-**Chaque nuit**, sur l'hôte (crontab de l'utilisateur qui pilote la
-pile ; sur frontal, depuis `~/stacks`) :
-
-    0 3 * * * cd ~/stacks && docker compose exec -T albert-proxy python -m llm_proxy.backup >> ~/llm-proxy-backup.log 2>&1
-
-Les archives restent sur le même disque que `data/` : en **copier
-ailleurs** (une autre machine, un stockage externe), sinon la perte du
-disque emporte tout. Le **`.env`** (clé Albert, `OIDC_CLIENT_SECRET`…)
+**Depuis la page** : un admin des [comptes OIDC](#comptes-oidc) la
+télécharge dans *Configuration → Comptes → Sauvegarde*
+(`GET /ui/admin/backup`) — la même archive, faite à l'instant dans un
+dossier temporaire effacé une fois envoyée, et rangée là où l'admin la
+garde : **hors du disque de `data/`**, que sa perte n'emporte pas. Sans
+comptes, pas d'admin, pas de bouton : la commande ci-dessus. Le **`.env`** (clé Albert, `OIDC_CLIENT_SECRET`…)
 n'est pas dans l'archive : il vit hors de `data/`, à sauvegarder à part.
 
 **Restaurer**, proxy arrêté (une base ouverte ne doit pas changer sous

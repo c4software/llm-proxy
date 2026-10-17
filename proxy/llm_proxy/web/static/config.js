@@ -648,6 +648,16 @@ window.ConfigPanel = {
           </tbody>
         </table>
       </section>
+      <section class="panel backup-panel">
+        <div class="panel-head"><h2>Sauvegarde</h2>
+          <a class="btn" href="/ui/admin/backup" download>Télécharger une sauvegarde</a></div>
+        <p class="note">Une archive de <code>data/</code>, faite à l'instant : les bases
+          (statistiques, mémoire, comptes et clés), <code>client.secret</code> et
+          <code>config.toml</code>. Elle contient le secret des condensés et la mémoire
+          de tous : à garder comme un mot de passe. Le <code>.env</code> n'y est pas.
+          Restauration : <code>python -m llm_proxy.backup --restore &lt;archive&gt;</code>,
+          proxy arrêté (voir le README).</p>
+      </section>
     </div>
 
     <div class="config-grid" v-if="part === 'clients'">

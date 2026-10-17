@@ -373,3 +373,32 @@ def test_the_admin_sets_an_account_share(idp, monkeypatch):
                            json={"share": bad}).status_code == 400
     assert alice.patch(f"/ui/users/{uid}", json={}).status_code == 400
     fairshare.reset()
+
+
+def test_an_admin_downloads_a_backup(idp, tmp_path, monkeypatch):
+    """Configuration → Comptes → Sauvegarde : l'archive de data/, faite à
+    la demande — pour un admin seulement ; sans comptes, rien."""
+    import io
+    import tarfile
+
+    from llm_proxy import config, memories, stats, tools
+    (tmp_path / "config.toml").write_text("[proxy]\n")
+    monkeypatch.setattr(config, "CONFIG_PATH", str(tmp_path / "config.toml"))
+    monkeypatch.setattr(memories, "DB_PATH", str(tmp_path / "memory.db"))
+    monkeypatch.setattr(stats, "DB_PATH", str(tmp_path / "absente.db"))
+    tools.owner("x")                                  # crée client.secret
+    alice = connect(idp)
+    bob = connect(idp, "bob", "bob@example.org")
+    r = alice.get("/ui/admin/backup")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/gzip"
+    assert "llm-proxy-" in r.headers["content-disposition"]
+    with tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz") as tar:
+        # stats.db absente : sautée ; le reste y est.
+        assert sorted(tar.getnames()) == ["accounts.db", "client.secret",
+                                         "config.toml"]
+    assert bob.get("/ui/admin/backup").status_code == 403
+
+
+def test_no_backup_download_without_accounts(proxy):
+    assert proxy.client.get("/ui/admin/backup").status_code == 404

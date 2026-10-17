@@ -879,6 +879,8 @@ a.btn { display: inline-block; text-decoration: none; }
 .config-keys .share-cell input { width: 110px; font: inherit; font-size: 13px; padding: 5px 8px;
   border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
 .config-keys .fair-note { padding: 12px 18px; }
+.backup-panel .panel-head { align-items: center; }
+.backup-panel .note code { font-size: 12px; }
 .config-keys .btn { padding: 4px 10px; font-size: 12.5px; }
 .config-keys .btn.danger.armed { background: var(--err); color: #fff; }
 .config-keys select, .key-new-row input {

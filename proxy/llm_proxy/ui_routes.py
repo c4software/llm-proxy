@@ -14,16 +14,22 @@ import binascii
 import hashlib
 import os
 import re
+import shutil
+import tempfile
 import uuid
 from urllib.parse import quote
 
 import httpx2
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
+)
+from starlette.background import BackgroundTask
 
 from . import accounts
 from . import albert
 from . import auth
+from . import backup
 from . import catalog
 from . import chat_api
 from . import config
@@ -238,6 +244,32 @@ def admin_only(request: Request) -> JSONResponse | None:
     if (request_user(request) or {}).get("role") != "admin":
         return error_response("openai", 403, "forbidden", "réservé aux admins")
     return None
+
+
+@router.get("/ui/admin/backup")
+async def ui_backup(request: Request):
+    """Une sauvegarde de data/, à télécharger (admin) : la même archive que
+    `python -m llm_proxy.backup` — les trois bases copiées à chaud,
+    client.secret et config.toml —, faite à la demande dans un dossier
+    temporaire, effacé une fois l'archive partie. Réservée aux admins des
+    comptes OIDC : elle contient le secret des condensés et la mémoire de
+    tous ; sans comptes, pas d'admin, pas de téléchargement."""
+    if (bad := admin_only(request)) is not None:
+        return bad
+    tmp = tempfile.mkdtemp(prefix="llm-proxy-backup-")
+    try:
+        path = await asyncio.to_thread(backup.backup, tmp, 0)
+    except Exception:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    user = request_user(request)
+    log.info("sauvegarde téléchargée par le compte %d (%s)", user["id"],
+             user["email"] or user["name"])
+    return FileResponse(
+        path, media_type="application/gzip",
+        filename=os.path.basename(path),
+        headers={"Cache-Control": "no-store"},
+        background=BackgroundTask(shutil.rmtree, tmp, True))
 
 
 def account_error(exc: accounts.AccountError) -> JSONResponse:
