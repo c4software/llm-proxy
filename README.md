@@ -767,7 +767,7 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
   dernière phrase ; tokens
   et durée sous la réponse.
 
-- **Mémoire** (si `[tools.memory]` est actif) : le bouton *Retenu* de
+- **Mémoire** (si `[tools.memory]` est actif) : le bouton *Mémoire* de
   l'en-tête ouvre, à droite du fil, le panneau de *Configuration → Mémoire* —
   les fichiers de la clé connectée, à lire, corriger ou effacer. Il se
   relit dès que le modèle a appelé l'outil `memory`, et l'appel se lit
