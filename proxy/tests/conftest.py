@@ -31,7 +31,7 @@ def secret_client(monkeypatch, tmp_path):
 def proxy(monkeypatch):
     """L'application entière, par le client de test de Starlette (`client`),
     les deux surfaces traduites actives ; seul l'envoi au backend
-    (app.send_upstream) est remplacé : aucun réseau. Un backend «essai»
+    (relaying.send_upstream) est remplacé : aucun réseau. Un backend «essai»
     sans quota, les outils factices (`hosted`, dont `hosted.runs` dit ce
     qui a été exécuté), et de quoi lire ce qui se passe :
       `replies` : ce que le backend répondra, tour après tour — un
@@ -44,6 +44,7 @@ def proxy(monkeypatch):
 
     from fakes import hosted_tools
     from llm_proxy import app
+    from llm_proxy import auth, relaying
     from llm_proxy.backends import Backend
 
     env = types.SimpleNamespace(replies=[], sent=[], lines=[],
@@ -56,11 +57,11 @@ def proxy(monkeypatch):
 
     monkeypatch.setitem(app.BACKENDS, "essai",
                         Backend("essai", {"url": "http://backend.invalid"}))
-    monkeypatch.setattr(app, "PROXY_API_KEYS", [])
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", [])
     monkeypatch.setattr(app.anthropic_api, "ENABLED", True)
     monkeypatch.setattr(app.responses_api, "ENABLED", True)
     monkeypatch.setattr(app.tools, "Hosted", lambda: env.hosted)
-    monkeypatch.setattr(app, "send_upstream", send_upstream)
+    monkeypatch.setattr(relaying, "send_upstream", send_upstream)
     monkeypatch.setattr(app.stats, "record", lambda *a: env.lines.append(a))
     env.client = TestClient(app.app)
     return env

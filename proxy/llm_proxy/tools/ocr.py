@@ -28,9 +28,9 @@ page il vient, et une page lue reste lue quand le temps manque pour les
 suivantes — le modèle les redemande par `pages`. Chaque page lue est
 gardée dans le cache web (webcache.py), comme le fichier téléchargé.
 
-L'appel au backend ne passe PAS par app.py (qu'un outil ne peut importer
+L'appel au backend ne passe PAS par relaying.py (qu'un outil ne peut importer
 sans cycle), mais par les mêmes portes : le limiteur du backend à quotas
-(albert.Limiter.acquire, celui d'app.gate) et une ligne de statistiques
+(albert.Limiter.acquire, celui de relaying.gate) et une ligne de statistiques
 par requête (stats.record), sous l'endpoint «/v1/tools/ocr» — ce que
 l'outil consomme du backend se voit, et se compte, comme le reste.
 """
@@ -389,7 +389,7 @@ def _content(doc) -> tuple[str, bool]:
 async def transcribe(images) -> tuple[str, bool]:
     """Le texte d'UNE page — ses images, [(type, octets)…], dans une seule
     requête chat/completions au modèle de vision. Rend (texte, coupé ?) ;
-    lève ToolError. Même parcours qu'une requête d'un client dans app.py :
+    lève ToolError. Même parcours qu'une requête d'un client dans relaying.py :
     le limiteur du backend à quotas, puis une ligne de statistiques,
     quelle que soit l'issue."""
     backend, plain = engine()
@@ -423,7 +423,7 @@ async def transcribe(images) -> tuple[str, bool]:
                 headers={"Content-Type": "application/json",
                          **backend.auth_headers()})
         except httpx2.RequestError as exc:
-            # Comme app.send_upstream : un backend local éteint fait
+            # Comme relaying.send_upstream : un backend local éteint fait
             # partie du fonctionnement normal.
             status = 502 if backend.quotas else 503
             raise ToolError("unavailable", (

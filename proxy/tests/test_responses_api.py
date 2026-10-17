@@ -16,6 +16,7 @@ from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
                    SEARCH_TURN, SEARCHED, FakeUpstream, chat_doc, chunk, feed,
                    hosted_tools, sse, sse_events, stream, tool_call, usage)
 from llm_proxy import app as A
+from llm_proxy import auth, relaying, tool_loop
 from llm_proxy import responses_api as R
 from llm_proxy import tools
 from llm_proxy.tools import web_fetch, web_search
@@ -957,7 +958,7 @@ def test_app_loop_hands_back_when_the_client_is_called_too(proxy):
 
 
 def test_app_loop_stops_a_model_that_never_concludes(proxy, monkeypatch):
-    monkeypatch.setattr(A, "HOSTED_HARD_LIMIT", 3)
+    monkeypatch.setattr(tool_loop, "HOSTED_HARD_LIMIT", 3)
     proxy.replies = [FakeUpstream(stream(
         tool_call(0, f"call_{i}", "web_search", "{\"query\":\"encore\"}"),
         chunk(finish="tool_calls"), usage(10, 1))) for i in range(5)]
@@ -1045,8 +1046,8 @@ def test_app_loop_client_gone_closes_everything(proxy, monkeypatch):
         up = FakeUpstream(stream(*SEARCH_TURN))
         _, ctx = R.to_chat(request, hosted=proxy.hosted)
         robinet = R.Translator(200, "text/event-stream", ctx)
-        call = A.Call(A.BACKENDS["essai"], "essai/qwen", "/v1/responses")
-        loop = A.hosted_stream(call, None, request, False, proxy.hosted,
+        call = relaying.Call(A.BACKENDS["essai"], "essai/qwen", "/v1/responses")
+        loop = tool_loop.hosted_stream(call, None, request, False, proxy.hosted,
                                robinet, up, 0)
         async for out in loop:
             if marker in out:
@@ -1090,7 +1091,7 @@ def test_app_memory_is_scoped_by_proxy_key(proxy, monkeypatch):
         return proxy.sent[1], proxy.sent[2]
 
     encode = lambda messages: json.dumps(messages, ensure_ascii=False)
-    monkeypatch.setattr(A, "PROXY_API_KEYS", ["cle-alice", "cle-bob"])
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", ["cle-alice", "cle-bob"])
     looped, again = session("cle-alice", "cle-alice")
     n = len(looped["messages"])
     assert looped["messages"][-1]["content"] == FOUND
@@ -1099,7 +1100,7 @@ def test_app_memory_is_scoped_by_proxy_key(proxy, monkeypatch):
     assert again["messages"][n - 1]["content"] == proxy.hosted.expired
     assert "alice" not in repr(proxy.hosted.memory._data)
 
-    monkeypatch.setattr(A, "PROXY_API_KEYS", [])
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", [])
     for first, second in (("un", "autre"), ("", "un")):
         looped, again = session(first, second)
         assert encode(again["messages"][:n]) == encode(looped["messages"])

@@ -10,7 +10,7 @@ image en markdown pour une image, un lien sinon). Jamais de data URL :
 un client de chat la renverrait dans chaque requête suivante.
 
 LE JETON VAUT DROIT D'ACCÈS. Le lien est ouvert par un navigateur, qui
-n'envoie pas la clé du proxy : la route est donc HORS clé (app.py), et
+n'envoie pas la clé du proxy : la route est donc HORS clé (auth.py), et
 seul le jeton — 192 bits tirés par `secrets`, un par fichier — protège le
 fichier. Qui a le lien a le fichier, jusqu'à son expiration ; qui ne l'a
 pas ne peut ni le deviner ni lister le magasin.
@@ -64,7 +64,7 @@ TTL = config.num("files.ttl", 4 * 3600)
 INCOGNITO_TTL = min(TTL, config.num("files.incognito_ttl", 900))
 MAX_BYTES = config.integer("files.max_bytes", 128_000_000)
 MAX_FILE_BYTES = config.integer("files.max_file_bytes", 10_000_000)
-# Le chemin de la route, que app.py exempte de la clé du proxy.
+# Le chemin de la route, qu'auth.py exempte de la clé du proxy.
 PATH = "/v1/files/"
 
 # Les seuls types servis en ligne, par leurs premiers octets.
@@ -103,7 +103,7 @@ def safe_name(name: str) -> str:
 
 def is_link(path: str) -> bool:
     """`path` a-t-il la forme d'un lien, PATH<jeton>/<nom> ? Ce chemin-là,
-    en lecture, est le seul que app.py sert sans la clé du proxy."""
+    en lecture, est le seul que le proxy sert sans sa clé (auth.py)."""
     token, _, name = path[len(PATH):].partition("/")
     return path.startswith(PATH) and bool(token) and bool(name) \
         and "/" not in name

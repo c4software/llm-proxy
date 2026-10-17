@@ -148,7 +148,7 @@ def route_backend(payload) -> tuple[Backend | None, bool]:
 
 def unknown_prefix_message(model: str) -> str:
     """Texte du 400 «modèle sans préfixe» ; la réponse elle-même est
-    construite par app.error_response, dans le dialecte du client."""
+    construite par httputil.error_response, dans le dialecte du client."""
     prefixes = ", ".join(f"«{n}/»" for n in BACKENDS)
     log.warning("modèle %r sans préfixe backend reconnu → 400", model)
     return f"modèle «{model}» sans préfixe backend ; préfixes attendus : {prefixes}"

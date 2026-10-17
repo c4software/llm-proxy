@@ -45,7 +45,7 @@ réponse) pour que le chiffre affiché reste honnête.
 PAR CLÉ : chaque ligne porte `api_key_id`, le condensé de la clé du proxy
 que le client a présentée (tools.owner : jamais la clé elle-même), «» pour
 un proxy ouvert. Il n'est passé à aucune fonction : la requête le pose
-dans CLIENT (une variable de contexte, app.require_proxy_key), record()
+dans CLIENT (une variable de contexte, auth.require_proxy_key), record()
 et record_tool() l'y lisent — l'enregistrement se fait loin de la route,
 dans le relais ou un outil, et tout ce qui y mène hérite du contexte. Le
 tableau de bord ne montre ainsi à chacun que SES requêtes ; l'Usage API
@@ -161,7 +161,7 @@ class UsageCollector:
     def feed(self, chunk: bytes) -> bytes:
         """Inspecte `chunk` et le rend TEL QUEL : ce robinet est
         l'identité. (Même interface qu'anthropic_api.Translator, qui
-        lui réécrit — app.forward ne distingue pas les deux.)"""
+        lui réécrit — relaying.forward ne distingue pas les deux.)"""
         try:
             if self.sse:
                 self._feed_sse(chunk)

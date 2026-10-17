@@ -43,7 +43,7 @@ perdu en silence : `previous_response_id`, `conversation`, `background`,
 Outils hébergés (paquet tools/) : quand le proxy sait exécuter un outil
 que le client déclare — `web_search` —, il présente au modèle les
 fonctions correspondantes, et leurs appels ne sont PAS rendus au client
-en `function_call` : le robinet les met de côté (`pending`), app.py les
+en `function_call` : le robinet les met de côté (`pending`), tool_loop.py les
 exécute et relance le backend, et le client ne voit qu'un élément
 `web_search_call` terminé. Au tour suivant le client renvoie cet élément
 sans son résultat : il est relu dans la mémoire du paquet tools/ et
@@ -634,7 +634,7 @@ def _messages(p: dict, images: bool, ctx: Context, hosted=None) -> list[dict]:
             continue
         elif hosted and (replayed := _replayed_call(it, hosted, ctx.client)):
             # Appel que le proxy avait exécuté : il redevient un appel
-            # suivi de son résultat, comme pendant la boucle (app.py
+            # suivi de son résultat, comme pendant la boucle (tool_loop.py
             # reconstruit ses tours par ce même chemin).
             name, arguments, result = replayed
             call(str(it.get("id")), name, arguments)
@@ -929,7 +929,7 @@ class Translator:
     Outils hébergés : UNE réponse peut couvrir PLUSIEURS tours upstream.
     Un appel dont le nom est dans ctx.hosted n'est pas rendu au client :
     il est rangé dans `pending`, et finish() ne clôt alors PAS la réponse
-    (pas de `response.completed`, b"" en JSON). L'appelant (app.py)
+    (pas de `response.completed`, b"" en JSON). L'appelant (tool_loop.py)
     exécute chaque appel et en rend le compte par resolve(), puis soit
     next_turn() et un nouveau flux upstream dans feed()/finish(), soit
     finalize(). `pending` vide après finish() = réponse close. L'identité

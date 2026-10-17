@@ -13,7 +13,8 @@ URL : ni pièce jointe, ni envoi.
 Le modèle de transcription, lui, est une adresse de CONFIGURATION
 ([tools.transcribe].model = "<backend>/<modèle>") : il part par le client
 HTTP du backend (backends.py), comme une requête relayée, sans passer par
-app.py — pas de cycle d'import. Ce que app.py fait autour d'un relais est
+relaying.py — pas de cycle d'import. Ce que relaying.py fait autour d'un
+relais est
 refait ici, en petit : la porte de quota (backend à quotas dont
 `/audio/transcriptions` n'est pas exempté) et la ligne de statistiques.
 
@@ -378,7 +379,7 @@ def _backend() -> tuple[backends.Backend, str]:
 
 def _count(backend, model: str, status: int, started: float, usage) -> None:
     """La ligne de statistiques de la requête au backend, celle qu'écrit
-    app.Call.done pour une transcription relayée : le modèle de
+    relaying.Call.done pour une transcription relayée : le modèle de
     transcription apparaît dans l'usage, qu'il serve un client ou l'outil.
     (L'exécution de l'outil, elle, a sa ligne à part : Hosted.run.)"""
     usage = usage if isinstance(usage, dict) else {}
@@ -403,7 +404,7 @@ async def _transcribe(name: str, content_type: str, body: bytes,
     """Le fichier → (texte, langue, durée en secondes ou None), par le
     modèle de transcription configuré."""
     backend, model = _backend()
-    # La porte de quota de app.gate, pour un backend à quotas dont le
+    # La porte de quota de relaying.gate, pour un backend à quotas dont le
     # chemin n'est pas exempté (il l'est par défaut : exempt_paths). Une
     # requête, coût 1 : des octets d'audio ne sont pas des tokens.
     if backend.quotas and not is_exempt(PATH):

@@ -661,9 +661,9 @@ l'API Responses ni l'API Messages n'ont d'outil à lui lier.
 
 Ce qu'il montre du contrat :
 
-- **Un outil peut appeler un backend du proxy** sans passer par `app.py` :
+- **Un outil peut appeler un backend du proxy** sans passer par le relais (`relaying.py`) :
   `backends.route_backend` sur le modèle de sa configuration, puis le
-  client HTTP du backend. Il refait alors lui-même ce que `app.py` fait
+  client HTTP du backend. Il refait alors lui-même ce que `relaying.py` fait
   autour d'un relais : la porte de quota (`settings.is_exempt`, le
   limiteur du backend) et la ligne de statistiques « requête »
   (`stats.record`) — en plus de celle de l'outil, écrite par

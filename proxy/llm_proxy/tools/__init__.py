@@ -64,7 +64,7 @@ RIEN : son client renvoie le résultat avec l'appel (blocs
 `web_search_tool_result` et `web_fetch_tool_result`), le texte se
 reconstruit de là.
 
-La boucle qui relance le backend après un appel vit dans app.py ; la
+La boucle qui relance le backend après un appel vit dans tool_loop.py ; la
 traduction des éléments, dans responses_api.py, anthropic_api.py et
 chat_api.py — qui ne connaissent de ce paquet que l'objet `Hosted` qu'on
 leur passe, et le contrat.
@@ -174,7 +174,7 @@ def _owner_secret() -> bytes:
 
 def owner_secret() -> bytes:
     """Le secret des condensés (data/client.secret) : d'autres clés en
-    dérivent (la session de la page, app.UISession)."""
+    dérivent (la session de la page, auth.UISession)."""
     return _owner_secret()
 
 

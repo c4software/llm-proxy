@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from llm_proxy import accounts, oidc
 from llm_proxy import app as A
+from llm_proxy import auth
 
 ISSUER = "https://idp.test"
 JSON = {"content-type": "application/json"}
@@ -231,16 +232,16 @@ def test_keys_of_an_account_share_its_client(idp):
     alice = connect(idp)
     uid = alice.get("/ui/session").json()["account"]["id"]
     k1, k2 = new_key(alice)["key"], new_key(alice)["key"]
-    one = asyncio.run(A.key_client(k1))
-    two = asyncio.run(A.key_client(k2))
+    one = asyncio.run(auth.key_client(k1))
+    two = asyncio.run(auth.key_client(k2))
     # Statistiques par clé, client (mémoire) par compte — celui de la page.
     assert one[0] != two[0]
-    assert one[1] == two[1] == A.account_owner(uid)
-    assert asyncio.run(A.key_client("pas-une-cle")) is None
+    assert one[1] == two[1] == auth.account_owner(uid)
+    assert asyncio.run(auth.key_client("pas-une-cle")) is None
 
 
 def test_toml_keys_still_work_next_to_accounts(idp, monkeypatch):
-    monkeypatch.setattr(A, "PROXY_API_KEYS", ["sk-toml"])
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-toml"])
     assert idp.client.get("/v1/tools", headers=bearer("sk-toml")).status_code == 200
     every = connect(idp).get("/ui/keys", params={"all": 1}).json()
     assert every["toml"] == [{"api_key_id": A.tools.owner("sk-toml"),
@@ -249,14 +250,14 @@ def test_toml_keys_still_work_next_to_accounts(idp, monkeypatch):
 
 
 def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
-    monkeypatch.setattr(A, "PROXY_API_KEYS", ["sk-toml"])
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-toml"])
     digest = A.tools.owner("sk-toml")
     alice = connect(idp)
     bob = connect(idp, "bob", "bob@example.org")
     bob_id = bob.get("/ui/session").json()["account"]["id"]
     alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
     # Seule, la clé est son propre client.
-    assert asyncio.run(A.key_client("sk-toml")) == (digest, digest)
+    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest)
 
     # Un user ne rattache rien ; l'admin, si.
     assert bob.put(f"/ui/keys/toml/{digest}",
@@ -264,8 +265,8 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     r = alice.put(f"/ui/keys/toml/{digest}", json={"user_id": bob_id})
     assert r.status_code == 200 and r.json()["user"] == "bob@example.org"
     # Elle écrit désormais dans la mémoire du compte ; ses stats aussi.
-    assert asyncio.run(A.key_client("sk-toml")) == (
-        digest, A.account_owner(bob_id))
+    assert asyncio.run(auth.key_client("sk-toml")) == (
+        digest, auth.account_owner(bob_id))
     assert digest in A.accounts.digests(bob_id)
     # Bob la voit parmi ses clés ; l'admin, dans toutes.
     mine = bob.get("/ui/keys").json()["toml"]
@@ -283,11 +284,11 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     # Détachée : de nouveau son propre client.
     assert alice.put(f"/ui/keys/toml/{digest}",
                      json={"user_id": None}).json()["user_id"] is None
-    assert asyncio.run(A.key_client("sk-toml")) == (digest, digest)
+    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest)
 
 
 def test_binding_refuses_what_is_not_a_toml_key(idp, monkeypatch):
-    monkeypatch.setattr(A, "PROXY_API_KEYS", ["sk-toml"])
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-toml"])
     alice = connect(idp)
     digest = A.tools.owner("sk-toml")
     assert alice.put("/ui/keys/toml/" + "0" * 32,

@@ -22,6 +22,7 @@ import pytest
 
 from fakes import (FOUND, RESULTS, SEARCHED, Echo, FakeUpstream, chat_doc,
                    outil)
+from llm_proxy import auth, catalog, tool_loop
 from llm_proxy import tools
 from llm_proxy.tools import html_text, net, web_fetch, web_grep, web_search, webcache
 
@@ -1123,7 +1124,7 @@ def routes(monkeypatch):
     from fastapi.testclient import TestClient
     from llm_proxy import app as A
 
-    monkeypatch.setattr(A, "PROXY_API_KEYS", frozenset())
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", frozenset())
     monkeypatch.setattr(web_search, "ENABLED", True)
     monkeypatch.setattr(web_fetch, "ENABLED", False)
     seen = []
@@ -1174,9 +1175,8 @@ def test_route_tools_run_refuse_outil_inactif_et_corps_non_objet(routes):
 
 
 def test_route_tools_exige_la_cle_du_proxy(routes, monkeypatch):
-    from llm_proxy import app as A
     client, seen = routes
-    monkeypatch.setattr(A, "PROXY_API_KEYS", frozenset({"secret"}))
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", frozenset({"secret"}))
     assert client.get("/v1/tools").status_code == 401
     assert client.post("/v1/tools/web_search",
                        json={"query": "x"}).status_code == 401
@@ -1190,9 +1190,8 @@ def test_cle_du_proxy_non_ascii_ne_casse_pas_le_controle(routes, monkeypatch):
     """Une clé configurée avec un accent : le contrôle compare en octets
     (compare_digest refuse une chaîne non ASCII) — 401 pour un autre jeton,
     pas un 500."""
-    from llm_proxy import app as A
     client, _ = routes
-    monkeypatch.setattr(A, "PROXY_API_KEYS", frozenset({"clé-secrète"}))
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", frozenset({"clé-secrète"}))
     r = client.get("/v1/tools", headers={"Authorization": "Bearer cle-fausse"})
     assert r.status_code == 401
 
@@ -1218,7 +1217,7 @@ def test_type_d_un_modele_sans_type_au_catalogue():
             "input_modalities": ["text", "image"], "output_modalities": ["text"]}},
          "image-text-to-text"),
     ]:
-        assert A._model_type(model, b) == attendu, model["id"]
+        assert catalog._model_type(model, b) == attendu, model["id"]
     assert set(A.CHAT_TYPES) == {"text-generation", "image-text-to-text"}
 
 
@@ -1604,9 +1603,9 @@ def test_boucle_un_outil_a_compte_propre_ne_pese_pas_sur_le_commun(
     """Dans la boucle : les appels d'un outil à `max_calls` sont comptés
     contre SA limite, ceux des autres contre le plafond commun — et un
     modèle qui insiste au-delà de sa limite est arrêté de même."""
-    from llm_proxy import app as A, chat_api
+    from llm_proxy import chat_api
     monkeypatch.setattr(tools, "MAX_CALLS", 1)
-    monkeypatch.setattr(A, "HOSTED_HARD_LIMIT", 1 + A.HOSTED_EXTRA_CALLS)
+    monkeypatch.setattr(tool_loop, "HOSTED_HARD_LIMIT", 1 + tool_loop.HOSTED_EXTRA_CALLS)
     monkeypatch.setattr(chat_api, "ENABLED", True)
     monkeypatch.setattr(chat_api, "MEMORY", chat_api.Memory(8, 60, 100_000))
     propre, commun = outil("propre"), outil("commun")

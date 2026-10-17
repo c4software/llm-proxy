@@ -13,7 +13,7 @@ ne dit rien de la clé. La clé elle-même n'est jamais écrite. Proxy ouvert
 Changer une clé, c'est donc changer de mémoire : l'ancienne reste en base,
 inaccessible, jusqu'à ce qu'on la supprime.
 Avec les comptes OIDC (accounts.py), le client d'une clé gérée est son
-COMPTE (app.account_owner) : toutes ses clés, et la page connectée,
+COMPTE (auth.account_owner) : toutes ses clés, et la page connectée,
 partagent une mémoire.
 
 Un fichier = (client, chemin, contenu, dates). Les répertoires n'existent

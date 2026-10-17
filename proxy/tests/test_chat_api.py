@@ -11,6 +11,7 @@ from fakes import (
     FakeUpstream, chat_doc, chunk, stream, tool_call, usage,
 )
 from llm_proxy import app as A
+from llm_proxy import auth, relaying, tool_loop
 from llm_proxy import chat_api as C
 from llm_proxy import tools
 from llm_proxy.tools import web_search
@@ -35,13 +36,13 @@ def chat(proxy, monkeypatch):
     dans `tool_lines` (stats.record_tool), une mémoire des échanges
     cachés neuve, et dans `raws` les OCTETS partis au backend."""
     proxy.tool_lines, proxy.raws = [], []
-    inner = A.send_upstream
+    inner = relaying.send_upstream
 
     async def send_upstream(call, request, path, body):
         proxy.raws.append(body)
         return await inner(call, request, path, body)
 
-    monkeypatch.setattr(A, "send_upstream", send_upstream)
+    monkeypatch.setattr(relaying, "send_upstream", send_upstream)
     monkeypatch.setattr(C, "ENABLED", True)
     monkeypatch.setattr(C, "MEMORY", C.Memory(8, 60, 100_000))
     monkeypatch.setattr(A.stats, "record_tool",
@@ -98,13 +99,13 @@ def test_request_without_declaration_is_relayed_byte_for_byte(chat, monkeypatch)
     vers le client, clé active ou non — et la clé inactive laisse passer
     jusqu'à la déclaration elle-même."""
     raws = []
-    inner = A.send_upstream
+    inner = relaying.send_upstream
 
     async def send_upstream(call, request, path, body):
         raws.append(body)
         return await inner(call, request, path, body)
 
-    monkeypatch.setattr(A, "send_upstream", send_upstream)
+    monkeypatch.setattr(relaying, "send_upstream", send_upstream)
     # Sans modèle (backend de repli) ni rien à injecter : aucun octet
     # n'est réécrit, pas même l'espacement.
     body = (b'{"messages":  [{"role": "user", "content": "h\\u00e9"}],\n'
@@ -276,7 +277,7 @@ def test_mixed_turn_the_first_call_decides(chat):
 
 
 def test_a_model_that_never_concludes_is_stopped(chat, monkeypatch):
-    monkeypatch.setattr(A, "HOSTED_HARD_LIMIT", 3)
+    monkeypatch.setattr(tool_loop, "HOSTED_HARD_LIMIT", 3)
     chat.replies = [FakeUpstream(stream(
         tool_call(0, f"call_{i}", "web_search", "{\"query\":\"encore\"}"),
         chunk(finish="tool_calls"), usage(10, 1))) for i in range(5)]
@@ -305,8 +306,8 @@ def test_exhausted_tools_are_withdrawn_for_a_final_answer(chat, monkeypatch):
     # Le dernier appel a RÉUSSI (aucun refus lu) : le modèle apprend que
     # ses outils sont partis, sinon il écrirait l'appel en texte.
     last = chat.sent[2]["messages"][-1]
-    assert last["role"] == "tool" and last["content"].endswith(A.BUDGET_SPENT)
-    assert A.BUDGET_SPENT not in chat.sent[1]["messages"][-1]["content"]
+    assert last["role"] == "tool" and last["content"].endswith(tool_loop.BUDGET_SPENT)
+    assert tool_loop.BUDGET_SPENT not in chat.sent[1]["messages"][-1]["content"]
     text = "".join(d.get("content") or "" for d in deltas(docs))
     assert text.endswith("Voilà.")
 
@@ -411,7 +412,7 @@ def test_in_doubt_nothing_is_reinserted(chat, monkeypatch):
         monkeypatch.setattr(C, "MEMORY_ENABLED", True)
 
     # Cloisonnée par client dès que le proxy a des clés.
-    monkeypatch.setattr(A, "PROXY_API_KEYS", ["un", "deux"])
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", ["un", "deux"])
     searched(chat, key="un")
     assert ask(chat, [Q1, A1, Q2], key="deux") == [Q1, A1, Q2]
     assert len(ask(chat, [Q1, A1, Q2], key="un")) == 5
@@ -748,7 +749,7 @@ def test_files_come_back_as_links_and_the_session_follows_the_conversation(
 
     # Proxy à clés : le LIEN seul se lit sans clé (un navigateur n'en
     # envoie pas), en lecture seulement ; tout le reste la demande.
-    monkeypatch.setattr(A, "PROXY_API_KEYS", ["k"])
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", ["k"])
     token = next(iter(files.STORE._data))
     link = f"/v1/files/{token}/courbe.png"
     assert chat.client.get(link).status_code == 200

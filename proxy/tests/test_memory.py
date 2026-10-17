@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+from llm_proxy import auth
 from llm_proxy import mcp_server, memories, tools
 from llm_proxy.tools import memory
 
@@ -121,7 +122,7 @@ def proxy(monkeypatch):
     from fastapi.testclient import TestClient
     from llm_proxy import app as A
 
-    monkeypatch.setattr(A, "PROXY_API_KEYS", frozenset({"sk-a", "sk-b"}))
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", frozenset({"sk-a", "sk-b"}))
     monkeypatch.setattr(mcp_server, "ENABLED", True)
     monkeypatch.setattr(memory, "ENABLED", True)
     monkeypatch.setattr(tools, "enabled", lambda: [memory.TOOL])

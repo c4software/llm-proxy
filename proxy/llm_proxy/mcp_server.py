@@ -31,7 +31,7 @@ annonce accepter JSON et SSE, et un appel d'outil du proxy ne pousse rien
 en cours de route. Chaque POST se suffit : un redémarrage du proxy ne
 casse aucune session.
 
-L'authentification est celle de tout le proxy (middleware de app.py) :
+L'authentification est celle de tout le proxy (middleware d'auth.py) :
 le client pose `Authorization: Bearer <clé du proxy>` dans la
 configuration de son serveur MCP. La clé dit aussi QUI appelle
 (`call.client`, tools.owner) — ce qui cloisonne la mémoire persistante,

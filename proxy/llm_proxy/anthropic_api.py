@@ -22,7 +22,7 @@ dur (ses tâches d'arrière-plan ignorent ANTHROPIC_MODEL) — la table les
 traduit en noms PRÉFIXÉS, que backends.py route comme d'habitude.
 
 La traduction de la RÉPONSE est la seule partie délicate : le relais
-(app.forward) ne connaît que des octets, il les fait passer par un
+(relaying.forward) ne connaît que des octets, il les fait passer par un
 «robinet» (tap) — feed(chunk) rend ce qu'il faut émettre, finish() le
 reliquat, tokens() ce que les stats doivent compter. stats.UsageCollector
 est le robinet identité ; Translator, ici, celui qui réécrit. Un flux
@@ -39,7 +39,7 @@ il lit dans la réponse les blocs `server_tool_use` puis
 `web_search_tool_result`. Quand le proxy héberge `web_search`, cet outil
 serveur devient la fonction `web_search` présentée au modèle ; ses appels
 ne sont PAS rendus en `tool_use` : le robinet les met de côté (`pending`),
-app.py les exécute et relance le backend — même boucle que la surface
+tool_loop.py les exécute et relance le backend — même boucle que la surface
 Responses —, et le client reçoit les deux blocs qu'il attend. Rien n'est
 conservé entre deux requêtes : le bloc `web_search_tool_result` porte
 tout le résultat, un client qui le rejoue rend au modèle le même texte
@@ -359,7 +359,7 @@ def _prepend_text(msg: dict, text: str) -> None:
 
 class Context:
     """Ce que la requête dit des outils hébergés, pour to_openai, le
-    robinet et la boucle d'app.py. Vide (`hosted` = {}) tant que le proxy
+    robinet et la boucle de tool_loop.py. Vide (`hosted` = {}) tant que le proxy
     n'héberge ni `web_search` ni `web_fetch`, ou que le client ne déclare
     aucun des deux outils serveur : tout se passe alors comme avant, ils
     sont ignorés.
@@ -495,12 +495,12 @@ def _assistant_messages(content, hosted=None, results=None) -> list[dict]:
     un nouveau message assistant : c'est un autre tour du backend. Un
     message [texte, recherche, résultat, texte] rend donc assistant(texte
     + appel), tool, assistant(texte) — ce que le backend a réellement vu
-    pendant la boucle, que app.py reconstruit par ce même chemin : le
+    pendant la boucle, que tool_loop.py reconstruit par ce même chemin : le
     préfixe reste le même d'un tour à l'autre et d'une requête à l'autre.
     Ajouter des blocs à la fin ne change aucun message déjà rendu.
 
     `results` : id d'appel → texte exact rendu au modèle, pour les appels
-    de la réponse EN COURS (app.py) ; un bloc rejoué par le client est
+    de la réponse EN COURS (tool_loop.py) ; un bloc rejoué par le client est
     relu par _search_text ou _fetch_text. Sans `hosted`, pour un outil
     que la requête ne déclare pas, ou pour un `server_tool_use` sans le
     résultat de son type, les blocs sont ignorés comme avant : un appel
@@ -893,7 +893,7 @@ class Translator:
 
     Outils hébergés (`ctx.hosted` non vide) : UNE réponse peut couvrir
     PLUSIEURS tours upstream — même contrat que responses_api.Translator,
-    c'est la même boucle d'app.py qui pilote les deux. Un appel à la
+    c'est la même boucle (tool_loop.py) qui pilote les deux. Un appel à la
     fonction hébergée n'est pas rendu en `tool_use` : il est rangé dans
     `pending`, et finish() ne clôt alors PAS le message (ni
     `message_delta` ni `message_stop`, b"" en JSON). L'appelant exécute
@@ -1115,7 +1115,7 @@ class Translator:
         """Échec d'un tour ULTÉRIEUR (quota, backend injoignable, statut
         d'erreur) : en flux le 200 est parti, il ne reste que
         l'`event: error` ; en JSON rien n'est parti, c'est le corps
-        d'erreur — app.py lui donne son vrai statut HTTP."""
+        d'erreur — tool_loop.py lui donne son vrai statut HTTP."""
         if self._finished:
             return b""
         out = (self._start({}) + self._close()) if self.sse else b""

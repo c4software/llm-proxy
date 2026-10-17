@@ -10,7 +10,8 @@ base64 ni d'URL dans ce qu'il lit, et que la mémoire garde.
 Le modèle d'images est une adresse de CONFIGURATION
 ([tools.image_generation].model = "<backend>/<modèle>") : la requête part
 par le client HTTP du backend (backends.py), comme une requête relayée,
-sans passer par app.py. Ce que app.py fait autour d'un relais est refait
+sans passer par relaying.py. Ce que relaying.py fait autour d'un relais
+est refait
 ici, en petit, comme dans transcribe.py : la porte de quota et la ligne
 de statistiques « requête », sous l'endpoint «/v1/tools/image_generation».
 
@@ -150,7 +151,7 @@ def _backend() -> tuple[backends.Backend, str]:
 async def _ask(path: str, fields: dict, image=None) -> dict:
     """Une requête au modèle d'images — JSON, ou multipart avec `image`
     (nom, octets, type) pour une retouche — → le premier élément de
-    `data`. Même parcours qu'une requête relayée par app.py : le limiteur
+    `data`. Même parcours qu'une requête relayée par relaying.py : le limiteur
     d'un backend à quotas, puis une ligne de statistiques, quelle que
     soit l'issue. Le corps d'une erreur du backend va au journal, pas au
     modèle."""

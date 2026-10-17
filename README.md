@@ -225,14 +225,22 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
 | `docker-compose.override.example.yml` | Le modèle de `docker-compose.override.yml` (non versionné, fusionné par Docker Compose) : l'exécuteur de code et son réseau interne, les adaptations à la machine — voir [Le compose de base et son override](#le-compose-de-base-et-son-override) |
 | `docs/outils.md` | Le contrat des outils hébergés, membre par membre, et comment en écrire un |
 | `proxy/llm_proxy/multipart.py` | Le champ `model` d'un corps multipart/form-data : lu pour router, réécrit pour retirer le préfixe |
-| `proxy/llm_proxy/app.py` | L'application FastAPI : routes, auth, relais, `/v1/models` fusionné |
+| `proxy/llm_proxy/app.py` | L'application FastAPI : démarrage, assemblage des routes et des middlewares, `/healthz`, `/v1/tools`, `/mcp`, le catch-all |
+| `proxy/llm_proxy/auth.py` | Qui parle au proxy : clés (TOML, comptes), session signée de la page, middleware d'auth |
+| `proxy/llm_proxy/relaying.py` | Le relais vers les backends : `Call` (la ligne de stats), la porte de quota, `forward` |
+| `proxy/llm_proxy/catalog.py` | Le catalogue des modèles : `/v1/models` fusionné et préfixé, type et contexte de chaque modèle |
+| `proxy/llm_proxy/surfaces.py` | `/v1/chat/completions`, `/v1/messages` (et `count_tokens`), `/v1/responses` |
+| `proxy/llm_proxy/tool_loop.py` | La boucle des outils hébergés, commune aux trois surfaces |
+| `proxy/llm_proxy/usage_api.py` | L'Usage API (`/v1/organization/usage/*`) et ce qu'une page connectée peut en voir |
+| `proxy/llm_proxy/ui_routes.py` | Les routes du tableau de bord (`/ui/*`) : entrée, session, comptes et clés, chat, mémoire |
+| `proxy/llm_proxy/httputil.py` | La forme des erreurs (OpenAI ou Anthropic), la lecture des corps JSON |
 | `proxy/tests/` | Tests du proxy : traducteurs, outils, stats (`cd proxy && pytest`, `requirements-dev.txt`, `pytest.ini`) — sur des octets et une base temporaire, sans réseau |
 | `bench/` | Validation avec de **vrais clients** en conteneurs jetables : Claude Code, pi, Codex CLI, omp et un client HTTP nu, scénarios PASS/FAIL — voir `bench/README.md` |
 | `proxy/llm_proxy/web/` | Le tableau de bord : `templates/index.html` (le gabarit Vue, servi tel quel) et `static/` (`dashboard.js`, `memory.js` — la section Mémoire, un composant à part —, `dashboard.css`, `vue.global.prod.js`) |
 | `data/config.example.toml` | Le modèle de configuration, documenté — copié en `data/config.toml` au premier démarrage |
 | `services/searxng/settings.yml` | Réglages de l'instance SearXNG du compose : les défauts de SearXNG, plus le format JSON. Monté en lecture seule dans le service `searxng` |
 
-`app.py` ne connaît d'Albert que « un backend `quotas = true` passe par
+Le relais (`relaying.py`) ne connaît d'Albert que « un backend `quotas = true` passe par
 sa `QuotaState` » ; toute la mécanique de quotas vit dans `albert.py`.
 
 Chaque requête relayée est portée par un objet `Call` (backend, modèle

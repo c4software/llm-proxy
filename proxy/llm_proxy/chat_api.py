@@ -31,7 +31,7 @@ les annotations `url_citation`, reprise ici.
 
 Ce module ne s'applique qu'à une requête qui DÉCLARE, sur un proxy où
 [chat].hosted_tools est vrai. Toute autre requête ne passe pas par lui :
-relais brut des octets, comme avant (app.chat_completions).
+relais brut des octets, comme avant (surfaces.chat_completions).
 
 PRÉSENTATION D'OFFICE ([chat].always, `ALWAYS`, `unasked`). Une interface
 de chat (Open WebUI) ne déclarera jamais rien : la liste nomme des outils
@@ -54,13 +54,13 @@ même boucle, même réponse, même mémoire. Vide par défaut : rien ne change.
     "none"` (le client ne veut pas d'appel), ni à `n` > 1 (une
     déclaration y est refusée : ici le client n'a rien déclaré, il garde
     ses `n` réponses), ni à un modèle que le catalogue de son backend ne
-    dit pas de conversation (app._converses). Une telle requête, et celle
+    dit pas de conversation (catalog._converses). Une telle requête, et celle
     à qui il ne reste rien à présenter, repart en relais brut.
   * Les autres `tool_choice` sont ceux du client, intacts : une fonction
     forcée est appelée (les outils d'office sont présentés quand même —
     la liste d'outils, donc le préfixe, ne change pas d'une requête à
     l'autre) ; `required` sans outil du client force un outil hébergé au
-    premier tour, `auto` ensuite (app.hosted_loop).
+    premier tour, `auto` ensuite (tool_loop.hosted_loop).
   * Le proxy ne sait PAS d'une requête qu'elle est de service (titre,
     tags, suggestions qu'une interface demande après chaque réponse) :
     rien dans son corps ne le dit. Elle reçoit les outils aussi — sauf
@@ -155,7 +155,7 @@ Dans les deux cas le client et le backend gardent des historiques
 cohérents, et rien d'exécuté n'est perdu.
 
 Même contrat de robinet que responses_api.Translator et
-anthropic_api.Translator : c'est app.hosted_loop qui mène la boucle.
+anthropic_api.Translator : c'est tool_loop.hosted_loop qui mène la boucle.
 Ce module ne connaît ni FastAPI ni httpx2.
 """
 
@@ -231,7 +231,7 @@ class Context:
         # mémoire reconnaît — la conversation continue dans son bac.
         self.session = uuid.uuid4().hex
         # Annoncer l'exécution des outils hébergés dans le flux (le chat
-        # du tableau de bord, app.ui_chat) : voir Translator.start.
+        # du tableau de bord, ui_routes.ui_chat) : voir Translator.start.
         self.progress = False
 
 
@@ -305,7 +305,7 @@ def prepare(payload: dict, hosted, kinds, always=()) -> Context:
     `tool_choice` à la forme Responses (`{"type": "web_search"}`) :
     traduit vers la fonction présentée pour ce type — la première,
     `web_search` pour la recherche. Il ne
-    vaut que pour le premier tour (app.hosted_loop ramène un choix forcé
+    vaut que pour le premier tour (tool_loop.hosted_loop ramène un choix forcé
     à `auto` ensuite). S'il vise un outil désactivé, ou que la requête ne
     déclare pas (ou dont une fonction du client a pris le nom) : 400 —
     le backend, lui, refuserait sans dire pourquoi."""
@@ -575,7 +575,7 @@ class Translator:
     hébergé est déclaré : même interface que responses_api.Translator
     (feed / finish / tokens / cached / sse / ok, puis `pending`,
     `client_calls`, resolve, next_turn, finalize, fail, `turns`), menée
-    par app.hosted_loop. Les octets rendus restent du chat/completions.
+    par tool_loop.hosted_loop. Les octets rendus restent du chat/completions.
 
     UNE réponse pour PLUSIEURS tours upstream. En flux, le client lit un
     flux continu :

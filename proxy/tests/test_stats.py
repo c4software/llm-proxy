@@ -6,6 +6,7 @@ import time
 
 import pytest
 
+from llm_proxy import ui_routes
 from llm_proxy import stats
 
 
@@ -361,6 +362,6 @@ def test_page_ui_versionne_ses_fichiers_statiques():
     r = TestClient(A.app).get("/ui")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
     for name in ("dashboard.js", "dashboard.css", "vue.global.prod.js"):
-        assert f'/ui/static/{name}?v={A.UI_VERSION}"' in r.text, name
+        assert f'/ui/static/{name}?v={ui_routes.UI_VERSION}"' in r.text, name
     assert TestClient(A.app).get(
-        f"/ui/static/dashboard.js?v={A.UI_VERSION}").status_code == 200
+        f"/ui/static/dashboard.js?v={ui_routes.UI_VERSION}").status_code == 200

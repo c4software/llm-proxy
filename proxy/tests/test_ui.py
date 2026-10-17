@@ -10,6 +10,7 @@ import pytest
 
 from fakes import ANSWER_TURN, SEARCH_TURN, FakeUpstream, stream
 from llm_proxy import app as A
+from llm_proxy import auth, catalog, relaying, ui_routes, usage_api
 from llm_proxy import chat_api as C
 from llm_proxy import stats, tools
 
@@ -22,8 +23,8 @@ def ui(proxy, monkeypatch):
     """`proxy`, l'auth active (deux clés), le chat de la page ouvert, les
     outils hébergés de chat/completions actifs ; `clients` note le client
     de chaque ligne de statistiques (stats.CLIENT au moment d'écrire)."""
-    monkeypatch.setattr(A, "PROXY_API_KEYS", [KEY, "sk-bob"])
-    monkeypatch.setattr(A, "UI_CHAT", True)
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", [KEY, "sk-bob"])
+    monkeypatch.setattr(ui_routes, "UI_CHAT", True)
     monkeypatch.setattr(C, "ENABLED", True)
     monkeypatch.setattr(C, "MEMORY", C.Memory(8, 60, 100_000))
     proxy.clients = []
@@ -96,7 +97,7 @@ def test_a_key_in_the_url_opens_nothing(ui):
 
 
 def test_the_old_cookie_with_the_key_is_ignored_then_erased(ui):
-    ui.client.cookies.set(A.LEGACY_COOKIE, KEY)
+    ui.client.cookies.set(auth.LEGACY_COOKIE, KEY)
     assert ui.client.get("/ui/session").status_code == 401
     r = login(ui)
     assert 'proxy_key=""' in r.headers.get("set-cookie", "")
@@ -112,7 +113,7 @@ def test_the_session_is_secure_behind_an_https_reverse_proxy(ui):
 def test_removing_the_key_from_the_toml_closes_the_page(ui, monkeypatch):
     login(ui)
     assert ui.client.get("/ui/session").status_code == 200
-    monkeypatch.setattr(A, "PROXY_API_KEYS", ["sk-bob"])
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-bob"])
     assert ui.client.get("/ui/session").status_code == 401
 
 
@@ -137,7 +138,7 @@ def test_writing_routes_want_a_json_body(ui):
 
 def test_chat_is_closed_unless_enabled(ui, monkeypatch):
     login(ui)
-    monkeypatch.setattr(A, "UI_CHAT", False)
+    monkeypatch.setattr(ui_routes, "UI_CHAT", False)
     assert chat(ui).status_code == 404
     assert ui.client.get("/ui/session").json()["chat"] == {
         "enabled": False, "hosted_tools": False, "tools": [], "always": [],
@@ -204,7 +205,7 @@ def test_models_for_chat_or_the_whole_catalogue(ui, monkeypatch):
                 # Le type du catalogue fait foi : un modèle d'image n'est
                 # pas proposé au chat.
                 {"id": "essai/Qwen-Image-2.1", "type": "text-to-image"}]
-    monkeypatch.setattr(A, "merged_models", merged)
+    monkeypatch.setattr(catalog, "merged_models", merged)
     monkeypatch.setitem(A.BACKENDS["essai"].model_types, "whisper",
                         "automatic-speech-recognition")
     login(ui)
@@ -231,7 +232,7 @@ def test_chat_generates_an_image_with_an_image_model(ui, monkeypatch):
     assert ui.sent[-1] == {**body, "model": "flux"}
     assert ui.clients == [tools.owner(KEY)]
     assert ui.client.post("/ui/images/generations", content="{}").status_code == 415
-    monkeypatch.setattr(A, "UI_CHAT", False)
+    monkeypatch.setattr(ui_routes, "UI_CHAT", False)
     assert ui.client.post("/ui/images/generations", json=body).status_code == 404
 
 
@@ -269,7 +270,7 @@ def test_dashboard_reads_only_the_connected_key(ui, monkeypatch):
         seen.append(kw["keys"])
         return {}
 
-    monkeypatch.setattr(A, "run_in_threadpool", read)
+    monkeypatch.setattr(usage_api, "run_in_threadpool", read)
     login(ui)
     ui.client.get("/ui/usage?start_time=0&api_key_ids=autre")
     ui.client.get("/v1/organization/usage/completions?start_time=0",
@@ -356,7 +357,7 @@ def test_chat_edits_an_attached_image(ui, monkeypatch):
         seen.append((path, request.headers["content-type"], body))
         return FakeUpstream(json.dumps({"data": [{"b64_json": "eA=="}]}).encode())
 
-    monkeypatch.setattr(A, "send_upstream", send_upstream)
+    monkeypatch.setattr(relaying, "send_upstream", send_upstream)
     login(ui)
     png = b"\x89PNG\r\n\x1a\n" + b"0" * 30
     body = {"model": "essai/flux", "prompt": "plus sombre", "size": "512x512",
