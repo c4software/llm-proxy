@@ -96,6 +96,10 @@ export function saveFile(live, args) {
   return `Fichier « ${name} » proposé au téléchargement sous la réponse.`;
 }
 
+// L'identifiant d'un artifact : minuscules, sans accents, des tirets.
+const slug = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "artifact";
+
 // show_artifact : la version rejoint conv.artifacts ; rend l'id montré.
 export function showArtifact(conv, args) {
   const type = TYPES.includes(args.type) ? args.type : "";
@@ -104,7 +108,7 @@ export function showArtifact(conv, args) {
   if (!content.trim()) return { result: "Error: `content` est vide." };
   if (content.length > MAX_ARTIFACT) return { result: `Error: artifact trop long (${MAX_ARTIFACT} caractères au plus).` };
   const title = String(args.title || "Sans titre").trim().slice(0, 120);
-  const id = String(args.id || title).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "artifact";
+  const id = slug(args.id || title);
   const list = conv.artifacts || (conv.artifacts = []);
   let art = list.find((a) => a.id === id);
   if (!art) { list.push({ id, title, versions: [] }); art = list[list.length - 1]; }
@@ -115,7 +119,12 @@ export function showArtifact(conv, args) {
     + (n > 1 ? `, version ${n}).` : ").") + " Pour le modifier ensuite : edit_artifact." };
 }
 
-const findArtifact = (conv, id) => (conv.artifacts || []).find((a) => a.id === String(id || ""));
+// Retrouvé par son id exact, sinon par son slug (« Checklist randonnée »,
+// « checklist-randonnée » : « checklist-randonnee »).
+function findArtifact(conv, id) {
+  const list = conv.artifacts || [];
+  return list.find((a) => a.id === String(id || "")) || list.find((a) => slug(a.id) === slug(id));
+}
 const known = (conv) => (conv.artifacts || []).map((a) => `« ${a.id} »`).join(", ") || "aucun";
 
 // edit_artifact : les remplacements, tous ou aucun → une nouvelle version.
