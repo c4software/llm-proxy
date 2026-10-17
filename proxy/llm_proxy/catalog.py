@@ -8,6 +8,7 @@ modèle spécialisé.
 
 import asyncio
 import fnmatch
+import time
 
 from fastapi import APIRouter, Request
 
@@ -15,7 +16,7 @@ from . import anthropic_api
 from . import chat_api
 from . import tools
 from .backends import BACKENDS, Backend
-from .settings import log
+from .settings import CATALOG_TTL, log
 from .httputil import anthropic_disabled, dialect_of, error_response
 from .relaying import clean_headers
 
@@ -116,11 +117,45 @@ def _model_type(m: dict, b: Backend | None = None) -> str:
     return "text-generation"
 
 
+# Les catalogues lus : (backend, en-têtes) → (instant, entrées ou None).
+# Les en-têtes en font partie : un backend sans clé reçoit celle du
+# client, et peut ne pas montrer les mêmes modèles à tous. Une lecture
+# en cours est partagée : les appels simultanés (la page en fait
+# plusieurs à son ouverture) attendent la même.
+_cache: dict[tuple, tuple[float, list | None]] = {}
+_reading: dict[tuple, asyncio.Task] = {}
+
+
+def forget() -> None:
+    """Oublie les catalogues lus (tests, rechargement)."""
+    _cache.clear()
+    _reading.clear()
+
+
 async def fetch_models(b: Backend, request: Request | None = None) -> list | None:
     """Le catalogue d'UN backend, normalisé et préfixé ; None s'il ne
-    répond pas. Met à jour b.models et b.model_types au passage."""
+    répond pas. Gardé CATALOG_TTL secondes, sa réponse comme son silence.
+    Met à jour b.models et b.model_types à chaque lecture."""
     headers = b.auth_headers() or (
         clean_headers(request, "") if request is not None else {})
+    key = (b.name, tuple(sorted((k.lower(), v) for k, v in headers.items())))
+    hit = _cache.get(key)
+    if hit is not None and time.monotonic() - hit[0] < CATALOG_TTL:
+        return hit[1]
+    task = _reading.get(key)
+    if task is None:
+        task = _reading[key] = asyncio.ensure_future(_read_models(b, headers))
+        task.add_done_callback(lambda _t: _reading.pop(key, None))
+    entries = await asyncio.shield(task)
+    now = time.monotonic()
+    if len(_cache) > 256:            # une clé de client par entrée : borné
+        for k in [k for k, (t, _) in _cache.items() if now - t >= CATALOG_TTL]:
+            del _cache[k]
+    _cache[key] = (now, entries)
+    return entries
+
+
+async def _read_models(b: Backend, headers: dict) -> list | None:
     try:
         r = await b.client.get(
             "/v1/models", headers=headers, timeout=b.meta_timeout,

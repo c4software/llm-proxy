@@ -23,6 +23,9 @@ TOOL_CHOICE = config.text("proxy.tool_choice", "auto")
 TIMEOUT = config.num("proxy.upstream_timeout", 600)
 # Court : un backend lent ne doit pas bloquer le catalogue.
 META_TIMEOUT = config.num("proxy.meta_timeout", 5.0)
+# Le catalogue d'un backend (/v1/models), gardé ce temps — sa réponse
+# comme son silence : un backend éteint ne fait pas attendre chaque appel.
+CATALOG_TTL = config.num("proxy.catalog_ttl", 30.0)
 
 # Liste vide = proxy ouvert. /healthz reste accessible sans clé.
 PROXY_API_KEYS = frozenset(config.strings("proxy.api_keys"))

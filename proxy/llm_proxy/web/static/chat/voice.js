@@ -7,6 +7,7 @@
   text-to-speech ; le choix (modèle, voix) reste dans ce navigateur.
 */
 import { call } from "../lib/http.js";
+import { catalog } from "../lib/catalog.js";
 
 const KEY = "llm-proxy-chat-voice";
 const MAX_SPEECH = 3000;        // caractères lus au plus
@@ -20,8 +21,8 @@ export function savePrefs(p) {
 
 // Les modèles de synthèse du catalogue : {tts: [ids]}.
 export async function voiceModels() {
-  const r = await call("GET", "/ui/models?all=1");
-  return { tts: (r.data || []).filter((m) => m.type === "text-to-speech").map((m) => m.id).sort() };
+  const data = await catalog();
+  return { tts: data.filter((m) => m.type === "text-to-speech").map((m) => m.id).sort() };
 }
 
 export async function voicesOf(model) {

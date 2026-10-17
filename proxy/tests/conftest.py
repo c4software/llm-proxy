@@ -27,6 +27,16 @@ def secret_client(monkeypatch, tmp_path):
     monkeypatch.setattr(tools, "_secret", None)
 
 
+@pytest.fixture(autouse=True)
+def fresh_catalog():
+    """Chaque test relit les catalogues des backends (catalog.fetch_models
+    les garde CATALOG_TTL)."""
+    from llm_proxy import catalog
+    catalog.forget()
+    yield
+    catalog.forget()
+
+
 @pytest.fixture
 def proxy(monkeypatch):
     """L'application entière, par le client de test de Starlette (`client`),

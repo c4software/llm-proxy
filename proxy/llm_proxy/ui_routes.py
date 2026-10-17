@@ -453,8 +453,9 @@ async def ui_models(request: Request):
     catalogue le dit capable de lire une image. Pour le chat et pour le
     générateur de configuration : servi même chat fermé (c'est ce que
     /v1/models dit déjà à la même clé). `?all=1` : tout le catalogue, avec
-    le type de chaque modèle — le générateur y choisit le modèle de l'OCR,
-    de la transcription ou des images. `?images=1` : les modèles
+    le type de chaque modèle (`chat` : un modèle de conversation) — la page
+    ne lit que lui, une fois, et y trouve le chat, la voix, l'OCR, les
+    images. `?images=1` : les modèles
     d'images en plus (`image`), que le chat sait faire générer."""
     every = request.query_params.get("all") in ("1", "true")
     images = request.query_params.get("images") in ("1", "true")
@@ -475,6 +476,7 @@ async def ui_models(request: Request):
                          # La fenêtre de contexte, si le backend la dit :
                          # le générateur la donne à Codex, qui l'ignore.
                          "context": entry.get("max_context_length"),
+                         "chat": kind in CHAT_TYPES,
                          "vision": kind == "image-text-to-text",
                          "image": kind == IMAGE_TYPE})
     return {"object": "list", "data": data}

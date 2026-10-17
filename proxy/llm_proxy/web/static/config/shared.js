@@ -5,6 +5,7 @@
   de comptes en attente).
 */
 import { call } from "../lib/http.js";
+import { catalog } from "../lib/catalog.js";
 
 const { ref, computed } = Vue;
 
@@ -30,24 +31,20 @@ export const KEY_ENV = "LLM_PROXY_API_KEY";
 export const KEY_SETUP = `(umask 077; read -rsp "Clé du proxy : " k && echo && printf '%s' "$k" > ${KEYFILE})\n`;
 
 // ── catalogue des modèles ───────────────────────────────────────────────
-// Lu une fois pour toute la configuration : les modèles de conversation
-// (/ui/models, avec leur fenêtre de contexte) et le catalogue complet
-// (?all=1 : images, voix, OCR — pour les outils qui en visent un).
+// Celui de la page (lib/catalog.js) : les modèles de conversation, avec
+// leur fenêtre de contexte, et le catalogue complet (images, voix, OCR —
+// pour les outils qui en visent un).
 const models = ref([]);
 const contexts = ref({});
 const allModels = ref([]);
 let loading = null;
 function loadCatalog() {
-  return loading || (loading = Promise.all([
-    call("GET", "/ui/models").then((r) => {
-      const data = r.data || [];
-      models.value = data.map((m) => m.id).sort();
-      contexts.value = Object.fromEntries(data.filter((m) => m.context).map((m) => [m.id, m.context]));
-    }).catch(() => { /* hors ligne : saisie libre */ }),
-    call("GET", "/ui/models?all=1").then((r) => {
-      allModels.value = (r.data || []).map((m) => m.id).sort();
-    }).catch(() => { /* les modèles de chat suffiront */ }),
-  ]));
+  return loading || (loading = catalog().then((data) => {
+    const chat = data.filter((m) => m.chat);
+    models.value = chat.map((m) => m.id).sort();
+    contexts.value = Object.fromEntries(chat.filter((m) => m.context).map((m) => [m.id, m.context]));
+    allModels.value = data.map((m) => m.id).sort();
+  }).catch(() => { loading = null; /* hors ligne : saisie libre */ }));
 }
 export function useCatalog() {
   loadCatalog();

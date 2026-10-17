@@ -4,7 +4,7 @@
   propres appels et ne touche pas aux statistiques.
 
   Routes (même cookie que /ui/usage — la clé de la personne connectée) :
-    GET  /ui/models             le catalogue (/v1/models)
+    GET  /ui/models?all=1       le catalogue (/v1/models), lib/catalog.js
     POST /ui/chat/completions   /v1/chat/completions, en flux ; ouvert par
                                 [ui] chat = true dans config.toml
   Ce que la page sait du proxy (chat ouvert, outils hébergés déclarables)
@@ -46,8 +46,8 @@
   `memory`), et un fichier rendu ne vit que le temps de s'afficher. Les
   statistiques (des comptes, sans contenu) restent.
 
-  MODÈLES D'IMAGES : /ui/models?images=1 les ajoute au catalogue
-  (`image`). Choisi, un tel modèle reçoit le dernier message, précédé des
+  MODÈLES D'IMAGES : ceux du catalogue (`image`) s'ajoutent à la
+  liste. Choisi, un tel modèle reçoit le dernier message, précédé des
   demandes de la même suite d'images (le contexte : « plus sombre » suit
   ce qu'il retouche), par
     POST /ui/images/generations   /v1/images/generations
@@ -65,6 +65,7 @@ import { readAttachment } from "./attachments.js";
 import { imagePrompt, oneImage } from "./images.js";
 import { readStream } from "./stream.js";
 import { localModels, isLocal, runLocal } from "./local.js";
+import { catalog } from "../lib/catalog.js";
 import * as workspace from "./workspace.js";
 import * as pagetools from "./pagetools.js";
 import * as askTool from "./ask.js";
@@ -273,16 +274,13 @@ export const ChatPanel = {
         models.value = models.value.filter((m) => !m.local).concat(got);
       });
       try {
-        const r = await fetch("/ui/models?images=1", { headers: { accept: "application/json" } });
-        if (r.status === 401) { emit("unauthorized"); return; }
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const j = await r.json();
-        // Le proxy ne rend que les modèles de conversation, et d'images.
-        models.value = (j.data || []).filter((m) => m.id)
+        // Les modèles de conversation, et d'images.
+        models.value = (await catalog()).filter((m) => m.chat || m.image)
           .sort((a, b) => a.id.localeCompare(b.id)).concat(local);
         modelsError.value = "";
         if (current.value && !current.value.model) current.value.model = defaultModel();
       } catch (e) {
+        if (e.status === 401) { emit("unauthorized"); return; }
         modelsError.value = "Catalogue illisible : " + e.message;
         models.value = [...local];
       }

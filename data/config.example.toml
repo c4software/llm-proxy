@@ -19,6 +19,10 @@ upstream_timeout = 600
 # Timeout (s) des appels de méta-données (GET /v1/models, /v1/me/info…) :
 # court, un backend lent ne doit pas bloquer le catalogue.
 meta_timeout = 5
+# Secondes pendant lesquelles le catalogue d'un backend (/v1/models) est
+# gardé — sa réponse comme son silence : un backend éteint ne fait pas
+# attendre chaque appel du catalogue.
+catalog_ttl = 30
 log_level = "INFO"
 
 # Clé(s) exigée(s) DES CLIENTS pour appeler le proxy («Authorization:
