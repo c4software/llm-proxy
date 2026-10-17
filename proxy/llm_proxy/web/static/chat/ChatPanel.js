@@ -613,7 +613,7 @@ export const ChatPanel = {
     function focusSheet(selector) {
       nextTick(() => {
         const el = sheetBody.value && sheetBody.value.closest(".ask-sheet").querySelector(selector);
-        if (el) el.focus({ preventScroll: true });
+        if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ block: "nearest" }); }
       });
     }
     function showTab(k) {

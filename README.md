@@ -825,20 +825,24 @@ message au lieu de répondre la clôt, sans réponse.
 
 | Outil | Ce qu'il fait | Attend l'utilisateur |
 |---|---|---|
-| `ask_user` | 1 à 4 questions à choix (unique ou multiple), toujours avec « Autre… » libre | oui |
+| `ask_user` | 1 à 4 questions à choix (unique ou multiple), un titre court par question, une description par option, toujours avec « Autre » libre | oui |
 | `show_artifact` | une page HTML, un document Markdown, un SVG, un schéma Mermaid ou du code, dans le panneau latéral ; même `id` = nouvelle version | non |
 | `save_file` | un fichier texte (CSV, script, Markdown…) en puce sous la réponse, à télécharger | non |
 | `folder_list`, `folder_read`, `folder_search` | parcourir, lire (par tranches numérotées), chercher dans le dossier ouvert | non |
 | `folder_write`, `folder_edit` | créer ou remplacer un fichier, remplacer un passage exact | oui : diff, *Appliquer* ou *Refuser* |
 
-![La feuille ask_user en bas du chat : une question à choix (niveau de randonnée), une option choisie, le champ « Autre… », Répondre ou Passer](docs/chat-question.png)
+![La feuille ask_user en bas du chat : un onglet par question (Budget, Hébergement, Activités), les options en liste avec leur description et leur touche, Envoyer les réponses (2/3) ou Passer](docs/chat-question.png)
 
 - **Questions** (`ask_user`) : quand une décision revient à
   l'utilisateur ou qu'une précision manque. Sa réponse est rendue au
   modèle question par question ; *Passer* le dit aussi. La feuille
-  (`ask-sheet`) couvre la zone de saisie ; *Réduire* (ou Échap) la
-  replie en une barre au-dessus de celle-ci, pour relire le fil ou écrire
-  autre chose.
+  (`ask-sheet`) couvre la zone de saisie : un **onglet par question**
+  (son `header`, coché une fois répondu), les options en liste avec leur
+  description, *Autre* (réponse libre) en dernier, et *Envoyer les
+  réponses* en bas. Au clavier : `1`…`9` choisit (un choix unique passe à
+  la question suivante), `←`/`→` change d'onglet, Entrée envoie, Échap
+  replie la feuille en une barre au-dessus de la saisie, pour relire le
+  fil ou écrire autre chose.
 - **Dossier ouvert** (*Joindre → Dossier…*, `chat/workspace.js`) : le
   dossier choisi reste **dans le navigateur**, rien n'est envoyé
   d'avance ; le modèle ne lit que ce dont il a besoin — un dépôt de mille
