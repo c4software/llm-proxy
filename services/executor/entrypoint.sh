@@ -1,35 +1,21 @@
 #!/bin/sh
-# Démarrage de l'exécuteur. Trois choses avant le serveur.
+# Démarrage de l'exécuteur.
 #
-# 1. L'état d'exécution de podman (XDG_RUNTIME_DIR) doit être VIDE à chaque
-#    démarrage du conteneur, comme après un redémarrage de machine — c'est
-#    à cela que podman reconnaît que plus aucun conteneur ne tourne. Le
-#    compose en fait un tmpfs ; sans lui (`docker run` à la main), ce
-#    ménage y supplée. Les conteneurs eux-mêmes sont détruits ensuite par
-#    le serveur (orphelins).
+# 1. XDG_RUNTIME_DIR vidé : c'est à cela que podman reconnaît qu'aucun
+#    conteneur ne tourne plus (le compose en fait un tmpfs ; ceci couvre
+#    un `docker run` à la main).
 #
-# 2. Le cgroup du conteneur est DÉLÉGUÉ à l'utilisateur `executor`, pour
-#    que podman puisse y créer un cgroup par bac : sans cela il accepte
-#    --memory, --cpus et --pids-limit et ne borne RIEN (vu sur Docker 29 :
-#    1 Go alloué dans un bac « à 512 Mo »). Il faut que Docker ait monté
-#    ce cgroup en écriture (`security_opt: writable-cgroups=true`, Docker
-#    28 et plus) ; sinon rien n'est délégué, l'exécuteur le constate par sa
-#    sonde et le dit, et seul le plafond du conteneur borne les bacs.
-#    Un cgroup qui a des enfants bornés ne peut pas porter de processus :
-#    ceux du conteneur passent donc dans `init` avant d'ouvrir les
-#    contrôleurs aux enfants. Ce que Docker impose au conteneur lui-même
-#    (mem_limit, cpus, pids_limit) est écrit un cran plus haut, hors de
-#    portée d'ici.
+# 2. Le cgroup du conteneur délégué à `executor`, pour que podman y crée
+#    un cgroup par bac : sans cela --memory, --cpus et --pids-limit ne
+#    bornent rien. Exige `writable-cgroups=true` ; sinon l'exécuteur le
+#    signale et seul le plafond du conteneur tient. Un cgroup aux enfants
+#    bornés ne peut porter de processus : ceux du conteneur passent dans
+#    `init` d'abord. Puis root cède la place à `executor`.
 #
-# Puis root cède la place : le serveur et podman tournent sous `executor`.
-#
-# 3. Le PID 1 est un INIT (catatonit, celui que podman embarque), pas le
-#    serveur. Chaque `podman run` et chaque `podman exec` laisse un conmon
-#    qui se détache : orphelin, il revient au PID 1, et uvicorn n'enterre
-#    pas des enfants qu'il n'a pas lancés. Vu sur le déploiement le
-#    07/10/2026 : 111 zombies en vingt minutes d'usage, comptés dans le
-#    plafond de processus de l'utilisateur — et plus aucun bac ne se créait
-#    (« crun: clone: Resource temporarily unavailable », 503).
+# 3. PID 1 = catatonit, pas le serveur : les conmon détachés de chaque
+#    `podman run`/`exec` lui reviennent, et uvicorn ne les enterrerait
+#    pas — les zombies épuisent le plafond de processus et plus aucun bac
+#    ne se crée (« crun: clone: Resource temporarily unavailable »).
 set -eu
 INIT=/usr/libexec/podman/catatonit
 rm -rf "${XDG_RUNTIME_DIR:?}"/* 2>/dev/null || true

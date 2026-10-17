@@ -1,14 +1,8 @@
-# Cinq clients jetables pour valider le proxy : Claude Code (API Anthropic,
-# traduite), pi (pi.dev — API OpenAI, et API Anthropic aussi), Codex CLI
-# (API Responses, traduite), omp (oh-my-pi, fork de pi — API OpenAI, par
-# l'extension de son provider) et `api`, un client HTTP nu pour ce qu'aucun agent n'envoie de
-# lui-même (outil hébergé déclaré sur /v1/chat/completions). Rien n'est
-# installé sur l'hôte, rien ne touche ~/.claude, ~/.pi, ~/.codex ni ~/.omp :
-# chaque client
-# vit dans son image, avec SA configuration, et son dossier de travail
-# disparaît avec le conteneur.
+# Clients jetables pour valider le proxy, chacun dans son image avec SA
+# configuration : rien ne touche ~/.claude, ~/.pi, ~/.codex ni ~/.omp.
+# Scénarios et résultats : README.md.
 #
-#   cp .env.example .env          # PROXY_URL, MODEL…
+#   cp .env.example .env          # PROXY_URL, MODELS…
 #   docker compose run --rm claude            # tous les scénarios Claude Code
 #   docker compose run --rm pi                # tous les scénarios pi (API OpenAI)
 #   docker compose run --rm codex             # tous les scénarios Codex (API Responses)
@@ -17,9 +11,8 @@
 #   docker compose run --rm claude claude     # Claude Code interactif
 #   docker compose run --rm pi pi             # pi interactif
 #
-# Réseau HÔTE : 127.0.0.1:8000 est le proxy de la racine du dépôt. Un proxy
-# distant se vise par PROXY_URL dans .env (http://llmproxy) : en réseau
-# hôte, le nom est résolu par la machine qui lance les conteneurs.
+# Réseau HÔTE : 127.0.0.1:8000 est le proxy de la racine du dépôt ; un nom
+# dans PROXY_URL est résolu par la machine qui lance les conteneurs.
 services:
   claude:
     build: ./claude
@@ -37,25 +30,19 @@ services:
     env_file: .env
     command: ["./scenarios.sh"]
 
-  # PROXY_API_KEY (env_file) est la variable que Codex lit (env_key).
   codex:
     build: ./codex
     network_mode: host
     env_file: .env
     command: ["./scenarios.sh"]
 
-  # LLM_PROXY_URL et LLM_PROXY_API_KEY, que lit l'extension du provider
-  # d'omp, ne sont pas posées ici : omp/entrypoint.sh les dérive de
-  # PROXY_URL et PROXY_API_KEY (env_file), pour n'avoir qu'une source.
+  # LLM_PROXY_URL et LLM_PROXY_API_KEY : dérivées par omp/entrypoint.sh.
   omp:
     build: ./omp
     network_mode: host
     env_file: .env
     command: ["./scenarios.sh"]
 
-  # Pas un agent : des requêtes HTTP (Python, bibliothèque standard) et ce
-  # qu'on lit dans les réponses. PROXY_URL, PROXY_API_KEY et MODELS
-  # (env_file) lui suffisent.
   api:
     build: ./api
     network_mode: host

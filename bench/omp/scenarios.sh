@@ -10,13 +10,11 @@
 # Le dossier d'agent est vide : rien d'autre n'est chargé (--no-extensions
 # coupe la découverte, -e charge ce qu'on nomme).
 #
-# Scénario 6 : la recherche web HÉBERGÉE par le proxy (README principal,
+# Scénario 6 : la recherche web HÉBERGÉE par le proxy (docs/outils-heberges.md,
 # « Serveur MCP »). L'outil vient du serveur MCP du proxy (POST /mcp),
 # déclaré dans le dossier d'agent $PI_CODING_AGENT_DIR-mcp qu'écrit
 # entrypoint.sh : omp l'appelle comme un de ses outils, l'appel et le
-# résultat sont dans sa trace. (Jusqu'au 07/10/2026 : l'extension
-# llm-proxy-web.ts ; jusqu'au 15/10/2026 : les outils d'office du proxy,
-# [chat].always.) omp a aussi un `web_search`
+# résultat sont dans sa trace. omp a aussi un `web_search`
 # INTÉGRÉ, qui cherche depuis le conteneur (DuckDuckGo et d'autres, sans
 # clé) : le scénario doit donc prouver que c'est le proxy qui a cherché —
 # voir `verdict`. Il est SAUTÉ (SKIP, ni PASS ni FAIL) quand le proxy visé
@@ -46,9 +44,9 @@ mcp=${health#*|}
 hosts() { case " $hosted " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # Le compteur du proxy : exécutions de web_search arrivées par son serveur
-# MCP (route /mcp), lues sur son Usage API des outils (README principal,
+# MCP (route /mcp), lues sur son Usage API des outils (docs/statistiques.md,
 # « Usage des outils hébergés »). Imprime le nombre, ou rien si la route ne
-# répond pas (proxy antérieur au 05/10/2026, clé refusée). $1 : le nombre à
+# répond pas (proxy trop ancien, clé refusée). $1 : le nombre à
 # atteindre — le proxy écrit ses lignes hors de la requête, on relit donc
 # jusqu'à 5 s tant qu'il n'y est pas (0 : une seule lecture).
 # La fenêtre est la MÊME à chaque lecture (un jour avant le début du banc,
@@ -147,7 +145,7 @@ for MODEL in $MODELS; do
   #                            appel au modèle pour titrer la session
   #   --max-time               voir MAX_TIME
   #   --model albert/<modèle>  le provider de llm-proxy.ts
-  # C'est la commande validée à la main le 05/10/2026, dans le même ordre
+  # C'est la commande validée à la main, dans le même ordre
   # (le prompt en dernier, derrière -p), --max-time en plus. $1 : le
   # prompt ; la suite : les options propres à l'appel.
   agent() {
@@ -250,5 +248,5 @@ done
 
 echo
 echo "Résumé :$summary"
-[ "$skips" -gt 0 ] && echo "$skips scénario(s) sauté(s) : outils web non hébergés, ou non présentés d'office, par le proxy."
+[ "$skips" -gt 0 ] && echo "$skips scénario(s) sauté(s) : outils web non hébergés par le proxy, ou serveur MCP inactif."
 [ "$fails" -eq 0 ] && echo "Tout passe." || { echo "$fails scénario(s) en échec."; exit 1; }

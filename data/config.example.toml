@@ -2,84 +2,61 @@
 #  llm-proxy — configuration unique
 #
 #  Copié en data/config.toml au premier démarrage s'il n'existe pas.
-#  Toute chaîne peut contenir «${VARIABLE}» : la valeur est prise dans
-#  l'environnement au chargement. Les CLÉS D'API passent par là et ne
-#  sont donc jamais écrites dans ce fichier.
-#
-#  Emplacement surchargeable par la variable d'environnement CONFIG_PATH
-#  (défaut : data/config.toml, à la racine du dépôt ; /app/data dans l'image).
+#  Emplacement : variable CONFIG_PATH (défaut data/config.toml ; /app/data
+#  dans l'image). Toute chaîne peut contenir «${VARIABLE}», lue dans
+#  l'environnement : les CLÉS D'API passent par là, jamais en clair ici.
+#  Chemins relatifs (bases SQLite…) = à côté de ce fichier.
+#  Référence complète : docs/configuration.md.
 # ════════════════════════════════════════════════════════════════════════
 
 [proxy]
-# Valeur injectée dans `tool_choice` quand un backend demande
-# force_tool_choice = true (voir [backends]).
+# Valeur injectée dans `tool_choice` par un backend force_tool_choice = true.
 tool_choice = "auto"
-# Timeout (s) par défaut des appels vers les backends.
+# Timeout (s) des appels aux backends.
 upstream_timeout = 600
-# Timeout (s) des appels de méta-données (GET /v1/models, /v1/me/info…) :
-# court, un backend lent ne doit pas bloquer le catalogue.
+# Timeout (s) des méta-données (/v1/models, /v1/me/info) : court, un backend
+# lent ne bloque pas le catalogue.
 meta_timeout = 5
-# Secondes pendant lesquelles le catalogue d'un backend (/v1/models) est
-# gardé — sa réponse comme son silence : un backend éteint ne fait pas
-# attendre chaque appel du catalogue.
+# Durée (s) pendant laquelle le catalogue d'un backend est gardé, réponse
+# comme silence (un backend éteint ne fait pas attendre chaque appel).
 catalog_ttl = 30
 log_level = "INFO"
 
-# Clé(s) exigée(s) DES CLIENTS pour appeler le proxy («Authorization:
-# Bearer <clé>»). Liste vide = proxy ouvert. /healthz reste toujours
-# accessible sans clé.
+# Clé(s) exigée(s) des clients («Authorization: Bearer <clé>»).
+# LISTE VIDE = PROXY OUVERT à quiconque le joint. /healthz reste sans clé.
 api_keys = []
 # api_keys = ["${PROXY_API_KEY}"]
 
-# Seules routes POST relayées aux backends, en plus des handlers dédiés
-# (/v1/chat/completions, /v1/models). Toute autre URL → 404 local.
+# Routes POST relayées telles quelles, en plus des handlers dédiés
+# (/v1/chat/completions, /v1/models…). Toute autre URL → 404 local.
 forward_post_paths = [
   "/v1/completions", "/v1/embeddings", "/v1/rerank",
   "/v1/audio/transcriptions", "/v1/audio/speech",
   "/v1/images/generations", "/v1/images/edits", "/v1/ocr",
 ]
-# Endpoints hors quota chat côté Albert : jamais temporisés.
+# Suffixes jamais temporisés par le limiteur Albert (hors quota chat) ni
+# comptés au partage équitable.
 exempt_paths = ["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]
 
 
-# ── Surface Anthropic (Claude Code) ─────────────────────────────────────
-# Un client écrit pour l'API Messages d'Anthropic — Claude Code — peut
-# parler au proxy comme s'il était api.anthropic.com :
-#
-#   ANTHROPIC_BASE_URL=http://localhost:8000
-#   ANTHROPIC_API_KEY=<clé du proxy, ou n'importe quoi si proxy ouvert>
-#   ANTHROPIC_MODEL=albert/deepseek-v4-flash
-#
-# Le proxy traduit /v1/messages en /v1/chat/completions (et la réponse,
-# flux SSE compris) vers le backend que désigne le préfixe, comme pour
-# tout autre client. Uniquement dans ce sens : aucun backend Anthropic.
-# L'outil WebSearch de Claude Code passe par l'outil serveur `web_search`
-# d'Anthropic : le proxy l'exécute lui-même si [tools.web_search] est
-# activé plus bas, et l'ignore sinon (WebSearch ne rend alors rien).
-# Table absente ou enabled = false → surface inactive (404), rien ne
-# change pour les clients OpenAI.
+# ── Surface Anthropic : POST /v1/messages ───────────────────────────────
+# Voir docs/api-anthropic.md. Traduit l'API Messages vers
+# /v1/chat/completions du backend désigné par le préfixe du modèle.
+# Table absente ou enabled = false (défaut) → 404.
 [anthropic]
 enabled = true
-# En flux, pendant l'attente du limiteur : un `event: ping` toutes les
-# N secondes tient la connexion (Claude Code coupe un flux muet ; l'API
-# Anthropic envoie ces mêmes pings). Un 429 local devient alors un
-# `event: error` dans le flux. 0 = attendre AVANT de répondre, comme pour
-# un client OpenAI.
+# En flux, pendant l'attente du limiteur : un `event: ping` toutes les N s
+# (un client coupe un flux muet). 0 = attendre avant de répondre.
 ping_interval = 10
-# `reasoning_content` d'un backend (DeepSeek…) → bloc `thinking` visible
-# dans Claude Code. false = jeté.
+# `reasoning_content` du backend → bloc `thinking`. false = jeté.
 reasoning_as_thinking = true
-# Une ligne de log par réponse /v1/messages : stop_reason, outils appelés
-# (nom et extrait des arguments), tokens. À activer pour comprendre ce
-# qu'un agent fait — ou répète — derrière le proxy.
+# Une ligne de log par réponse (stop_reason, outils appelés, tokens).
 trace = false
 
-# Noms de modèles → noms PRÉFIXÉS du proxy. Claude Code envoie des noms
-# Claude en dur pour ses tâches d'arrière-plan (titres, résumés…), même
-# avec ANTHROPIC_MODEL défini : sans cette table ils partiraient en 400.
-# Un suffixe entre crochets («claude-opus-5[1m]») est ignoré à la
-# recherche. Un nom déjà préfixé par un backend passe tel quel.
-# «default» attrape tout nom inconnu ; sans lui → 400.
+# Nom de modèle reçu → nom PRÉFIXÉ du proxy. Claude Code envoie des noms
+# Claude en dur pour ses tâches de fond : sans entrée, 400. Un suffixe
+# «[1m]» est ignoré ; un nom déjà préfixé passe tel quel ; «default»
+# attrape tout nom inconnu (sans lui → 400).
 [anthropic.model_map]
 default = "albert/deepseek-v4-flash"
 "claude-fable-5" = "albert/deepseek-v4-flash"
@@ -93,849 +70,446 @@ default = "albert/deepseek-v4-flash"
 "claude-sonnet-4-6" = "albert/deepseek-v4-flash"
 "claude-sonnet-4-5" = "albert/deepseek-v4-flash"
 "claude-haiku-4-5" = "albert/deepseek-v4-flash"
-# Alias génériques que Claude Code accepte dans ANTHROPIC_MODEL.
+# Alias génériques.
 "opus" = "albert/deepseek-v4-flash"
 "sonnet" = "albert/deepseek-v4-flash"
 "haiku" = "albert/deepseek-v4-flash"
 
 
-# ── Surface Responses (Codex CLI) ───────────────────────────────────────
-# Un client écrit pour l'API Responses d'OpenAI — Codex CLI — peut parler
-# au proxy : POST /v1/responses est traduit en /v1/chat/completions (et la
-# réponse, flux d'événements compris) vers le backend que désigne le
-# préfixe du modèle. Aucun backend n'a besoin de servir /v1/responses.
-# Dans ~/.codex/config.toml :
-#
-#   model = "bigchuck/qwen3.8-flash-next"
-#   model_provider = "llm-proxy"
-#   [model_providers.llm-proxy]
-#   name = "llm-proxy"
-#   base_url = "http://localhost:8000/v1"
-#   wire_api = "responses"
-#
-# Les outils que seul OpenAI exécute (file_search, code_interpreter, mcp…)
-# sont ignorés — sauf `web_search`, que le proxy exécute lui-même s'il est
-# activé plus bas ([tools]) —, les `namespace` aplatis en fonctions, les
-# champs sans effet tolérés. Aucun état de conversation côté proxy :
-# previous_response_id → 400.
-# Table absente ou enabled = false → surface inactive (404).
+# ── Surface Responses : POST /v1/responses ──────────────────────────────
+# Voir docs/api-responses.md. Traduit vers /v1/chat/completions ; aucun
+# état côté proxy (previous_response_id → 400). Outils propres à OpenAI
+# ignorés, sauf `web_search` exécuté par le proxy ([tools]).
+# Table absente ou enabled = false (défaut) → 404.
 [responses]
 enabled = true
-# `reasoning_content` d'un backend → élément `reasoning` (résumé) visible
-# dans le client. false = jeté.
+# `reasoning_content` du backend → élément `reasoning`. false = jeté.
 reasoning_as_summary = true
 
 
 # ── Outils hébergés sur /v1/chat/completions ────────────────────────────
-# chat/completions n'a pas de forme standard pour un outil exécuté côté
-# serveur. hosted_tools = true : une requête qui déclare dans `tools` la
-# forme de l'API Responses — {"type": "web_search"} — ou le champ
-# `web_search_options` d'OpenAI voit sa déclaration remplacée par les
-# fonctions de [tools], et le proxy boucle (exécution, relance du
-# backend) : le client reçoit UNE réponse ordinaire, sans `tool_calls`
-# pour ces appels. Un outil déclaré mais désactivé plus bas → 400.
-# À SAVOIR : le client ne garde ni ces appels ni leurs résultats. Le
-# proxy les lui rend à la requête suivante tant que `memory` les garde
-# (voir plus bas) ; sinon le modèle n'a plus ce qu'il avait lu, et le
-# cache de préfixe du backend ne sert que jusqu'au message d'avant la
-# recherche.
-# Table absente ou hosted_tools = false → comme avant : relais brut, la
-# déclaration part telle quelle au backend (qui la refuse, ou en a SA
-# lecture — Zhipu). Une requête qui ne déclare rien n'est jamais touchée
-# — sauf par `always`, ci-dessous.
+# Voir docs/outils-heberges.md et docs/chat.md.
 [chat]
+# true : une déclaration d'outil hébergé dans `tools` ({"type": "web_search"},
+# `web_search_options`…) est remplacée par les fonctions de [tools] et le
+# proxy boucle lui-même ; le client reçoit une réponse ordinaire. Un outil
+# déclaré mais désactivé → 400. false (défaut) : relais brut.
 hosted_tools = true
-# Outils présentés D'OFFICE à TOUTE requête /v1/chat/completions, sans
-# déclaration : pour une interface de chat (Open WebUI), qui n'en fera
-# jamais. Pas pour un agent (pi, omp) : il les prend mieux par le
-# serveur MCP ([mcp_server]) — appels dans sa trace, rien de caché —, et
-# les deux ensemble lui présenteraient chaque outil deux fois. Des NOMS d'outils hébergés — always = ["web_search",
-# "web_fetch"] — présentés à la suite des outils du client ; la requête
-# est ensuite traitée comme si elle les avait déclarés (boucle, réponse
-# unique, annotations, mémoire). Vide ou absent = rien d'office (le
-# défaut). Sans effet si hosted_tools est faux.
-# «mcp:<serveur>» y vaut TOUS les outils du serveur [tools.mcp.<serveur>],
-# ceux qu'il annoncera plus tard compris — always = ["web_search",
-# "mcp:deepwiki"] ; un outil MCP seul s'y nomme «<serveur>_<outil>». Pas
-# de «mcp» nu pour tous les serveurs.
-# Un nom inconnu, ou d'un outil désactivé plus bas, est ignoré avec un
-# avertissement au démarrage (pas de 400 : le client n'a rien demandé).
-# Rien n'est présenté d'office : à une requête qui dit `tool_choice:
-# "none"` ou `n` > 1 ; à un modèle que le catalogue de son backend ne
-# dit pas de conversation (image, voix, embeddings) ; pour un outil dont
-# une fonction du client porte déjà le nom.
-# À SAVOIR : le réglage vaut pour TOUS les clients de cette route et tous
-# ses modèles, sauf ceux d'always_except. Un modèle de conversation qui
-# ne sait pas appeler d'outils les reçoit quand même (le catalogue ne le
-# dit pas), et les requêtes de service d'une interface (titre, tags,
-# suggestions) aussi : rien ne les distingue, sinon leur modèle. Un backend dont le `tool_choice` par défaut est `none`
-# (Albert) n'appellera rien sans son force_tool_choice. Et le texte des
-# pages web entre alors dans TOUTES les conversations, sans que le client
-# l'ait demandé : voir l'avertissement d'injection de prompt de [tools].
+# Outils présentés D'OFFICE à TOUTE requête de cette route (interface de
+# chat), ex. ["web_search", "web_fetch", "mcp:deepwiki"] ; «mcp:<serveur>»
+# = tous ses outils. Vide = rien (défaut). Nom inconnu ou outil désactivé :
+# ignoré avec avertissement. Pour un agent, préférer [mcp_server] (les
+# deux ensemble présentent chaque outil deux fois).
+# ATTENTION : vaut pour tous les clients et modèles (sauf always_except) ;
+# le texte des pages web entre alors dans toutes les conversations
+# (injection de prompt, voir [tools]).
 always = []
-# Modèles à qui RIEN n'est présenté d'office : motifs à jokers shell sur
-# le nom préfixé «<backend>/<modèle>», casse ignorée (la syntaxe des
-# model_types d'un backend). Pour le « modèle de tâches » qu'une interface
-# (Open WebUI) réserve à ses titres, tags et suggestions. Une déclaration
-# explicite du client reste honorée.
+# Modèles exclus d'`always` : jokers shell sur «<backend>/<modèle>», casse
+# ignorée (ex. le modèle de tâches d'une interface).
 # always_except = ["bigchuck/qwen3.8-nano*"]
 always_except = []
-# Annotations `url_citation` (forme OpenAI) en fin de réponse : les URL
-# rendues par un outil ET écrites par le modèle. false = aucune.
+# Annotations `url_citation` en fin de réponse. false = aucune.
 annotations = true
-# Mémoire des échanges cachés : à la conclusion d'une réponse, les appels
-# hébergés et le texte de leurs résultats sont gardés sous un condensé
-# des messages de la requête et de la réponse (aucun identifiant de
-# conversation en chat/completions) ; à la requête suivante, si le client
-# renvoie cette réponse et ce qui la précède inchangés, ils sont
-# réinsérés à leur place avant l'envoi au backend. En mémoire vive
-# seulement, cloisonnée par clé du proxy, jamais d'image ; nombre
-# d'entrées et durée : [tools].cache_entries et cache_ttl. false = rien
-# n'est gardé ni réinséré.
+# Mémoire des échanges cachés : appels hébergés et résultats réinsérés à la
+# requête suivante si le client renvoie l'historique inchangé (en mémoire
+# vive, cloisonnée par clé ; taille et durée : [tools].cache_entries,
+# cache_ttl). false = le modèle perd ce qu'il a lu d'un tour à l'autre.
 memory = true
-# Caractères gardés au plus, toutes entrées confondues (un échange peut
-# porter 8 résultats de 24 000 caractères) : au-delà, les moins
-# récemment relus sortent.
+# Caractères gardés au plus, toutes entrées confondues (LRU).
 memory_chars = 8000000
 
 
-# ── Outils hébergés (surfaces Responses et Anthropic) ───────────────────
-# Un client de l'API Responses — Codex CLI — déclare `{"type":
-# "web_search"}` en comptant qu'OpenAI fera la recherche. Derrière ce
-# proxy il n'y a pas d'OpenAI : c'est le proxy qui l'exécute. Il présente
-# au modèle deux fonctions, `web_search` et `web_fetch`, exécute leurs
-# appels, relance le backend avec le résultat, et ne rend au client que
-# des éléments `web_search_call` terminés.
-# Un client de l'API Messages — Claude Code, dont l'outil WebSearch envoie
-# une sous-requête à part — déclare de même l'outil serveur `{"type":
-# "web_search_20250305", "name": "web_search"}` en comptant sur Anthropic.
-# Pour lui le proxy ne présente QUE `web_search` (Claude Code lit les
-# pages sur le poste du client) et rend les blocs `server_tool_use` puis
-# `web_search_tool_result` ; `max_uses`, `allowed_domains` et
-# `blocked_domains` de l'outil sont respectés. Un client du SDK Anthropic
-# qui déclare l'outil serveur `{"type": "web_fetch_20250910", "name":
-# "web_fetch"}` reçoit de même `web_fetch`, rendu en blocs
-# `server_tool_use` puis `web_fetch_tool_result` (`max_content_tokens`
-# respecté aussi, `citations` ignoré).
-# /v1/chat/completions en profite si [chat].hosted_tools ; rien n'est
-# ajouté à une requête qui ne DÉCLARE pas l'outil — sauf sur cette route,
-# pour les outils nommés par [chat].always.
-# Tables absentes ou enabled = false → comme avant : `web_search` est
-# ignoré, le modèle ne le voit pas.
+# ── Outils hébergés (communs) ───────────────────────────────────────────
+# Voir docs/outils-heberges.md. Exécutés par le proxy pour les surfaces
+# Responses et Anthropic (outils serveur web_search / web_fetch) et pour
+# /v1/chat/completions ([chat]). Rien n'est ajouté à une requête qui ne
+# déclare pas l'outil (sauf [chat].always).
 #
-# À SAVOIR avant d'activer : le texte d'une page web entre dans le
-# contexte d'un agent qui exécute des commandes sur le poste du client.
-# Une page peut porter des instructions écrites pour lui (injection de
-# prompt) ; AUCUN réglage de ce fichier ne l'empêche.
+# ATTENTION : le texte d'une page web entre dans le contexte d'un agent qui
+# peut exécuter des commandes chez le client. Une page peut porter des
+# instructions (injection de prompt) : AUCUN réglage ici ne l'empêche.
 [tools]
-# Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
-# reçoit une erreur qui lui demande de conclure avec ce qu'il a, et le tour
-# suivant ne lui présente plus ces outils : il ne peut que répondre. Le
-# `max_uses` d'un outil serveur Anthropic peut abaisser cette limite pour
-# sa requête, jamais la relever.
+# Appels d'outils exécutés pour UNE réponse ; au-delà le modèle doit
+# conclure. Le `max_uses` Anthropic peut l'abaisser, pas le relever.
 max_calls = 8
-# Délai (s) d'une exécution, tout compris (redirections suivies incluses) ;
-# chaque outil a aussi le sien, plus court, par requête. Dépassé → une
-# erreur rendue au modèle, jamais au client.
+# Délai (s) d'une exécution d'outil, tout compris (sauf outils qui ont le
+# leur, ci-dessous). Dépassé → erreur rendue au modèle.
 run_timeout = 60
-# Taille (caractères) d'un résultat rendu au modèle ; le surplus est coupé
-# et marqué «[truncated]».
+# Caractères d'un résultat rendu au modèle ; le surplus est coupé.
 max_result_chars = 24000
-# Mémoire des résultats — la SEULE chose que le proxy conserve entre deux
-# requêtes, et pour la surface Responses seulement (un client Anthropic
-# renvoie le résultat avec l'appel : rien n'est gardé pour lui).
-# Le client renvoie au tour suivant l'élément `web_search_call`
-# SANS son résultat (OpenAI le garde côté serveur) : le proxy doit le
-# rendre au modèle à l'identique, sinon il perd ce qu'il a lu et le préfixe
-# change sous un backend à cache. Elle garde, par identifiant d'élément,
-# le nom de la fonction, ses arguments tels que le modèle les a écrits, et
-# le texte du résultat — rien d'autre. Cloisonnée par client : une entrée
-# ne se relit qu'avec la clé (proxy.api_keys) qui l'a fait ranger, dont
-# seul un condensé est gardé — ou, avec les comptes ([oidc]), avec
-# n'importe quelle clé du même compte ; proxy ouvert = un seul client. En mémoire
-# vive, jamais sur disque : un redémarrage du proxy la vide, le modèle
-# reçoit alors à la place un mot qui lui dit de relancer l'outil.
-# cache_entries : nombre d'appels gardés (les moins récemment relus
-# sortent) ; cache_ttl : durée de vie (s) d'une entrée.
+# Mémoire des résultats (Responses et [chat].memory) : nombre d'appels
+# gardés (LRU) et durée de vie (s). En mémoire vive, cloisonnée par clé
+# (ou par compte avec [oidc]) ; vidée au redémarrage.
 cache_entries = 512
 cache_ttl = 86400
-# Cache WEB (à ne pas confondre avec la mémoire ci-dessus, qui rend au
-# modèle ce qu'il a déjà lu dans UNE conversation) : une page lue ou une
-# recherche faite est gardée quelques minutes, pour ne pas la redemander au
-# web. Une page longue lue en plusieurs morceaux n'est téléchargée qu'une
-# fois, et une recherche identique ne repart pas chez les moteurs de
-# SearXNG, qui bloquent vite une adresse trop pressante. Durée en secondes
-# (0 = pas de cache) : courte, sinon une page d'actualité serait servie
-# périmée. En mémoire vive, commun à tous les clients, succès seulement.
+# Cache WEB partagé : page lue ou recherche faite, gardée N s (0 = aucun ;
+# court, une page d'actualité vieillit). Succès seulement, en mémoire vive.
 web_cache_ttl = 600
 web_cache_entries = 256
 web_cache_bytes = 64000000
 
-# Recherche web, par une instance SearXNG (métamoteur libre, API JSON,
-# sans clé) : le service `searxng` du docker-compose.
+# Recherche web par une instance SearXNG (service `searxng` du compose).
 [tools.web_search]
 enabled = true
-# Base de l'instance ; le proxy appelle <searxng_url>/search?q=…&format=json.
-# «http://searxng:8080» est le nom du service sur le réseau du compose :
-# hors compose (uvicorn lancé à la main), mettre l'adresse réelle. Vide →
-# l'outil répond au modèle que la recherche n'est pas configurée.
-# C'est une adresse de CONFIGURATION, en général privée : le garde-fou des
-# adresses publiques de [tools.net] ne s'y applique pas.
-# SearXNG ne sert le JSON que si `search.formats` le liste
-# (services/searxng/settings.yml) ; sinon 403, et l'erreur rendue au modèle le dit.
+# Base de l'instance (appel <url>/search?format=json). Hors compose, mettre
+# l'adresse réelle ; vide → outil non configuré. Adresse de configuration :
+# [tools.net] ne s'y applique pas. SearXNG doit lister `json` dans
+# search.formats (services/searxng/settings.yml), sinon 403.
 searxng_url = "http://searxng:8080"
-# Délai (s) de la requête vers SearXNG, qui interroge lui-même plusieurs
-# moteurs avant de répondre.
+# Délai (s) de la requête à SearXNG.
 timeout = 20
-# Résultats rendus quand le modèle ne précise pas `limit` (il peut en
-# demander jusqu'à 20). Un résultat = titre, date, URL, extrait de 240
-# caractères.
+# Résultats par défaut (le modèle peut en demander jusqu'à 20).
 limit = 8
-# Paramètres `language` («fr», «en-US»…) et `categories` («general»,
-# «general,it»…) passés à SearXNG. Vides = non envoyés, les défauts de
-# l'instance s'appliquent.
+# `language` («fr», «en-US») et `categories` («general,it») passés à
+# SearXNG ; vides = défauts de l'instance.
 language = ""
 categories = ""
 
-# Lecture d'une page par son URL, pour que le modèle ouvre un résultat de
-# la recherche — sans elle il n'en a que les extraits. Présentée au modèle
-# en même temps que `web_search`, quand un client Responses déclare
-# `web_search` ; à un client Anthropic, seulement s'il déclare l'outil
-# serveur `web_fetch_…` (Claude Code ne le fait pas).
+# Lecture d'une page par son URL (HTML → texte, JSON, texte, PDF avec
+# couche texte). Présentée avec web_search ; côté Anthropic seulement si
+# l'outil serveur web_fetch est déclaré.
 [tools.web_fetch]
 enabled = true
-# Délai (s) de chaque requête (une par saut de redirection, 5 sauts au plus).
+# Délai (s) par requête (5 redirections au plus).
 timeout = 20
-# Octets lus au plus sur le corps d'une page ; le reste n'est pas téléchargé.
+# Octets lus au plus sur une page ; le reste n'est pas téléchargé.
 max_bytes = 2000000
-# La même borne pour un PDF (reconnu à son type ou à ses premiers octets),
-# plus haute : un PDF coupé ne se lit pas. Au-delà, il est refusé.
+# Même borne pour un PDF (refusé au-delà : un PDF coupé ne se lit pas).
 pdf_max_bytes = 20000000
-# Caractères de texte rendus par appel (HTML converti en texte ; JSON et
-# texte tels quels ; texte extrait d'un PDF, sans OCR ; tout autre type
-# refusé). Page plus longue : le modèle redemande la suite par `offset`.
+# Caractères rendus par appel ; la suite se demande par `offset`.
 max_chars = 20000
-# Ce que `web_fetch` a le droit de joindre — adresses privées, listes de
-# domaines — se règle dans [tools.net], pour tous les outils qui
-# téléchargent.
 
-# Recherche dans une page (l'action `find_in_page` de la recherche web
-# d'OpenAI) : le modèle donne une URL et une expression régulière, il ne
-# reçoit que les lignes qui y répondent, avec un peu de contexte et
-# l'offset de chacune — à passer à web_fetch pour lire la suite. Sur une
-# longue documentation, quelques milliers de caractères au lieu de dix
-# morceaux de 20 000. Activée avec `web_search`, comme web_fetch, et
-# rendue par le même élément `web_search_call` ; la page est lue par
-# web_fetch (mêmes [tools.net], même conversion, PDF compris, même cache
-# web). Pas d'outil serveur Anthropic équivalent : absente de
-# /v1/messages, présente partout ailleurs.
+# Recherche d'une regex dans une page (lue par web_fetch, même cache) : rend
+# les lignes trouvées et leur offset. Absente de /v1/messages.
 [tools.web_grep]
 enabled = true
-# Lignes trouvées rendues par défaut (le modèle peut en demander jusqu'à
-# 50), et lignes non vides de contexte de chaque côté (au plus 5).
+# Lignes rendues par défaut (le modèle peut en demander 50 au plus), et
+# lignes de contexte de chaque côté (5 au plus).
 max_matches = 20
 context = 1
-# Délai (s) de la recherche du motif dans la page, lecture non comprise.
-# L'expression est écrite par le modèle : la bibliothèque `regex` la coupe
-# à ce délai (une expression à retour arrière catastrophique ne bloque
-# pas le proxy), et l'erreur rendue lui demande plus simple.
+# Délai (s) de la recherche du motif (une regex catastrophique est coupée).
 regex_timeout = 1.0
 
 # Garde-fou de TÉLÉCHARGEMENT, commun à tout ce que le proxy va chercher à
-# la demande du modèle : une page (`web_fetch`), et tout outil qui lit un
-# fichier par son URL. Une seule table : ce qu'un déploiement interdit de
-# lire, il l'interdit partout. Les bornes de taille et de durée restent à
-# chaque outil.
-# Ces trois clés vivaient dans [tools.web_fetch] : elles y sont encore
-# LUES si [tools.net] ne les pose pas, avec un avertissement au démarrage
-# qui demande de les déplacer ici.
+# la demande du modèle (web_fetch, OCR, transcription, fichiers du bac…).
+# Voir docs/securite.md. (Ces clés sont encore lues dans [tools.web_fetch],
+# avec un avertissement, si cette table ne les pose pas.)
 [tools.net]
-# Garde-fou des adresses privées. La cible est choisie par le MODÈLE, et
-# la requête part DU PROXY : sans filtre, une page web (ou un prompt)
-# pourrait lui faire lire un service de son réseau — le backend
-# d'inférence, l'instance SearXNG, un routeur, les métadonnées d'un cloud.
-# false : seules les adresses PUBLIQUES sont jointes. Le nom est résolu par
-# le proxy, TOUTES ses adresses doivent être publiques (ni privées, ni
-# locales, ni lien local, ni CGNAT 100.64.0.0/10 — les adresses Tailscale —,
-# ni réservées), la connexion part vers l'adresse vérifiée et non vers le
-# nom, et le contrôle est refait à CHAQUE saut de redirection.
-# true lève ce filtre : à n'ouvrir que sur un proxy dont tous les clients
-# sont de confiance, et jamais derrière un modèle qui lit le web.
+# false (défaut) : adresses PUBLIQUES seulement, vérifiées à chaque
+# redirection (ni privées, ni locales, ni CGNAT/Tailscale…).
+# true : le modèle peut faire lire au proxy tout service de son réseau
+# (backend, routeur, métadonnées cloud) — seulement si tous les clients
+# sont de confiance, jamais derrière un modèle qui lit le web.
 allow_private = false
-# Listes de domaines, pour restreindre ce que le modèle peut ouvrir. Vides
-# par défaut : tout domaine public est lu. `allowed_domains` non vide =
-# SEULS ces domaines ; `blocked_domains` = jamais. Un domaine couvre ses
-# sous-domaines ("github.com" couvre "docs.github.com"), un chemin
-# restreint ("example.com/blog"). Contrôlées à chaque redirection. C'est
-# la seule parade à la fuite par l'URL : une page lue qui pousse le modèle
-# à ouvrir https://ailleurs/?d=<contenu de la conversation>.
+# Domaines (sous-domaines et chemin compris) : `allowed_domains` non vide =
+# SEULS ceux-là ; `blocked_domains` = jamais. Vides = tout domaine public.
+# Seule parade à la fuite de la conversation par une URL.
 # allowed_domains = ["github.com", "docs.python.org", "wikipedia.org"]
 # blocked_domains = ["pastebin.com"]
 
-# Lecture du texte d'une IMAGE ou d'un PDF SCANNÉ (OCR), par son URL. Pas
-# de Tesseract : le texte est lu par un MODÈLE DE VISION qu'un backend de
-# ce fichier relaie déjà — une requête chat/completions ordinaire, l'image
-# en `image_url`. C'est le recours de `web_fetch`, qui ne lit ni une image
-# ni un PDF sans couche texte (sa description y renvoie le modèle quand
-# les deux lui sont présentés).
-# Le fichier arrive par URL seulement, téléchargé par le proxy sous le
-# garde-fou de [tools.net].
-# Image : PNG, JPEG, GIF, WebP (reconnue à ses premiers octets). PDF : les
-# images EMBARQUÉES dans ses pages (un scan = une image par page), pas un
-# rendu de la page — JPEG repris tel quel, pixels bruts (gris, RVB)
-# réécrits en PNG ; un scan codé en fax (CCITT, JBIG2) ou en JPEG 2000
-# n'est pas lu, et l'erreur le dit.
-# Sans liaison à l'API Responses ni à l'API Messages : l'outil se présente
-# sur /v1/chat/completions — déclaré par {"type": "ocr"}
-# ([chat].hosted_tools) ou d'office ([chat].always) — et s'appelle par
-# POST /v1/tools/ocr.
-# À SAVOIR : le texte lu dans une image entre dans le contexte du modèle
-# comme celui d'une page web — une image peut porter des instructions.
+# OCR d'une image (PNG, JPEG, GIF, WebP) ou d'un PDF scanné, par URL, lu par
+# un MODÈLE DE VISION d'un backend. Sur /v1/chat/completions ({"type":
+# "ocr"} ou [chat].always) et POST /v1/tools/ocr. Le texte lu entre dans le
+# contexte comme une page web (injection possible).
 [tools.ocr]
 enabled = false
-# Le modèle de vision, PRÉFIXÉ comme dans une requête d'un client. Son
-# backend doit avoir `images = true`. Vide, préfixe inconnu, backend sans
-# images, ou modèle que le catalogue ne dit pas multimodal → l'outil
-# répond au modèle qu'il n'est pas configuré (la raison est dans le journal).
-# Sur un backend à quotas, chaque page lue passe par son limiteur ; chaque
-# requête laisse, en plus de la ligne d'usage de l'outil, une ligne de
-# requête de ce modèle, endpoint «/v1/tools/ocr».
+# Modèle de vision PRÉFIXÉ ; son backend doit avoir `images = true`. Vide
+# ou invalide → outil non configuré (raison dans le journal).
 model = ""
-# Durée (s) d'une exécution, téléchargement et lectures compris. Ce délai
-# passé, les pages déjà lues sont rendues et le modèle redemande la suite.
-# Il remplace [tools].run_timeout pour cet outil (10 s de marge en plus,
-# le temps de rendre) : le monter suffit pour un modèle de vision lent.
+# Délai (s) d'une exécution ; remplace [tools].run_timeout pour cet outil.
 timeout = 50
-# Octets téléchargés au plus ; un fichier plus gros est refusé.
+# Octets téléchargés au plus (refusé au-delà).
 max_bytes = 20000000
-# Octets d'UNE image envoyée au modèle de vision (en base64 dans le corps
-# de la requête : un tiers de plus). Aucune image n'est redimensionnée.
+# Octets d'UNE image envoyée au modèle (jamais redimensionnée).
 max_image_bytes = 5000000
-# Pages d'un PDF lues par appel — une requête au modèle de vision chacune ;
-# le modèle demande les suivantes par l'argument `pages` ("5-8").
+# Pages de PDF par appel (une requête chacune), et lues en parallèle.
 max_pages = 4
-# Pages lues en même temps.
 concurrency = 2
-# Caractères de texte rendus par appel ; au-delà, les pages restantes sont
-# à redemander (déjà lues, elles sortent du cache web).
+# Caractères rendus par appel.
 max_chars = 20000
-# `max_tokens` de chaque requête au modèle de vision (une page dense :
-# 1 500 à 3 000 tokens) ; ramené à [backends.<nom>].max_tokens s'il est
-# plus bas.
+# `max_tokens` par page, ramené à [backends.<nom>].max_tokens s'il est plus bas.
 max_tokens = 4096
 
-# Transcription d'un fichier audio : le modèle donne une URL, le proxy
-# télécharge le fichier (sous le garde-fou de [tools.net]) et le confie au
-# modèle de transcription d'un de ses backends (API OpenAI
-# /v1/audio/transcriptions). Le fichier n'arrive QUE par URL.
-# Sans liaison à l'API Responses ni à l'API Messages (aucune des deux n'a
-# d'outil de ce nom) : l'outil se présente sur /v1/chat/completions —
-# déclaré par {"type": "transcribe"} ([chat].hosted_tools) ou d'office
-# ([chat].always) — et s'appelle par POST /v1/tools/transcribe.
+# Transcription d'un fichier audio par URL, via /v1/audio/transcriptions
+# d'un backend. Sur /v1/chat/completions ({"type": "transcribe"} ou
+# [chat].always) et POST /v1/tools/transcribe.
 [tools.transcribe]
 enabled = false
-# Le modèle de transcription, PRÉFIXÉ comme tout modèle du proxy :
-# "<backend>/<modèle>". Vide, sans préfixe ou backend inconnu → l'outil
-# répond au modèle que la transcription n'est pas configurée.
-# C'est une adresse de CONFIGURATION : le garde-fou des adresses publiques
-# ne s'y applique pas (il protège de l'URL choisie par le modèle).
-# Chaque transcription laisse, en plus de la ligne d'usage de l'outil, une
-# ligne de requête de ce modèle, endpoint «/v1/tools/transcribe».
+# Modèle PRÉFIXÉ "<backend>/<modèle>" ; vide ou invalide → non configuré.
 model = ""
 # model = "bigchuck/qwen3-asr-1.7b"
-# Formats que CE modèle lit TELS QUELS, parmi : mp3, wav, flac, ogg, m4a,
-# aac, webm, amr, mp4 (absent = tous). Vu le 07/10/2026 : Qwen3-ASR sous
-# gufo ne lit que le WAV (tout autre format → HTTP 500).
+# Formats que le modèle lit tels quels parmi mp3, wav, flac, ogg, m4a, aac,
+# webm, amr, mp4 (absent = tous).
 # formats = ["wav"]
-# Ce que `formats` ne liste pas est CONVERTI en WAV 16 kHz mono par ffmpeg
-# avant l'envoi (il faut donc "wav" dans `formats`). L'image Docker du
-# proxy embarque ffmpeg ; hors conteneur, s'il est absent, le proxy démarre,
-# le dit, et ces formats sont refusés — comme avec `convert = false`, où
-# la description de l'outil ne promet au modèle que `formats`.
-# ffmpeg décode alors des octets venus du web : arguments fixes, format
-# d'entrée imposé d'après les premiers octets, aucun protocole que `file`,
-# dossier temporaire supprimé, délai et taille bornés — mais PAS isolé du
-# proxy. `convert = false` pour refuser plutôt que décoder.
+# Les autres sont convertis en WAV 16 kHz mono par ffmpeg ("wav" doit être
+# dans `formats`). ffmpeg décode des octets venus du web, borné mais NON
+# isolé du proxy : false = refuser plutôt que convertir.
 convert = true
-# Le binaire : un nom cherché dans PATH, ou un chemin.
+# Binaire ffmpeg (nom dans PATH ou chemin).
 # ffmpeg = "ffmpeg"
-# Délai (s) d'une conversion (s'ajoute au délai de l'outil), et octets du
-# WAV produit au plus — 1,92 Mo par minute, 100 Mo ≈ 52 min ; au-delà le
-# fichier est refusé, pas coupé. Tenu en mémoire le temps de l'envoi.
+# Délai (s) d'une conversion, et octets du WAV produit (1,92 Mo/min ;
+# refusé au-delà).
 convert_timeout = 60
 convert_max_bytes = 100000000
-# Le `response_format` demandé au modèle de transcription. "verbose_json"
-# rend aussi la langue entendue et la durée, que l'outil donne au modèle ;
-# "json" (le texte seul) pour un backend qui refuse l'autre.
+# "verbose_json" (langue et durée en plus) ou "json" si le backend refuse.
 response_format = "verbose_json"
-# Délai (s) de la requête de transcription, et délai (s) du téléchargement,
-# redirections comprises. Leur SOMME (plus `convert_timeout` quand ffmpeg
-# convertit) est le délai de l'outil : elle
-# remplace [tools].run_timeout pour lui (une heure d'audio ne se
-# transcrit pas en 60 s). Le client attend pendant ce temps.
+# Délais (s) de la transcription et du téléchargement ; leur somme (+
+# convert_timeout) remplace [tools].run_timeout pour cet outil.
 timeout = 300
 download_timeout = 60
-# Octets téléchargés au plus. Au-delà le fichier est REFUSÉ, pas coupé
-# (une transcription partielle passerait pour entière). 25 Mo ≈ 25 min de
-# MP3 à 128 kbit/s. Le fichier est tenu en mémoire le temps de l'appel.
+# Octets téléchargés au plus (refusé, pas coupé ; 25 Mo ≈ 25 min de MP3).
 max_bytes = 25000000
-# Caractères rendus par appel ; transcription plus longue : le modèle
-# redemande la suite par `offset`, sans que rien soit retranscrit.
+# Caractères rendus par appel ; la suite par `offset`.
 max_chars = 20000
-# Langue passée au modèle de transcription quand l'appel n'en donne pas
-# (code ISO 639-1 : "fr", "en"). Vide = il la détecte.
+# Langue ISO 639-1 par défaut ("fr") ; vide = détectée.
 language = ""
-# Cache des TRANSCRIPTIONS (le texte, jamais l'audio) : par URL et langue,
-# en mémoire vive, commun à tous les clients. Plus long que le cache web :
-# un enregistrement ne change pas, et le retranscrire coûte cher.
-# cache_ttl en secondes (0 = pas de cache).
+# Cache des transcriptions (texte seul) : durée (s, 0 = aucun) et entrées.
 cache_ttl = 3600
 cache_entries = 64
 
-# Serveurs MCP (Model Context Protocol) : le proxy s'y connecte, découvre
-# leurs outils, et chacun devient un outil hébergé — présenté au modèle
-# sous le nom `<serveur>_<outil>`, exécutable par POST /v1/tools/<nom>.
-# Sur /v1/chat/completions ([chat].hosted_tools), un client les déclare
-# dans `tools` : `{"type": "mcp"}` (tous), `{"type": "mcp:<serveur>"}`
-# (ceux d'un serveur) ou `{"type": "<serveur>_<outil>"}` (un seul) ;
-# [chat].always les présente d'office, chacun par son nom
-# `<serveur>_<outil>`. Pas de liaison à l'API Responses ni à l'API
-# Messages : ces deux surfaces ne les présentent pas.
-# HTTP seulement (transport « Streamable HTTP ») : le proxy ne lance aucun
-# processus, pas de serveur stdio. La liste est FERMÉE : seuls les
-# serveurs de ce fichier sont joints, jamais une URL venue d'un client ou
-# du modèle.
+# Serveurs MCP distants (HTTP « Streamable » seulement, pas de stdio) dont
+# les outils deviennent des outils hébergés `<serveur>_<outil>`. Sur
+# /v1/chat/completions ({"type": "mcp"}, "mcp:<serveur>", "<serveur>_<outil>"
+# ou [chat].always) et /v1/tools ; pas sur Responses ni Messages. Seuls les
+# serveurs listés ici sont joints. Voir docs/outils-heberges.md.
 #
-# À SAVOIR avant d'activer :
-#   * un outil exposé l'est à TOUS les clients du proxy, avec le compte
-#     que portent les en-têtes ci-dessous. Personne ne confirme un appel :
-#     n'exposez pas un outil qui écrit ou supprime sans l'avoir voulu
-#     (`tools`, `exclude`) ;
-#   * le nom, la description et le schéma de chaque outil, puis ses
-#     résultats, sont du texte TIERS qui entre dans le prompt du modèle
-#     (injection de prompt) : ne listez que des serveurs de confiance ;
-#   * pas d'OAuth : en-têtes statiques seulement.
+# ATTENTION : un outil exposé l'est à TOUS les clients, avec le compte des
+# en-têtes ci-dessous, sans confirmation (filtrer ce qui écrit ou supprime
+# par `tools` / `exclude`). Descriptions et résultats sont du texte tiers
+# (injection de prompt) : serveurs de confiance seulement. Pas d'OAuth.
 #
-# Réglages communs à tous les serveurs (une sous-table = un serveur ; ces
-# sept noms ne peuvent donc pas être des noms de serveur) :
+# Réglages communs (ces noms ne peuvent pas être des noms de serveur) :
 # [tools.mcp]
-# Délai (s) d'un appel d'outil, tout compris, et d'une découverte. Il
-# remplace [tools].run_timeout pour ces outils.
+# Délai (s) d'un appel et d'une découverte ; remplace [tools].run_timeout.
 # timeout = 30
-# Période (s) entre deux découvertes (`tools/list`) d'un serveur : sa
-# liste d'outils peut changer. Jamais plus souvent que la fraîcheur que
-# le serveur annonce (`ttlMs`) ; après un échec, nouvel essai à 10 s,
-# 20 s, 40 s… jusqu'à cette période. 0 = au démarrage seulement.
+# Période (s) entre deux `tools/list` (0 = au démarrage seulement).
 # refresh = 300
-# Ce que le démarrage du proxy attend, au plus, de la première
-# découverte. Un serveur éteint ne bloque pas : ses outils apparaissent
-# quand il répond.
+# Attente (s) au démarrage de la première découverte (non bloquante).
 # startup_wait = 5
-# Outils exposés par serveur, au plus : chacun pèse dans le prompt de
-# toute requête qui les déclare.
+# Outils exposés par serveur, au plus.
 # max_tools = 64
-# Bornes de ce qu'un serveur fait entrer dans le prompt : description
-# coupée au-delà, outil écarté si son schéma est plus gros.
+# Description coupée au-delà ; outil écarté si son schéma est plus gros.
 # description_chars = 1024
 # schema_chars = 8000
-# Octets lus au plus sur une réponse du serveur.
+# Octets lus au plus sur une réponse.
 # max_bytes = 4000000
 #
-# Un serveur : le nom de la table (lettres, chiffres, «_», «-») est son
-# nom dans le journal et, sauf `prefix`, le préfixe de ses fonctions.
+# Un serveur (nom : lettres, chiffres, «_», «-») :
 # [tools.mcp.docs]
 # enabled = true
-# L'adresse du point d'accès MCP. Une adresse de CONFIGURATION, qui peut
-# être privée : le garde-fou des adresses publiques de [tools.net] ne
-# s'y applique pas. Les redirections ne sont pas suivies.
+# Adresse de configuration ([tools.net] ne s'y applique pas) ; redirections
+# non suivies.
 # url = "http://mcp-docs:8000/mcp"
-# En-têtes envoyés à chaque requête ; secrets par ${VAR}. Une variable
-# absente : l'en-tête n'est pas envoyé, et le démarrage le signale.
+# En-têtes statiques ; variable absente → en-tête non envoyé.
 # headers = { Authorization = "Bearer ${MCP_DOCS_TOKEN}" }
-# Outils exposés, par leur nom CHEZ LE SERVEUR (jokers `*`, `?`) : `tools`
-# non vide = seuls ceux-là ; `exclude` = jamais ceux-là.
+# Filtre par nom chez le serveur (jokers) : `tools` = seuls ceux-là,
+# `exclude` = jamais ceux-là.
 # tools = ["search", "get_*"]
 # exclude = ["delete_*"]
-# Préfixe des noms de fonction (défaut : le nom de la table ; "" = aucun,
-# à réserver à un serveur unique). Un nom de fonction est limité à 64
-# caractères parmi [A-Za-z0-9_-] : tout autre caractère du nom MCP devient
-# «_», un nom trop long est coupé et fini par un condensé.
+# Préfixe des fonctions (défaut : nom de la table ; "" = aucun).
 # prefix = "docs"
-# Propres à ce serveur, à la place des réglages communs :
+# Surcharges des réglages communs :
 # timeout = 30
 # refresh = 300
 # max_tools = 64
-# Certificat TLS non vérifié (serveur interne auto-signé) :
 # verify_ssl = true
 
 
-# Exécution de code : le modèle écrit un programme, il tourne dans un BAC
-# À SABLE et le modèle en lit le code de sortie et la sortie. Le proxy
-# n'exécute rien lui-même : il appelle le service `executor` (services/executor/
-# dans le dépôt ; mis en route par docker-compose.override.yml, copié de
-# docker-compose.override.example.yml), seul à avoir un moteur de
-# conteneurs (podman sans root), sur un réseau interne sans sortie.
-# Langages : python (numpy, pandas, scipy, sympy, scikit-learn, networkx,
-# matplotlib, seaborn, pillow, openpyxl, python-docx, pypdf, reportlab),
-# bash (et les outils Unix, jq, sqlite3), javascript (Node.js), et les
-# compilés c, cpp, go, rust — un fichier source, compilé puis exécuté dans
-# le délai de l'appel, bibliothèque standard seulement.
-# Pas de réseau dans un bac, rien ne s'y installe : ni paquet pip, ni
-# module Go, ni crate. Ce qui manque s'ajoute à l'IMAGE de l'exécuteur
-# (services/executor/sandbox/requirements.txt, services/executor/Dockerfile).
-# Un bac par CONVERSATION : ses fichiers sont gardés d'un appel au suivant
-# (pas ses variables), jusqu'à son expiration côté exécuteur (3 h sans
-# appel — SANDBOX_IDLE dans docker-compose.override.yml —, 4 h au plus,
-# ou place à faire) — le modèle est alors prévenu que le bac est neuf. La conversation est reconnue par la mémoire des
-# échanges cachés ([chat].memory) : sans elle, un bac par requête.
-# Des fichiers peuvent ENTRER dans le bac : le modèle en liste les URL
-# (`files`), le PROXY les télécharge — sous le garde-fou de [tools.net],
-# comme web_fetch — et l'exécuteur les dépose dans le dossier de travail
-# avant le programme. Ils y restent pour la conversation.
-# Sans liaison à l'API Responses ni à l'API Messages : l'outil se déclare
-# par {"type": "code_execution"} sur /v1/chat/completions
-# ([chat].hosted_tools), se présente d'office par [chat].always, et
-# s'appelle par POST /v1/tools/code_execution (un bac par appel).
+# Exécution de code dans un BAC À SABLE, par le service `executor`
+# (services/executor/, activé par docker-compose.override.yml). Langages :
+# python, bash, javascript, c, cpp, go, rust. Un bac par conversation
+# (fichiers gardés, expiration côté exécuteur) ; sans [chat].memory, un bac
+# par requête. Sur /v1/chat/completions ({"type": "code_execution"} ou
+# [chat].always) et POST /v1/tools/code_execution.
+# Voir docs/execution-de-code.md.
 #
-# DÉSACTIVÉ par défaut, et le proxy démarre et sert sans exécuteur :
-# activé avec un exécuteur absent ou éteint, l'outil rend une erreur au
-# modèle (`unavailable`), rien d'autre ne change.
-#
-# À SAVOIR avant d'activer : du code écrit par un modèle — donc, par
-# injection de prompt, par n'importe quelle page web lue — tourne sur
-# cette machine. Le bac partage le NOYAU de l'hôte ; le conteneur
-# exécuteur tourne sans profil seccomp, sans AppArmor, sans masquage de
-# /proc ni no-new-privileges ; les limites de mémoire, de CPU et de
-# processus par bac ne sont tenues que si le cgroup de ce conteneur est
-# délégué (`writable-cgroups=true` dans l'override, Docker 28 et plus) —
-# sinon podman les accepte sans rien borner. L'exécuteur le vérifie et le
-# dit : son journal au démarrage. Voir « Exécution de code » dans le
-# README. Validé le 07/10/2026 sur une machine (Docker 29.7, noyau 6.1,
-# cgroup v2) ; sur une autre, dérouler `docker compose exec executor
-# python -m executor.validate` avant d'activer.
+# ATTENTION : du code écrit par un modèle — donc par n'importe quelle page
+# web lue, via injection — tourne sur CETTE machine. Le bac partage le noyau
+# de l'hôte ; l'exécuteur tourne sans seccomp ni AppArmor, et ses limites
+# (mémoire, CPU, processus) ne tiennent que si son cgroup est délégué.
+# Dérouler `docker compose exec executor python -m executor.validate`
+# avant d'activer. Exécuteur absent → l'outil rend `unavailable`.
 [tools.code_execution]
 enabled = false
-# Base de l'exécuteur ; le proxy appelle <url>/v1/execute. «http://
-# executor:8080» est le nom du service sur le réseau du compose. Vide →
-# l'outil répond au modèle que l'exécution n'est pas configurée.
-# C'est une adresse de CONFIGURATION, privée : le garde-fou des adresses
-# publiques ([tools.net]) ne s'y applique pas.
+# Base de l'exécuteur (appel <url>/v1/execute) ; vide → non configuré.
 url = "http://executor:8080"
-# Le jeton partagé avec l'exécuteur (son EXECUTOR_TOKEN) : dans .env.
-# Vide → même réponse que sans url.
+# Jeton partagé (EXECUTOR_TOKEN dans .env) ; vide → non configuré.
 token = "${EXECUTOR_TOKEN}"
-# Délai (s) d'UN programme — compilation comprise pour c, cpp, go, rust —,
-# dit au modèle. L'exécuteur a le sien, plus haut (SANDBOX_TIMEOUT,
-# 120 s), et ne va jamais au-delà. Le délai de l'outil est ce délai +
-# 120 s (création du bac, récolte des fichiers) : il remplace
-# [tools].run_timeout pour cet outil.
+# Délai (s) d'un programme, compilation comprise ; l'outil y ajoute 120 s et
+# remplace [tools].run_timeout. L'exécuteur plafonne (SANDBOX_TIMEOUT).
 timeout = 30
-# Appels exécutés au plus pour UNE réponse, comptés À PART de
-# [tools].max_calls : un modèle qui corrige son programme en consomme
-# plusieurs.
+# Exécutions par réponse, comptées à part de [tools].max_calls.
 max_calls = 8
-# Le bac peut-il INSTALLER des paquets (pip, npm -g, cargo, modules Go) ?
-# Ce que l'outil dit au modèle : la sortie elle-même s'ouvre côté
-# exécuteur (SANDBOX_EGRESS et le réseau `sandbox-egress`, voir
-# docker-compose.override.example.yml) — les deux vont ensemble. Le bac
-# reste sans réseau : seuls les dépôts de paquets répondent, par un relais
-# de l'exécuteur. false : « no network, nothing can be installed ».
+# Dit au modèle s'il peut installer des paquets ; à accorder avec
+# SANDBOX_EGRESS côté exécuteur. false = ni réseau ni installation.
 packages = false
-# Caractères de sortie rendus au modèle par appel ; au-delà, le début et
-# la fin sont gardés (une trace d'erreur est à la fin).
+# Caractères de sortie rendus (début et fin gardés).
 max_output_chars = 12000
-# Fichiers d'ENTRÉE (`files`), par appel : leur nombre, la taille de
-# chacun, leur taille à eux tous (octets). Un fichier au-delà est refusé —
-# jamais coupé — et le modèle le sait ; le programme tourne avec les
-# autres, sauf si aucun n'entre. Ils passent par la mémoire du proxy puis
-# de l'exécuteur, et /work est un tmpfs de 256 Mo. max_files = 0 : le
-# paramètre n'est ni présenté au modèle ni accepté.
-# L'exécuteur revérifie avec SES bornes (SANDBOX_MAX_INPUTS,
-# SANDBOX_MAX_INPUT_BYTES, SANDBOX_MAX_INPUT_TOTAL_BYTES, mêmes défauts) :
-# monter celles-ci sans monter les siennes ne sert à rien.
+# Fichiers d'entrée par appel (URL téléchargées sous [tools.net]) : nombre,
+# taille de chacun, total (octets). Refusés au-delà, jamais coupés.
+# 0 fichier = paramètre non proposé. L'exécuteur a ses propres bornes
+# (SANDBOX_MAX_INPUT*) : les monter aussi.
 max_files = 8
 max_file_bytes = 20000000
 max_files_bytes = 40000000
-# Secondes données à TOUS les téléchargements d'un appel (4 de front).
-# Elles s'ajoutent au délai de l'outil, avec 45 s pour le dépôt.
+# Délai (s) de tous les téléchargements d'un appel.
 download_timeout = 60
-# Les autres bornes — mémoire, CPU, processus, taille de /work et de /tmp,
-# nombre et taille des fichiers rendus, nombre de bacs — sont celles de
-# l'exécuteur : variables SANDBOX_* du service `executor`, dans
-# docker-compose.override.yml.
+# Autres bornes (mémoire, CPU, /work, fichiers rendus) : variables
+# SANDBOX_* du service `executor`.
 
-# L'outil `image_generation` : le modèle décrit une image, le proxy la
-# fait générer par le modèle d'images d'un backend (API OpenAI
-# POST /v1/images/generations) et la REMET à l'utilisateur comme fichier :
-# rangée au magasin ([files], plus bas), affichée par un lien que le proxy
-# écrit lui-même à la fin de la réponse. Le modèle ne reçoit qu'une phrase
-# (nom du fichier, type, dimensions) : ni base64, ni URL. Il faut donc
-# [files].public_url : sans elle l'outil répond, AVANT de rien générer,
-# que l'image ne pourrait pas être remise.
-# Sans liaison à l'API Responses ni à l'API Messages : l'outil se présente
-# sur /v1/chat/completions — déclaré par {"type": "image_generation"}
-# ([chat].hosted_tools) ou d'office ([chat].always) — et s'appelle par
-# POST /v1/tools/image_generation. (La route relayée
-# /v1/images/generations, elle, ne change pas.)
+# Génération d'image via /v1/images/generations d'un backend ; l'image est
+# remise comme fichier ([files]) par un lien que le proxy écrit. Exige
+# [files].public_url. Sur /v1/chat/completions ({"type":
+# "image_generation"} ou [chat].always) et POST /v1/tools/image_generation.
 [tools.image_generation]
 enabled = false
-# Le modèle d'images, PRÉFIXÉ comme tout modèle du proxy :
-# "<backend>/<modèle>". Vide, sans préfixe ou backend inconnu → l'outil
-# répond au modèle que la génération d'images n'est pas configurée.
-# C'est une adresse de CONFIGURATION : le garde-fou des adresses publiques
-# ne s'y applique pas. Chaque génération laisse, en plus de la ligne
-# d'usage de l'outil, une ligne de requête de ce modèle, endpoint
-# «/v1/tools/image_generation» ; un backend à quotas la compte pour une
-# requête.
-# Le corps envoyé : `model`, `prompt`, `size` — rien d'autre (ni `n`, ni
-# `response_format`, que plus d'un modèle refuse). Le backend rend
-# `b64_json` (gufo, vu le 07/10/2026 : un PNG) ou une `url` : les deux
-# sont lus. Une `url` de l'origine du backend (ou relative) est lue par
-# son client, avec sa clé ; une `url` d'une AUTRE origine (un CDN) passe
-# par le garde-fou [tools.net] — adresses publiques seulement — comme une
-# cible choisie par le modèle. Le type se lit dans les octets : ce qui
-# n'est pas un PNG, un JPEG, un GIF ou un WebP n'est pas remis.
+# Modèle PRÉFIXÉ "<backend>/<modèle>" ; vide ou invalide → non configuré.
+# Une `url` rendue par le backend hors de son origine passe par [tools.net].
 model = ""
 # model = "bigchuck/Qwen-Image-2.1-heretic"
-# Les tailles que le modèle peut demander («LxH», l'`enum` de la
-# fonction), et celle d'un appel qui n'en demande pas (elle doit figurer
-# dans la liste). À régler sur ce que le modèle d'images sait faire, et
-# sur ce qu'il coûte : le temps croît avec la surface. Vu le 07/10/2026,
-# Qwen-Image sous gufo : un PNG 512x512 en 17 à 25 s, bascule de modèle
-# comprise.
+# Tailles proposées au modèle, et celle par défaut (doit être dans la liste).
 sizes = ["512x512", "768x768", "1024x1024"]
 size = "512x512"
-# Délai (s) de la requête au backend, chargement du modèle compris. Avec
-# deux fois `download_timeout` (s, un téléchargement : l'image qu'un
-# backend rend par `url`, l'image à retoucher), c'est le délai de
-# l'outil : il remplace [tools].run_timeout pour lui. Le client attend
-# pendant ce temps — et, sur un backend qui ne tient qu'un modèle en
-# mémoire, le temps que celui de la conversation soit rechargé ensuite.
+# Délai (s) de la génération, et d'un téléchargement ; timeout + 2 ×
+# download_timeout remplace [tools].run_timeout pour cet outil.
 timeout = 300
 download_timeout = 30
-# Images générées au plus pour UNE réponse (une par appel), comptées À
-# PART de [tools].max_calls. Bas : une image coûte cher, et un modèle qui
-# « améliore » la sienne n'en finit pas.
+# Images par réponse, comptées à part de [tools].max_calls.
 max_calls = 2
-# Octets de l'image remise, au plus ; au-delà elle ne l'est pas, et le
-# modèle le sait. [files].max_file_bytes vaut aussi.
+# Octets de l'image remise au plus ([files].max_file_bytes vaut aussi).
 max_bytes = 10000000
-# RETOUCHE d'une image existante : la fonction prend alors `image_url`,
-# l'image est téléchargée sous le garde-fou [tools.net] (PNG, JPEG, GIF,
-# WebP reconnus à leurs octets, `max_input_bytes` au plus, refusée
-# au-delà) et envoyée avec le prompt à POST /v1/images/edits (multipart,
-# champs `model`, `prompt`, `image`, et `size` si le modèle en demande
-# une). Inactive par défaut : à n'ouvrir que si le modèle d'images sert
-# cette route — elle n'a PAS été jouée contre un vrai backend. L'image
-# n'arrive que par URL PUBLIQUE : une image que le proxy vient de remettre
-# ne se retouche que si [files].public_url n'est pas une adresse privée
-# vue du proxy.
+# Retouche d'une image par URL publique via /v1/images/edits. false
+# (défaut) : à n'ouvrir que si le modèle sert cette route (non testée
+# contre un vrai backend). max_input_bytes : taille de l'image d'entrée.
 edits = false
 max_input_bytes = 10000000
 
-# Mémoire PERSISTANTE, pour le modèle : des fichiers texte sous
-# `/memories`, que l'outil `memory` lit et écrit (commandes de l'outil
-# memory d'Anthropic : view, create, str_replace, insert, delete, rename)
-# et que le tableau de bord montre — section Mémoire de /ui : lire,
-# corriger, renommer, effacer. Sans liaison de protocole : offerte par
-# /v1/tools, le serveur MCP ([mcp_server]) et /v1/chat/completions
-# (déclarée `{"type": "memory"}`, ou nommée dans [chat].always).
-# CLOISONNÉE PAR CLÉ ([proxy].api_keys) : un client ne lit et n'écrit que
-# la sienne, l'interface ne montre que celle de la clé connectée. La clé
-# n'est jamais écrite : la base range un condensé de la clé sous un secret
-# tiré une fois (client.secret, à côté de ce fichier). Changer de clé =
-# changer de mémoire. Avec les comptes ([oidc]) : une mémoire PAR COMPTE,
-# partagée par toutes ses clés, celles du TOML qui lui sont rattachées et
-# le chat de sa page — révoquer une clé et en créer une autre ne perd rien. Proxy OUVERT : une seule mémoire,
-# commune à tous.
-# À SAVOIR : ce qu'un modèle range ici revient dans les conversations
-# suivantes — une page web lue par un agent peut lui faire écrire une
-# consigne qui le suivra (injection persistante). Relire la mémoire de
-# temps en temps, dans /ui.
+# Mémoire PERSISTANTE du modèle : fichiers texte sous /memories (outil
+# `memory` façon Anthropic), visibles et modifiables dans /ui. Sur /v1/tools,
+# [mcp_server] et /v1/chat/completions ({"type": "memory"} ou [chat].always).
+# Cloisonnée par clé (condensé sous client.secret ; changer de clé = changer
+# de mémoire), par compte avec [oidc] ; proxy ouvert = une mémoire commune.
+# ATTENTION : une page lue peut y faire écrire une consigne qui suivra le
+# modèle (injection persistante) : la relire de temps en temps.
 [tools.memory]
 enabled = false
-# Base SQLite ; relatif = à côté de CE fichier.
 database = "memory.db"
-# Bornes PAR CLÉ : nombre de fichiers, caractères d'un fichier, caractères
-# en tout. Au-delà, l'écriture est refusée avec un message qui demande au
-# modèle de faire de la place.
+# Bornes par clé : fichiers, caractères d'un fichier, caractères en tout.
 max_files = 500
 max_file_chars = 100000
 max_total_chars = 2000000
 
 
-# ── Serveur MCP ─────────────────────────────────────────────────────────
-# Le proxy offre ses outils hébergés actifs (ceux de GET /v1/tools, outils
-# des serveurs [tools.mcp.*] compris) à tout client MCP, par POST /mcp —
-# transport « streamable HTTP », sans état, réponses JSON. C'est l'inverse
-# de [tools.mcp] (le proxy client de serveurs MCP). Pour un client qui
-# n'a pas les outils autrement — la boucle principale de Claude Code —,
-# déclaré chez lui comme un serveur MCP distant, avec la clé du proxy :
-#   Claude Code  claude mcp add --transport http llmproxy http://llmproxy/mcp \
-#                  --header "Authorization: Bearer $LLM_PROXY_API_KEY"
-#   Codex        [mcp_servers.llmproxy] url = "http://llmproxy/mcp"
-#                bearer_token_env_var = "LLM_PROXY_API_KEY"
-#   pi / omp     ~/.pi/agent/mcp.json, ~/.omp/agent/mcp.json — pi exige
-#                "exposure": "direct" pour déclarer les outils au modèle.
-# À SAVOIR : un client qui reçoit DÉJÀ les outils par [chat].always (pi,
-# omp sur /v1/chat/completions) les aurait alors deux fois.
+# ── Serveur MCP : POST /mcp ─────────────────────────────────────────────
+# Offre les outils hébergés actifs (ceux de GET /v1/tools) à tout client
+# MCP, avec la clé du proxy. Inverse de [tools.mcp]. Un client qui les
+# reçoit déjà par [chat].always les aurait deux fois. Voir docs/outils.md.
 [mcp_server]
 enabled = false
-# Origines (en-tête `Origin`, que seul un navigateur envoie) admises en
-# plus de celle du proxy lui-même ; une autre → 403. Les clients en ligne
-# de commande n'envoient pas d'Origin.
+# Origines navigateur admises en plus de celle du proxy ; autre → 403.
 allowed_origins = []
 
 
 # ── Tableau de bord (/ui) ───────────────────────────────────────────────
-# L'onglet « Chat » du tableau de bord : une interface de conversation sur
-# les backends du proxy, outils hébergés compris (ceux de [chat], si
-# hosted_tools est vrai). Le cookie de /ui y DÉPENSE des tokens — comptés
-# à la clé connectée (au compte, avec [oidc]), comme toute requête.
-# false = l'onglet le dit, et
-# POST /ui/chat/completions rend 404 : le cookie ne sert qu'à lire.
+# Voir docs/tableau-de-bord.md et docs/chat.md.
 [ui]
+# Onglet Chat : DÉPENSE des tokens au nom de la clé (ou du compte)
+# connectée. false (défaut) = POST /ui/chat/completions → 404.
 chat = false
-# Le modèle présélectionné dans le chat (<backend>/<modèle>) : chaque
-# nouvelle conversation part sur lui, s'il est au catalogue. Vide : le
-# dernier modèle choisi dans le navigateur, sinon le premier du catalogue.
+# Modèle présélectionné (<backend>/<modèle>) ; vide = dernier choisi, sinon
+# premier du catalogue.
 chat_model = ""
-# L'historique du chat : les conversations du compte connecté et leurs
-# images, gardées en base (le même compte les retrouve sur tout appareil ;
-# jamais une conversation incognito). Relatif = à côté de ce fichier.
+# Historique des conversations du compte (jamais les incognito).
 conversations_database = "conversations.db"
-# Bornes, en octets : une conversation (son texte, artifacts et fichiers
-# produits compris), une image, et tout l'historique d'un compte.
+# Bornes (octets) : une conversation, une image, l'historique d'un compte.
 conversation_max_bytes = 20000000
 asset_max_bytes = 20000000
 history_max_bytes = 2000000000
 
 
 # ── Partage équitable ───────────────────────────────────────────────────
-# Pas un quota : rien n'est jamais refusé (aucun 429). Chaque client a une
-# PART de tokens (entrée + sortie) sur une heure GLISSANTE ; au-delà, ses
-# requêtes ATTENDENT que la part se libère, puis partent. But : qu'un
-# client (un agent qui boucle) ne sature pas les backends au détriment des
-# autres. Le client : le compte (clé gérée, clé du TOML rattachée, page
-# connectée), sinon la clé du TOML elle-même ; proxy ouvert = personne
-# n'est compté. L'admin règle la part d'un compte dans la page
-# (Configuration → Comptes) : défaut, illimitée, ou un nombre. Hors
-# partage : les routes de [proxy].exempt_paths (embeddings, transcription,
-# OCR) et les backends `fair_share = false`.
+# Pas un quota (jamais de 429) : au-delà de sa part de tokens sur une heure
+# glissante, un client ATTEND. Client = compte, sinon clé du TOML ; proxy
+# ouvert = personne n'est compté. Part par compte réglable dans la page.
+# Hors partage : [proxy].exempt_paths et backends `fair_share = false`.
 [fair_share]
-# La part par défaut, en tokens par heure glissante. 0 = aucune limite
-# (seules comptent alors les parts réglées par compte).
+# Part par défaut, tokens/heure. 0 = illimitée.
 tokens_per_hour = 0
 
 
 # ── Comptes : connexion par OIDC ────────────────────────────────────────
-# Sans `issuer` ni `client_id` : rien ne change — la page s'ouvre avec une
-# clé de [proxy].api_keys, et il n'y a pas de comptes.
-# Avec : la page (/ui) ne s'ouvre plus QUE par le fournisseur OIDC
-# (Keycloak, Authentik, Google, tout fournisseur qui publie
-# <issuer>/.well-known/openid-configuration). Chaque compte y crée ses
-# propres clés (des uuid4, montrées une fois) pour ses clients, valables
-# sur /v1, /mcp… à côté de celles du TOML, qui restent. Le PREMIER compte
-# connecté est admin : il accepte les suivants, bloque, promeut, révoque.
-# Toutes les clés d'un compte partagent sa mémoire ; ses statistiques
-# restent ventilées par clé. Une clé de [proxy].api_keys peut être
-# rattachée à un compte par un admin (dans la page, gardé dans la base) :
-# elle écrit alors dans la mémoire du compte et suit son état ; ce
-# qu'elle avait rangé avant ne bouge pas.
-# Chez le fournisseur : un client « confidentiel », flux authorization
-# code, adresse de retour <adresse publique>/ui/auth/callback.
+# Voir docs/securite.md et docs/tableau-de-bord.md. Sans `issuer` ni
+# `client_id` : pas de comptes, la page s'ouvre avec une clé de
+# [proxy].api_keys. Avec : /ui ne s'ouvre QUE par le fournisseur ; chaque
+# compte crée ses clés ; le PREMIER compte connecté est admin.
+# Chez le fournisseur : client confidentiel, flux authorization code,
+# retour <adresse publique>/ui/auth/callback.
 [oidc]
 issuer = ""
 client_id = "${OIDC_CLIENT_ID}"
 client_secret = "${OIDC_CLIENT_SECRET}"
 # scopes = ["openid", "email", "profile"]
-# L'adresse de retour déclarée chez le fournisseur. Vide : celle de
-# [files].public_url + /ui/auth/callback, sinon déduite de la requête —
-# derrière un reverse proxy, mieux vaut poser l'une ou l'autre.
+# Vide : [files].public_url + /ui/auth/callback, sinon déduite de la requête
+# (derrière un reverse proxy, poser l'une ou l'autre).
 # redirect_uri = "https://llm.example.org/ui/auth/callback"
-# Un nouveau compte (après le premier) : «pending» = attend qu'un admin
-# l'accepte ; «user» = actif d'emblée (fournisseur fermé à votre équipe).
+# Nouveau compte : «pending» = attend un admin ; «user» = actif d'emblée.
 new_accounts = "pending"
-# Durée d'une session de la page (jours).
+# Durée d'une session (jours).
 session_days = 7
 # Clés actives au plus par compte.
 max_keys_per_account = 50
-# Base SQLite des comptes et des condensés de clés ; relatif = à côté de
-# ce fichier.
 database = "accounts.db"
-# Le libellé du bouton de connexion.
+# Libellé du bouton de connexion.
 label = "Se connecter"
 
 
 # ── Fichiers rendus par les outils ──────────────────────────────────────
-# Un outil peut produire des fichiers (le graphique ou le tableur d'une
-# exécution de code). Le proxy les garde quelques heures et écrit leurs
-# LIENS à la fin de la réponse : une image en markdown pour une image
-# (PNG, JPEG, GIF, WebP), un lien de téléchargement sinon —
-#   GET <public_url>/v1/files/<jeton>/<nom>
-# Cette route est HORS clé du proxy : un navigateur n'envoie pas
-# d'Authorization. Le JETON du lien, imprévisible (192 bits, un par
-# fichier), vaut droit d'accès : qui a le lien a le fichier, jusqu'à son
-# expiration. Seules les images matricielles sont servies en ligne ; tout
-# le reste est servi en téléchargement, sous un type inerte.
-# En mémoire vive : un redémarrage du proxy casse les liens déjà rendus.
+# Servis par GET <public_url>/v1/files/<jeton>/<nom>, HORS clé du proxy :
+# qui a le lien a le fichier jusqu'à expiration. En mémoire vive (perdus
+# au redémarrage).
 [files]
-# L'adresse sous laquelle le NAVIGATEUR du client joint ce proxy
-# («https://llm.example.org»), sans «/» final. Elle ne se devine pas (le
-# proxy est derrière un reverse proxy). VIDE = aucun lien ne peut être
-# écrit : aucun fichier n'est gardé, et le modèle est prévenu que ses
-# fichiers ne sont pas remis.
+# Adresse publique du proxy vue du navigateur, sans «/» final. Vide = aucun
+# fichier remis (le modèle en est prévenu).
 public_url = ""
-# Durée de vie (s) d'un fichier.
+# Durée de vie (s) d'un fichier, et d'un fichier de conversation incognito.
 ttl = 14400
-# Durée de vie (s) d'un fichier rendu à une conversation INCOGNITO du chat
-# de la page : le temps de s'afficher (au plus `ttl`).
 incognito_ttl = 900
-# Octets gardés au plus, tous fichiers confondus (les plus anciens
-# sortent) — pris sur la mémoire du proxy.
+# Octets gardés au plus en tout (les plus anciens sortent), et par fichier.
 max_bytes = 128000000
-# Taille au plus d'UN fichier ; au-delà il n'est pas gardé, et le modèle
-# le sait.
 max_file_bytes = 10000000
 
+
 # ── Statistiques ────────────────────────────────────────────────────────
+# Voir docs/statistiques.md.
 [stats]
-# Base SQLite : une ligne par requête servie, d'où les vues All/Week/Day
-# et l'Usage API ; et une par exécution d'outil hébergé (des mesures,
-# jamais ce qui est cherché ou lu). Chemin relatif = à côté de CE fichier.
+# Une ligne par requête et par exécution d'outil (mesures seulement).
 database = "stats.db"
-# Purge des lignes plus vieilles que N jours, requêtes et outils
-# (0 = ne jamais purger).
+# Purge au-delà de N jours (0 = jamais).
 retention_days = 90
 
 
 # ── Quotas Albert ───────────────────────────────────────────────────────
 [quotas]
-# Marge de sécurité appliquée aux limites du compte (0.9 = 90 %).
+# Marge appliquée aux limites du compte (0.9 = 90 %).
 margin = 0.9
-# Rafraîchissement (s) des limites exactes via GET /v1/me/info.
+# Rafraîchissement (s) des limites via GET /v1/me/info.
 limits_refresh = 3600
-# Si l'attente nécessaire dépasse N secondes (quota JOURNALIER épuisé),
-# le proxy renvoie un 429 local avec Retry-After plutôt que de bloquer
-# la requête pendant des heures.
+# Attente au-delà de N s (quota journalier épuisé) → 429 local avec
+# Retry-After plutôt que de bloquer.
 max_queue_seconds = 900
-# Fallback n°3 : modèles ni dans /v1/me/info ni dans [quotas.family_limits].
+# Limites des modèles inconnus de /v1/me/info et de family_limits.
 generic_rpm = 30
 generic_tpm = 128000
-# Cartouche d'état (fenêtre locale, aucun appel réseau) dans les logs :
-# au plus une toutes les N secondes, s'il y a du trafic (0 = désactivé).
+# Ligne d'état dans les logs, au plus toutes les N s (0 = désactivé).
 status_interval = 600
 
-# Mapping manuel routeur → préfixes de modèles, prioritaire sur la
-# détection par signature. À utiliser si les logs signalent une famille
-# non associée.
+# Routeur → préfixes de modèles, prioritaire sur la détection automatique
+# (si les logs signalent une famille non associée).
 # [quotas.router_models]
 # 3 = ["openweight-code", "qwen"]
 
-# Fallback n°2 : quotas par FAMILLE (palier Expérimentation 08/2026),
-# utilisés pour les modèles absents de /v1/me/info ou si l'endpoint est
-# injoignable. `models` = préfixes matchés contre le champ `model`
-# (le plus long gagne).
+# Limites par famille, pour les modèles absents de /v1/me/info (ou s'il est
+# injoignable). `models` = préfixes du nom de modèle (le plus long gagne).
 [quotas.family_limits.deepseek]
 rpm = 50
 tpm = 246000
@@ -958,45 +532,25 @@ models = ["openweight-large", "gpt-oss"]
 
 
 # ── Backends ────────────────────────────────────────────────────────────
-# Le NOM de la table est le PRÉFIXE de routage : «albert/…» part vers
-# [backends.albert], «bigchuck/…» vers [backends.bigchuck], préfixe retiré
-# avant transfert. Tout modèle doit être préfixé : sans préfixe reconnu
-# → 400. GET /v1/models interroge les backends en direct et renvoie le
-# catalogue fusionné, ids préfixés.
+# Le NOM de la table est le PRÉFIXE de routage («albert/…» → [backends.albert],
+# préfixe retiré avant transfert). Modèle sans préfixe connu → 400.
 #
-# Champs : url (requis), api_key, quotas, timeout, meta_timeout,
-# connect_timeout, verify_ssl, force_tool_choice.
-#
-# force_tool_choice — injection de `tool_choice` quand `tools` est présent
-# sans `tool_choice` : absent/false = AUCUNE injection (le défaut) ;
-# true = la valeur de proxy.tool_choice ; "auto"/"required"… = cette
-# valeur-là. Seul Albert en a besoin (son schéma déclare «default: none»,
-# ce qui casse le tool calling) ; llama.cpp non.
-
-#
-# max_tokens — plafond (0 ou absent = aucun) : la valeur du client est
-# ramenée au plafond, jamais augmentée. Claude Code en demande 32 000
-# par défaut, que certains backends refusent.
-#
-# images — le backend accepte les images (`image_url`) : les blocs image
-# d'un client Anthropic (Claude Code lisant un .png) sont transmis aux
-# modèles que SON catalogue déclare multimodaux (type image-text-to-text)
-# — un modèle texte seul recevant une image est un 500 chez llama.cpp ;
-# absent/false, ou modèle texte = «[image ignorée : image/png, 12 Ko]».
-#
-# tokenize_path — endpoint de tokenisation pour un count_tokens EXACT
-# (llama.cpp : "/tokenize") ; absent = estimation à 4 caractères/token.
-#
-# fair_share — le backend relève-t-il du partage équitable ([fair_share]) ?
-# true par défaut ; false = ses requêtes ne pèsent sur la part de personne
-# et n'y attendent jamais.
-#
-# model_types — type imposé à des modèles de ce backend, par motif (jokers
-# shell, casse ignorée). Le type vient d'ordinaire du catalogue du backend
-# (Albert le donne, llama.cpp le laisse déduire) ; un catalogue qui ne dit
-# rien (llama-swap) est lu au NOM du modèle (image, tts, asr, embed…), et
-# cette table corrige un nom qui trompe. Le type décide de ce qui est
-# proposé à un client de chat (tableau de bord) et de qui reçoit les images.
+# Champs :
+#   url (requis), api_key, verify_ssl (true), timeout, meta_timeout ;
+#   quotas — limiteur Albert (false) ;
+#   connect_timeout — s, poignée de main TCP (15 avec quotas, 1 sinon :
+#     un backend local éteint → 503 backend_offline vite) ;
+#   force_tool_choice — `tool_choice` injecté si `tools` sans lui : absent/
+#     false = rien (défaut), true = [proxy].tool_choice, ou une valeur
+#     ("auto"…). Seul Albert en a besoin (son défaut «none» casse les outils) ;
+#   max_tokens — plafond de la valeur du client (0/absent = aucun) ;
+#   images — transmet les images aux modèles multimodaux du catalogue
+#     (false : remplacées par un texte) ;
+#   tokenize_path — count_tokens exact (llama.cpp : "/tokenize") ; absent =
+#     estimation à 4 caractères/token ;
+#   fair_share — compté au partage équitable (true) ;
+#   model_types — type imposé par motif (jokers, casse ignorée) quand le
+#     catalogue ou le nom du modèle trompe :
 #   [backends.bigchuck.model_types]
 #   "mon-modele-voice-chat" = "text-generation"
 #   "*-vision-*" = "image-text-to-text"
@@ -1008,10 +562,7 @@ quotas = true
 force_tool_choice = "auto"
 # max_tokens = 8192
 
-# Backend local llama.cpp : sans quota, pas toujours allumé — contacté
-# uniquement à la demande, jamais sondé en tâche de fond ; éteint → 503
-# backend_offline en 1 s (connect_timeout, poignée de main TCP seule —
-# un hôte allumé répond bien avant, même occupé à générer).
+# Backend local llama.cpp : sans quota, contacté à la demande seulement.
 [backends.bigchuck]
 url = "http://bigchuck:8009"
 # images = true

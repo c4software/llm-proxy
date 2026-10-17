@@ -5,13 +5,11 @@
 # conteneur. (Le provider llm-proxy-anthropic de models.json n'est pas
 # joué ici — il reste disponible pour un essai à la main.)
 #
-# Scénario 6 : la recherche web HÉBERGÉE par le proxy (README principal,
+# Scénario 6 : la recherche web HÉBERGÉE par le proxy (docs/outils-heberges.md,
 # « Serveur MCP »). L'outil vient du serveur MCP du proxy (POST /mcp),
 # déclaré dans le dossier d'agent $PI_CODING_AGENT_DIR-mcp qu'écrit
 # entrypoint.sh : pi l'appelle comme un de ses outils, l'appel et le
-# résultat sont dans sa trace. (Jusqu'au 07/10/2026 : l'extension
-# llm-proxy-web.ts ; jusqu'au 15/10/2026 : les outils d'office du proxy,
-# [chat].always.) Il est SAUTÉ (SKIP, ni PASS ni FAIL) quand le proxy visé
+# résultat sont dans sa trace. Il est SAUTÉ (SKIP, ni PASS ni FAIL) quand le proxy visé
 # n'héberge pas web_search ou n'a pas son serveur MCP — lu dans /healthz.
 # Les scénarios 1 à 5 tournent sans serveur MCP.
 set -u
@@ -38,9 +36,9 @@ mcp=${health#*|}
 hosts() { case " $hosted " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # Le compteur du proxy : exécutions de web_search arrivées par son serveur
-# MCP (route /mcp), lues sur son Usage API des outils (README principal,
+# MCP (route /mcp), lues sur son Usage API des outils (docs/statistiques.md,
 # « Usage des outils hébergés »). Imprime le nombre, ou rien si la route ne
-# répond pas (proxy antérieur au 05/10/2026, clé refusée). $1 : le nombre à
+# répond pas (proxy trop ancien, clé refusée). $1 : le nombre à
 # atteindre — le proxy écrit ses lignes hors de la requête, on relit donc
 # jusqu'à 5 s tant qu'il n'y est pas (0 : une seule lecture).
 # La fenêtre est la MÊME à chaque lecture (un jour avant le début du banc,
@@ -211,5 +209,5 @@ done
 
 echo
 echo "Résumé :$summary"
-[ "$skips" -gt 0 ] && echo "$skips scénario(s) sauté(s) : outils web non hébergés, ou non présentés d'office, par le proxy."
+[ "$skips" -gt 0 ] && echo "$skips scénario(s) sauté(s) : outils web non hébergés par le proxy, ou serveur MCP inactif."
 [ "$fails" -eq 0 ] && echo "Tout passe." || { echo "$fails scénario(s) en échec."; exit 1; }

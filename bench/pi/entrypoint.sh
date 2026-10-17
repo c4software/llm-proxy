@@ -1,8 +1,6 @@
 #!/bin/sh
-# Génère la configuration pi depuis le gabarit : ${PROXY_URL} et la liste
-# des modèles (une entrée par élément de MODELS) sont substitués ici ;
-# "$PROXY_API_KEY" est laissé tel quel — c'est pi qui le lit dans
-# l'environnement (sa syntaxe pour une clé en variable).
+# ${PROXY_URL} et ${MODELS_JSON} sont substitués ici ; "$PROXY_API_KEY" est
+# laissé tel quel : pi le lit dans l'environnement.
 set -eu
 mkdir -p "$PI_CODING_AGENT_DIR"
 entries=""
@@ -12,11 +10,9 @@ for m in $MODELS; do
 done
 sed -e "s|\${PROXY_URL}|${PROXY_URL}|g" -e "s|\${MODELS_JSON}|${entries}|g" \
     /work/models.json.tpl > "$PI_CODING_AGENT_DIR/models.json"
-# Le dossier d'agent du scénario 6 : la même configuration, plus le serveur
-# MCP du proxy (exposure direct : ses outils déclarés au modèle, pas
-# seulement joignables par codemode). L'URL est écrite ici — pi ne lit les
-# variables que dans `headers` et `env` ; la clé reste "${PROXY_API_KEY}",
-# que pi lit dans l'environnement (et refuse si elle n'y est pas). `timeout`
+# Dossier d'agent du scénario 6 : plus le serveur MCP du proxy (exposure
+# direct : outils déclarés au modèle, pas seulement par codemode). L'URL est
+# écrite ici, pi ne lit les variables que dans `headers` et `env`. `timeout`
 # en SECONDES (défaut 60) : les outils longs du proxy vont jusqu'à 7 min.
 mkdir -p "$PI_CODING_AGENT_DIR-mcp"
 cp "$PI_CODING_AGENT_DIR/models.json" "$PI_CODING_AGENT_DIR-mcp/models.json"

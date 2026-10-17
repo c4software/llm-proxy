@@ -17,7 +17,8 @@ docker-compose*.yml
 proxy/tests/
 proxy/pytest.ini
 proxy/requirements-dev.txt
-data/config.toml
-data/stats.db*
-data/client.secret
-data/memory.db*
+# data/ : la configuration et les bases du déploiement (clés, comptes,
+# conversations, sauvegardes) n'entrent jamais dans le contexte ; seul le
+# modèle de configuration y va.
+data/*
+!data/config.example.toml

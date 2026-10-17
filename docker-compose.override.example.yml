@@ -1,94 +1,66 @@
-# Ce que la pile a de FACULTATIF et de PROPRE À LA MACHINE, à part du
-# docker-compose.yml versionné — comme le compose.override.yaml de dev-box.
+# Le facultatif et le propre à la machine, à part du docker-compose.yml
+# versionné :
 #
 #   cp docker-compose.override.example.yml docker-compose.override.yml
 #
-# puis ne garder que les blocs voulus. Docker Compose lit ce fichier tout
-# seul, à côté de docker-compose.yml, et FUSIONNE les deux : rien à
-# passer à `docker compose`. docker-compose.override.yml n'est pas
-# versionné (.gitignore) : un `git pull` ne le touche jamais, et
-# docker-compose.yml reste celui du dépôt.
-#
-# Dans une pile à `include` (un compose racine qui réunit plusieurs
-# dossiers), nommer les deux fichiers :
+# puis ne garder que les blocs voulus. Compose le lit et le fusionne tout
+# seul ; il n'est pas versionné. Dans une pile à `include`, nommer les
+# deux fichiers :
 #
 #   include:
 #     - path:
 #         - ./llm-proxy/docker-compose.yml
 #         - ./llm-proxy/docker-compose.override.yml
 #
-# Vérifier le résultat de la fusion : `docker compose config`.
+# Vérifier la fusion : `docker compose config`. Détail : docs/deploiement.md
+# et docs/execution-de-code.md, « Le compose de base et son override ».
 
 services:
 
   # ── Bloc 1 : l'exécution de code (outil hébergé `code_execution`) ─────
-  # Trois morceaux qui vont ENSEMBLE : le proxy rejoint le réseau interne,
-  # le service `executor`, et le réseau `sandbox` tout en bas. Il faut en
-  # plus EXECUTOR_TOKEN dans .env, puis [tools.code_execution] et [files]
-  # dans data/config.toml. Ordre de mise en route : README, « Exécution de
-  # code ».
+  # Trois morceaux qui vont ensemble : le proxy sur le réseau `sandbox`,
+  # le service `executor`, le réseau `sandbox` en bas. Plus EXECUTOR_TOKEN
+  # dans .env, [tools.code_execution] et [files] dans data/config.toml.
+  # Mise en route : docs/execution-de-code.md.
   albert-proxy:
-    # Dès qu'un service nomme ses réseaux il quitte `default` s'il ne le
-    # nomme pas : les deux, donc.
+    # Un service qui nomme ses réseaux quitte `default` s'il ne le nomme pas.
     networks:
       - default     # searxng, et la sortie vers les backends
       - sandbox     # l'exécuteur de code, et rien d'autre
 
-  # L'exécuteur de code de l'outil hébergé `code_execution` : le SEUL
-  # conteneur de la pile qui a un moteur de conteneurs (podman sans root),
-  # où tournent les programmes écrits par un modèle — chacun dans un bac
-  # sans réseau. Le proxy l'appelle en HTTP (http://executor:8080, voir
-  # [tools.code_execution] dans data/config.example.toml), jeton à l'appui.
-  # Le proxy n'en dépend PAS pour démarrer — pas de `depends_on` : exécuteur
-  # absent ou en panne, l'outil rend une erreur au modèle, le reste sert.
-  #
-  # Validé le 07/10/2026 sur Docker 29.7, noyau 6.1, cgroup v2. Sur une
-  # autre machine, dérouler d'abord
+  # Podman sans root, où tournent les programmes des modèles, chacun dans
+  # un bac sans réseau. Pas de `depends_on` : absent, seul l'outil échoue.
+  # Sur une nouvelle machine, valider avant d'activer l'outil
   #   docker compose exec executor python -m executor.validate
-  # et n'activer l'outil que sur un verdict « activable » (README,
-  # « Exécution de code »).
+  # (docs/execution-de-code.md, « Valider l'exécuteur sur le déploiement »).
   executor:
-    # L'image construite par la CI du dépôt (.github/workflows/executor.yml),
-    # chaque mois et à chaque changement : `docker compose pull executor`
-    # la met à jour, sans construire ici. `build:` reste pour construire
-    # sur place (`docker compose build executor`, une version modifiée).
+    # Image de la CI (`docker compose pull executor`) ; `build:` pour
+    # construire sur place une version modifiée.
     image: ghcr.io/c4software/llm-proxy-executor:latest
     build:
       context: ./services/executor
-      # Les scripts de dev-box (`devbox dev-env`, ses recettes) : tirés de
-      # son dépôt à CHAQUE construction, sans version figée. Un fork ou une
+      # Scripts de dev-box, tirés à chaque construction. Un fork ou une
       # branche : changer l'URL (…/dev-box.git#ma-branche).
       additional_contexts:
         devbox: https://github.com/c4software/dev-box.git#main
     restart: unless-stopped
-    # PAS de `ports:`, PAS de `volumes:` — volontaire. Ni secret, ni
-    # dossier du proxy, ni socket Docker : ce conteneur ne voit rien de
-    # l'hôte, et ne garde rien (les bacs vivent en tmpfs, leur système de
-    # fichiers est dans l'image).
+    # Pas de `ports:` ni de `volumes:`, volontairement : ni secret, ni
+    # dossier du proxy, ni socket Docker.
     networks:
-      # Le réseau INTERNE seul (plus bas) : aucune route vers l'extérieur,
-      # ni vers searxng, ni vers les autres piles de l'hôte.
+      # Réseau interne seul : aucune route vers l'extérieur ni searxng.
       - sandbox
-      # La sortie du RELAIS vers les dépôts de paquets (SANDBOX_EGRESS) :
-      # les bacs, eux, n'ont toujours aucune interface. Le prix : un
-      # programme qui s'évaderait d'un bac serait dans un conteneur AVEC
-      # sortie. Ne décommenter qu'avec SANDBOX_EGRESS.
+      # Sortie du relais de paquets, seulement avec SANDBOX_EGRESS. Le
+      # prix : une évasion d'un bac arriverait dans un conteneur avec sortie.
       # - sandbox-egress
     environment:
-      # Le jeton partagé avec le proxy, exigé sur toute l'API. Sans `:?` :
-      # absent, le service démarre et REFUSE tout (503, « unhealthy »), il
-      # ne tourne jamais ouvert — et compose n'arrête pas les autres
-      # services.
+      # Sans `:?` : absent, le service démarre et refuse tout (503).
       EXECUTOR_TOKEN: "${EXECUTOR_TOKEN:-}"
-      # Bornes d'un bac et quotas : défauts de
-      # services/executor/executor/sandbox.py (Limits), à surcharger ici —
-      # SANDBOX_<NOM>.
+      # Bornes et quotas des bacs (défauts : executor/sandbox.py, Limits).
       # SANDBOX_MEMORY: 512m        # mémoire d'un bac (si les cgroups la tiennent)
       # SANDBOX_CPUS: "1.0"         # aussi le nombre de fils des bibliothèques
       # SANDBOX_PIDS: "128"         # processus et fils d'un bac
       # SANDBOX_TIMEOUT: "120"      # délai d'un programme, AU PLUS
-      # Délai de PURGE d'une zone de travail : un bac sans appel depuis
-      # tant de secondes est détruit, avec ses fichiers (défaut 3 h).
+      # Purge d'un bac inactif, avec ses fichiers (s, défaut 3 h).
       # SANDBOX_IDLE: "10800"
       # Vie maximale d'un bac, même utilisé sans arrêt (s, défaut 4 h).
       # SANDBOX_LIFETIME: "14400"
@@ -96,91 +68,54 @@ services:
       # SANDBOX_MAX_SESSIONS_PER_CLIENT: "4"
       # SANDBOX_WORK_SIZE: 256m     # tmpfs /work d'un bac
       # SANDBOX_TMP_SIZE: 128m      # tmpfs /tmp d'un bac (caches, compilations)
-      # Fichiers d'ENTRÉE déposés dans /work par appel (`files` de
-      # l'outil) : au moins autant que [tools.code_execution] du proxy
+      # Fichiers d'entrée : au moins autant que [tools.code_execution]
       # (max_files, max_file_bytes, max_files_bytes).
       # SANDBOX_MAX_INPUTS: "8"
       # SANDBOX_MAX_INPUT_BYTES: "20000000"
       # SANDBOX_MAX_INPUT_TOTAL_BYTES: "40000000"
       #
-      # Installer des paquets depuis un bac (pip, npm, cargo, Go) : la
-      # SORTIE vers les dépôts, fermée par défaut. Le bac reste sans réseau ;
-      # l'exécuteur lui passe une prise vers un relais qui n'ouvre que des
-      # tunnels HTTPS vers la liste (executor/egress.py). Va avec
-      # [tools.code_execution] packages = true côté proxy, et le réseau
-      # `sandbox-egress` ci-dessous (décommenter les deux).
+      # Installer des paquets (pip, npm, cargo, Go) par un relais HTTPS ;
+      # avec packages = true côté proxy et le réseau `sandbox-egress`.
       # SANDBOX_EGRESS: "true"
       # SANDBOX_EGRESS_HOSTS: ""    # vide : PyPI, npm, crates.io, modules Go
       # SANDBOX_EGRESS_MAX_BYTES: "500000000"   # par bac, dans les deux sens
-      # Les paquets s'installent dans /tmp, un tmpfs compté dans la mémoire
-      # du bac : agrandir les deux ensemble.
+      # /tmp compte dans la mémoire du bac : agrandir les deux ensemble.
       # SANDBOX_TMP_SIZE: 768m
-      # Ce que `devbox dev-env` installe (mise : un JDK, une toolchain) va
-      # dans un tmpfs /opt/devbox du bac, compté lui aussi dans sa mémoire.
-      # Une installation dure jusqu'à une minute : monter le délai d'un
-      # programme ici ET dans [tools.code_execution].timeout.
+      # `devbox dev-env` : tmpfs /opt/devbox compté dans la mémoire, et une
+      # installation dure jusqu'à une minute (monter aussi
+      # [tools.code_execution].timeout).
       # SANDBOX_DEVBOX_SIZE: 2g
       # SANDBOX_MEMORY: 3g
       # SANDBOX_TIMEOUT: "300"
     security_opt:
-      # La recette de dev-box (compose.override.example.yaml), trouvée par
-      # essais ; sans --privileged ni CAP_SYS_ADMIN. Le prix : l'isolation
-      # de CE conteneur est desserrée — une évasion d'un bac vers ce
-      # conteneur, puis de ce conteneur vers l'hôte, est plus facile que
-      # depuis un conteneur ordinaire. Voir « Exécution de code » dans le
-      # README.
-      #
-      # Le profil seccomp par défaut de Docker refuse clone(CLONE_NEWUSER)
-      # sans CAP_SYS_ADMIN : podman s'arrête sur « cannot clone: Operation
-      # not permitted ». (Les BACS, eux, reçoivent le profil seccomp de
-      # podman.)
+      # Ce qu'il faut à podman imbriqué, sans --privileged ni CAP_SYS_ADMIN ;
+      # l'isolation de ce conteneur en est desserrée (docs/execution-de-code.md,
+      # « Ce que le bac à sable vaut »).
+      # seccomp par défaut : refuse clone(CLONE_NEWUSER).
       - seccomp=unconfined
-      # Docker masque des chemins de /proc et monte /proc/sys en lecture
-      # seule ; le noyau refuse alors de monter un /proc neuf dans un
-      # espace d'utilisateurs imbriqué : aucun bac ne démarre.
+      # /proc masqué : aucun /proc neuf dans un userns imbriqué.
       - systempaths=unconfined
-      # Sans effet sur un hôte sans AppArmor ; nécessaire là où il est
-      # actif (Debian) : le profil docker-default refuse les `mount` de crun.
+      # Là où AppArmor est actif : docker-default refuse les `mount` de crun.
       - apparmor=unconfined
-      # Le cgroup du conteneur monté en ÉCRITURE (Docker 28 et plus) : le
-      # point d'entrée le délègue à l'utilisateur de l'exécuteur, et podman
-      # y crée un cgroup par bac. Sans cette ligne podman accepte --memory,
-      # --cpus et --pids-limit et ne borne RIEN ; l'exécuteur le constate
-      # au démarrage et le dit (journal, GET /v1/status), et seul le
-      # plafond du conteneur, plus bas, retient les bacs.
+      # Sans cgroup inscriptible, podman ne borne aucun bac (seul le
+      # plafond plus bas tient) ; l'exécuteur le signale (GET /v1/status).
       - writable-cgroups=true
-      # ET SURTOUT PAS `no-new-privileges` : newuidmap et newgidmap tirent
-      # leur droit de capacités de fichier, que cette option neutralise —
-      # podman n'écrirait plus la table d'uid de ses bacs. Dans une pile
-      # dont les services étendent une base commune qui la pose, ce
-      # service ne l'étend PAS : il recopie ce qu'il en veut.
-    # PAS de `devices:` : ni /dev/fuse (le magasin de podman est `vfs`, et
-    # un bac démarre d'un système de fichiers déplié, sans image — voir
-    # services/executor/Dockerfile), ni /dev/net/tun (un bac n'a pas de réseau).
+      # Surtout PAS `no-new-privileges` : il neutralise newuidmap et
+      # newgidmap. Ne pas faire étendre à ce service une base qui la pose.
+    # Pas de `devices:` : ni /dev/fuse (magasin `vfs`), ni /dev/net/tun.
     tmpfs:
-      # L'état d'exécution de podman : vide à chaque démarrage du
-      # conteneur, comme après un redémarrage de machine — c'est à cela
-      # que podman reconnaît qu'aucun conteneur ne tourne plus.
+      # État de podman, vide à chaque démarrage : aucun conteneur ne tourne.
       - /run/user/10001:mode=700,uid=10001,gid=10001
-    # Le FILET. Les limites par bac (mémoire, CPU, processus) ne sont
-    # tenues que si le cgroup est délégué (writable-cgroups, plus haut) ;
-    # l'exécuteur le vérifie au démarrage et le dit (GET /v1/status,
-    # journal). Ce plafond-ci, tenu par Docker, vaut dans tous les cas :
-    # c'est lui qui protège l'hôte. À RÉGLER sur la machine.
-    # Mémoire : les tmpfs des bacs y comptent. Pire cas sans cgroups par
-    # bac : 8 bacs × (256 Mo /work + 128 Mo /tmp + 16 Mo /dev/shm) ≈
-    # 3,2 Go, plus les programmes en cours. À ajuster avec
-    # SANDBOX_MAX_SESSIONS.
+    # Le filet, tenu par Docker dans tous les cas : c'est lui qui protège
+    # l'hôte. À régler sur la machine, avec SANDBOX_MAX_SESSIONS (les tmpfs
+    # des bacs comptent : ~3,2 Go pour 8 bacs sans cgroups par bac).
     mem_limit: 4g
-    # Pas d'échange : un programme qui déborde est tué, il ne fait pas
-    # ramer l'hôte.
+    # Pas d'échange : un programme qui déborde est tué.
     memswap_limit: 4g
     cpus: 2
-    # 8 bacs × 128 processus (RLIMIT_NPROC, tenu par uid de bac) + conmon,
-    # init et `sleep` de chaque bac + le serveur.
+    # 8 bacs × 128 processus, plus conmon, init, sleep et le serveur.
     pids_limit: 2048
-    # Même forme que celui du proxy. 503 tant que podman n'a pas démarré
-    # un conteneur d'essai, ou sans jeton.
+    # 503 tant que podman n'a pas démarré un conteneur d'essai, ou sans jeton.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status==200 else 1)"]
       interval: 30s
@@ -189,10 +124,8 @@ services:
       start_period: 60s
 
   # ── Bloc 2 : adapter la pile à la machine ─────────────────────────────
-  # Exemples, à décommenter et à ajuster. Une clé posée ici REMPLACE celle
-  # de docker-compose.yml pour une valeur simple, et S'AJOUTE pour une
-  # liste (ports, volumes, security_opt…) ; `!reset` vide une liste héritée,
-  # `!override` la remplace (Docker Compose 2.24 et plus).
+  # Une clé posée ici remplace une valeur simple et s'ajoute à une liste ;
+  # `!reset` vide une liste héritée, `!override` la remplace.
   #
   # albert-proxy:
   #   container_name: llm-proxy
@@ -201,8 +134,7 @@ services:
   #   # Un backend joint par un nom que le DNS du conteneur ne connaît pas.
   #   extra_hosts:
   #     - "bigchuck:100.64.0.4"
-  #   # Une base commune à tous les services de l'hôte (redémarrage,
-  #   # journaux, no-new-privileges). PAS pour `executor` : voir plus haut.
+  #   # Une base commune aux services de l'hôte. PAS pour `executor`.
   #   extends:
   #     file: ../bases-configuration/base.yml
   #     service: base
@@ -211,13 +143,8 @@ services:
   #   container_name: searxng
 
 networks:
-  # Entre le proxy et l'exécuteur, et rien d'autre. `internal` : Docker ne
-  # lui donne ni passerelle vers l'extérieur ni port publiable — un
-  # programme qui s'évaderait d'un bac serait dans un conteneur sans
-  # sortie.
+  # `internal` : ni passerelle vers l'extérieur ni port publiable.
   sandbox:
     internal: true
-  # La sortie de l'exécuteur, pour le seul relais des dépôts de paquets
-  # (SANDBOX_EGRESS). Un réseau à lui : il ne joint pas le proxy ni
-  # searxng par là.
+  # Sortie du seul relais de paquets (SANDBOX_EGRESS), à part du proxy.
   # sandbox-egress: {}

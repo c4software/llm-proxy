@@ -3,8 +3,8 @@
 # FAIL avec ce qu'il a vu ; le script sort en erreur si l'un échoue.
 # Tout s'exécute ICI, dans /work du conteneur — rien n'est écrit ailleurs.
 #
-# Scénario 14 : la recherche web HÉBERGÉE par le proxy (README principal,
-# « Claude Code et l'outil serveur web_search »). L'outil WebSearch de
+# Scénario 14 : la recherche web HÉBERGÉE par le proxy (docs/outils-heberges.md,
+# « L'outil serveur `web_search` »). L'outil WebSearch de
 # Claude Code envoie une sous-requête /v1/messages avec l'outil serveur
 # `web_search_20250305`, que le proxy exécute. Il est SAUTÉ (SKIP, ni PASS
 # ni FAIL) quand le proxy visé n'héberge pas l'outil — lu dans /healthz.

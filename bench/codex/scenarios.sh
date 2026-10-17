@@ -9,7 +9,7 @@
 # jetable EST le bac à sable — même choix que Claude Code ici
 # (--dangerously-skip-permissions). À ne pas reprendre sur un poste.
 #
-# Scénarios 6 et 7 : les outils web HÉBERGÉS par le proxy (README principal,
+# Scénarios 6 et 7 : les outils web HÉBERGÉS par le proxy (docs/outils-heberges.md,
 # « Outils hébergés »). Codex déclare lui-même `web_search` ; le proxy
 # exécute recherche et lecture de page et rend des éléments
 # `web_search_call`. Ils sont SAUTÉS (SKIP, ni PASS ni FAIL) quand le proxy

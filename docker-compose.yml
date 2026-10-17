@@ -1,35 +1,28 @@
 services:
   albert-proxy:
-    # Contexte à la RACINE : l'image embarque data/config.example.toml,
-    # qui y reste avec le data/ du déploiement. Le .dockerignore de la
-    # racine n'y laisse que proxy/ et ce modèle.
+    # Contexte à la racine : l'image embarque data/config.example.toml
+    # (le .dockerignore n'y laisse que proxy/ et ce modèle).
     build:
       context: .
       dockerfile: proxy/Dockerfile
     restart: unless-stopped
     ports:
       - "8000:8000"
-    # Config (config.toml) et base de statistiques (stats.db) : le volume
-    # les garde au travers des redémarrages et des rebuilds d'image.
+    # config.toml et stats.db survivent aux redémarrages et aux rebuilds.
     volumes:
       - ./data:/app/data
-    # ./data appartient à l'hôte : le conteneur doit écrire config.toml et
-    # stats.db avec cet uid, sinon le montage n'est pas inscriptible et les
-    # fichiers créés ne seraient pas éditables sans sudo.
+    # ./data appartient à l'hôte : écrire avec son uid, sinon le montage
+    # n'est pas inscriptible et les fichiers créés exigent sudo.
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
-      # Les SECRETS seulement : injectés dans le TOML par «${VAR}»
-      # (voir data/config.example.toml). Les réglages vivent dans le TOML.
+      # Les secrets seulement, injectés dans le TOML par «${VAR}» ; les
+      # réglages vivent dans le TOML. Les variables vides sont sans effet.
       ALBERT_API_KEY: "${ALBERT_API_KEY}"
-      # Le jeton de l'exécuteur de code ([tools.code_execution].token).
-      # Vide tant que l'outil n'est pas mis en route : sans effet. Le
-      # service lui-même vit dans docker-compose.override.example.yml.
+      # [tools.code_execution].token ; le service est dans l'override.
       EXECUTOR_TOKEN: "${EXECUTOR_TOKEN:-}"
-      # La clé des clients du proxy, si [proxy].api_keys la référence
-      # («${PROXY_API_KEY}»). Vide : sans effet.
+      # Si [proxy].api_keys référence «${PROXY_API_KEY}».
       PROXY_API_KEY: "${PROXY_API_KEY:-}"
-      # Le client OIDC ([oidc].client_id et client_secret), si les comptes
-      # sont actifs. Vides : sans effet.
+      # [oidc].client_id et client_secret, si les comptes sont actifs.
       OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
       OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
       # CONFIG_PATH: /app/data/config.toml
@@ -39,47 +32,30 @@ services:
       timeout: 5s
       retries: 3
 
-  # Métamoteur de recherche de l'outil hébergé `web_search` : le proxy
-  # l'interroge en JSON (GET http://searxng:8080/search?q=…&format=json,
-  # voir [tools.web_search] dans data/config.example.toml). Le proxy n'en
-  # dépend PAS pour démarrer — pas de `depends_on` : SearXNG en panne, la
-  # recherche rend une erreur au modèle, le reste du proxy sert.
+  # Métamoteur de l'outil `web_search` ([tools.web_search]). Pas de
+  # `depends_on` : SearXNG en panne, seule la recherche échoue.
   searxng:
-    # Tag daté (`AAAA.M.J-<commit>`, un par build de master), pas `latest` :
-    # l'image fige ses dépendances Python, autant que la version de SearXNG
-    # ne bouge pas non plus sous un `docker compose pull`. Mise à jour :
-    # changer le tag (https://hub.docker.com/r/searxng/searxng/tags), puis
-    # `docker compose up -d searxng`. Même image sur ghcr.io/searxng/searxng
-    # si Docker Hub limite les téléchargements.
+    # Tag daté plutôt que `latest`, pour qu'un `docker compose pull` ne
+    # change pas de version. Mise à jour : changer le tag
+    # (https://hub.docker.com/r/searxng/searxng/tags). Même image sur
+    # ghcr.io/searxng/searxng si Docker Hub limite les téléchargements.
     image: docker.io/searxng/searxng:2026.10.4-d48c4b555
     restart: unless-stopped
-    # PAS de `ports:` — volontaire. L'instance n'a pas de limiteur
-    # (services/searxng/settings.yml) : elle ne doit être joignable que du proxy, par
-    # le réseau du compose, sous le nom `searxng` et le port 8080 de l'image.
+    # Pas de `ports:`, volontairement : l'instance n'a pas de limiteur et
+    # ne doit être joignable que du proxy (searxng:8080).
     volumes:
-      # Le FICHIER seul, en lecture seule, pas le dossier : le conteneur
-      # démarre en root et son point d'entrée ferait un `chown -R` du
-      # dossier monté vers son utilisateur (uid 977) — ici, un dossier
-      # versionné de l'hôte. Le fichier existant, il ne génère rien non plus.
+      # Le fichier seul, en lecture seule : monté en dossier, le point
+      # d'entrée (root) en ferait un `chown -R` vers son uid 977.
       - ./services/searxng/settings.yml:/etc/searxng/settings.yml:ro
-      # Données persistantes de SearXNG (caches) : un volume nommé, pour
-      # qu'elles survivent à la recréation du conteneur.
       - searxng-cache:/var/cache/searxng
     environment:
-      # Surcharge `server.secret_key`. Jamais dans un fichier versionné :
-      # elle vient de .env (voir .env.example). Volontairement SANS `:?` —
-      # une variable absente n'arrête pas `docker compose`, qui dans une
-      # pile à `include` bloquerait tous les autres services avec celui-ci.
-      # Absente, la clé est vide : SearXNG démarre quand même (il ne refuse
-      # que son défaut «ultrasecretkey»), et compose le signale par un
-      # avertissement. L'instance n'est joignable que du proxy et ne sert
-      # que du JSON : la clé n'y signe rien d'exposé, mais autant la poser.
+      # Surcharge `server.secret_key`, depuis .env. Sans `:?` exprès : une
+      # variable absente bloquerait toute une pile à `include`. Vide,
+      # SearXNG démarre quand même et compose avertit ; autant la poser.
       SEARXNG_SECRET: "${SEARXNG_SECRET:-}"
-      # Ceinture et bretelles avec le montage du fichier seul : ne jamais
-      # changer le propriétaire de ce qui vient de l'hôte.
+      # Ne jamais changer le propriétaire de ce qui vient de l'hôte.
       FORCE_OWNERSHIP: "false"
-    # Même forme que celui du proxy : le Python de l'image (celui qui lance
-    # le serveur), sans compter sur un curl qu'elle n'embarque pas.
+    # Le Python de l'image : elle n'embarque pas curl.
     healthcheck:
       test: ["CMD", "/usr/local/searxng/.venv/bin/python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status==200 else 1)"]
       interval: 30s

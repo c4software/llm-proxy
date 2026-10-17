@@ -1,13 +1,8 @@
 #!/bin/sh
-# Génère la configuration Codex : un provider `llm-proxy` en API Responses
-# (wire_api = "responses"), que le proxy traduit vers /v1/chat/completions.
-# La clé est lue par Codex dans PROXY_API_KEY (env_key) : la variable doit
-# être NON VIDE, même devant un proxy ouvert — vide ou absente, Codex
-# s'arrête sur « Missing environment variable » avant toute requête
-# (model-provider-info, api_key(), lu à la version 0.157.1). Le modèle est
-# passé à chaque appel par scenarios.sh (-m) ; `model` (le premier de
-# MODELS) ne sert qu'à un essai à la main, sans -m.
-# `web_search` n'a rien à recevoir ici : Codex le déclare de lui-même.
+# Provider `llm-proxy` en API Responses, que le proxy traduit.
+# PROXY_API_KEY (env_key) doit être NON VIDE, même devant un proxy ouvert :
+# sinon Codex s'arrête sur « Missing environment variable ».
+# `model` ne sert qu'à un essai à la main : scenarios.sh passe -m.
 set -eu
 mkdir -p "$CODEX_HOME"
 cat > "$CODEX_HOME/config.toml" <<TOML
@@ -20,10 +15,9 @@ base_url = "${PROXY_URL}/v1"
 wire_api = "responses"
 env_key = "PROXY_API_KEY"
 TOML
-# Le CODEX_HOME du scénario 10 : la même configuration, plus le serveur MCP
-# du proxy (POST /mcp). Ses outils sont approuvés d'office — `codex exec`
-# ne peut rien demander, il refuserait chaque appel — et leur délai porté à
-# 600 s (les outils longs du proxy). Les autres scénarios ne l'ont pas.
+# CODEX_HOME du scénario 10 : plus le serveur MCP du proxy. Outils approuvés
+# d'office (`codex exec` ne peut rien demander, il refuserait chaque appel),
+# délai de 600 s pour les outils longs.
 mkdir -p "$CODEX_HOME-mcp"
 cat "$CODEX_HOME/config.toml" - > "$CODEX_HOME-mcp/config.toml" <<TOML
 

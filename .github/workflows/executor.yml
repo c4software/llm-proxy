@@ -1,14 +1,9 @@
-# L'image de l'EXÉCUTEUR de code (services/executor), construite ici plutôt
-# que sur chaque machine : la sandbox part de la base de dev-box (Arch,
-# `latest`) et tire les scripts de dev-box de leur dépôt — rien n'est
-# figé, d'où une reconstruction chaque mois en plus des changements.
-# Le build exécute le contrôle du bac (sandbox/check.py) : une image qui
-# ne tient pas ses promesses n'est pas publiée. La validation de
-# l'isolation (python -m executor.validate) se joue, elle, sur la machine
-# qui l'exécute : elle dépend de son noyau et de son Docker.
-#
-# Publiée : ghcr.io/c4software/llm-proxy-executor — `latest`, la date
-# (AAAAMMJJ) et le commit (sha-xxxxxxx). Sur la machine :
+# Image de l'exécuteur de code (services/executor). La base (Arch `latest`)
+# et les scripts de dev-box ne sont pas figés : reconstruction mensuelle.
+# Le build lance sandbox/check.py ; la validation de l'isolation
+# (python -m executor.validate) se fait sur la machine, elle dépend de son
+# noyau et de son Docker.
+# Sur la machine :
 #   docker compose pull executor && docker compose up -d executor
 name: Image de l'exécuteur
 
@@ -60,8 +55,7 @@ jobs:
         with:
           context: services/executor
           platforms: linux/amd64
-          # La base `latest` d'Arch retirée à chaque fois, et sans cache :
-          # une reconstruction du mois prend vraiment les nouveautés.
+          # Sans cache : la reconstruction mensuelle prend les nouveautés.
           pull: true
           no-cache: true
           build-contexts: |

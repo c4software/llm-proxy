@@ -1,9 +1,6 @@
-# L'image du PROXY. Contexte de build : la RACINE du dépôt, pas ce
-# dossier — l'image embarque data/config.example.toml, resté à la racine
-# avec le data/ du déploiement (docker-compose.yml : `context: .`,
-# `dockerfile: proxy/Dockerfile`). À la main :
+# Contexte de build : la racine du dépôt (l'image embarque
+# data/config.example.toml). À la main :
 #   docker build -f proxy/Dockerfile .
-# Ce que le contexte emporte est borné par le .dockerignore de la racine.
 FROM python:3.13-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -12,9 +9,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# ffmpeg : l'outil hébergé `transcribe` convertit en WAV l'audio que le
-# modèle de transcription ne lit pas ([tools.transcribe].convert). Sans
-# lui le proxy tourne, et refuse ces fichiers.
+# ffmpeg : `transcribe` convertit en WAV l'audio que le modèle ne lit
+# pas ([tools.transcribe].convert) ; sans lui, ces fichiers sont refusés.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/*
@@ -24,8 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY proxy/main.py .
 COPY proxy/llm_proxy/ llm_proxy/
-# Le modèle de configuration seulement : data/ est un VOLUME, le proxy y
-# écrit config.toml au premier démarrage s'il est absent, puis stats.db.
+# Le modèle seul : data/ est un volume, où le proxy crée config.toml
+# s'il est absent.
 COPY data/config.example.toml data/
 
 RUN useradd --create-home --uid 10001 appuser \

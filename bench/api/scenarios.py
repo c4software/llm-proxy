@@ -4,14 +4,14 @@ chaque modèle de MODELS. PASS/FAIL par scénario, sortie en erreur si l'un
 échoue. Bibliothèque standard seule (urllib) : rien à installer.
 
 Ce banc couvre ce qu'aucun client agentique ne fait de lui-même : DÉCLARER
-un outil hébergé sur /v1/chat/completions (README principal, « Client
+un outil hébergé sur /v1/chat/completions (docs/outils-heberges.md, « Client
 chat/completions : déclarer l'outil »). La requête porte
 `{"type": "web_search"}` dans `tools` ; le proxy cherche, relance le backend
 et rend UNE réponse chat/completions ordinaire. Ce n'est donc pas un agent :
 aucun outil n'est exécuté ici, il n'y a que des requêtes et ce qu'on y lit.
 S'y ajoutent l'appel direct (/v1/tools, le chemin de pi et d'omp), la même
 déclaration sur /v1/responses hors de Codex, et la preuve CÔTÉ PROXY : le
-compteur de l'Usage API des outils (README principal, « Usage des outils
+compteur de l'Usage API des outils (docs/statistiques.md, « Usage des outils
 hébergés »), lu avant et après, par route d'appel.
 
 Un scénario est SAUTÉ (SKIP, ni PASS ni FAIL) quand le proxy visé n'a pas
@@ -139,7 +139,7 @@ def as_json(text):
 def counts():
     """Les exécutions d'outils que le proxy a comptées dans la fenêtre,
     par (route d'appel, outil) → nombre. None si la route d'usage des
-    outils ne répond pas (proxy antérieur au 05/10/2026, clé refusée)."""
+    outils ne répond pas (proxy trop ancien, clé refusée)."""
     query = urllib.parse.urlencode([
         ("start_time", START), ("end_time", END), ("bucket_width", "all"),
         ("group_by[]", "endpoint"), ("group_by[]", "tool")])
@@ -605,7 +605,7 @@ def main():
             skipped(no_search)
         elif base is None:
             skipped("ce proxy ne sert pas GET /v1/organization/usage/tools "
-                    "(antérieur au 05/10/2026, ou clé refusée)")
+                    "(proxy trop ancien, ou clé refusée)")
         else:
             usage_proof(base, expected)
 

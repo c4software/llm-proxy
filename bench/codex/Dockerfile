@@ -1,12 +1,7 @@
-# Codex CLI seul. Sa configuration — le provider qui vise le proxy, en
-# API Responses — est générée au démarrage dans CODEX_HOME, à l'intérieur
-# du conteneur : ~/.codex de l'hôte n'est jamais touché.
-#
-# Le paquet npm n'a ni script d'installation ni dépendance : le binaire
-# (Rust, lié statiquement) vient d'une dépendance optionnelle par
-# plateforme, que --ignore-scripts n'écarte pas.
-# CODEX_VERSION : la dernière par défaut. Pour rejouer la version validée à
-# la main le 05/10/2026 :
+# Configuration générée au démarrage (entrypoint.sh) dans CODEX_HOME.
+# --ignore-scripts n'écarte pas le binaire : il vient d'une dépendance
+# optionnelle par plateforme.
+# CODEX_VERSION : la dernière par défaut ; une version précise :
 #   docker compose build --build-arg CODEX_VERSION=0.157.1 codex
 FROM node:22-slim
 ARG CODEX_VERSION=latest
