@@ -551,6 +551,17 @@ statistiques aussi. Elles valent partout où vaut une clé du proxy
 celles de `proxy.api_keys`, qui restent valables (l'admin les voit,
 condensé seul, sans pouvoir les retirer : elles vivent dans le TOML).
 
+**Une clé du TOML rattachée à un compte.** Seule, une clé de
+`proxy.api_keys` est son propre client. L'admin peut la **rattacher** à
+un compte (*Clés → tous les comptes*, le sélecteur de sa ligne ;
+`PUT /ui/keys/toml/<condensé>` `{"user_id": <id> | null}`) : le lien est
+gardé dans `accounts.db`, le TOML ne change pas. Dès lors elle écrit dans
+la **mémoire du compte**, ses statistiques s'ajoutent aux siennes, le
+compte la voit parmi ses clés, et elle **suit son état** (compte en
+attente ou bloqué = `401`). Ce qu'elle avait rangé seule avant n'est
+**pas déplacé** : il reste sous son condensé, hors de vue du compte.
+La détacher la rend à son propre client.
+
 **Ce qui est partagé** : toutes les clés d'un compte, et le chat de sa
 page, ont **la même mémoire** (outil `memory`, échanges d'outils) — une
 clé révoquée puis recréée ne perd rien. Les statistiques restent **par
@@ -2575,7 +2586,9 @@ qu'avec elle — le modèle ne choisit pas le client. La clé n'est jamais
 mémoire. **Avec les [comptes OIDC](#comptes-oidc)**, le client d'une clé
 gérée est son **compte** : toutes ses clés et le chat de sa page lisent
 et écrivent la même mémoire, et une clé révoquée puis remplacée ne perd
-rien. **Proxy ouvert** (`api_keys` vide) : une seule mémoire, commune.
+rien — de même pour une clé du TOML qu'un admin a rattachée au compte
+(ce qu'elle avait écrit avant le rattachement n'est pas déplacé).
+**Proxy ouvert** (`api_keys` vide) : une seule mémoire, commune.
 Bornes par clé (par compte avec OIDC) (fichiers, taille d'un fichier, taille totale) ; au-delà,
 l'écriture est refusée et le modèle invité à faire de la place. Tout `..`
 est refusé dans un chemin.

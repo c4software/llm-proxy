@@ -21,6 +21,13 @@ ne connaît pas le secret) et un indice (ses 8 premiers caractères) pour
 la reconnaître dans la liste. Une clé révoquée reste en base (ses
 statistiques gardent un libellé) mais ne vaut plus rien.
 
+LES CLÉS DU TOML (proxy.api_keys) n'ont pas de compte, sauf si un admin
+en RATTACHE une à un compte (table `bound`, par condensé) : elle écrit
+alors dans la mémoire du compte, ses statistiques rejoignent les siennes,
+et elle suit son état (compte en attente ou bloqué = clé refusée). Elle
+reste écrite dans le TOML. Les données déjà rangées sous la clé seule
+ne sont pas déplacées.
+
 Ce module ne connaît ni FastAPI, ni httpx, ni Authlib. SQLite, une
 connexion par opération sous un verrou, comme memories.py : des
 opérations courtes, appelées hors de la boucle d'événements. Les lectures
@@ -85,6 +92,10 @@ def _connect() -> sqlite3.Connection:
         digest TEXT NOT NULL UNIQUE, hint TEXT NOT NULL,
         label TEXT NOT NULL DEFAULT '', created REAL NOT NULL,
         last_used REAL, revoked REAL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS bound (
+        digest TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        created REAL NOT NULL)""")
     return conn
 
 
@@ -245,7 +256,49 @@ def digests(uid: int) -> list[str]:
     """Les condensés de toutes les clés du compte, révoquées comprises :
     ses statistiques."""
     return _run(lambda conn: [r[0] for r in conn.execute(
-        "SELECT digest FROM keys WHERE user_id = ?", (uid,)).fetchall()])
+        "SELECT digest FROM keys WHERE user_id = ? UNION "
+        "SELECT digest FROM bound WHERE user_id = ?", (uid, uid)).fetchall()])
+
+
+# ── Clés du TOML rattachées à un compte ─────────────────────────────────
+
+def bind(digest: str, uid: int | None) -> None:
+    """Rattache la clé du TOML de condensé `digest` au compte `uid`, ou
+    l'en détache (None). L'appelant vérifie que c'est bien une clé du
+    TOML."""
+    def go(conn):
+        if uid is None:
+            conn.execute("DELETE FROM bound WHERE digest = ?", (digest,))
+            return
+        if conn.execute("SELECT 1 FROM users WHERE id = ?",
+                        (uid,)).fetchone() is None:
+            raise AccountError("compte introuvable", 404)
+        conn.execute("INSERT INTO bound (digest, user_id, created) "
+                     "VALUES (?, ?, ?) ON CONFLICT (digest) DO UPDATE "
+                     "SET user_id = excluded.user_id, created = excluded.created",
+                     (digest, uid, time.time()))
+    _run(go, write=True)
+
+
+def bindings() -> dict[str, dict]:
+    """condensé → {"user_id", "user"} : les clés du TOML rattachées."""
+    return _run(lambda conn: {r["digest"]: {
+        "user_id": r["user_id"],
+        "user": r["email"] or r["name"] or f"#{r['user_id']}"}
+        for r in conn.execute("SELECT b.digest, b.user_id, u.email, u.name "
+                              "FROM bound b JOIN users u ON u.id = b.user_id")})
+
+
+def bound(digest: str) -> dict | None:
+    """Le compte d'une clé du TOML rattachée : {"user_id", "active"} ;
+    None si elle ne l'est pas — relu au plus toutes les CACHE_TTL s."""
+    def load():
+        row = _run(lambda conn: conn.execute(
+            "SELECT b.user_id, u.role FROM bound b JOIN users u "
+            "ON u.id = b.user_id WHERE b.digest = ?", (digest,)).fetchone())
+        return {"user_id": row["user_id"], "active": row["role"] in ACTIVE} \
+            if row else None
+    return _cached(("bound", digest), load)
 
 
 def revoke_key(kid: str, uid: int | None = None) -> dict:

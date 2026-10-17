@@ -449,14 +449,22 @@ def error_response(dialect: str, status: int, type_: str, message: str,
 
 async def key_client(token: str) -> tuple[str, str] | None:
     """La clé présentée → (api_key_id, client), None si elle ne vaut rien.
-    Une clé du TOML est son propre client ; une clé gérée (accounts.py)
-    a pour client son COMPTE — toutes ses clés partagent sa mémoire — et
-    garde son propre api_key_id dans les statistiques."""
+    Une clé du TOML est son propre client, sauf rattachée à un compte
+    (accounts.bind) ; une clé gérée (accounts.py) a pour client son
+    COMPTE — toutes ses clés partagent sa mémoire. Chacune garde son
+    propre api_key_id dans les statistiques."""
     if not token:
         return None
     digest = tools.owner(token)
     if valid_key(token):
-        return digest, digest
+        if not oidc.ENABLED:
+            return digest, digest
+        link = await asyncio.to_thread(accounts.bound, digest)
+        if link is None:
+            return digest, digest
+        # Rattachée : elle suit son compte, bloqué ou en attente compris.
+        return (digest, account_owner(link["user_id"])) \
+            if link["active"] else None
     if not oidc.ENABLED:
         return None
     hit = await asyncio.to_thread(accounts.resolve, digest)
@@ -2234,19 +2242,52 @@ def account_error(exc: accounts.AccountError) -> JSONResponse:
 
 @app.get("/ui/keys")
 async def ui_keys(request: Request, all: int = 0):
-    """Les clés du compte connecté ; `?all=1` (admin) : celles de tous, et
-    celles du TOML — leur seul condensé, en lecture seule."""
+    """Les clés du compte connecté, et celles du TOML qui lui sont
+    rattachées ; `?all=1` (admin) : celles de tous, et toutes celles du
+    TOML. Une clé du TOML ne se montre que par son condensé."""
     if (off := accounts_off()) is not None:
         return off
     user = request_user(request)
     if all and (bad := admin_only(request)) is not None:
         return bad
     data = await asyncio.to_thread(accounts.keys, None if all else user["id"])
-    out = {"object": "list", "data": data}
-    if all:
-        out["toml"] = [{"api_key_id": d, "hint": d[:8]}
-                       for d in sorted(tools.owner(k) for k in PROXY_API_KEYS)]
-    return out
+    links = await asyncio.to_thread(accounts.bindings)
+    toml = [{"api_key_id": d, "hint": d[:8], **links.get(
+                d, {"user_id": None, "user": None})}
+            for d in sorted(toml_digests())]
+    if not all:
+        toml = [k for k in toml if k["user_id"] == user["id"]]
+    return {"object": "list", "data": data, "toml": toml}
+
+
+def toml_digests() -> set[str]:
+    return {tools.owner(k) for k in PROXY_API_KEYS}
+
+
+@app.put("/ui/keys/toml/{digest}")
+async def ui_toml_bind(request: Request, digest: str):
+    """Rattache une clé du TOML (désignée par son condensé) à un compte,
+    `{"user_id": <id>}`, ou l'en détache, `{"user_id": null}` (admin).
+    Ce qui était rangé sous la clé seule n'est pas déplacé."""
+    if (bad := admin_only(request)) is not None:
+        return bad
+    if (bad := json_only(request)) is not None:
+        return bad
+    if digest not in toml_digests():
+        return error_response("openai", 404, "not_found",
+                              "pas une clé de proxy.api_keys")
+    body = parse_json(await request.body())
+    uid = body.get("user_id") if isinstance(body, dict) else 0
+    if uid is not None and (not isinstance(uid, int) or isinstance(uid, bool)):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps attendu : {\"user_id\": <id> | null}")
+    try:
+        await asyncio.to_thread(accounts.bind, digest, uid)
+    except accounts.AccountError as exc:
+        return account_error(exc)
+    links = await asyncio.to_thread(accounts.bindings)
+    return {"api_key_id": digest, "hint": digest[:8],
+            **links.get(digest, {"user_id": None, "user": None})}
 
 
 @app.post("/ui/keys")

@@ -132,7 +132,17 @@ window.ConfigPanel = {
       } catch (e) { userError.value = e.message; }
       await loadUsers();
     }
-    watch(allKeys, loadKeys);
+    // Une clé du TOML rattachée à un compte (admin) : elle écrit dans sa
+    // mémoire et suit son état. "" = détachée.
+    async function bindToml(k, value) {
+      try {
+        await call("PUT", "/ui/keys/toml/" + encodeURIComponent(k.api_key_id),
+          { user_id: value === "" ? null : Number(value) });
+        keyError.value = "";
+      } catch (e) { keyError.value = e.message; }
+      await loadKeys();
+    }
+    watch(allKeys, (on) => { loadKeys(); if (on) loadUsers(); });
 
     // ── utilitaires ─────────────────────────────────────────────────────
     // Une chaîne TOML « basique » : les échappements de JSON en sont un
@@ -499,7 +509,7 @@ window.ConfigPanel = {
 
     return { part, parts, setPart, account, isAdmin, keys, tomlKeys, allKeys,
              keyLabel, fresh, keyError, armed, createKey, revokeKey, loadKeys,
-             users, userError, ROLES, roleLabel, pendingCount, setRole, when,
+             users, userError, bindToml, ROLES, roleLabel, pendingCount, setRole, when,
              clients, form, client, models, clientOut, auth, mcpOn,
              TOOL_LIST, px, prefill, modelChoices, addBackend, addKey, randomKey, proxyOut,
              copy, download, copied };
@@ -557,10 +567,15 @@ window.ConfigPanel = {
                 <button v-else type="button" class="btn danger" :class="{ armed: armed === k.id }"
                         @click="revokeKey(k)">{{ armed === k.id ? "Révoquer ?" : "Révoquer" }}</button></td>
             </tr>
-            <tr v-for="k in tomlKeys" :key="k.api_key_id" v-if="allKeys">
-              <td>proxy.api_keys</td><td>—</td>
+            <tr v-for="k in tomlKeys" :key="k.api_key_id">
+              <td>proxy.api_keys <span class="tag" title="Écrite dans config.toml : se retire là">TOML</span></td>
+              <td v-if="allKeys"><select :value="k.user_id ?? ''" @change="bindToml(k, $event.target.value)"
+                  aria-label="Compte de cette clé du TOML"
+                  title="Rattachée, la clé écrit dans la mémoire du compte et suit son état ; ce qu'elle avait rangé seule ne bouge pas">
+                <option value="">— aucun compte —</option>
+                <option v-for="u in users" :key="u.id" :value="u.id">{{ u.email || u.name }}</option></select></td>
               <td><code title="condensé (la clé n'est pas connue de la page)">#{{ k.hint }}</code></td>
-              <td>—</td><td>—</td><td><span class="tag" title="Écrite dans config.toml : se retire là">TOML</span></td>
+              <td>—</td><td>—</td><td></td>
             </tr>
           </tbody>
         </table>

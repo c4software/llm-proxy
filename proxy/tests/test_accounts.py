@@ -244,7 +244,58 @@ def test_toml_keys_still_work_next_to_accounts(idp, monkeypatch):
     assert idp.client.get("/v1/tools", headers=bearer("sk-toml")).status_code == 200
     every = connect(idp).get("/ui/keys", params={"all": 1}).json()
     assert every["toml"] == [{"api_key_id": A.tools.owner("sk-toml"),
-                              "hint": A.tools.owner("sk-toml")[:8]}]
+                              "hint": A.tools.owner("sk-toml")[:8],
+                              "user_id": None, "user": None}]
+
+
+def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
+    monkeypatch.setattr(A, "PROXY_API_KEYS", ["sk-toml"])
+    digest = A.tools.owner("sk-toml")
+    alice = connect(idp)
+    bob = connect(idp, "bob", "bob@example.org")
+    bob_id = bob.get("/ui/session").json()["account"]["id"]
+    alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
+    # Seule, la clé est son propre client.
+    assert asyncio.run(A.key_client("sk-toml")) == (digest, digest)
+
+    # Un user ne rattache rien ; l'admin, si.
+    assert bob.put(f"/ui/keys/toml/{digest}",
+                   json={"user_id": bob_id}).status_code == 403
+    r = alice.put(f"/ui/keys/toml/{digest}", json={"user_id": bob_id})
+    assert r.status_code == 200 and r.json()["user"] == "bob@example.org"
+    # Elle écrit désormais dans la mémoire du compte ; ses stats aussi.
+    assert asyncio.run(A.key_client("sk-toml")) == (
+        digest, A.account_owner(bob_id))
+    assert digest in A.accounts.digests(bob_id)
+    # Bob la voit parmi ses clés ; l'admin, dans toutes.
+    mine = bob.get("/ui/keys").json()["toml"]
+    assert [k["api_key_id"] for k in mine] == [digest]
+    assert alice.get("/ui/keys").json()["toml"] == []
+
+    # Elle suit l'état du compte.
+    alice.patch(f"/ui/users/{bob_id}", json={"role": "blocked"})
+    assert idp.client.get("/v1/tools",
+                          headers=bearer("sk-toml")).status_code == 401
+    alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
+    assert idp.client.get("/v1/tools",
+                          headers=bearer("sk-toml")).status_code == 200
+
+    # Détachée : de nouveau son propre client.
+    assert alice.put(f"/ui/keys/toml/{digest}",
+                     json={"user_id": None}).json()["user_id"] is None
+    assert asyncio.run(A.key_client("sk-toml")) == (digest, digest)
+
+
+def test_binding_refuses_what_is_not_a_toml_key(idp, monkeypatch):
+    monkeypatch.setattr(A, "PROXY_API_KEYS", ["sk-toml"])
+    alice = connect(idp)
+    digest = A.tools.owner("sk-toml")
+    assert alice.put("/ui/keys/toml/" + "0" * 32,
+                     json={"user_id": 1}).status_code == 404
+    assert alice.put(f"/ui/keys/toml/{digest}",
+                     json={"user_id": 999}).status_code == 404
+    assert alice.put(f"/ui/keys/toml/{digest}",
+                     json={"user_id": "1"}).status_code == 400
 
 
 def test_a_forged_callback_is_refused(idp):

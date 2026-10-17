@@ -741,8 +741,8 @@ max_input_bytes = 10000000
 # n'est jamais écrite : la base range un condensé de la clé sous un secret
 # tiré une fois (client.secret, à côté de ce fichier). Changer de clé =
 # changer de mémoire. Avec les comptes ([oidc]) : une mémoire PAR COMPTE,
-# partagée par toutes ses clés et le chat de sa page — révoquer une clé
-# et en créer une autre ne perd rien. Proxy OUVERT : une seule mémoire,
+# partagée par toutes ses clés, celles du TOML qui lui sont rattachées et
+# le chat de sa page — révoquer une clé et en créer une autre ne perd rien. Proxy OUVERT : une seule mémoire,
 # commune à tous.
 # À SAVOIR : ce qu'un modèle range ici revient dans les conversations
 # suivantes — une page web lue par un agent peut lui faire écrire une
@@ -804,7 +804,10 @@ chat = false
 # sur /v1, /mcp… à côté de celles du TOML, qui restent. Le PREMIER compte
 # connecté est admin : il accepte les suivants, bloque, promeut, révoque.
 # Toutes les clés d'un compte partagent sa mémoire ; ses statistiques
-# restent ventilées par clé.
+# restent ventilées par clé. Une clé de [proxy].api_keys peut être
+# rattachée à un compte par un admin (dans la page, gardé dans la base) :
+# elle écrit alors dans la mémoire du compte et suit son état ; ce
+# qu'elle avait rangé avant ne bouge pas.
 # Chez le fournisseur : un client « confidentiel », flux authorization
 # code, adresse de retour <adresse publique>/ui/auth/callback.
 [oidc]
