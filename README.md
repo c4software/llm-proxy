@@ -831,7 +831,7 @@ message au lieu de répondre la clôt, sans réponse.
 | `folder_list`, `folder_read`, `folder_search` | parcourir, lire (par tranches numérotées), chercher dans le dossier ouvert | non |
 | `folder_write`, `folder_edit` | créer ou remplacer un fichier, remplacer un passage exact | oui : diff, *Appliquer* ou *Refuser* |
 
-![La feuille ask_user en bas du chat : deux questions à choix, un champ « Autre… » sous chacune, Répondre ou Passer](docs/chat-question.png)
+![La feuille ask_user en bas du chat : une question à choix (niveau de randonnée), une option choisie, le champ « Autre… », Répondre ou Passer](docs/chat-question.png)
 
 - **Questions** (`ask_user`) : quand une décision revient à
   l'utilisateur ou qu'une précision manque. Sa réponse est rendue au
