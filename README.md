@@ -733,7 +733,7 @@ le reste. **Fermée par défaut** — `[ui] chat = true` dans
 - **Outils hébergés** (avec `[chat] hosted_tools = true`) : un
   interrupteur par type déclarable — *Web* déclare `{"type":
   "web_search"}` (donc `web_search`, `web_fetch`, `web_grep`), *Code*,
-  *Images*, *Retenir* (l'outil `memory` ; le bouton *Mémoire* ouvre son panneau), et un par serveur MCP de la configuration
+  *Images*, *Mémoire* (l'outil `memory` ; le bouton *Mémoire* de l'en-tête ouvre son panneau), et un par serveur MCP de la configuration
   (`{"type": "mcp:<serveur>"}`, tous ses outils). Un refus par limite
   d'appels s'affiche comme tel (`status: "limit"`), pas comme une panne.
   Les interrupteurs **font foi** :
