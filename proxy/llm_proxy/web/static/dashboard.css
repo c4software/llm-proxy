@@ -733,7 +733,7 @@ button.icon:disabled { opacity: .4; cursor: default; }
 .tool summary b { font-weight: 500; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
 .tool .arg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .tool .state { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
-.tool.running .state { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.tool.running .state, .tool.writing .state { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 .tool.error .state { background: var(--err); }
 .tool pre {
   margin: 0; padding: 10px 12px; border-top: 1px solid var(--line); max-height: 260px; overflow: auto;
@@ -795,7 +795,7 @@ button.icon:disabled { opacity: .4; cursor: default; }
   .composer { padding: 10px 12px 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .tool.running .state, .typing i { transition: none; animation: none; }
+  .tool.running .state, .tool.writing .state, .typing i { transition: none; animation: none; }
 }
 
 /* ── Chat : panneau Mémoire (memory.js, compact) ─────────────────────── */
@@ -945,6 +945,19 @@ a.btn { display: inline-block; text-decoration: none; }
 .ico-btn { display: inline-flex; align-items: center; gap: 6px; }
 .ico-btn .ico { display: none; width: 18px; height: 18px; fill: none; stroke: currentColor;
   stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+/* Le chat rétréci par un panneau latéral (artifact, mémoire) : son
+   en-tête et sa zone de saisie passent en icônes, comme sur mobile —
+   sinon les boutons débordent sous le panneau. */
+.chat-main { container-type: inline-size; }
+@container (max-width: 760px) {
+  .chat-head { padding: 10px 12px; gap: 6px; }
+  .chat-head h2 { display: none; }
+  .chat-head .model-pick { flex: 1; min-width: 0; }
+  .chat-head .model-pick select { max-width: none; width: 100%; }
+  .ico-btn .ico { display: block; }
+  .ico-btn .lbl { display: none; }
+  .ico-btn { padding: 8px 10px; }
+}
 @media (max-width: 760px) {
   .ico-btn .ico { display: block; }
   .ico-btn .lbl { display: none; }

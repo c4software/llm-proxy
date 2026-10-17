@@ -11,6 +11,8 @@
   (plusieurs Go), que Chrome garde ensuite pour toutes les pages ; le
   charger prend une vingtaine de secondes à la première réponse.
 */
+import { partialString as partial } from "../../lib/partialjson.js";
+
 const OPTIONS = {
   expectedInputs: [{ type: "text", languages: ["fr", "en"] }, { type: "image" }],
   expectedOutputs: [{ type: "text", languages: ["fr"] }],
@@ -85,30 +87,6 @@ function plain(messages) {
       if (t.trim()) push("assistant", t);
     } else if (m.role === "tool" && (m.content || "").trim()) {
       push("user", "Mes réponses à tes questions :\n" + m.content);
-    }
-  }
-  return out;
-}
-
-// La valeur, même inachevée, de la chaîne `key` d'un JSON en cours.
-function partial(raw, key) {
-  const at = raw.search(new RegExp(`"${key}"\\s*:\\s*"`));
-  if (at < 0) return "";
-  let k = raw.indexOf('"', raw.indexOf(":", at)) + 1;
-  let out = "";
-  for (; k < raw.length; k++) {
-    const ch = raw[k];
-    if (ch === '"') break;
-    if (ch !== "\\") { out += ch; continue; }
-    const nx = raw[k + 1];
-    if (nx === undefined) break;
-    if (nx === "u") {
-      if (k + 5 >= raw.length) break;
-      out += String.fromCharCode(parseInt(raw.slice(k + 2, k + 6), 16));
-      k += 5;
-    } else {
-      out += { n: "\n", t: "\t", r: "", b: "", f: "" }[nx] ?? nx;
-      k += 1;
     }
   }
   return out;

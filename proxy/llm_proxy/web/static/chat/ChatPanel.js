@@ -64,6 +64,7 @@ import { inline, dataUrl, ownImage } from "./history.js";
 import { readAttachment } from "./attachments.js";
 import { imagePrompt, oneImage } from "./images.js";
 import { readStream } from "./stream.js";
+import { partialString } from "../lib/partialjson.js";
 import { availableBrowserModels, browserModel, modelCaps } from "./browser.js";
 import { catalog, catalogState, refreshCatalog } from "../lib/catalog.js";
 import * as workspace from "./workspace.js";
@@ -607,7 +608,8 @@ export const ChatPanel = {
               live.usage = j.usage || null;
               return;
             }
-            await readStream(r.body, live, { calls, onMemory: () => { memoryStamp.value++; } });
+            await readStream(r.body, live, { calls, onCall: (slot) => writing(live, slot),
+                                             onMemory: () => { memoryStamp.value++; } });
             const asked = calls.filter((c) => c && pagetools.isPageTool(c.name))
               .map((c) => ({ id: c.id || "call_" + uid(), name: c.name, arguments: c.arguments }));
             if (!asked.length || live.error) {
@@ -623,6 +625,8 @@ export const ChatPanel = {
             if (!chip) {
               live.tools.push({ id: c.id, name: c.name, arguments: c.arguments, status: "running" });
               chip = live.tools[live.tools.length - 1];
+            } else if (chip.status === "writing") {
+              Object.assign(chip, { arguments: c.arguments, status: "running" });
             }
             let result;
             let image = "";
@@ -720,6 +724,29 @@ export const ChatPanel = {
         (live.steps || (live.steps = [])).push({ content: live.step.content, calls: live.step.calls });
         live.step = null;
         if (live.content && !live.content.endsWith("\n")) live.content += "\n\n";
+      }
+    }
+
+    // Un appel de la page qui s'écrit encore (un artifact peut prendre des
+    // minutes) : sa puce paraît dès son nom, « écriture… », et compte ce
+    // qui s'écrit — mise à jour quatre fois par seconde au plus.
+    function writing(live, slot) {
+      if (!slot.name || !pagetools.isPageTool(slot.name)) return;
+      if (!slot.id) slot.id = "call_" + uid();
+      let chip = live.tools.find((t) => t.id === slot.id);
+      if (!chip) {
+        live.tools.push({ id: slot.id, name: slot.name, arguments: "", status: "writing", chars: 0, at: 0 });
+        chip = live.tools[live.tools.length - 1];
+      }
+      const now = Date.now();
+      if (chip.status !== "writing" || now - chip.at < 250) return;
+      chip.at = now;
+      chip.chars = slot.arguments.length;
+      // Le titre (ou le nom, le chemin) : au début des arguments.
+      if (!chip.label) {
+        const head = slot.arguments.slice(0, 2000);
+        chip.label = partialString(head, "title") || partialString(head, "name")
+          || partialString(head, "path") || "";
       }
     }
 
@@ -891,7 +918,7 @@ export const ChatPanel = {
 
     function done(conv, live, ctrl, paused = false) {
       live.duration = (Date.now() - live.started) / 1000;
-      for (const t of live.tools) if (t.status === "running") t.status = "error";
+      for (const t of live.tools) if (t.status === "running" || t.status === "writing") t.status = "error";
       streaming.value = false;
       controller = null;
       conv.updated = Date.now();
@@ -1106,6 +1133,7 @@ export const ChatPanel = {
 
     // Ce que l'appel d'outil cherchait, en une ligne.
     function argSummary(t) {
+      if (t.status === "writing") return t.label || "";
       let a = {};
       try { a = JSON.parse(t.arguments || "{}"); } catch { return t.arguments; }
       // Les outils de la page : ce qui les distingue, lisible.
@@ -1318,7 +1346,8 @@ export const ChatPanel = {
                 <summary>
                   <i class="state"></i><b>{{ t.name }}</b>
                   <span class="arg">{{ argSummary(t) }}</span>
-                  <span class="dim" v-if="t.status === 'running'">en cours…</span>
+                  <span class="dim" v-if="t.status === 'writing'">écriture… {{ num(t.chars) }} car.</span>
+                  <span class="dim" v-else-if="t.status === 'running'">en cours…</span>
                   <span class="dim" v-else-if="t.status === 'limit'">limite d'appels atteinte</span>
                   <span class="dim" v-else-if="t.chars !== undefined">{{ num(t.chars) }} car.</span>
                 </summary>

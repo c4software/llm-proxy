@@ -5,7 +5,8 @@
   (`x_hosted_tool`, propre au chat de la page), sources citées, usage —
   et les appels que la PAGE doit exécuter (`tool_calls` : les outils du
   dossier ouvert, chat/workspace.js), rassemblés morceau par morceau dans
-  `hooks.calls` (index → {id, name, arguments}).
+  `hooks.calls` (index → {id, name, arguments}) ; `hooks.onCall(slot)` à
+  chaque morceau — un artifact peut mettre des minutes à s'écrire.
 */
 export async function readStream(stream, live, hooks = {}) {
   const reader = stream.getReader();
@@ -46,9 +47,10 @@ export function take(doc, live, hooks = {}) {
       for (const tc of d.tool_calls) {
         const slot = hooks.calls[tc.index || 0] || (hooks.calls[tc.index || 0] =
           { id: "", name: "", arguments: "" });
-        if (tc.id) slot.id = tc.id;
+        if (tc.id && !slot.id) slot.id = tc.id;
         if (tc.function && tc.function.name) slot.name += tc.function.name;
         if (tc.function && tc.function.arguments) slot.arguments += tc.function.arguments;
+        if (hooks.onCall) hooks.onCall(slot);
       }
     }
     if (d.x_hosted_tool) {
