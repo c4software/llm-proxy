@@ -635,8 +635,9 @@ sur la page avec le motif (`/ui?auth_error=…`).
 **Mettre en route** : déclarer chez le fournisseur un client
 confidentiel, flux *authorization code*, adresse de retour
 `https://<adresse publique>/ui/auth/callback` ; remplir `[oidc]`
-(`issuer`, `client_id`, `client_secret = "${OIDC_CLIENT_SECRET}"`, la
-valeur dans `.env`) ; derrière un reverse proxy, poser
+(`issuer`, `client_id = "${OIDC_CLIENT_ID}"`,
+`client_secret = "${OIDC_CLIENT_SECRET}"`, les valeurs dans `.env`, que
+`docker-compose.yml` transmet au conteneur) ; derrière un reverse proxy, poser
 `[oidc].redirect_uri` ou `[files].public_url` (sinon l'adresse déduite
 de la requête est en `http://`, et le fournisseur la refuse) ;
 redémarrer, puis se connecter **le premier** : ce compte est admin.

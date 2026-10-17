@@ -25,6 +25,13 @@ services:
       # Vide tant que l'outil n'est pas mis en route : sans effet. Le
       # service lui-même vit dans docker-compose.override.example.yml.
       EXECUTOR_TOKEN: "${EXECUTOR_TOKEN:-}"
+      # La clé des clients du proxy, si [proxy].api_keys la référence
+      # («${PROXY_API_KEY}»). Vide : sans effet.
+      PROXY_API_KEY: "${PROXY_API_KEY:-}"
+      # Le client OIDC ([oidc].client_id et client_secret), si les comptes
+      # sont actifs. Vides : sans effet.
+      OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
+      OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
       # CONFIG_PATH: /app/data/config.toml
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status==200 else 1)"]

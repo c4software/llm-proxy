@@ -829,7 +829,7 @@ tokens_per_hour = 0
 # code, adresse de retour <adresse publique>/ui/auth/callback.
 [oidc]
 issuer = ""
-client_id = ""
+client_id = "${OIDC_CLIENT_ID}"
 client_secret = "${OIDC_CLIENT_SECRET}"
 # scopes = ["openid", "email", "profile"]
 # L'adresse de retour déclarée chez le fournisseur. Vide : celle de
