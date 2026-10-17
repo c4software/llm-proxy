@@ -34,7 +34,10 @@
 
   SESSION ET VUES. La page lit d'abord /ui/session : auth active sans clé
   valide (401), elle montre l'écran d'entrée — la clé saisie part à
-  /ui/login, qui la garde dans le cookie HttpOnly de /ui. Une fois entrée,
+  /ui/login, qui la garde dans le cookie HttpOnly de /ui ; avec les
+  comptes OIDC (/ui/auth dit «oidc»), un bouton mène au fournisseur
+  (/ui/auth/login), et un compte en attente ou bloqué ne voit que son
+  état. Une fois entrée,
   la personne ne voit que SES requêtes (le proxy filtre /ui/usage sur sa
   clé). Trois vues, menu latéral (tiroir sur mobile) : « Statistiques » (tout ce qui
   suit), « Chat » (chat.js, <chat-panel>) et « Configuration »
@@ -104,6 +107,11 @@ createApp({
     const loginKey = ref("");
     const loginError = ref("");
     const loginBusy = ref(false);
+    // L'entrée : «oidc» (bouton vers le fournisseur) ou «key» (/ui/auth).
+    const authMode = ref(null);
+    const authLabel = ref("");
+    // Un compte OIDC en attente ou bloqué : son état, et rien d'autre.
+    const inactive = ref(null);
 
     // ── état ────────────────────────────────────────────────────────────
     const current = ref(byId[localStorage.getItem(STORE)] ? localStorage
@@ -447,14 +455,30 @@ createApp({
     async function loadSession() {
       try {
         const r = await fetch("/ui/session", { headers: { accept: "application/json" } });
-        if (r.status === 401) { needLogin.value = true; session.value = null; return; }
+        if (r.status === 401) { await loadAuth(); needLogin.value = true; session.value = null; return; }
         if (!r.ok) throw new Error("HTTP " + r.status);
-        session.value = await r.json();
+        const s = await r.json();
         needLogin.value = false;
+        if (s.account && !["admin", "user"].includes(s.account.role)) {
+          inactive.value = s.account;
+          session.value = null;
+          return;
+        }
+        inactive.value = null;
+        session.value = s;
       } catch (e) {
         // Proxy injoignable : réessayé dans 5 s, par la boucle.
         setTimeout(loadSession, REFRESH);
       }
+    }
+
+    async function loadAuth() {
+      if (authMode.value) return;
+      try {
+        const a = await (await fetch("/ui/auth", { headers: { accept: "application/json" } })).json();
+        authMode.value = a.mode || "key";
+        authLabel.value = a.label || "Se connecter";
+      } catch { authMode.value = "key"; }
     }
 
     async function login() {
@@ -486,6 +510,8 @@ createApp({
           headers: { "content-type": "application/json" }, body: "{}" });
       } catch { /* le cookie partira au prochain 401 */ }
       session.value = null;
+      inactive.value = null;
+      await loadAuth();
       buckets.value = [];
       toolResults.value = [];
       loaded.value = false;
@@ -567,7 +593,10 @@ createApp({
     onMounted(async () => {
       // «?key=» a servi (le proxy l'a mise en cookie) : elle n'a rien à
       // faire dans la barre d'adresse ni dans l'historique.
-      if (new URLSearchParams(location.search).has("key")) {
+      const params = new URLSearchParams(location.search);
+      // Le retour d'une connexion OIDC refusée : dit sur l'écran d'entrée.
+      if (params.has("auth_error")) loginError.value = params.get("auth_error");
+      if (params.has("key") || params.has("auth_error")) {
         history.replaceState(null, "", location.pathname + location.hash);
       }
       loadHealth();
@@ -590,7 +619,8 @@ createApp({
 
     return { views, view, setView, navOpen, chats, chatState, chatList, openChat,
              newChat, session, needLogin, loginKey, loginError,
-             loginBusy, login, logout, onUnauthorized,
+             loginBusy, login, logout, onUnauthorized, authMode, authLabel,
+             inactive, loadSession,
              windows, current, metrics, metric, metricUnit, metricLabel,
              models, totals, bars, axis, peak, since, now, tools, toolCalls,
              loaded, entering, webCache, mcpServers, health,

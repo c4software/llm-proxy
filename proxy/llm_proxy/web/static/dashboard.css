@@ -864,6 +864,33 @@ button.icon:disabled { opacity: .4; cursor: default; }
   font: 12.5px/1.5 ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
 }
 .config-intro { margin: 0; padding: 12px 20px 0; font-size: 12.5px; color: var(--muted); }
+a.btn { display: inline-block; text-decoration: none; }
+
+/* Clés et comptes (comptes OIDC) : listes en tableau, défilantes sur mobile. */
+.config-keys { display: flex; flex-direction: column; gap: 16px; }
+.config-keys .panel { overflow-x: auto; }
+.config-keys .note, .config-keys .err { font-size: 13px; margin: 0; padding: 12px 18px; }
+.config-keys .note { color: var(--muted); }
+.config-keys td { white-space: nowrap; }
+.config-keys td:first-child { white-space: normal; }
+.config-keys tr.dim td { color: var(--muted); }
+.config-keys td .tag { margin-left: 6px; }
+.config-keys .btn { padding: 4px 10px; font-size: 12.5px; }
+.config-keys .btn.danger.armed { background: var(--err); color: #fff; }
+.config-keys select, .key-new-row input {
+  font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+}
+.key-new-row { display: flex; gap: 10px; padding: 14px 18px; }
+.key-new-row input { flex: 1; min-width: 0; padding: 7px 10px; }
+.key-fresh { border-color: var(--accent); }
+.key-copy { display: flex; align-items: center; gap: 10px; padding: 0 18px; flex-wrap: wrap; }
+.key-copy code { font: 14px ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
+.key-fresh pre {
+  margin: 12px 14px 14px; padding: 10px 12px; border-radius: 10px; background: var(--track);
+  border: 1px solid var(--line); overflow-x: auto;
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, monospace;
+}
 .tools-grid select { width: 100%; }
 .config-steps ol { margin: 0; padding: 12px 20px 16px 38px; font-size: 14px; }
 .config-steps li + li { margin-top: 6px; }

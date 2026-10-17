@@ -515,6 +515,52 @@ la page. La page elle-même, ses fichiers, l'entrée et la sortie se
 servent sans clé ; `GET /ui/session` dit qui est connecté (un fragment
 du condensé de la clé) et ce que le chat peut faire, ou `401`.
 
+### Comptes OIDC
+
+Avec `[oidc]` (`issuer`, `client_id`, `client_secret`), la page ne
+s'ouvre plus avec une clé mais **par un fournisseur OIDC** (Keycloak,
+Authentik, Google…) : bouton *Se connecter* → `GET /ui/auth/login` →
+fournisseur → `GET /ui/auth/callback` → `/ui`. Le client est celui
+d'[Authlib](https://docs.authlib.org/) : découverte
+(`<issuer>/.well-known/openid-configuration`), *authorization code* avec
+PKCE (S256), `state` et `nonce`, id_token vérifié (signature par le JWKS
+du fournisseur, `iss`, `aud`, `exp`, `nonce`). La session est un cookie
+signé (`proxy_session`, `HttpOnly`, `SameSite=Lax` — le retour du
+fournisseur est une navigation venue d'ailleurs —, `Secure` si
+l'adresse publique est en HTTPS), dont la clé dérive de
+`data/client.secret`. Une clé du proxy n'ouvre plus la page ;
+`/ui/login` répond `404`.
+
+**Les comptes** (`accounts.db`) : un par identité (`iss`, `sub`), avec un
+rôle. Le **premier** compte connecté est **admin** ; les suivants sont
+**en attente** (`[oidc].new_accounts = "pending"`, ou `"user"` pour un
+fournisseur déjà fermé à votre équipe) et ne voient que leur état
+jusqu'à ce qu'un admin les accepte. Un compte **bloqué** perd la page et
+ses clés cessent de valoir. Le dernier admin ne peut pas perdre son
+rôle.
+
+**Les clés** : chacun crée les siennes dans *Configuration → Clés*
+(`POST /ui/keys`), une par client, avec un libellé. Ce sont des
+**uuid4**, montrés **une seule fois** à la création (avec la ligne
+`export`) : le proxy n'en garde que le condensé (le même que pour les
+clés du TOML) et les 8 premiers caractères, pour les reconnaître. Une
+clé se révoque (`DELETE /ui/keys/<id>`) ; elle reste listée, ses
+statistiques aussi. Elles valent partout où vaut une clé du proxy
+(`/v1/*`, `/mcp`, `Authorization: Bearer` ou `x-api-key`), à côté de
+celles de `proxy.api_keys`, qui restent valables (l'admin les voit,
+condensé seul, sans pouvoir les retirer : elles vivent dans le TOML).
+
+**Ce qui est partagé** : toutes les clés d'un compte, et le chat de sa
+page, ont **la même mémoire** (outil `memory`, échanges d'outils) — une
+clé révoquée puis recréée ne perd rien. Les statistiques restent **par
+clé** (`api_key_id`) ; la page d'un compte les montre toutes réunies,
+celle d'un admin montre tout le monde.
+
+**L'admin**, en plus : *Configuration → Comptes* (`GET /ui/users`,
+`PATCH /ui/users/<id>` `{"role": …}` : `pending`, `user`, `admin`,
+`blocked`), les clés de tous (`GET /ui/keys?all=1`), et le générateur
+*Proxy*, réservé aux admins dès que les comptes existent.
+
 ### Le chat
 
 Second onglet en tête de page (<kbd>#chat</kbd> dans l'URL) : une
@@ -657,6 +703,9 @@ navigateur — rien n'est écrit sur le proxy.
   par une variable d'environnement (`LLM_PROXY_API_KEY` par défaut),
   dont la page donne la ligne `export`. Elle prévient si la surface que
   vise le client, ou le serveur MCP, est désactivée.
+- **Clés** et **Comptes** : avec les [comptes OIDC](#comptes-oidc)
+  seulement — créer et révoquer ses clés, et pour un admin, les comptes
+  et les clés de tous.
 - **Proxy** : un formulaire guidé pour `data/config.toml` — clés (une par
   personne), backends, surfaces, outils hébergés et leur limite, chat,
   adresse publique, rétention. Prérempli d'après `/healthz`, l'état
@@ -2892,6 +2941,21 @@ défauts), qu'il applique sans croire le proxy : à monter avec celles-ci.
 |---|---|---|
 | `chat` | `false` | Ouvre l'onglet *Chat* du tableau de bord (`POST /ui/chat/completions`) : le cookie de `/ui` y dépense des tokens, comptés à la clé connectée. Voir [Le chat](#le-chat) |
 
+### `[oidc]`
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `issuer` | `""` | L'émetteur OIDC (`https://idp.example.org/realms/x`). Vide (ou `client_id` vide) = pas de comptes. Voir [Comptes OIDC](#comptes-oidc) |
+| `client_id` | `""` | L'identifiant du client déclaré chez le fournisseur |
+| `client_secret` | `""` | Son secret, en `${VAR}` |
+| `scopes` | `["openid", "email", "profile"]` | Portées demandées |
+| `redirect_uri` | `""` | L'adresse de retour ; vide = `[files].public_url` + `/ui/auth/callback`, sinon déduite de la requête |
+| `new_accounts` | `"pending"` | Rôle d'un nouveau compte après le premier (admin) : `pending` ou `user` |
+| `session_days` | `7` | Durée d'une session de la page |
+| `max_keys_per_account` | `50` | Clés actives au plus par compte |
+| `database` | `"accounts.db"` | Base SQLite des comptes et des condensés de clés ; relatif = à côté de `config.toml` |
+| `label` | `"Se connecter"` | Libellé du bouton de connexion |
+
 ### `[mcp_server]`
 
 | Clé | Défaut | Rôle |
@@ -2988,6 +3052,10 @@ cumulables :
   vaut que sous `/ui` ; il ne dépense des tokens que par le chat, et
   seulement si `[ui] chat = true`. Les routes `/ui` qui écrivent ou
   dépensent exigent un corps JSON.
+- **Les [comptes OIDC](#comptes-oidc)** (`[oidc]`) : la page ne s'ouvre
+  plus que par le fournisseur, chacun gère ses clés (uuid4, condensé seul
+  en base), un admin accepte, bloque ou révoque. Une clé volée n'ouvre
+  pas la page.
 - **Le réseau** : Nginx Proxy Manager, Tailscale, réseau Docker partagé.
 
 Avec les [outils hébergés](#outils-hébergés) activés, s'y ajoute que le

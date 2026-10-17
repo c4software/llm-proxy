@@ -48,7 +48,10 @@ Rôles :
      défaut = ouvert) exige des clients un «Authorization: Bearer <clé>»
      à la OpenAI — ou «x-api-key: <clé>», à l'Anthropic — (401 sinon,
      /healthz exempté). C'est la clé DU PROXY : jamais relayée aux
-     backends quand l'auth est active.
+     backends quand l'auth est active. Avec [oidc] (oidc.py), des
+     COMPTES : la page s'ouvre par le fournisseur OIDC, et chaque compte
+     y crée ses propres clés (accounts.py), valables à côté de celles du
+     TOML ;
 
 Chaque requête relayée est portée par UN objet `Call` (backend visé,
 modèle demandé, endpoint, dialecte du client) : c'est lui qui écrit la

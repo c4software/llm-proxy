@@ -789,6 +789,42 @@ allowed_origins = []
 chat = false
 
 
+# ── Comptes : connexion par OIDC ────────────────────────────────────────
+# Sans `issuer` ni `client_id` : rien ne change — la page s'ouvre avec une
+# clé de [proxy].api_keys, et il n'y a pas de comptes.
+# Avec : la page (/ui) ne s'ouvre plus QUE par le fournisseur OIDC
+# (Keycloak, Authentik, Google, tout fournisseur qui publie
+# <issuer>/.well-known/openid-configuration). Chaque compte y crée ses
+# propres clés (des uuid4, montrées une fois) pour ses clients, valables
+# sur /v1, /mcp… à côté de celles du TOML, qui restent. Le PREMIER compte
+# connecté est admin : il accepte les suivants, bloque, promeut, révoque.
+# Toutes les clés d'un compte partagent sa mémoire ; ses statistiques
+# restent ventilées par clé.
+# Chez le fournisseur : un client « confidentiel », flux authorization
+# code, adresse de retour <adresse publique>/ui/auth/callback.
+[oidc]
+issuer = ""
+client_id = ""
+client_secret = "${OIDC_CLIENT_SECRET}"
+# scopes = ["openid", "email", "profile"]
+# L'adresse de retour déclarée chez le fournisseur. Vide : celle de
+# [files].public_url + /ui/auth/callback, sinon déduite de la requête —
+# derrière un reverse proxy, mieux vaut poser l'une ou l'autre.
+# redirect_uri = "https://llm.example.org/ui/auth/callback"
+# Un nouveau compte (après le premier) : «pending» = attend qu'un admin
+# l'accepte ; «user» = actif d'emblée (fournisseur fermé à votre équipe).
+new_accounts = "pending"
+# Durée d'une session de la page (jours).
+session_days = 7
+# Clés actives au plus par compte.
+max_keys_per_account = 50
+# Base SQLite des comptes et des condensés de clés ; relatif = à côté de
+# ce fichier.
+database = "accounts.db"
+# Le libellé du bouton de connexion.
+label = "Se connecter"
+
+
 # ── Fichiers rendus par les outils ──────────────────────────────────────
 # Un outil peut produire des fichiers (le graphique ou le tableur d'une
 # exécution de code). Le proxy les garde quelques heures et écrit leurs

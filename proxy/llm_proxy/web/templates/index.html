@@ -92,7 +92,12 @@
               @click="setView('config')">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M16 4v4M10 10v4M18 16v4"/></svg>
         <span>Configuration</span></button>
-      <div class="nav-foot" v-if="session.auth_required">
+      <div class="nav-foot" v-if="session.account">
+        <span :title="session.account.email">{{ session.account.name || session.account.email }}
+          <span class="tag" v-if="session.account.role === 'admin'">admin</span></span>
+        <button type="button" class="link" @click="logout">Se déconnecter</button>
+      </div>
+      <div class="nav-foot" v-else-if="session.auth_required">
         <span>clé <code title="condensé de la clé connectée">{{ session.client }}</code></span>
         <button type="button" class="link" @click="logout">Se déconnecter</button>
       </div>
@@ -110,14 +115,35 @@
       </button>
       <div class="brand"><span class="dot"></span> llm-proxy</div>
     </div>
-    <h1 v-if="needLogin">Connexion</h1>
+    <h1 v-if="needLogin || inactive">Connexion</h1>
     <h1 v-else-if="view === 'stats'">Statistiques d'usage</h1>
     <h1 v-else-if="view === 'config'">Configuration</h1>
   </header>
 
   <!-- Auth active, pas de clé valide : on la demande. Elle part à
        /ui/login, qui la garde dans un cookie HttpOnly de /ui. -->
-  <form class="panel login" v-if="needLogin" @submit.prevent="login">
+  <div class="panel login" v-if="needLogin && authMode === 'oidc'">
+    <p>Connectez-vous avec votre compte : vous y gérez <b>vos</b> clés pour
+      vos clients, et ne voyez que <b>vos</b> statistiques et <b>vos</b> conversations.</p>
+    <div class="login-bar">
+      <a class="btn" href="/ui/auth/login">{{ authLabel }}</a>
+      <span class="err" role="status">{{ loginError }}</span>
+    </div>
+  </div>
+
+  <!-- Compte OIDC connecté mais pas encore accepté (ou bloqué). -->
+  <div class="panel login" v-if="inactive">
+    <p v-if="inactive.role === 'pending'">Compte <b>{{ inactive.email || inactive.name }}</b>
+      créé : il attend qu'un admin l'accepte. Revenez ensuite sur cette page.</p>
+    <p v-else>Le compte <b>{{ inactive.email || inactive.name }}</b> est bloqué.
+      Voyez avec un admin du proxy.</p>
+    <div class="login-bar">
+      <button type="button" class="btn" @click="loadSession">Vérifier à nouveau</button>
+      <button type="button" class="btn ghost" @click="logout">Se déconnecter</button>
+    </div>
+  </div>
+
+  <form class="panel login" v-if="needLogin && authMode !== 'oidc'" @submit.prevent="login">
     <p>Ce proxy demande une clé. Elle reste dans un cookie de ce navigateur,
       illisible par la page ; vous ne verrez que <b>vos</b> statistiques
       et <b>vos</b> conversations.</p>

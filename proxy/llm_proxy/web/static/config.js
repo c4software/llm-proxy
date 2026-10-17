@@ -18,6 +18,12 @@
   .env à part, que la page produit aussi (clés du proxy tirées au hasard
   dans le navigateur, à la demande). Seuls les réglages du formulaire sont
   écrits : tout autre garde son défaut (voir config.example.toml).
+
+  CLÉS et COMPTES, avec les comptes OIDC seulement ([oidc]). Chacun crée
+  ses clés (des uuid4, /ui/keys) pour ses clients — montrées UNE fois, à
+  la création — et les révoque. Un admin voit aussi celles de tous et les
+  comptes (/ui/users) : accepter un compte en attente, bloquer, promouvoir.
+  Le générateur « Proxy » est alors réservé aux admins.
 */
 window.ConfigPanel = {
   props: {
@@ -29,14 +35,104 @@ window.ConfigPanel = {
     const origin = window.location.origin;
     const STORE_PART = "llm-proxy-config-part";
 
-    const part = ref((() => {
-      try { return localStorage.getItem(STORE_PART) === "proxy" ? "proxy" : "clients"; }
+    // Les comptes OIDC : le compte connecté, et s'il est admin.
+    const account = computed(() => props.session.account || null);
+    const isAdmin = computed(() => !!account.value && account.value.role === "admin");
+    const parts = computed(() => [
+      { id: "clients", label: "Clients" },
+      ...(account.value ? [{ id: "keys", label: "Clés" }] : []),
+      ...(isAdmin.value ? [{ id: "accounts", label: "Comptes" }] : []),
+      ...(!account.value || isAdmin.value ? [{ id: "proxy", label: "Proxy" }] : []),
+    ]);
+    const stored = ref((() => {
+      try { return localStorage.getItem(STORE_PART) || "clients"; }
       catch { return "clients"; }
     })());
+    const part = computed(() => parts.value.some((p) => p.id === stored.value)
+      ? stored.value : "clients");
     function setPart(p) {
-      part.value = p;
+      stored.value = p;
       try { localStorage.setItem(STORE_PART, p); } catch { /* sans stockage */ }
+      if (p === "keys") loadKeys();
+      if (p === "accounts") loadUsers();
     }
+
+    // ── clés et comptes (OIDC) ──────────────────────────────────────────
+    const keys = ref([]);
+    const tomlKeys = ref([]);
+    const allKeys = ref(false);         // admin : les clés de tous
+    const keyLabel = ref("");
+    const fresh = ref(null);            // la clé tout juste créée, en clair
+    const keyError = ref("");
+    const armed = ref(null);            // révocation : deuxième clic attendu
+    const users = ref([]);
+    const userError = ref("");
+    const ROLES = [
+      { id: "pending", label: "en attente" }, { id: "user", label: "utilisateur" },
+      { id: "admin", label: "admin" }, { id: "blocked", label: "bloqué" },
+    ];
+    const roleLabel = (r) => (ROLES.find((x) => x.id === r) || { label: r }).label;
+    const pendingCount = computed(() => users.value.filter((u) => u.role === "pending").length);
+    function when(t) {
+      return t ? new Date(t * 1000).toLocaleString("fr-FR",
+        { dateStyle: "short", timeStyle: "short" }) : "—";
+    }
+    async function call(method, url, body) {
+      const r = await fetch(url, {
+        method, headers: { accept: "application/json",
+          ...(body ? { "content-type": "application/json" } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((data.error || {}).message || "HTTP " + r.status);
+      return data;
+    }
+    async function loadKeys() {
+      if (!account.value) return;
+      try {
+        const d = await call("GET", "/ui/keys" + (allKeys.value ? "?all=1" : ""));
+        keys.value = d.data || [];
+        tomlKeys.value = d.toml || [];
+        keyError.value = "";
+      } catch (e) { keyError.value = e.message; }
+    }
+    async function createKey() {
+      keyError.value = "";
+      try {
+        fresh.value = await call("POST", "/ui/keys", { label: keyLabel.value });
+        keyLabel.value = "";
+        await loadKeys();
+      } catch (e) { keyError.value = e.message; }
+    }
+    async function revokeKey(k) {
+      if (armed.value !== k.id) {
+        armed.value = k.id;
+        setTimeout(() => { if (armed.value === k.id) armed.value = null; }, 3000);
+        return;
+      }
+      armed.value = null;
+      try {
+        await call("DELETE", "/ui/keys/" + encodeURIComponent(k.id));
+        if (fresh.value && fresh.value.id === k.id) fresh.value = null;
+        await loadKeys();
+      } catch (e) { keyError.value = e.message; }
+    }
+    async function loadUsers() {
+      if (!isAdmin.value) return;
+      try {
+        users.value = (await call("GET", "/ui/users")).data || [];
+        userError.value = "";
+      } catch (e) { userError.value = e.message; }
+    }
+    async function setRole(u, role) {
+      if (role === u.role) return;
+      try {
+        await call("PATCH", "/ui/users/" + u.id, { role });
+        userError.value = "";
+      } catch (e) { userError.value = e.message; }
+      await loadUsers();
+    }
+    watch(allKeys, loadKeys);
 
     // ── utilitaires ─────────────────────────────────────────────────────
     // Une chaîne TOML « basique » : les échappements de JSON en sont un
@@ -84,7 +180,11 @@ window.ConfigPanel = {
         if (r.ok) allModels.value = ((await r.json()).data || []).map((m) => m.id).sort();
       } catch { /* les modèles de chat suffiront */ }
     }
-    onMounted(() => { loadModels(); loadAllModels(); });
+    onMounted(() => {
+      loadModels(); loadAllModels();
+      if (part.value === "keys") loadKeys();
+      loadUsers();                    // admin : le nombre de comptes en attente
+    });
 
     const health = computed(() => props.health || {});
     const auth = computed(() => !!props.session.auth_required);
@@ -397,19 +497,97 @@ window.ConfigPanel = {
       };
     });
 
-    return { part, setPart, clients, form, client, models, clientOut, auth, mcpOn,
+    return { part, parts, setPart, account, isAdmin, keys, tomlKeys, allKeys,
+             keyLabel, fresh, keyError, armed, createKey, revokeKey, loadKeys,
+             users, userError, ROLES, roleLabel, pendingCount, setRole, when,
+             clients, form, client, models, clientOut, auth, mcpOn,
              TOOL_LIST, px, prefill, modelChoices, addBackend, addKey, randomKey, proxyOut,
              copy, download, copied };
   },
   template: `
   <div class="config-view">
     <div class="toolbar">
-      <div class="range" role="group" aria-label="Générateur">
-        <button type="button" :aria-pressed="String(part === 'clients')" @click="setPart('clients')">Clients</button>
-        <button type="button" :aria-pressed="String(part === 'proxy')" @click="setPart('proxy')">Proxy</button>
+      <div class="range" role="group" aria-label="Partie">
+        <button type="button" v-for="p in parts" :key="p.id" :aria-pressed="String(part === p.id)"
+                @click="setPart(p.id)">{{ p.label }}<template
+                v-if="p.id === 'accounts' && pendingCount"> ({{ pendingCount }})</template></button>
       </div>
       <span class="range-note" v-if="part === 'clients'">la configuration d'un client, la clé par variable d'environnement</span>
+      <span class="range-note" v-else-if="part === 'keys'">vos clés pour vos clients : une par client, révocable</span>
+      <span class="range-note" v-else-if="part === 'accounts'">les comptes connectés par OIDC, et leur rôle</span>
       <span class="range-note" v-else>data/config.toml et son .env, préremplis d'après ce déploiement</span>
+    </div>
+
+    <div class="config-keys" v-if="part === 'keys'">
+      <form class="panel key-new" @submit.prevent="createKey">
+        <div class="panel-head"><h2>Nouvelle clé</h2></div>
+        <div class="key-new-row">
+          <input v-model="keyLabel" maxlength="80" spellcheck="false"
+                 placeholder="libellé : le client qui l'utilisera (Claude Code, portable…)">
+          <button type="submit" class="btn">Créer</button>
+        </div>
+        <p class="err" v-if="keyError" role="status">{{ keyError }}</p>
+      </form>
+      <section class="panel key-fresh" v-if="fresh">
+        <div class="panel-head"><h2>Clé créée{{ fresh.label ? " : " + fresh.label : "" }}</h2>
+          <button type="button" class="btn ghost" @click="fresh = null">Fermer</button></div>
+        <p class="note">Copiez-la maintenant : le proxy n'en garde qu'un condensé, elle ne
+          sera plus affichée. Posez-la dans la variable de votre client
+          (onglet <button type="button" class="link" @click="setPart('clients')">Clients</button>).</p>
+        <div class="key-copy">
+          <code>{{ fresh.key }}</code>
+          <button type="button" class="btn ghost" @click="copy({ name: fresh.id, content: fresh.key })">{{ copied === fresh.id ? "Copié" : "Copier" }}</button>
+        </div>
+        <pre>export {{ form.env || "LLM_PROXY_API_KEY" }}={{ fresh.key }}</pre>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>{{ allKeys ? "Toutes les clés" : "Vos clés" }}</h2>
+          <label class="check" v-if="isAdmin"><input type="checkbox" v-model="allKeys"> tous les comptes</label></div>
+        <table v-if="keys.length || tomlKeys.length">
+          <thead><tr><th>Libellé</th><th v-if="allKeys">Compte</th><th>Clé</th>
+            <th>Créée</th><th>Dernier usage</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="k in keys" :key="k.id" :class="{ dim: k.revoked }">
+              <td>{{ k.label || "—" }}</td>
+              <td v-if="allKeys">{{ k.user }}</td>
+              <td><code>{{ k.hint }}…</code></td>
+              <td>{{ when(k.created) }}</td>
+              <td>{{ when(k.last_used) }}</td>
+              <td><span v-if="k.revoked" class="tag">révoquée</span>
+                <button v-else type="button" class="btn danger" :class="{ armed: armed === k.id }"
+                        @click="revokeKey(k)">{{ armed === k.id ? "Révoquer ?" : "Révoquer" }}</button></td>
+            </tr>
+            <tr v-for="k in tomlKeys" :key="k.api_key_id" v-if="allKeys">
+              <td>proxy.api_keys</td><td>—</td>
+              <td><code title="condensé (la clé n'est pas connue de la page)">#{{ k.hint }}</code></td>
+              <td>—</td><td>—</td><td><span class="tag" title="Écrite dans config.toml : se retire là">TOML</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="note" v-else>Aucune clé pour l'instant.</p>
+      </section>
+    </div>
+
+    <div class="config-keys" v-if="part === 'accounts'">
+      <section class="panel">
+        <div class="panel-head"><h2>Comptes</h2></div>
+        <p class="err" v-if="userError" role="status">{{ userError }}</p>
+        <table>
+          <thead><tr><th>Compte</th><th>Clés</th><th>Créé</th><th>Connexion</th><th>Rôle</th></tr></thead>
+          <tbody>
+            <tr v-for="u in users" :key="u.id">
+              <td>{{ u.name || u.email }}<span class="dim" v-if="u.name && u.email"> · {{ u.email }}</span>
+                <span class="tag" v-if="account && u.id === account.id">vous</span></td>
+              <td>{{ u.keys }}</td>
+              <td>{{ when(u.created) }}</td>
+              <td>{{ when(u.last_login) }}</td>
+              <td><select :value="u.role" @change="setRole(u, $event.target.value)"
+                          :aria-label="'Rôle de ' + (u.email || u.name)">
+                <option v-for="r in ROLES" :key="r.id" :value="r.id">{{ r.label }}</option></select></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
     </div>
 
     <div class="config-grid" v-if="part === 'clients'">
@@ -437,6 +615,8 @@ window.ConfigPanel = {
             <input v-model="form.env" spellcheck="false"></label>
           <p class="note" v-if="!auth">Le proxy est ouvert : la clé est libre, la variable vaut
             <code>unused</code>.</p>
+          <p class="note" v-else-if="account">La clé : créez-en une par client dans l'onglet
+            <button type="button" class="link" @click="setPart('keys')">Clés</button>.</p>
         </div>
       </form>
       <div class="config-out">
@@ -459,7 +639,7 @@ window.ConfigPanel = {
       </div>
     </div>
 
-    <div class="config-grid" v-else>
+    <div class="config-grid" v-if="part === 'proxy'">
       <form class="panel config-form" @submit.prevent>
         <div class="panel-head"><h2>Proxy</h2>
           <button type="button" class="btn ghost" @click="prefill" :disabled="!health"
