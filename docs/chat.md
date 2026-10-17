@@ -262,13 +262,30 @@ tokens).
 | QR et codes-barres | `scan_code` | lus à la caméra ou à l'écran ; seul le texte part (macOS, Android, ChromeOS) | oui | non |
 | Pipette | `pick_color` | une couleur prise à l'écran, en hexadécimal | *Prendre une couleur* | non |
 | Écran allumé | `keep_screen_on` | empêche la veille tant que la page est visible | non | non |
-| Calcul | `run_javascript` | JavaScript en bac isolé (sans origine ni réseau, 10 s au plus) | non | non |
+| JavaScript | `run_javascript` | du JavaScript dans le bac (10 s au plus) | non | non |
+| PHP | `run_php` | un script PHP 8.3 dans le bac : sortie, erreurs, code de sortie (30 s au plus) | non | non |
+| SQL | `run_sql` | un script SQLite dans le bac, sur une base vide en mémoire : un tableau par requête (20 s au plus) | non | non |
 
 Ce qui touche à l'appareil n'est **jamais** lu sans un clic sur la
 carte, même si la permission du navigateur est déjà accordée. Une image
 (capture, photo) s'affiche sous la réponse, part au modèle avec le
 résultat de l'outil et reste dans l'historique. Caméra et écran sont
 coupés dès que la carte est répondue ou abandonnée.
+
+Le **bac** de JavaScript, PHP et SQL : le code tourne dans un Worker,
+créé dans un cadre `sandbox` sans origine (ni la page, ni sa session, ni
+ses cookies), sous une politique qui coupe tout réseau. Une boucle sans
+fin ne fige pas la page : le bac est supprimé au délai dépassé. Chaque
+appel part de zéro. PHP (≈ 18 Mo) et SQLite (≈ 700 Ko) sont des runtimes
+WASM servis par le proxy (`/ui/static/vendor/`) et téléchargés
+seulement au premier appel, puis revalidés par le navigateur sans être
+retéléchargés. L'image Docker les construit ; hors Docker, `npm ci &&
+npm run build` dans `proxy/wasm/`, sinon ces deux outils répondent que
+le runtime manque.
+
+Chaque outil suit le contrat de `chat/device/contract.js` : un nom de
+`TOOL`, une famille de `FAMILY`, sa description et ses paramètres, et
+soit `run` (aussitôt), soit `prepare`, `view` et `act` (une carte).
 
 ## Routes
 

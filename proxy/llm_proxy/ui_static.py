@@ -12,8 +12,9 @@ relatif d'un module (`./chat/store.js`) hérite du même préfixe, donc de
 la même version — un navigateur ne peut pas mêler l'ancien et le nouveau
 après une mise à jour. Sous ce préfixe, un fichier est gardé un an
 (immutable) ; une empreinte périmée est servie quand même, mais sans
-cache. Sans préfixe (/ui/static/icon.svg, le manifeste), il est revalidé
-à chaque fois.
+cache. Sans préfixe (/ui/static/icon.svg, le manifeste, les runtimes
+WASM de vendor/), il est revalidé à chaque fois : un ETag inchangé rend
+304, sans le contenu.
 
 Ouvert sans clé (auth.ui_open) : c'est la page d'entrée qui en a besoin.
 """
@@ -22,7 +23,7 @@ import hashlib
 import os
 import re
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, Response
 
 from .httputil import error_response
@@ -61,7 +62,7 @@ def versioned(html: str) -> str:
 
 
 @router.api_route(PREFIX + "{path:path}", methods=["GET", "HEAD"])
-async def static_file(path: str) -> Response:
+async def static_file(path: str, request: Request) -> Response:
     cache = "no-cache"
     if m := _VERSIONED.match(path):
         path = m.group(2)
@@ -70,4 +71,9 @@ async def static_file(path: str) -> Response:
     full = os.path.realpath(os.path.join(STATIC_DIR, path))
     if not full.startswith(STATIC_DIR + os.sep) or not os.path.isfile(full):
         return error_response("openai", 404, "not_found", "fichier inconnu")
-    return FileResponse(full, headers={"Cache-Control": cache})
+    response = FileResponse(full, headers={"Cache-Control": cache},
+                            stat_result=os.stat(full))
+    if response.headers["etag"] in request.headers.get("if-none-match", ""):
+        return Response(status_code=304, headers={
+            "Cache-Control": cache, "ETag": response.headers["etag"]})
+    return response

@@ -1,6 +1,16 @@
 # Contexte de build : la racine du dépôt (l'image embarque
 # data/config.example.toml). À la main :
 #   docker build -f proxy/Dockerfile .
+
+# Les runtimes WASM des bacs du navigateur (PHP, SQLite) : construits
+# depuis proxy/wasm, versions et empreintes figées par package-lock.json.
+FROM node:24-slim AS wasm
+WORKDIR /wasm
+COPY proxy/wasm/package.json proxy/wasm/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY proxy/wasm/build.mjs proxy/wasm/php.js proxy/wasm/sql.js ./
+RUN node build.mjs /vendor
+
 FROM python:3.13-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -20,6 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY proxy/main.py .
 COPY proxy/llm_proxy/ llm_proxy/
+COPY --from=wasm /vendor/ llm_proxy/web/static/vendor/
 # Le modèle seul : data/ est un volume, où le proxy crée config.toml
 # s'il est absent.
 COPY data/config.example.toml data/

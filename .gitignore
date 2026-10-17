@@ -29,3 +29,7 @@ bench/.env
 # Le facultatif et le propre à la machine (voir
 # docker-compose.override.example.yml).
 docker-compose.override.yml
+# Les runtimes WASM des bacs du navigateur : construits par proxy/wasm
+# (npm ci && npm run build), dans l'image par proxy/Dockerfile.
+proxy/wasm/node_modules/
+proxy/llm_proxy/web/static/vendor/

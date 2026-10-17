@@ -1,0 +1,17 @@
+{
+  "name": "llm-proxy-wasm",
+  "private": true,
+  "type": "module",
+  "description": "Les runtimes WASM des bacs du navigateur (PHP, SQLite), servis sous web/static/vendor/",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@php-wasm/universal": "3.1.58",
+    "@php-wasm/web-8-3": "3.1.58",
+    "sql.js": "1.15.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}

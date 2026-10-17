@@ -58,6 +58,18 @@ def test_page_opens_without_key_and_session_asks_for_one(ui):
     assert ui.client.get("/ui/usage?start_time=0").status_code == 401
 
 
+def test_unchanged_static_file_is_revalidated_without_its_content(ui):
+    """Un fichier sans préfixe versionné (les runtimes WASM) : son ETag
+    inchangé rend 304, vide."""
+    r = ui.client.get("/ui/static/icon.svg")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    again = ui.client.get("/ui/static/icon.svg",
+                          headers={"If-None-Match": r.headers["etag"]})
+    assert again.status_code == 304 and not again.content
+    assert ui.client.get("/ui/static/icon.svg",
+                         headers={"If-None-Match": '"autre"'}).status_code == 200
+
+
 def test_installable_app_is_served_without_key(ui):
     """Manifeste, icônes et service worker : servis sans clé (le navigateur
     les demande sans cookie), le service worker avec la portée de /ui."""

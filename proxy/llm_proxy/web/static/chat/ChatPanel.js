@@ -1118,16 +1118,7 @@ export const ChatPanel = {
       }
       if (t.name === "read_artifact") return a.id || "";
       if (t.name === "save_file") return a.name || "";
-      if (["get_location", "clipboard_read", "capture_screen", "take_photo", "scan_code",
-           "pick_color"].includes(t.name)) return a.reason || "";
-      if (t.name === "open_link") return a.url || "";
-      if (t.name === "add_to_calendar") return [a.title, a.start].filter(Boolean).join(" · ");
-      if (t.name === "clipboard_write") return (a.text || "").slice(0, 80);
-      if (t.name === "share") return a.title || (a.text || "").slice(0, 80);
-      if (t.name === "keep_screen_on") return a.on ? "allumé" : "veille normale";
-      if (t.name === "run_javascript") return (a.code || "").replace(/\s+/g, " ").slice(0, 120);
-      if (t.name === "notify") return [a.title, a.delay_minutes ? "dans " + a.delay_minutes + " min" : ""]
-        .filter(Boolean).join(" · ");
+      if (device.isTool(t.name)) return device.summary(t.name, a);
       // La mémoire : la commande et le fichier, pas le texte écrit.
       if (t.name === "memory" && a.command) {
         return [a.command, a.path || a.old_path, a.new_path ? "→ " + a.new_path : ""]
