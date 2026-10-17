@@ -64,16 +64,23 @@ import { readAttachment } from "./attachments.js";
 import { imagePrompt, oneImage } from "./images.js";
 import { readStream } from "./stream.js";
 import * as workspace from "./workspace.js";
+import * as pagetools from "./pagetools.js";
+import * as askTool from "./ask.js";
+import * as notify from "./notify.js";
+import { lineDiff, counts as diffCounts } from "./diff.js";
+import { ArtifactPanel } from "./ArtifactPanel.js";
+import { download } from "../lib/files.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 
 export const ChatPanel = {
+  components: { ArtifactPanel },
   props: { session: { type: Object, required: true } },
   emits: ["unauthorized"],
   setup(props, { emit }) {
     const { ref, reactive, computed, watch, nextTick, onMounted, onUpdated, onUnmounted, toRaw } = Vue;
     const API = "/ui/chat/completions";
-    // Tours de lecture du dossier au plus, par réponse.
+    // Tours d'outils de la page au plus, par réponse.
     const MAX_ROUNDS = 25;
     const LAST_MODEL = "llm-proxy-chat-model";
     const MEMORY_OPEN = "llm-proxy-chat-memory";
@@ -122,8 +129,25 @@ export const ChatPanel = {
       try { return localStorage.getItem(MEMORY_OPEN) === "1"; } catch { return false; }
     })());
     const memoryStamp = ref(0);
+    // Les artifacts de la conversation (show_artifact) : leur panneau, à la
+    // place de celui de la mémoire — un seul panneau à la fois.
+    const artifactsOpen = ref(false);
+    const artifactId = ref("");
+    function openArtifact(id) {
+      artifactId.value = id;
+      artifactsOpen.value = true;
+      memoryOpen.value = false;
+    }
+    function toggleArtifacts(open = !artifactsOpen.value) {
+      artifactsOpen.value = open;
+      if (open) memoryOpen.value = false;
+    }
+    // Prévenir de la fin d'une réponse (notify.js), réglage du navigateur.
+    const notifyOn = ref(notify.enabled());
+    async function toggleNotify(e) { notifyOn.value = await notify.setEnabled(e.target.checked); }
     function toggleMemory(open = !memoryOpen.value) {
       memoryOpen.value = open;
+      if (open) artifactsOpen.value = false;
       try { localStorage.setItem(MEMORY_OPEN, open ? "1" : "0"); } catch { /* sans stockage */ }
     }
     const thread = ref(null);
@@ -250,6 +274,25 @@ export const ChatPanel = {
         + (ws.ignored ? ` (${ws.ignored} ignoré${ws.ignored > 1 ? "s" : ""} : .git, node_modules…)` : "")
         + " — le modèle les lit à la demande.";
     }
+    // Chrome, Edge : le sélecteur du système, qui permet d'écrire ensuite.
+    const canPick = workspace.canPick();
+    async function pickFolder() {
+      attachOpen.value = false;
+      const c = current.value;
+      if (!c) return;
+      try {
+        const ws = await workspace.pickFolder();
+        if (!ws.count) { status.value = `${ws.name} : aucun fichier lisible.`; return; }
+        folders.set(c.id, ws);
+        c.folder = { name: ws.name, count: ws.count };
+        folderTick.value++;
+        status.value = `Dossier « ${ws.name} » ouvert : ${ws.count} fichier${ws.count > 1 ? "s" : ""}`
+          + (ws.ignored ? ` (${ws.ignored} ignoré${ws.ignored > 1 ? "s" : ""})` : "")
+          + " — le modèle le lit à la demande, et peut proposer des écritures.";
+      } catch (e) {
+        if (e.name !== "AbortError") status.value = "Dossier : " + e.message;
+      }
+    }
     function closeFolder() {
       const c = current.value;
       if (!c) return;
@@ -330,6 +373,7 @@ export const ChatPanel = {
         if (!streaming.value) resume();
         return;
       }
+      abandonWaiting(c);
       ask(c, item);
     }
 
@@ -361,23 +405,29 @@ export const ChatPanel = {
       nextTick(() => { if (input.value) { input.value.focus(); autosize(); } });
     }
 
-    async function respond(conv) {
-      if (isImage(conv.model)) return generate(conv);
-      const msg = { id: uid(), role: "assistant", content: "", reasoning: "",
-                    tools: [], sources: [], model: conv.model, usage: null,
-                    error: "", started: Date.now(), duration: 0 };
-      const upto = conv.messages.length;
-      conv.messages.push(msg);
-      conv.updated = Date.now();
+    // ── une réponse ─────────────────────────────────────────────────────
+    // Un tour par requête : tant que le modèle appelle des outils de la
+    // PAGE (pagetools.js), elle les exécute et le relance avec leurs
+    // résultats. Un outil qui attend l'utilisateur (question, écriture)
+    // MET EN PAUSE : la boucle s'arrête, l'état reste dans le message
+    // (`step` : le tour en cours, `waiting` : la carte), et la réponse de
+    // l'utilisateur la relance (respond(conv, message)) — même après un
+    // rechargement.
+    async function respond(conv, resumeMsg = null) {
+      if (!resumeMsg && isImage(conv.model)) return generate(conv);
+      if (!resumeMsg) {
+        conv.messages.push({ id: uid(), role: "assistant", content: "", reasoning: "",
+                             tools: [], sources: [], model: conv.model, usage: null,
+                             error: "", started: Date.now(), duration: 0 });
+      }
       // Le message RÉACTIF : c'est lui que le flux modifie.
-      const live = conv.messages[conv.messages.length - 1];
+      const live = resumeMsg || conv.messages[conv.messages.length - 1];
+      const upto = conv.messages.indexOf(live);
+      conv.updated = Date.now();
       streaming.value = true;
       status.value = "";
       const ctrl = controller = new AbortController();
-      const body = {
-        model: conv.model, stream: true, stream_options: { include_usage: true },
-        messages: apiMessages(conv, upto),
-      };
+      const body = { model: conv.model, stream: true, stream_options: { include_usage: true } };
       if (conv.temperature !== null && conv.temperature !== "") {
         body.temperature = Number(conv.temperature);
       }
@@ -390,76 +440,166 @@ export const ChatPanel = {
       if (["low", "medium", "high"].includes(effort)) body.reasoning_effort = effort;
       else if (effort === "none") body.chat_template_kwargs = { enable_thinking: false };
       // Incognito : rien de persistant, donc pas l'outil `memory`.
-      const tools = conv.tools.filter((t) => available.value.has(t)
+      const hosted = conv.tools.filter((t) => available.value.has(t)
         && !(conv.incognito && t === "memory"));
-      // Le dossier ouvert : ses outils, exécutés ici (chat/workspace.js).
+      // Les outils de la page, ceux du dossier s'il est ouvert.
       const ws = folders.get(conv.id) || null;
-      body.tools = [...tools.map((type) => ({ type })), ...(ws ? workspace.TOOLS : [])];
-      if (!body.tools.length) delete body.tools;
+      body.tools = [...hosted.map((type) => ({ type })), ...pagetools.toolsFor(ws)];
+      const ctx = { conv, live, ws };
+      let paused = false;
       try {
-        // Un tour par requête : tant que le modèle appelle les outils du
-        // dossier, la page les exécute et le relance avec leurs résultats.
-        for (let round = 0; ; round++) {
-          const start = live.content.length;
-          if (live.steps) body.messages = [...apiMessages(conv, upto), ...workspace.stepMessages(live.steps)];
-          const calls = [];
-          const r = await fetch(API, {
-            method: "POST", signal: controller.signal,
-            headers: { "content-type": "application/json", accept: "text/event-stream",
-                       ...(conv.incognito ? { "x-incognito": "1" } : {}) },
-            body: JSON.stringify(body),
-          });
-          if (r.status === 401) { live.error = "Session expirée : reconnectez-vous."; emit("unauthorized"); return; }
-          if (!r.ok) {
-            let j = null;
-            try { j = await r.json(); } catch { /* corps illisible */ }
-            live.error = (j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`;
-            return;
+        for (;;) {
+          // Un tour à demander au modèle — sauf à la reprise d'une pause.
+          if (!(live.step && live.step.queue.length)) {
+            if ((live.steps || []).length >= MAX_ROUNDS) {
+              live.error = `Arrêté après ${MAX_ROUNDS} tours d'outils.`;
+              break;
+            }
+            const start = live.content.length;
+            body.messages = [...apiMessages(conv, upto), ...workspace.stepMessages(live.steps)];
+            const calls = [];
+            const r = await fetch(API, {
+              method: "POST", signal: controller.signal,
+              headers: { "content-type": "application/json", accept: "text/event-stream",
+                         ...(conv.incognito ? { "x-incognito": "1" } : {}) },
+              body: JSON.stringify(body),
+            });
+            if (r.status === 401) { live.error = "Session expirée : reconnectez-vous."; emit("unauthorized"); return; }
+            if (!r.ok) {
+              let j = null;
+              try { j = await r.json(); } catch { /* corps illisible */ }
+              live.error = (j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`;
+              return;
+            }
+            if (!(r.headers.get("content-type") || "").includes("event-stream")) {
+              const j = await r.json();
+              const choice = (j.choices || [])[0] || {};
+              live.content = (choice.message || {}).content || "";
+              live.usage = j.usage || null;
+              return;
+            }
+            await readStream(r.body, live, { calls, onMemory: () => { memoryStamp.value++; } });
+            const asked = calls.filter((c) => c && pagetools.isPageTool(c.name))
+              .map((c) => ({ id: c.id || "call_" + uid(), name: c.name, arguments: c.arguments }));
+            if (!asked.length || live.error) {
+              if (live.steps) live.final = live.content.slice(start);
+              break;
+            }
+            live.step = { content: live.content.slice(start), calls: [], queue: asked };
           }
-          if (!(r.headers.get("content-type") || "").includes("event-stream")) {
-            const j = await r.json();
-            const choice = (j.choices || [])[0] || {};
-            live.content = (choice.message || {}).content || "";
-            live.usage = j.usage || null;
-            return;
-          }
-          await readStream(r.body, live, { calls, onMemory: () => { memoryStamp.value++; } });
-          const asked = calls.filter((c) => c && workspace.TOOL_NAMES.has(c.name));
-          if (!ws || !asked.length || live.error) {
-            if (live.steps) live.final = live.content.slice(start);
-            break;
-          }
-          if (round >= MAX_ROUNDS) {
-            live.error = `Arrêté après ${MAX_ROUNDS} tours de lecture du dossier.`;
-            break;
-          }
-          const step = { content: live.content.slice(start), calls: [] };
-          for (const c of asked) {
-            const id = c.id || "call_" + uid();
-            live.tools.push({ id, name: c.name, arguments: c.arguments, status: "running" });
-            const chip = live.tools[live.tools.length - 1];
-            const result = await workspace.run(ws, c.name, c.arguments);
+          // Les appels du tour, un à un.
+          while (live.step.queue.length) {
+            const c = live.step.queue[0];
+            let chip = live.tools.find((t) => t.id === c.id);
+            if (!chip) {
+              live.tools.push({ id: c.id, name: c.name, arguments: c.arguments, status: "running" });
+              chip = live.tools[live.tools.length - 1];
+            }
+            let result;
+            if (pagetools.waitsForUser(c.name)) {
+              if (live.waiting && live.waiting.id === c.id) {
+                // La carte de cet appel : répondue (reprise), ou encore en attente.
+                if (live.waiting.result === undefined) { paused = true; return; }
+                result = live.waiting.result;
+                live.waiting = null;
+              } else {
+                const card = await pagetools.prepare(ctx, c);
+                if (card.error) result = card.error;
+                else {
+                  live.waiting = { id: c.id, name: c.name, ...card };
+                  chip.status = "waiting";
+                  paused = true;
+                  notify.notify(c.name === "ask_user" ? "Une question vous attend"
+                    : "Une écriture attend votre accord", conv.title);
+                  return;
+                }
+              }
+            } else {
+              const got = await pagetools.run(ctx, c);
+              result = got.result;
+              if (got.artifact) openArtifact(got.artifact);
+            }
             Object.assign(chip, { status: result.startsWith("Error:") ? "error" : "done",
                                   chars: result.length, preview: result.slice(0, 600) });
-            step.calls.push({ id, name: c.name, arguments: c.arguments, result });
+            live.step.calls.push({ id: c.id, name: c.name, arguments: c.arguments, result });
+            live.step.queue.shift();
           }
-          (live.steps || (live.steps = [])).push(step);
+          (live.steps || (live.steps = [])).push({ content: live.step.content, calls: live.step.calls });
+          live.step = null;
           if (live.content && !live.content.endsWith("\n")) live.content += "\n\n";
         }
       } catch (e) {
         if (e.name !== "AbortError") live.error = "Connexion interrompue : " + e.message;
         else if (!live.content) live.error = "Arrêté.";
       } finally {
-        done(conv, live, ctrl);
+        done(conv, live, ctrl, paused);
       }
     }
 
-    function done(conv, live, ctrl) {
+    // ── les cartes : question, écriture ─────────────────────────────────
+    // La réponse de l'utilisateur devient le résultat de l'outil, et la
+    // réponse du modèle reprend.
+    function settle(m, result) {
+      const c = current.value;
+      if (!c || streaming.value || !m.waiting) return;
+      m.waiting.result = result;
+      respond(c, m);
+    }
+    const askReady = (w) => w.questions.every(askTool.answered);
+    function togglePick(q, option) {
+      if (q.multiple) q.picked = q.picked.includes(option) ? q.picked.filter((o) => o !== option) : [...q.picked, option];
+      else q.picked = q.picked[0] === option ? [] : [option];
+    }
+    const answerAsk = (m) => settle(m, askTool.result(m.waiting));
+    const skipAsk = (m) => settle(m, "L'utilisateur a passé la question sans répondre.");
+    async function applyWrite(m) {
+      const ws = folders.get(current.value.id);
+      if (!ws) { status.value = "Rouvrir le dossier pour appliquer l'écriture."; return; }
+      const w = m.waiting;
+      try {
+        const where = await workspace.apply(ws, w.path, w.after, download);
+        const lines = w.after.split("\n").length;
+        settle(m, `Appliqué par l'utilisateur : « ${w.path} » ${w.created ? "créé" : "modifié"}, ${where} (${lines} ligne${lines > 1 ? "s" : ""}).`
+          + (w.comment ? ` Son commentaire : « ${w.comment} »` : ""));
+      } catch (e) {
+        status.value = `${w.path} : ${e.message}`;
+      }
+    }
+    const refuseWrite = (m) => settle(m, `Refusé par l'utilisateur : « ${m.waiting.path} » n'a pas été modifié.`
+      + (m.waiting.comment ? ` Son commentaire : « ${m.waiting.comment} »` : ""));
+    // Le diff d'une carte d'écriture, calculé une fois.
+    const diffs = new WeakMap();
+    function writeDiff(w) {
+      const raw = toRaw(w);
+      if (!diffs.has(raw)) diffs.set(raw, lineDiff(raw.before, raw.after));
+      return diffs.get(raw);
+    }
+    // Un nouveau message pendant qu'une carte attend : elle est close sans
+    // réponse, et le tour en cours avec elle (ses autres appels aussi).
+    function abandonWaiting(c) {
+      const m = c.messages[c.messages.length - 1];
+      if (!m || !m.waiting || !m.step) return;
+      for (const q of m.step.queue) {
+        const result = q.id === m.waiting.id ? askTool.NO_ANSWER : "Non exécuté : l'utilisateur est passé à autre chose.";
+        m.step.calls.push({ ...q, result });
+        const chip = m.tools.find((t) => t.id === q.id);
+        if (chip) Object.assign(chip, { status: "error", preview: result, chars: result.length });
+      }
+      (m.steps || (m.steps = [])).push({ content: m.step.content, calls: m.step.calls });
+      m.step = null;
+      m.waiting = null;
+    }
+
+    function done(conv, live, ctrl, paused = false) {
       live.duration = (Date.now() - live.started) / 1000;
       for (const t of live.tools) if (t.status === "running") t.status = "error";
       streaming.value = false;
       controller = null;
       conv.updated = Date.now();
+      if (paused) return;            // une carte attend : la file aussi
+      if (!ctrl.signal.aborted && !live.error) {
+        notify.notify("Réponse terminée", (live.final || live.content || conv.title).trim());
+      }
       // La suite de la file : seulement après une réponse réussie, et si
       // la conversation affichée est toujours celle-ci.
       if (conv.queue && conv.queue.length) {
@@ -704,6 +844,10 @@ export const ChatPanel = {
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
+             canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
+             notifyOn, toggleNotify, notifySupported: notify.supported(),
+             askReady, togglePick, answerAsk, skipAsk, applyWrite, refuseWrite, writeDiff, diffCounts,
+             download, fileOf: (f) => ({ name: f.name, content: f.content }),
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
              host };
@@ -718,7 +862,8 @@ export const ChatPanel = {
     </div>
   </div>
   <div class="panel chat" v-else
-       :class="{ 'with-memory': memoryOpen && $props.session.memory, incognito: current && current.incognito }">
+       :class="{ 'with-memory': (memoryOpen && $props.session.memory) || (artifactsOpen && current && (current.artifacts || []).length),
+                 'side-wide': artifactsOpen, incognito: current && current.incognito }">
     <section class="chat-main" v-if="current"
              @dragover.prevent="dragging = true" @dragleave.self="dragging = false"
              @drop.prevent="onDrop">
@@ -742,6 +887,11 @@ export const ChatPanel = {
                 :title="current.incognito ? 'Quitter le mode incognito' : 'Conversation incognito : rien n’est gardé'">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 11h20M5 11l2.5-6h9l2.5 6M10 16.5c1.3-.8 2.7-.8 4 0"/><circle cx="7" cy="16.5" r="3"/><circle cx="17" cy="16.5" r="3"/></svg>
           <span class="lbl">Incognito</span></button>
+        <button type="button" class="btn ghost ico-btn" v-if="(current.artifacts || []).length"
+                :aria-pressed="String(artifactsOpen)" @click="toggleArtifacts()"
+                title="Les artifacts de la conversation (pages, documents, schémas)">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 9h16M9 9v11"/></svg>
+          <span class="lbl">Artifacts ({{ current.artifacts.length }})</span></button>
         <button type="button" class="btn ghost ico-btn" v-if="$props.session.memory"
                 :aria-pressed="String(memoryOpen)" @click="toggleMemory()"
                 title="Mémoire : ce que les modèles ont retenu">
@@ -774,6 +924,11 @@ export const ChatPanel = {
           <span>Affichage</span>
           <label class="check"><input type="checkbox" v-model="current.showReasoning">
             montrer le raisonnement du modèle</label>
+        </div>
+        <div class="field" v-if="notifySupported">
+          <span>Notifications</span>
+          <label class="check"><input type="checkbox" :checked="notifyOn" @change="toggleNotify">
+            prévenir quand une réponse se termine (onglet en arrière-plan)</label>
         </div>
         <div class="field">
           <span>Conversation</span>
@@ -834,6 +989,46 @@ export const ChatPanel = {
                 </summary>
                 <pre v-if="t.preview">{{ t.preview }}{{ t.chars > t.preview.length ? "\\n…" : "" }}</pre>
               </details>
+            </div>
+            <!-- Une carte qui attend : question (ask_user) ou écriture dans le
+                 dossier ; la réponse de l'utilisateur relance le modèle. -->
+            <div class="tool-card ask-card" v-if="m.waiting && m.waiting.kind === 'ask'">
+              <div class="ask-q" v-for="(q, k) in m.waiting.questions" :key="k">
+                <p class="ask-text">{{ q.question }}<span class="dim" v-if="q.multiple"> · plusieurs choix</span></p>
+                <div class="ask-options">
+                  <button type="button" v-for="o in q.options" :key="o" class="btn ghost"
+                          :aria-pressed="String(q.picked.includes(o))" :disabled="streaming"
+                          @click="togglePick(q, o)">{{ o }}</button>
+                </div>
+                <input class="ask-other" v-model="q.other" :disabled="streaming"
+                       placeholder="Autre… (réponse libre)" @keydown.enter.prevent="askReady(m.waiting) && answerAsk(m)">
+              </div>
+              <div class="card-actions">
+                <button type="button" class="btn" :disabled="streaming || !askReady(m.waiting)"
+                        @click="answerAsk(m)">Répondre</button>
+                <button type="button" class="btn ghost" :disabled="streaming" @click="skipAsk(m)">Passer</button>
+              </div>
+            </div>
+            <div class="tool-card write-card" v-if="m.waiting && m.waiting.kind === 'write'">
+              <p class="write-head"><b>{{ m.waiting.created ? "Créer" : "Modifier" }}</b>
+                <code>{{ m.waiting.path }}</code>
+                <span class="dim">+{{ diffCounts(writeDiff(m.waiting)).added }}
+                  −{{ diffCounts(writeDiff(m.waiting)).removed }}</span></p>
+              <pre class="diff"><span v-for="(d, k) in writeDiff(m.waiting)" :key="k" :class="'d' + (d.type === '+' ? 'add' : d.type === '-' ? 'del' : d.type === '…' ? 'gap' : 'ctx')">{{ d.type === "…" ? "⋯" : d.type + " " + d.text }}
+</span></pre>
+              <input class="ask-other" v-model="m.waiting.comment" :disabled="streaming"
+                     placeholder="Commentaire pour le modèle (facultatif)">
+              <div class="card-actions">
+                <button type="button" class="btn" :disabled="streaming || !folderReady" @click="applyWrite(m)"
+                        :title="folderReady ? '' : 'Rouvrir le dossier pour appliquer'">Appliquer</button>
+                <button type="button" class="btn ghost" :disabled="streaming" @click="refuseWrite(m)">Refuser</button>
+                <span class="dim" v-if="!folderReady">dossier à rouvrir pour appliquer</span>
+              </div>
+            </div>
+            <div class="out-files" v-if="m.files && m.files.length">
+              <button type="button" class="chip file" v-for="f in m.files" :key="f.name"
+                      @click="download(fileOf(f), f.type)" title="Télécharger">{{ f.name }}
+                <span class="dim">{{ size(f.size) }}</span></button>
             </div>
             <div class="gen-images" :class="{ multi: m.attachments.length > 1 }" v-if="m.attachments && m.attachments.length">
               <template v-for="a in m.attachments" :key="a.name">
@@ -897,6 +1092,7 @@ export const ChatPanel = {
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
             {{ current.folder.name }}/
             <span class="dim" v-if="folderReady">{{ num(folderCount) }} fichier{{ folderCount > 1 ? "s" : "" }}</span>
+            <button type="button" class="link" v-else-if="canPick" @click="pickFolder">à rouvrir</button>
             <label class="link" v-else>à rouvrir<input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
             <button type="button" class="icon" title="Fermer le dossier" @click="closeFolder">×</button>
           </span>
@@ -925,8 +1121,10 @@ export const ChatPanel = {
               <label role="menuitem"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/></svg>
                 <span>Fichiers…<small>images, textes : joints au message</small></span>
                 <input type="file" multiple hidden @change="onPick"></label>
-              <label role="menuitem"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
-                <span>Dossier…<small>le modèle le parcourt et lit ce qu'il lui faut</small></span>
+              <button type="button" role="menuitem" v-if="canPick" @click.stop="pickFolder"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
+                <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut, propose des écritures</small></span></button>
+              <label role="menuitem" v-else><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
+                <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut ; écritures téléchargées</small></span>
                 <input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
             </div>
           </div>
@@ -977,6 +1175,9 @@ export const ChatPanel = {
     </section>
     <memory-panel v-if="memoryOpen && $props.session.memory" compact
                   :stamp="memoryStamp" @close="toggleMemory(false)"></memory-panel>
+    <artifact-panel v-else-if="artifactsOpen && current && (current.artifacts || []).length"
+                    :artifacts="current.artifacts" :selected="artifactId"
+                    @select="artifactId = $event" @close="toggleArtifacts(false)"></artifact-panel>
     <teleport to="body">
     <div class="lightbox" v-if="zoom" @click.self="zoom = null" role="dialog" aria-label="Image agrandie">
       <img :src="zoom.data" :alt="zoom.name" @click="zoom = null">

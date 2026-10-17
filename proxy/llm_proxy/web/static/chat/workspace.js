@@ -9,7 +9,15 @@
     folder_search  une chaîne ou une expression dans les fichiers texte
 
   Le modèle ne lit donc que ce dont il a besoin : un dépôt de mille
-  fichiers ne coûte que ce qu'il en ouvre. Ignorés à l'ouverture : .git,
+  fichiers ne coûte que ce qu'il en ouvre.
+
+  ÉCRIRE : folder_write (créer ou remplacer un fichier) et folder_edit
+  (remplacer un passage exact) ne s'appliquent qu'après votre accord — la
+  page montre le diff, « Appliquer » ou « Refuser », et la réponse attend.
+  Appliqué : écrit dans le dossier quand le navigateur le permet (Chrome,
+  Edge : dossier ouvert par showDirectoryPicker, accès en écriture demandé
+  à la première écriture), sinon le fichier modifié est téléchargé. Dans
+  les deux cas, le modèle relit ensuite la nouvelle version. Ignorés à l'ouverture : .git,
   node_modules, environnements Python et caches. Un dossier n'est gardé
   qu'en mémoire : après un rechargement, la conversation dit son nom et
   demande de le rouvrir (le navigateur ne rend pas l'accès tout seul).
@@ -57,7 +65,107 @@ export const TOOLS = [
       ignore_case: { type: "boolean", description: "Sans tenir compte de la casse (défaut : oui)." },
     } } } },
 ];
+// Écrire : soumis à l'accord de l'utilisateur (prepareWrite, apply).
+export const WRITE_TOOLS = [
+  { type: "function", function: {
+    name: "folder_write",
+    description: "Crée ou remplace entièrement un fichier texte du dossier ouvert. "
+      + "L'utilisateur voit le diff et accepte ou refuse ; le résultat le dit. Pour une "
+      + "modification localisée, préférer folder_edit.",
+    parameters: { type: "object", required: ["path", "content"], properties: {
+      path: { type: "string", description: "Chemin relatif à la racine du dossier." },
+      content: { type: "string", description: "Le contenu complet du fichier." },
+    } } } },
+  { type: "function", function: {
+    name: "folder_edit",
+    description: "Remplace un passage EXACT d'un fichier du dossier ouvert (lire le fichier "
+      + "d'abord). `old_text` doit y être une seule fois, sauf `replace_all`. L'utilisateur "
+      + "voit le diff et accepte ou refuse.",
+    parameters: { type: "object", required: ["path", "old_text", "new_text"], properties: {
+      path: { type: "string" },
+      old_text: { type: "string", description: "Le passage actuel, à l'identique (espaces compris)." },
+      new_text: { type: "string", description: "Ce qui le remplace." },
+      replace_all: { type: "boolean", description: "Remplacer toutes les occurrences." },
+    } } } },
+];
 export const TOOL_NAMES = new Set(TOOLS.map((t) => t.function.name));
+export const WRITE_NAMES = new Set(WRITE_TOOLS.map((t) => t.function.name));
+
+// Les arguments d'une écriture → ce que la carte montre (avant, après),
+// ou {error} : rien à demander à l'utilisateur.
+export async function prepareWrite(ws, name, args) {
+  const path = clean(args.path);
+  if (!path || path.split("/").some((p) => p === ".." || p === "")) {
+    return { error: "Error: `path` invalide (relatif à la racine, sans « .. »)." };
+  }
+  if ([...ws.files.keys()].some((p) => p.startsWith(path + "/"))) {
+    return { error: `Error: « ${path} » est un dossier.` };
+  }
+  const before = ws.files.has(path) ? await text(ws, path) : null;
+  if (ws.files.has(path) && before === null) return { error: `Error: « ${path} » est un fichier binaire.` };
+  let after;
+  if (name === "folder_write") {
+    after = String(args.content ?? "");
+  } else {
+    if (before === null) return { error: `Error: aucun fichier « ${path} » à modifier (folder_write pour le créer).` };
+    const old = String(args.old_text ?? "");
+    if (!old) return { error: "Error: `old_text` est vide." };
+    const n = before.split(old).length - 1;
+    if (!n) return { error: `Error: \`old_text\` introuvable dans « ${path} » (le relire, à l'identique).` };
+    if (n > 1 && !args.replace_all) {
+      return { error: `Error: \`old_text\` figure ${n} fois dans « ${path} » : préciser le passage, ou replace_all.` };
+    }
+    after = args.replace_all ? before.split(old).join(String(args.new_text ?? ""))
+      : before.replace(old, () => String(args.new_text ?? ""));
+  }
+  if (before === after) return { error: `Error: rien ne change dans « ${path} ».` };
+  return { kind: "write", path, before, after, created: before === null };
+}
+
+// L'écriture acceptée : sur le disque si le dossier le permet, sinon
+// téléchargée. Le dossier en mémoire prend la nouvelle version.
+export async function apply(ws, path, after, download) {
+  const name = path.split("/").pop();
+  let where = "téléchargé (ce navigateur ne permet pas d'écrire dans le dossier)";
+  if (ws.root) {
+    if ((await ws.root.queryPermission({ mode: "readwrite" })) !== "granted"
+        && (await ws.root.requestPermission({ mode: "readwrite" })) !== "granted") {
+      throw new Error("écriture refusée par le navigateur");
+    }
+    let dir = ws.root;
+    for (const part of path.split("/").slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create: true });
+    const handle = await dir.getFileHandle(name, { create: true });
+    const out = await handle.createWritable();
+    await out.write(after);
+    await out.close();
+    where = "écrit dans le dossier";
+  } else {
+    download({ name, content: after });
+  }
+  ws.files.set(path, new File([after], name, { type: "text/plain" }));
+  ws.cache.set(path, after);
+  ws.count = ws.files.size;
+  return where;
+}
+
+// Ouvrir un dossier AVEC l'accès en écriture possible (Chrome, Edge) :
+// le sélecteur du système, puis le parcours de ses fichiers.
+export const canPick = () => typeof window.showDirectoryPicker === "function";
+export async function pickFolder() {
+  const root = await window.showDirectoryPicker({ mode: "read" });
+  const files = new Map();
+  let ignored = 0;
+  async function walk(dir, prefix) {
+    for await (const [entry, handle] of dir.entries()) {
+      if (IGNORED.has(entry)) { ignored++; continue; }
+      const path = prefix ? prefix + "/" + entry : entry;
+      if (handle.kind === "directory") await walk(handle, path);
+      else files.set(path, await handle.getFile());
+    }
+  }
+  await walk(root, "");
+  return { name: root.name, files, count: files.size, ignored, cache: new Map(), root };
+}
 
 // Un dossier choisi (<input webkitdirectory>) → {name, files, count, ignored}.
 // `files` : chemin relatif à la racine → File.

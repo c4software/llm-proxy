@@ -1090,3 +1090,69 @@ a.btn { display: inline-block; text-decoration: none; }
 .chip.folder .ico { width: 15px; height: 15px; }
 .attach-menu .menu span { display: flex; flex-direction: column; gap: 1px; line-height: 1.35; }
 .chip.folder .link { cursor: pointer; }
+
+/* ── Chat : panneau des artifacts (chat/ArtifactPanel.js) ── */
+.chat.with-memory.side-wide { grid-template-columns: minmax(0, 1fr) minmax(360px, 46%); }
+.artifact-side {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  border-left: 1px solid var(--line); background: var(--panel);
+}
+.chat.with-memory.side-wide:has(.artifact-side.wide) { grid-template-columns: minmax(280px, 32%) minmax(0, 1fr); }
+.artifact-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+}
+.artifact-head h3 { margin: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.artifact-head select { font: inherit; font-size: 13px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 45%; }
+.artifact-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.artifact-actions .btn { padding: 4px 9px; font-size: 12.5px; }
+.artifact-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
+.artifact-source { flex: 1; min-height: 0; margin: 0; padding: 12px 14px; overflow: auto;
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, monospace; white-space: pre-wrap; }
+@media (max-width: 1100px) {
+  .chat.with-memory.side-wide { grid-template-columns: minmax(0, 1fr); }
+  .chat.with-memory .artifact-side {
+    position: absolute; z-index: 6; inset: 0 0 0 auto; width: min(96%, 720px);
+    box-shadow: 0 10px 40px rgb(0 0 0 / .18);
+  }
+}
+
+/* ── Chat : cartes qui attendent l'utilisateur (question, écriture) ── */
+.tool-card {
+  margin: 8px 0 10px; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 35%, var(--panel));
+  display: flex; flex-direction: column; gap: 10px;
+}
+.ask-q { display: flex; flex-direction: column; gap: 6px; }
+.ask-text { margin: 0; font-weight: 600; }
+.ask-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-options .btn { padding: 5px 11px; font-size: 13.5px; }
+.ask-options .btn[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ask-other {
+  font: inherit; font-size: 13.5px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+}
+.ask-other:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.card-actions .dim { font-size: 12.5px; }
+.write-head { margin: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.diff {
+  margin: 0; max-height: 360px; overflow: auto; padding: 8px 0; border-radius: 8px;
+  background: var(--bg); border: 1px solid var(--line);
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, monospace; white-space: pre;
+}
+.diff span { display: block; padding: 0 10px; }
+.diff .dadd { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+.diff .ddel { background: color-mix(in srgb, var(--err) 16%, transparent); }
+.diff .dgap { color: var(--muted); text-align: center; }
+.tool.waiting .state { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.out-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px; }
+.out-files .chip { cursor: pointer; font: inherit; font-size: 13px; }
+.attach-menu .menu button[role="menuitem"] {
+  display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 8px;
+  cursor: pointer; font: inherit; font-size: 13.5px; color: var(--ink);
+  background: none; border: 0; text-align: left;
+}
+.attach-menu .menu button[role="menuitem"]:hover { background: var(--accent-soft); }
