@@ -1,5 +1,5 @@
 """Le traducteur Anthropic ↔ OpenAI, testé sur des octets : aucun
-réseau, aucun serveur — anthropic_api ne connaît ni FastAPI ni httpx.
+réseau, aucun serveur — anthropic_api ne connaît ni FastAPI ni httpx2.
 Les outils hébergés (outils serveur `web_search_…` et `web_fetch_…`) sont
 testés en fin de fichier, jusqu'à la route entière par le client de test
 de Starlette ;
@@ -11,7 +11,7 @@ import json
 import re
 import types
 
-import httpx
+import httpx2
 import pytest
 
 from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, RESULTS, SEARCH_DOC,
@@ -1052,22 +1052,22 @@ def test_fetch_errors_become_error_codes(monkeypatch):
     def site(request):
         path = request.url.path
         if path == "/png":
-            return httpx.Response(200, content=b"\x89PNG",
+            return httpx2.Response(200, content=b"\x89PNG",
                                   headers={"content-type": "image/png"})
         if path == "/boucle":
-            return httpx.Response(302, headers={"location": "/boucle"})
+            return httpx2.Response(302, headers={"location": "/boucle"})
         if path == "/ailleurs":
-            return httpx.Response(302, headers={"location": "https://x.test/"})
+            return httpx2.Response(302, headers={"location": "https://x.test/"})
         if path == "/panne":
-            raise httpx.ConnectError("non")
-        return httpx.Response(int(path[1:]))
+            raise httpx2.ConnectError("non")
+        return httpx2.Response(int(path[1:]))
 
     for name in ("ALLOWED_DOMAINS", "BLOCKED_DOMAINS"):
         monkeypatch.setattr(web_fetch.net, name, [])
     monkeypatch.setattr(web_fetch.net, "ALLOW_PRIVATE", False)
     class Offline(web_fetch.WebFetch):
         async def run(self, args, call):
-            return await super().run(args, call, httpx.MockTransport(site))
+            return await super().run(args, call, httpx2.MockTransport(site))
 
     real = tools.Hosted([Offline()], tools.Memory(1, 60))
     run = lambda url, **options: asyncio.run(real.run(

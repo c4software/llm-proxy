@@ -77,7 +77,7 @@ cached / sse / ok) : un flux OpenAI (deltas plats, outils fragmentés par
 index) devient la séquence d'événements Responses, éléments ouverts et
 fermés un à un, numérotés (`sequence_number`).
 
-Ce module ne connaît ni FastAPI ni httpx.
+Ce module ne connaît ni FastAPI ni httpx2.
 """
 
 import json

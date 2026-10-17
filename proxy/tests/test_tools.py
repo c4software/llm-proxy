@@ -1,6 +1,6 @@
 """Les outils hébergés (llm_proxy/tools/) : garde-fou réseau, lecture de
 page, recherche, HTML → texte, mémoire et exécution bornée. Sur des
-octets, SANS réseau : HTTP passe par httpx.MockTransport, le DNS par une
+octets, SANS réseau : HTTP passe par httpx2.MockTransport, le DNS par une
 table (toute adresse hors table est refusée avant de quitter la machine).
 La configuration est posée par monkeypatch sur les constantes des
 modules, jamais lue dans config.example.toml.
@@ -17,7 +17,7 @@ import socket
 import threading
 
 import conftest
-import httpx
+import httpx2
 import pytest
 
 from fakes import (FOUND, RESULTS, SEARCHED, Echo, FakeUpstream, chat_doc,
@@ -124,19 +124,19 @@ class Web:
     def __init__(self, pages=None, default=None):
         self.pages, self.default, self.requests = pages or {}, default, []
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
+    def handler(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
         key = (request.headers["host"], request.url.path)
         page = self.pages.get(key, self.default)
         if page is None:
-            return httpx.Response(404, text="rien")
+            return httpx2.Response(404, text="rien")
         return page(request) if callable(page) else page
 
     def fetch(self, url, **args) -> str:
         """Le texte rendu au modèle ; le résultat entier reste dans `last`."""
         self.last = rendu(web_fetch.TOOL.run(
             {"url": url, **args}, tools.Call(),
-            transport=httpx.MockTransport(self.handler)))
+            transport=httpx2.MockTransport(self.handler)))
         return self.last.text
 
 
@@ -144,12 +144,12 @@ def page(text="bonjour", ct="text/plain", status=200, **headers):
     h = dict(headers)
     if ct is not None:
         h["content-type"] = ct
-    return httpx.Response(status, content=text.encode() if isinstance(text, str)
+    return httpx2.Response(status, content=text.encode() if isinstance(text, str)
                           else text, headers=h)
 
 
 def redirect(location, status=302):
-    return httpx.Response(status, headers={"location": location})
+    return httpx2.Response(status, headers={"location": location})
 
 
 def pdf(*pages, password=None):
@@ -189,19 +189,19 @@ def pdf(*pages, password=None):
 
 def search(args, reponse=None):
     """(texte rendu, requêtes reçues par le faux SearXNG). `reponse` : le
-    JSON servi en 200, une httpx.Response, ou une fonction."""
+    JSON servi en 200, une httpx2.Response, ou une fonction."""
     requests = []
 
     def handler(request):
         requests.append(request)
         if callable(reponse):
             return reponse(request)
-        if isinstance(reponse, httpx.Response):
+        if isinstance(reponse, httpx2.Response):
             return reponse
-        return httpx.Response(200, json=reponse or {"results": []})
+        return httpx2.Response(200, json=reponse or {"results": []})
 
     out = rendu(web_search.TOOL.run(args, tools.Call(),
-                                    transport=httpx.MockTransport(handler)))
+                                    transport=httpx2.MockTransport(handler)))
     return out.text, requests
 
 
@@ -335,7 +335,7 @@ def test_fetch_cible_et_host_selon_port_chemin_et_ipv6(dns):
          f"[{PUBLIC6}]:8443"),
         # «www.» sans schéma : lu en https.
         ("  www.site.test/doc  ", f"https://{PUBLIC}/doc", "www.site.test"),
-        # Un Host non ASCII faisait lever UnicodeEncodeError par httpx.
+        # Un Host non ASCII faisait lever UnicodeEncodeError par httpx2.
         ("http://exämple.test/", f"http://{PUBLIC}/", "xn--exmple-cua.test"),
     ]:
         assert not web.fetch(url).startswith("Error"), url
@@ -354,7 +354,7 @@ def test_fetch_cible_absente_ou_refusee_erreur_sans_aucune_requete():
                 "http://site.test@10.0.0.1/", "http://absent.test/"]:
         out = web.fetch(url)
         assert out.startswith("Error:") and "SECRET" not in out, url
-    # Caractère de contrôle, URL trop longue : httpx.InvalidURL n'est pas
+    # Caractère de contrôle, URL trop longue : httpx2.InvalidURL n'est pas
     # une HTTPError, elle sortait de run().
     assert "InvalidURL" in web.fetch("http://site.test/a\x01b")
     assert web.fetch("http://site.test/" + "a" * 70_000).startswith("Error:")
@@ -544,7 +544,7 @@ def test_fetch_arrete_de_lire_a_max_bytes(monkeypatch):
             servis.append(1)
             yield b"y" * 40
 
-    web = Web(default=lambda req: httpx.Response(
+    web = Web(default=lambda req: httpx2.Response(
         200, content=sans_fin(), headers={"content-type": "text/plain"}))
     out = web.fetch("http://site.test/")
     assert "Note: only the first 100 bytes were downloaded." in out
@@ -631,7 +631,7 @@ def test_fetch_pdf_illisible_rendu_en_erreur_jamais_garde(monkeypatch):
             servis.append(1)
             yield b"y" * 100
 
-    assert Web(default=lambda req: httpx.Response(
+    assert Web(default=lambda req: httpx2.Response(
         200, content=sans_fin())).fetch("http://site.test/f") == (
         "Error: http://site.test/f is a PDF larger than 300 bytes, which this "
         "tool does not download.")
@@ -640,7 +640,7 @@ def test_fetch_pdf_illisible_rendu_en_erreur_jamais_garde(monkeypatch):
 
 def test_fetch_echec_http_ou_reseau_rendu_en_texte():
     def casse(req):
-        raise httpx.ReadTimeout("lent")
+        raise httpx2.ReadTimeout("lent")
 
     web = Web({("site.test", "/404"): page("SECRET", status=404),
                ("site.test", "/500"): page("SECRET", status=500),
@@ -714,7 +714,7 @@ def test_search_mise_en_forme_des_resultats():
         "[5] 404 (20260102)\n    https://r.test/5\n    ['a', 'b']\n"
         "[6] Titre 6\n    https://r.test/6\n    " + "m" * 239 + "…")
     for corps in ({"results": []}, {"results": None}, {}, {"results": [{"x": 1}]}):
-        assert search({"query": " q "}, httpx.Response(200, json=corps))[0] == (
+        assert search({"query": " q "}, httpx2.Response(200, json=corps))[0] == (
             "No results for «q»."), corps
 
 
@@ -749,21 +749,21 @@ def test_search_reponse_illisible():
     qui n'en est pas une) : une erreur, pas une exception."""
     for corps in [b"<html>pas du json</html>", b"", b"\xff\xfe", b"[1, 2]", b"null",
                   b'{"results": 5}', b'{"results": {"0": {"url": "https://r.test/"}}}']:
-        out, _ = search({"query": "q"}, httpx.Response(
+        out, _ = search({"query": "q"}, httpx2.Response(
             200, content=corps, headers={"content-type": "application/json"}))
         assert out == "Error: unreadable search engine response.", corps
 
 
 def test_search_moteur_en_erreur_ou_injoignable():
-    out, _ = search({"query": "q"}, httpx.Response(403, text="Forbidden"))
+    out, _ = search({"query": "q"}, httpx2.Response(403, text="Forbidden"))
     assert out.startswith("Error:") and "search.formats" in out and "json" in out
     for status in (204, 302, 500):
-        out, _ = search({"query": "q"}, httpx.Response(
+        out, _ = search({"query": "q"}, httpx2.Response(
             status, json={"results": [res(1)]}, headers={"location": "http://x.test/"}))
         assert out == f"Error: search engine returned HTTP {status}."
 
     def casse(req):
-        raise httpx.ConnectTimeout("lent")
+        raise httpx2.ConnectTimeout("lent")
 
     assert search({"query": "q"}, casse)[0] == (
         "Error: search engine unreachable (ConnectTimeout).")
@@ -968,7 +968,7 @@ def test_hosted_limite_d_appels_par_reponse(monkeypatch):
 
 
 def test_hosted_echec_de_l_outil_rendu_en_texte(monkeypatch):
-    for exc in (RuntimeError("boum"), httpx.ConnectError("x"), KeyError("k"),
+    for exc in (RuntimeError("boum"), httpx2.ConnectError("x"), KeyError("k"),
                 UnicodeEncodeError("ascii", "é", 0, 1, "x"), MemoryError()):
         async def casse(args):
             raise exc
@@ -1102,11 +1102,11 @@ def test_search_domain_filters(monkeypatch):
 
     def handler(request):
         assert request.url.params["q"] == "x"   # la requête n'est pas réécrite
-        return httpx.Response(200, json={"results": raw})
+        return httpx2.Response(200, json={"results": raw})
 
     go = lambda **kw: asyncio.run(web_search.TOOL.run(
         {"query": "x"}, tools.Call(settings=kw),
-        transport=httpx.MockTransport(handler))).text
+        transport=httpx2.MockTransport(handler))).text
     monkeypatch.setattr(web_search, "SEARXNG_URL", "http://searxng.test")
     assert go(allowed_domains=["example.org"], blocked_domains=[
         "example.org/shop"]) == "[1] 3\n    https://example.org/blog/post-1"
@@ -1295,7 +1295,7 @@ def test_cache_web_recherche_identique_et_bornes(monkeypatch):
 
     def searx(request):
         appels.append(request)
-        return httpx.Response(200, json=donnees)
+        return httpx2.Response(200, json=donnees)
     out1, _ = search({"query": "q"}, searx)
     out2, _ = search({"query": "q", "limit": 1}, searx)
     assert len(appels) == 1 and "[3]" in out1 and "[2]" not in out2
@@ -1305,7 +1305,7 @@ def test_cache_web_recherche_identique_et_bornes(monkeypatch):
 
     def panne(request):
         vide.append(request)
-        return httpx.Response(200, json={
+        return httpx2.Response(200, json={
             "results": [], "unresponsive_engines": [["brave", "x"]]})
     for _ in range(2):
         search({"query": "rien"}, panne)
@@ -1690,11 +1690,11 @@ def test_net_download_bornes_de_l_outil_et_erreurs_du_contrat(monkeypatch):
             yield b"x" * 10
 
     web = Web({
-        ("site.test", "/"): lambda q: httpx.Response(
+        ("site.test", "/"): lambda q: httpx2.Response(
             200, content=flux(), headers={"content-type": "audio/x"}),
-        ("site.test", "/va"): httpx.Response(302, headers={"location": "/"}),
-        ("site.test", "/429"): httpx.Response(429),
-        ("site.test", "/sortie"): httpx.Response(
+        ("site.test", "/va"): httpx2.Response(302, headers={"location": "/"}),
+        ("site.test", "/429"): httpx2.Response(429),
+        ("site.test", "/sortie"): httpx2.Response(
             302, headers={"location": "http://ailleurs.test/"}),
     })
 
@@ -1702,7 +1702,7 @@ def test_net_download_bornes_de_l_outil_et_erreurs_du_contrat(monkeypatch):
         vus.clear()
         return go(net.download(
             url, settings, timeout=5, limit=limit, user_agent="essai",
-            accept="audio/*", transport=httpx.MockTransport(web.handler)))
+            accept="audio/*", transport=httpx2.MockTransport(web.handler)))
 
     url, r, body = dl("http://site.test/va", 25)
     assert (url, r.status_code, body) == ("http://site.test/", 200, b"x" * 25)

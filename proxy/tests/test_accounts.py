@@ -3,7 +3,7 @@ fournisseur OIDC (découverte, JWKS, jeton signé RS256 par authlib.jose —
 le client, lui, est celui d'Authlib, tel quel), rôles (premier compte
 admin, suivants en attente), clés uuid4 créées, utilisées sur /v1 et
 révoquées, et ce que la page refuse. Aucun réseau : le fournisseur répond
-par httpx.MockTransport."""
+par httpx2.MockTransport."""
 
 import asyncio
 import base64
@@ -13,7 +13,7 @@ import time
 import uuid
 from urllib.parse import parse_qs, urlparse
 
-import httpx
+import httpx2
 import pytest
 from joserfc import jwt
 from joserfc.jwk import RSAKey
@@ -50,10 +50,10 @@ class FakeIdP:
                             "redirect_uri": q["redirect_uri"]}
         return f"{q['redirect_uri']}?code={code}&state={q['state']}"
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path
         if path == "/.well-known/openid-configuration":
-            return httpx.Response(200, json={
+            return httpx2.Response(200, json={
                 "issuer": ISSUER,
                 "authorization_endpoint": ISSUER + "/authorize",
                 "token_endpoint": ISSUER + "/token",
@@ -61,16 +61,16 @@ class FakeIdP:
                 "id_token_signing_alg_values_supported": ["RS256"],
             })
         if path == "/jwks":
-            return httpx.Response(200, json={"keys": [self.published.as_dict(private=False)]})
+            return httpx2.Response(200, json={"keys": [self.published.as_dict(private=False)]})
         if path == "/token":
             form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
             grant = self.codes.pop(form.get("code"), None)
             if grant is None or form.get("redirect_uri") != grant["redirect_uri"]:
-                return httpx.Response(400, json={"error": "invalid_grant"})
+                return httpx2.Response(400, json={"error": "invalid_grant"})
             digest = hashlib.sha256(form["code_verifier"].encode()).digest()
             if base64.urlsafe_b64encode(digest).rstrip(b"=").decode() \
                     != grant["challenge"]:
-                return httpx.Response(400, json={"error": "invalid_grant"})
+                return httpx2.Response(400, json={"error": "invalid_grant"})
             now = int(time.time())
             id_token = jwt.encode(
                 {"alg": "RS256", "kid": "k1"},
@@ -78,10 +78,10 @@ class FakeIdP:
                  "email": grant["email"], "nonce": grant["nonce"],
                  "iat": now, "exp": now + 300},
                 self.key)
-            return httpx.Response(200, json={
+            return httpx2.Response(200, json={
                 "access_token": "at", "token_type": "Bearer",
                 "expires_in": 300, "id_token": id_token})
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ def idp(proxy, monkeypatch, tmp_path):
     monkeypatch.setattr(oidc, "CLIENT_SECRET", "secret")
     monkeypatch.setattr(oidc, "ENABLED", True)
     fake = FakeIdP()
-    oidc.register(transport=httpx.MockTransport(fake.handle))
+    oidc.register(transport=httpx2.MockTransport(fake.handle))
     proxy.idp = fake
     return proxy
 

@@ -28,7 +28,7 @@ et elle suit son état (compte en attente ou bloqué = clé refusée). Elle
 reste écrite dans le TOML. Les données déjà rangées sous la clé seule
 ne sont pas déplacées.
 
-Ce module ne connaît ni FastAPI, ni httpx, ni Authlib. SQLite, une
+Ce module ne connaît ni FastAPI, ni httpx2, ni Authlib. SQLite, une
 connexion par opération sous un verrou, comme memories.py : des
 opérations courtes, appelées hors de la boucle d'événements. Les lectures
 du chemin chaud (une clé présentée, le compte d'une session) passent par

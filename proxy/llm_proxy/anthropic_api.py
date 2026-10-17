@@ -54,7 +54,7 @@ le client le déclare : Claude Code ne déclare que la recherche (son
 `WebFetch` lit les pages sur le poste du client), un client du SDK peut
 déclarer l'un, l'autre ou les deux.
 
-Ce module ne connaît ni FastAPI ni httpx.
+Ce module ne connaît ni FastAPI ni httpx2.
 """
 
 import datetime as _dt

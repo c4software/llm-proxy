@@ -58,7 +58,7 @@ import re
 import struct
 import time
 
-import httpx
+import httpx2
 
 from .. import albert, backends, config, files, stats
 from ..settings import is_exempt, log
@@ -169,10 +169,10 @@ async def _ask(path: str, fields: dict, image=None) -> dict:
         try:
             r = await backend.client.post(
                 path, headers=backend.auth_headers(),
-                timeout=httpx.Timeout(TIMEOUT, connect=backend.connect_timeout),
+                timeout=httpx2.Timeout(TIMEOUT, connect=backend.connect_timeout),
                 **({"json": fields} if image is None
                    else {"data": fields, "files": {"image": image}}))
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             status = 502 if backend.quotas else 503
             log.warning("image_generation : backend %s injoignable (%s)",
                         backend.name, type(exc).__name__)
@@ -229,13 +229,13 @@ async def _collect(item: dict, transport) -> bytes:
         raise ToolError("unavailable", "the image backend returned no image.")
     backend, _ = _backend()
     try:
-        base = httpx.URL(backend.url)
+        base = httpx2.URL(backend.url)
         target = base.join(url)
         if (target.scheme, target.netloc) == (base.scheme, base.netloc):
             body = bytearray()
             async with backend.client.stream(
                     "GET", target, headers=backend.auth_headers(),
-                    timeout=httpx.Timeout(
+                    timeout=httpx2.Timeout(
                         DOWNLOAD_TIMEOUT,
                         connect=backend.connect_timeout)) as r:
                 async for chunk in r.aiter_bytes():
@@ -249,7 +249,7 @@ async def _collect(item: dict, transport) -> bytes:
                 user_agent=USER_AGENT, accept="image/*", transport=transport),
                 DOWNLOAD_TIMEOUT)
             status = r.status_code
-    except (ToolError, httpx.HTTPError, httpx.InvalidURL,
+    except (ToolError, httpx2.HTTPError, httpx2.InvalidURL,
             asyncio.TimeoutError) as exc:
         # Le refus du garde-fou compris : son texte nomme une adresse du
         # backend, dont le modèle ne ferait rien.

@@ -1,5 +1,5 @@
 """Le client MCP (llm_proxy/tools/mcp.py), face à un FAUX serveur MCP joué
-par httpx.MockTransport : aucun réseau. Le faux serveur parle l'une des
+par httpx2.MockTransport : aucun réseau. Le faux serveur parle l'une des
 deux ères du protocole (moderne, sans état ; héritée, à `initialize` et
 session), répond en JSON ou en flux SSE, pagine, oublie ses sessions,
 s'éteint. Le registre des outils hébergés est remplacé par une liste
@@ -11,7 +11,7 @@ l'assertion nomme l'entrée fautive."""
 import asyncio
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from llm_proxy import tools
@@ -67,9 +67,9 @@ class FakeMcp:
             stream = (": ping\r\n\r\nevent: message\r\ndata: " + note
                       + "\r\n\r\nid: 7\r\n"
                       + "\r\n".join("data: " + line for line in lines))
-            return httpx.Response(200, content=stream.encode(), headers={
+            return httpx2.Response(200, content=stream.encode(), headers={
                 "content-type": "text/event-stream", **(headers or {})})
-        return httpx.Response(status, json=message, headers=headers)
+        return httpx2.Response(status, json=message, headers=headers)
 
     def error(self, body, code, message, status=200, data=None):
         error = {"code": code, "message": message}
@@ -79,18 +79,18 @@ class FakeMcp:
 
     async def __call__(self, request):
         if self.down:
-            raise httpx.ConnectError("connexion refusée")
+            raise httpx2.ConnectError("connexion refusée")
         if request.method == "DELETE":
             self.seen.append(("DELETE", request.headers, None))
             self.sessions.discard(request.headers.get("mcp-session-id"))
-            return httpx.Response(200)
+            return httpx2.Response(200)
         body = json.loads(request.content)
         method, params = body.get("method"), body.get("params") or {}
         self.seen.append((method, request.headers, body))
         if self.delay:
             await asyncio.sleep(self.delay)
         if self.status:
-            return httpx.Response(self.status)
+            return httpx2.Response(self.status)
         if self.era == "modern":
             meta = params.get("_meta") or {}
             version = meta.get("io.modelcontextprotocol/protocolVersion")
@@ -119,9 +119,9 @@ class FakeMcp:
         elif "mcp-session-id" not in request.headers:
             return self.error(body, -32000, "Bad Request: no session", 400)
         elif request.headers["mcp-session-id"] not in self.sessions:
-            return httpx.Response(404)
+            return httpx2.Response(404)
         elif method == "notifications/initialized":
-            return httpx.Response(202)
+            return httpx2.Response(202)
         if method == "tools/list":
             start = int(params.get("cursor") or 0)
             end = start + self.page if self.page else len(self.defs)
@@ -151,7 +151,7 @@ def registre(monkeypatch):
 
 def serveur(fake, name="docs", **table) -> mcp.Server:
     server = mcp.Server(name, {"url": URL, **table},
-                        transport=httpx.MockTransport(fake))
+                        transport=httpx2.MockTransport(fake))
     return server
 
 
@@ -672,7 +672,7 @@ def test_configuration():
     assert mcp.load(None) == []
 
     fake = FakeMcp()
-    docs.transport = httpx.MockTransport(fake)
+    docs.transport = httpx2.MockTransport(fake)
 
     async def scenario():
         docs.open()

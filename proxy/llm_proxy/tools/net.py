@@ -22,7 +22,7 @@ import ipaddress
 import socket
 from urllib.parse import urljoin, urlsplit
 
-import httpx
+import httpx2
 
 from .. import config
 from .contract import ToolError
@@ -165,7 +165,7 @@ def check(url: str, settings=None) -> None:
 
 
 async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
-               transport) -> tuple[httpx.Response, bytes]:
+               transport) -> tuple[httpx2.Response, bytes]:
     """Un saut : résolution contrôlée, connexion vers l'adresse vérifiée
     (Host et SNI portent le nom), corps lu jusqu'à `limit` — voir
     download()."""
@@ -174,7 +174,7 @@ async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
     host = parts.hostname or ""
     # Le nom tel qu'il part sur le fil : en ASCII (un nom accentué passe
     # en punycode, comme getaddrinfo l'a résolu — un en-tête non ASCII
-    # ferait lever httpx), une IPv6 littérale entre crochets dans Host.
+    # ferait lever httpx2), une IPv6 littérale entre crochets dans Host.
     try:
         host = host.encode("idna").decode("ascii")
     except UnicodeError:
@@ -194,10 +194,10 @@ async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
         # bloc par bloc — un seul bloc gzip peut en rendre mille fois plus.
         "Accept-Encoding": "identity",
     }
-    # trust_env=False : sans lui httpx lirait HTTP_PROXY / ALL_PROXY, et
+    # trust_env=False : sans lui httpx2 lirait HTTP_PROXY / ALL_PROXY, et
     # « la connexion part vers l'adresse vérifiée » deviendrait « un proxy
     # s'y connecte pour nous ».
-    async with httpx.AsyncClient(timeout=timeout, transport=transport,
+    async with httpx2.AsyncClient(timeout=timeout, transport=transport,
                                  follow_redirects=False,
                                  trust_env=False) as c:
         req = c.build_request("GET", target, headers=headers,
@@ -223,7 +223,7 @@ async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
 
 async def download(url: str, settings=None, *, timeout: float, limit,
                    user_agent: str, accept: str = "*/*",
-                   transport=None) -> tuple[str, httpx.Response, bytes]:
+                   transport=None) -> tuple[str, httpx2.Response, bytes]:
     """LE téléchargement d'une cible choisie par le modèle : (URL
     réellement lue, réponse, corps). À chaque saut de redirection
     (MAX_REDIRECTS au plus) : les listes de domaines (check), puis
@@ -260,7 +260,7 @@ async def download(url: str, settings=None, *, timeout: float, limit,
         raise ToolError(exc.code, f"{exc}.")
     # InvalidURL n'est PAS une HTTPError : caractère de contrôle dans le
     # chemin, URL trop longue — y compris dans un Location de redirection.
-    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+    except (httpx2.HTTPError, httpx2.InvalidURL) as exc:
         raise ToolError("not_accessible", f"could not fetch {url} "
                                           f"({type(exc).__name__}).")
     if r.status_code >= 400:

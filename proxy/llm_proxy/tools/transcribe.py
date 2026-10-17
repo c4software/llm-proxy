@@ -55,7 +55,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2
 
 from .. import albert, backends, config, stats
 from ..settings import is_exempt, log
@@ -421,8 +421,8 @@ async def _transcribe(name: str, content_type: str, body: bytes,
         r = await backend.client.post(
             PATH, data=data, files={"file": (name, body, content_type)},
             headers=backend.auth_headers(),
-            timeout=httpx.Timeout(TIMEOUT, connect=backend.connect_timeout))
-    except httpx.HTTPError as exc:
+            timeout=httpx2.Timeout(TIMEOUT, connect=backend.connect_timeout))
+    except httpx2.HTTPError as exc:
         log.warning("transcribe : backend %s injoignable (%s)",
                     backend.name, type(exc).__name__)
         _count(backend, model, 503 if not backend.quotas else 502, started, None)

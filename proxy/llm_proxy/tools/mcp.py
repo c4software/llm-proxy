@@ -16,7 +16,7 @@ Ce qui est permis, et rien d'autre :
   * des en-têtes STATIQUES pour l'authentification (secrets par ${VAR}).
     Pas d'OAuth : un serveur qui l'exige répond 401, et le journal le dit.
 
-Le protocole est écrit ici avec httpx seul, sans SDK. Deux ÈRES, que la
+Le protocole est écrit ici avec httpx2 seul, sans SDK. Deux ÈRES, que la
 spécification du 28/07/2026 distingue (basic/versioning) :
   * « moderne » (2026-07-28) : sans état. Ni `initialize` ni session :
     chaque requête porte sa version et les capacités du client dans
@@ -66,7 +66,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2
 
 from .. import config
 from ..settings import log
@@ -473,7 +473,7 @@ class Server:
         self.verify_ssl = bool(table.get("verify_ssl", True))
         self.transport = transport
 
-        self.client: httpx.AsyncClient | None = None
+        self.client: httpx2.AsyncClient | None = None
         self.era: str | None = None       # None : pas encore sondée
         self.version = MODERN
         self.session = ""
@@ -496,8 +496,8 @@ class Server:
         # trust_env=False : une adresse du réseau du proxy, un HTTP_PROXY
         # d'environnement n'a pas à s'en mêler. Pas de redirection suivie :
         # les en-têtes d'authentification partiraient vers un autre hôte.
-        self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(self.timeout,
+        self.client = httpx2.AsyncClient(
+            timeout=httpx2.Timeout(self.timeout,
                                   connect=min(self.timeout, 10)),
             transport=transport or self.transport, follow_redirects=False,
             trust_env=False, verify=self.verify_ssl)
@@ -511,7 +511,7 @@ class Server:
             try:
                 await asyncio.wait_for(self.client.delete(
                     self.url, headers={**self.headers, **self._head("", {})}), 2)
-            except (httpx.HTTPError, asyncio.TimeoutError):
+            except (httpx2.HTTPError, asyncio.TimeoutError):
                 pass
         await self.client.aclose()
         self.client, self.era, self.session = None, None, ""
@@ -574,10 +574,10 @@ class Server:
                 # Fermer le flux, c'est aussi ANNULER la requête (ère
                 # moderne) : un appel abandonné au délai ne court plus.
                 await r.aclose()
-        except httpx.TimeoutException:
+        except httpx2.TimeoutException:
             raise Failure("timeout", f"the MCP server {self.name} did not "
                                      f"answer in {int(self.timeout)} s.")
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise Failure("unavailable", f"the MCP server {self.name} is "
                           f"unreachable ({type(exc).__name__}).")
         return r.status_code, reply, r.headers

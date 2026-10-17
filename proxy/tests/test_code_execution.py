@@ -1,5 +1,5 @@
 """L'outil hébergé `code_execution` (llm_proxy/tools/code_execution.py)
-contre un FAUX exécuteur — httpx.MockTransport, aucun réseau, aucun
+contre un FAUX exécuteur — httpx2.MockTransport, aucun réseau, aucun
 conteneur — et le magasin des fichiers rendus (llm_proxy/files.py). La
 configuration est posée par monkeypatch sur les constantes des modules.
 
@@ -15,7 +15,7 @@ import json
 import socket
 
 import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
-import httpx
+import httpx2
 import pytest
 
 from llm_proxy import files, tools
@@ -73,11 +73,11 @@ def executor(reply, seen=None):
         if isinstance(reply, Exception):
             raise reply
         if isinstance(reply, int):
-            return httpx.Response(reply, json={"error": {
+            return httpx2.Response(reply, json={"error": {
                 "code": "x", "message": "détail de podman"}})
-        return httpx.Response(200, content=reply) if isinstance(reply, bytes) \
-            else httpx.Response(200, json=reply)
-    return httpx.MockTransport(handler)
+        return httpx2.Response(200, content=reply) if isinstance(reply, bytes) \
+            else httpx2.Response(200, json=reply)
+    return httpx2.MockTransport(handler)
 
 
 CSV = b"mois,ventes\njanvier,12\n"
@@ -87,20 +87,20 @@ def web(request):
     """Le faux web d'où viennent les fichiers d'entrée."""
     path = request.url.path
     if path == "/data/ventes.csv":
-        return httpx.Response(200, content=CSV,
+        return httpx2.Response(200, content=CSV,
                               headers={"content-type": "text/csv"})
     if path == "/export":
-        return httpx.Response(200, content=b"PK" + bytes(598), headers={
+        return httpx2.Response(200, content=b"PK" + bytes(598), headers={
             "content-disposition": 'attachment; filename="rapport 2026.xlsx"'})
     if path == "/suivre":
-        return httpx.Response(302, headers={"location": "/data/ventes.csv"})
+        return httpx2.Response(302, headers={"location": "/data/ventes.csv"})
     if path == "/fuite":
-        return httpx.Response(302, headers={"location": "http://intern.test/x"})
+        return httpx2.Response(302, headers={"location": "http://intern.test/x"})
     if path == "/gros.bin":
-        return httpx.Response(200, content=b"0" * 1001)
+        return httpx2.Response(200, content=b"0" * 1001)
     if path == "/vide.csv":
-        return httpx.Response(200, content=b"")
-    return httpx.Response(404, text="rien")
+        return httpx2.Response(200, content=b"")
+    return httpx2.Response(404, text="rien")
 
 
 def rendu(args, reply=None, session="conv", seen=None) -> tools.Result:
@@ -109,7 +109,7 @@ def rendu(args, reply=None, session="conv", seen=None) -> tools.Result:
     try:
         return go(TOOL.run(args, call, transport=executor(
             answer() if reply is None else reply, seen),
-            downloads=httpx.MockTransport(web)))
+            downloads=httpx2.MockTransport(web)))
     except tools.ToolError as exc:
         return tools.failure(exc.code, exc.message)
 
@@ -352,8 +352,8 @@ def test_erreurs_de_l_outil():
         assert r.error == "invalid_input" and r.text.startswith("Error: "), args
     assert seen == []       # refusé avant tout appel
     for reply, code, said in (
-            (httpx.ConnectError("refusé"), "unavailable", "unreachable (ConnectError)"),
-            (httpx.ReadTimeout("long"), "unavailable", "unreachable (ReadTimeout)"),
+            (httpx2.ConnectError("refusé"), "unavailable", "unreachable (ConnectError)"),
+            (httpx2.ReadTimeout("long"), "unavailable", "unreachable (ReadTimeout)"),
             (429, "too_many_requests", "every sandbox is busy"),
             (503, "unavailable", "failed (HTTP 503)"),
             (401, "unavailable", "failed (HTTP 401)"),

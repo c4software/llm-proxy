@@ -9,7 +9,7 @@ multipart, lui, n'est pas du JSON : sans ce module, la requête partait vers le
 backend de repli (Albert) quel que soit le modèle demandé. Seule la valeur du
 champ « model » est touchée ; les autres parties (fichiers compris) sont
 recopiées octet pour octet. La longueur change, mais Content-Length n'est
-jamais relayé (HOP_BY_HOP) : httpx recalcule la bonne.
+jamais relayé (HOP_BY_HOP) : httpx2 recalcule la bonne.
 """
 
 import re

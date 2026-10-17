@@ -81,7 +81,7 @@ import uuid
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
-import httpx
+import httpx2
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import (
@@ -591,7 +591,7 @@ def clean_headers(request: Request, api_key: str) -> dict:
     return headers
 
 
-def response_headers(upstream: httpx.Response) -> dict:
+def response_headers(upstream: httpx2.Response) -> dict:
     return {
         k: v for k, v in upstream.headers.items()
         if k.lower() not in {"content-length", "content-encoding", "transfer-encoding", "connection"}
@@ -752,7 +752,7 @@ def default_tap(status: int, content_type: str):
 
 
 async def send_upstream(call: Call, request: Request, path: str,
-                        body: bytes) -> httpx.Response | JSONResponse:
+                        body: bytes) -> httpx2.Response | JSONResponse:
     """Envoie `body` vers `path` du backend de `call` ; rend la réponse
     upstream ouverte en flux, ou — backend injoignable — la réponse
     d'erreur locale, déjà comptée (503 parlant pour un backend local
@@ -771,7 +771,7 @@ async def send_upstream(call: Call, request: Request, path: str,
     )
     try:
         upstream = await b.client.send(req, stream=True)
-    except httpx.RequestError as exc:
+    except httpx2.RequestError as exc:
         # backend sans quota (local) : éteint fait partie du fonctionnement
         # normal → 503 parlant plutôt qu'un 502.
         if not b.quotas:
@@ -795,7 +795,7 @@ async def send_upstream(call: Call, request: Request, path: str,
 ERROR_EXCERPT = 600
 
 
-async def relay(call: Call, upstream: httpx.Response, robinet,
+async def relay(call: Call, upstream: httpx2.Response, robinet,
                 prompt_estimate: int):
     """Les octets upstream, passés par le robinet. Le `finally` compte
     aussi les flux interrompus (client parti) ; l'upstream est fermé
@@ -2517,7 +2517,7 @@ async def ui_images_edits(request: Request):
     for name in ("size", "n"):
         if payload.get(name) not in (None, ""):
             fields[name] = str(payload[name])
-    form = httpx.Request("POST", "http://form.invalid", data=fields, files={
+    form = httpx2.Request("POST", "http://form.invalid", data=fields, files={
         "image": ("image." + kind.split("/")[1], image, kind)})
     raw = form.read()
     # La requête relayée porte le type du formulaire, pas celui du JSON.
@@ -2786,7 +2786,7 @@ async def audio_voices(request: Request):
             "/v1/audio/voices", params=params,
             headers=clean_headers(request, backend.api_key),
             timeout=backend.meta_timeout)
-    except httpx.RequestError as exc:
+    except httpx2.RequestError as exc:
         if not backend.quotas:
             return error_response(dialect, 503, "backend_offline",
                                   backend_offline_message(backend, exc))

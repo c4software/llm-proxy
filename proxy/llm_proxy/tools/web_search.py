@@ -24,7 +24,7 @@ sinon il répond 403, et l'erreur le dit.
 
 import re
 
-import httpx
+import httpx2
 
 from .. import config
 from . import webcache
@@ -195,10 +195,10 @@ class WebSearch(Tool):
         try:
             # trust_env=False : l'instance est une adresse du réseau du
             # proxy, un HTTP_PROXY d'environnement n'a pas à s'en mêler.
-            async with httpx.AsyncClient(timeout=TIMEOUT, transport=transport,
+            async with httpx2.AsyncClient(timeout=TIMEOUT, transport=transport,
                                          trust_env=False) as c:
                 r = await c.get(f"{SEARXNG_URL}/search", params=params)
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise ToolError("unavailable", f"search engine unreachable "
                                            f"({type(exc).__name__}).")
         if r.status_code == 403:

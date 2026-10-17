@@ -51,7 +51,7 @@ dans le relais ou un outil, et tout ce qui y mène hérite du contexte. Le
 tableau de bord ne montre ainsi à chacun que SES requêtes ; l'Usage API
 filtre (`api_key_ids`) et groupe (`group_by=api_key_id`) dessus.
 
-Ce module ne connaît ni FastAPI ni httpx.
+Ce module ne connaît ni FastAPI ni httpx2.
 """
 
 import contextvars

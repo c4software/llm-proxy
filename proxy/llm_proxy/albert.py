@@ -31,7 +31,7 @@ compteur.
 Note comptage : sur /v1/chat/completions Albert ne comptabilise QUE les
 tokens des messages envoyés (~4 chars/token estimés ici), pas la sortie.
 
-Ce module ne connaît ni FastAPI ni httpx. Chaque backend à quotas de
+Ce module ne connaît ni FastAPI ni httpx2. Chaque backend à quotas de
 main.py instancie SA QuotaState : deux backends « albert » avec des clés
 différentes ont chacun leurs limiteurs, leur association routeurs et
 leur refresh. refresh() reçoit le Backend (attributs .client,
@@ -444,7 +444,7 @@ class QuotaState:
     async def refresh(self, backend) -> bool:
         """Charge /v1/me/info + /v1/models du backend et reconstruit
         l'association. N'écrase jamais des données valides par un échec.
-        `backend` : objet avec .client (httpx.AsyncClient), .auth_headers()
+        `backend` : objet avec .client (httpx2.AsyncClient), .auth_headers()
         et .meta_timeout (secondes)."""
         if backend is None or backend.client is None or not backend.api_key:
             return False

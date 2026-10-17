@@ -1,8 +1,8 @@
 """L'outil hébergé `ocr` (llm_proxy/tools/ocr.py) : téléchargement sous le
 garde-fou, images d'un PDF, requête au modèle de vision, mise en forme,
 cache, quotas et statistiques. SANS réseau, comme test_tools.py : le web
-est un httpx.MockTransport, le DNS une table, et le backend du modèle de
-vision un Backend dont le client httpx parle à un faux (`Vision`), qui
+est un httpx2.MockTransport, le DNS une table, et le backend du modèle de
+vision un Backend dont le client httpx2 parle à un faux (`Vision`), qui
 garde ce qu'il reçoit. Aucune image n'est décodée : le faux « lit » une
 image en retrouvant ses octets dans une table.
 
@@ -16,7 +16,7 @@ import socket
 import threading
 import zlib
 
-import httpx
+import httpx2
 import pytest
 
 from llm_proxy import albert, backends, tools
@@ -57,7 +57,7 @@ def dns(monkeypatch):
 
 class Vision:
     """Le faux modèle de vision. `texts` : octets d'une image → ce qu'il y
-    « lit » — un texte, une httpx.Response, une exception à lever, ou une
+    « lit » — un texte, une httpx2.Response, une exception à lever, ou une
     fonction asynchrone. `seen` : les corps reçus ; `images` : celles de
     chaque requête, [(type, octets)…]."""
 
@@ -65,7 +65,7 @@ class Vision:
         self.texts, self.default = texts or {}, default
         self.seen, self.images, self.headers = [], [], []
 
-    async def handler(self, request: httpx.Request) -> httpx.Response:
+    async def handler(self, request: httpx2.Request) -> httpx2.Response:
         doc = json.loads(request.content)
         self.seen.append(doc)
         self.headers.append(request.headers)
@@ -79,13 +79,13 @@ class Vision:
             said = await said()
         if isinstance(said, Exception):
             raise said
-        if isinstance(said, httpx.Response):
+        if isinstance(said, httpx2.Response):
             return said
         return answer(said)
 
 
 def answer(text, finish="stop", **usage):
-    return httpx.Response(200, json={
+    return httpx2.Response(200, json={
         "choices": [{"finish_reason": finish,
                      "message": {"role": "assistant", "content": text}}],
         "usage": usage or {"prompt_tokens": 900, "completion_tokens": 40,
@@ -112,8 +112,8 @@ def env(monkeypatch):
     vision = Vision()
     backend = backends.Backend("vision", {
         "url": "http://vision.invalid", "images": True, "api_key": "clef"})
-    backend.client = httpx.AsyncClient(
-        base_url=backend.url, transport=httpx.MockTransport(vision.handler))
+    backend.client = httpx2.AsyncClient(
+        base_url=backend.url, transport=httpx2.MockTransport(vision.handler))
     monkeypatch.setitem(backends.BACKENDS, "vision", backend)
     vision.backend, vision.lines = backend, []
     monkeypatch.setattr(ocr.stats, "record",
@@ -128,11 +128,11 @@ class Web:
     def __init__(self, pages=None, default=None):
         self.pages, self.default, self.requests = pages or {}, default, []
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
+    def handler(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
         got = self.pages.get(request.url.path, self.default)
         if got is None:
-            return httpx.Response(404, text="rien")
+            return httpx2.Response(404, text="rien")
         return got(request) if callable(got) else got
 
     def ocr(self, url, call=None, **args) -> str:
@@ -141,14 +141,14 @@ class Web:
         try:
             self.last = go(ocr.TOOL.run(
                 {"url": url, **args}, call or tools.Call(),
-                transport=httpx.MockTransport(self.handler)))
+                transport=httpx2.MockTransport(self.handler)))
         except tools.ToolError as exc:
             self.last = tools.failure(exc.code, exc.message)
         return self.last.text
 
 
 def fichier(body, ct="application/octet-stream", status=200):
-    return httpx.Response(status, content=body, headers={"content-type": ct})
+    return httpx2.Response(status, content=body, headers={"content-type": ct})
 
 
 def image_pdf(width=100, height=80, space=b"/DeviceGray", bits=8,
@@ -271,9 +271,9 @@ def test_ocr_reponses_du_modele_de_vision(env):
 # ── le garde-fou : rien ne part quand la cible est refusée ──────────────
 
 def test_ocr_cible_refusee_ni_telechargement_ni_lecture(env, monkeypatch):
-    web = Web({"/vers-prive": httpx.Response(
+    web = Web({"/vers-prive": httpx2.Response(
                    302, headers={"location": "http://intern.test/secret.png"}),
-               "/vers-autre": httpx.Response(
+               "/vers-autre": httpx2.Response(
                    302, headers={"location": "http://autre.test/i.png"})},
               default=fichier(PNG))
     for url in ["", None, 5]:
@@ -329,7 +329,7 @@ def test_ocr_fichier_illisible_refuse_sans_lecture(env, monkeypatch):
             servis.append(1)
             yield b"y" * 100
 
-    web = Web(default=lambda req: httpx.Response(200, content=sans_fin()))
+    web = Web(default=lambda req: httpx2.Response(200, content=sans_fin()))
     assert web.ocr("http://site.test/f") == (
         "Error: http://site.test/f is larger than 300 bytes, which this tool "
         "does not download.")
@@ -510,15 +510,15 @@ def test_ocr_pdf_ouvert_hors_de_la_boucle_asyncio(env, monkeypatch):
 def test_ocr_modele_de_vision_en_echec_rendu_en_texte(env):
     web = Web(default=fichier(PNG))
     for nom, dit, code, attendu, statut in [
-        ("éteint", httpx.ConnectError("refusé"), "unavailable",
+        ("éteint", httpx2.ConnectError("refusé"), "unavailable",
          "Error: the OCR model is unreachable (ConnectError).", 503),
-        ("500", httpx.Response(500, text="SECRET du backend"), "unavailable",
+        ("500", httpx2.Response(500, text="SECRET du backend"), "unavailable",
          "Error: the OCR model returned HTTP 500.", 500),
-        ("429", httpx.Response(429), "too_many_requests",
+        ("429", httpx2.Response(429), "too_many_requests",
          "Error: the OCR model returned HTTP 429.", 429),
-        ("pas du JSON", httpx.Response(200, text="<html>"), "unavailable",
+        ("pas du JSON", httpx2.Response(200, text="<html>"), "unavailable",
          "Error: unreadable answer from the OCR model.", 200),
-        ("autre forme", httpx.Response(200, json={"choices": []}),
+        ("autre forme", httpx2.Response(200, json={"choices": []}),
          "unavailable", "Error: unreadable answer from the OCR model.", 200),
         ("muet", answer(""), "unavailable",
          "Error: the OCR model returned no text.", 200),
@@ -538,7 +538,7 @@ def test_ocr_pages_lues_rendues_quand_une_autre_echoue_ou_tarde(env, monkeypatch
     monkeypatch.setattr(webcache.CACHE, "ttl", 600)
     lit(env, 3)
     web = Web(default=fichier(scan_jpeg(3)))
-    env.texts[jpeg(2)] = httpx.Response(500)
+    env.texts[jpeg(2)] = httpx2.Response(500)
     out = web.ocr("http://site.test/a.pdf")
     assert "\nPages: 1 of 3 (page 2 failed: the OCR model returned HTTP 500; " \
            "pass pages=\"2-3\" to continue)\n" in out
@@ -566,7 +566,7 @@ def test_ocr_pages_lues_rendues_quand_une_autre_echoue_ou_tarde(env, monkeypatch
         "Error: the OCR model did not answer within 0 s.")
     assert web.last.error == "timeout"
     # La première page en échec : son erreur, avec son code.
-    env.texts[jpeg(1)] = httpx.Response(429)
+    env.texts[jpeg(1)] = httpx2.Response(429)
     assert web.ocr("http://site.test/d.pdf") == (
         "Error: the OCR model returned HTTP 429.")
     assert web.last.error == "too_many_requests"
@@ -677,7 +677,7 @@ def test_ocr_derriere_l_executeur(env, monkeypatch):
     devient un Result avec son code, le succès garde son texte."""
     h = tools.Hosted([ocr.TOOL], tools.Memory(4, 60))
     web = Web(default=fichier(PNG))
-    transport = httpx.MockTransport(web.handler)
+    transport = httpx2.MockTransport(web.handler)
     vrai = ocr.download
     monkeypatch.setattr(ocr, "download", lambda url, settings, _: vrai(
         url, settings, transport))

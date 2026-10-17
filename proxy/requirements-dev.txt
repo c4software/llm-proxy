@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest==8.4.2
+# Le client de test de Starlette (fastapi.testclient) dépend encore de
+# httpx, l'ancien nom de httpx2 : pour les tests seulement.
+httpx==0.28.1

@@ -1,5 +1,5 @@
 """Le traducteur Responses ↔ OpenAI chat, testé sur des octets : aucun
-réseau, aucun serveur — responses_api ne connaît ni FastAPI ni httpx.
+réseau, aucun serveur — responses_api ne connaît ni FastAPI ni httpx2.
 Les corps de requête ont la forme de ceux que Codex CLI 0.157 envoie
 (capture du 05/10/2026), réduits.
 Les outils hébergés sont testés en fin de fichier, jusqu'à la route

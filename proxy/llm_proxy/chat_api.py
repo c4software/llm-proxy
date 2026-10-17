@@ -156,7 +156,7 @@ cohérents, et rien d'exécuté n'est perdu.
 
 Même contrat de robinet que responses_api.Translator et
 anthropic_api.Translator : c'est app.hosted_loop qui mène la boucle.
-Ce module ne connaît ni FastAPI ni httpx.
+Ce module ne connaît ni FastAPI ni httpx2.
 """
 
 import fnmatch

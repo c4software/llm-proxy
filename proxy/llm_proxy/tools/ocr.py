@@ -45,7 +45,7 @@ import struct
 import time
 import zlib
 
-import httpx
+import httpx2
 
 from .. import albert, config, stats
 from ..backends import Backend, route_backend
@@ -422,7 +422,7 @@ async def transcribe(images) -> tuple[str, bool]:
                 content=json.dumps(payload, ensure_ascii=False).encode(),
                 headers={"Content-Type": "application/json",
                          **backend.auth_headers()})
-        except httpx.RequestError as exc:
+        except httpx2.RequestError as exc:
             # Comme app.send_upstream : un backend local éteint fait
             # partie du fonctionnement normal.
             status = 502 if backend.quotas else 503

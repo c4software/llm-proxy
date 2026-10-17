@@ -1,5 +1,5 @@
 """L'outil hébergé `image_generation` (llm_proxy/tools/image_generation.py)
-contre un FAUX backend d'images — httpx.MockTransport, aucun réseau : ce
+contre un FAUX backend d'images — httpx2.MockTransport, aucun réseau : ce
 que l'outil envoie, le texte qu'il écrit pour le modèle, le fichier qu'il
 rend, ses codes d'erreur, d'où il accepte de lire une image rendue par
 URL, et la retouche d'une image téléchargée sous le garde-fou. La
@@ -15,7 +15,7 @@ import socket
 import struct
 
 import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
-import httpx
+import httpx2
 import pytest
 
 from llm_proxy import albert, backends, files, tools
@@ -41,22 +41,22 @@ def b64(data: bytes) -> dict:
 
 class Backend:
     """Le faux backend d'images «img» : garde chaque requête reçue ; à un
-    POST il répond `reply` (un JSON servi en 200, une httpx.Response, ou
+    POST il répond `reply` (un JSON servi en 200, une httpx2.Response, ou
     une exception à lever), à un GET `stored[chemin]`."""
 
     def __init__(self):
         self.requests, self.reply, self.stored = [], b64(PNG), {}
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
+    def handler(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
         if request.method == "GET":
             body = self.stored.get(request.url.path)
-            return httpx.Response(404) if body is None \
-                else httpx.Response(200, content=body)
+            return httpx2.Response(404) if body is None \
+                else httpx2.Response(200, content=body)
         if isinstance(self.reply, Exception):
             raise self.reply
-        return self.reply if isinstance(self.reply, httpx.Response) \
-            else httpx.Response(200, json=self.reply)
+        return self.reply if isinstance(self.reply, httpx2.Response) \
+            else httpx2.Response(200, json=self.reply)
 
 
 @pytest.fixture(autouse=True)
@@ -67,8 +67,8 @@ def img(monkeypatch):
     les lignes de statistiques des requêtes au backend."""
     env = Backend()
     b = backends.Backend("img", {"url": "http://10.0.0.9:8009", "api_key": "k"})
-    b.client = httpx.AsyncClient(base_url=b.url,
-                                 transport=httpx.MockTransport(env.handler))
+    b.client = httpx2.AsyncClient(base_url=b.url,
+                                 transport=httpx2.MockTransport(env.handler))
     env.backend, env.lines = b, []
     monkeypatch.setitem(backends.BACKENDS, "img", b)
     for name, value in {
@@ -105,13 +105,13 @@ def rendu(args=None, web=None, seen=None, **more) -> tools.Result:
         if seen is not None:
             seen.append(request)
         body = (web or {}).get((request.headers["host"], request.url.path))
-        return httpx.Response(404) if body is None \
-            else httpx.Response(200, content=body)
+        return httpx2.Response(404) if body is None \
+            else httpx2.Response(200, content=body)
 
     try:
         return go(TOOL.run({"prompt": "un bateau rouge", **(args or {}), **more},
                            tools.Call(endpoint="/v1/tools"),
-                           transport=httpx.MockTransport(handler)))
+                           transport=httpx2.MockTransport(handler)))
     except tools.ToolError as exc:
         return tools.failure(exc.code, exc.message)
 
@@ -212,14 +212,14 @@ def test_non_configure_ou_image_impossible_a_remettre_dit_avant_de_generer(
 def test_echec_du_backend_rendu_avec_son_code_sans_son_message(img):
     secret = "CUDA out of memory at 10.0.0.9"
     for reply, code, said, status in (
-            (httpx.ConnectError("refus"), "unavailable", "offline", 503),
-            (httpx.ReadTimeout("lent"), "unavailable", "did not answer", 503),
-            (httpx.Response(429, text=secret), "too_many_requests", "busy", 429),
-            (httpx.Response(400, json={"error": {"message": secret}}),
+            (httpx2.ConnectError("refus"), "unavailable", "offline", 503),
+            (httpx2.ReadTimeout("lent"), "unavailable", "did not answer", 503),
+            (httpx2.Response(429, text=secret), "too_many_requests", "busy", 429),
+            (httpx2.Response(400, json={"error": {"message": secret}}),
              "invalid_input", "refused this request (HTTP 400)", 400),
-            (httpx.Response(500, text=secret), "unavailable",
+            (httpx2.Response(500, text=secret), "unavailable",
              "failed (HTTP 500)", 500),
-            (httpx.Response(200, text="<html>"), "unavailable", "no image", 200),
+            (httpx2.Response(200, text="<html>"), "unavailable", "no image", 200),
             ({"data": []}, "unavailable", "no image", 200),
             ({"data": [{"revised_prompt": "x"}]}, "unavailable", "no image", 200),
             ({"data": [{"b64_json": "%%%="}]}, "unavailable", "unreadable", 200),

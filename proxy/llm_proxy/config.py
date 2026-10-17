@@ -12,7 +12,7 @@ Au premier démarrage, si data/config.toml n'existe pas, il est créé à
 partir de data/config.example.toml : le conteneur démarre sur un volume
 vide sans intervention.
 
-Ce module ne connaît ni FastAPI, ni httpx, ni les autres modules du
+Ce module ne connaît ni FastAPI, ni httpx2, ni les autres modules du
 proxy : il est importé par tous, il n'importe personne.
 """
 

@@ -2,7 +2,7 @@
 page lue par web_fetch.load — même faux web, mêmes réglages que
 test_tools.py, dont les fixtures sont reprises ici."""
 
-import httpx
+import httpx2
 
 from llm_proxy import tools
 from llm_proxy.tools import web_fetch, web_grep, webcache
@@ -26,7 +26,7 @@ def grep(args, web=None) -> tools.Result:
     web = web or Web(default=page(DOC))
     return rendu(web_grep.TOOL.run({"url": "http://site.test/doc", **args},
                                    tools.Call(),
-                                   transport=httpx.MockTransport(web.handler)))
+                                   transport=httpx2.MockTransport(web.handler)))
 
 
 def corps(result) -> list[str]:
@@ -111,7 +111,7 @@ def test_cache_commun_avec_web_fetch(monkeypatch):
     grep({"pattern": "fin"}, web)
     out = rendu(web_fetch.TOOL.run({"url": "http://site.test/doc", "offset": 131},
                                    tools.Call(),
-                                   transport=httpx.MockTransport(web.handler)))
+                                   transport=httpx2.MockTransport(web.handler)))
     assert out.text.endswith("\n---\nfin") and len(web.requests) == 1
 
 

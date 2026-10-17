@@ -12,7 +12,7 @@ tombent sur le backend de repli.
 
 import json
 
-import httpx
+import httpx2
 
 from . import albert
 from . import config
@@ -64,7 +64,7 @@ class Backend:
         # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
         # Albert avec des clés différentes ne partagent rien).
         self.quota_state = albert.QuotaState(name) if self.quotas else None
-        self.client: httpx.AsyncClient | None = None
+        self.client: httpx2.AsyncClient | None = None
         # Dernier catalogue vu lors d'un GET /v1/models (informel, healthz).
         self.models: set[str] = set()
         # id (minuscule) → type normalisé («image-text-to-text»…), rempli
@@ -171,9 +171,9 @@ def backend_offline_message(b: Backend, exc: Exception) -> str:
 async def open_clients() -> None:
     """Un client HTTP par backend, ouvert au démarrage de l'application."""
     for b in BACKENDS.values():
-        b.client = httpx.AsyncClient(
+        b.client = httpx2.AsyncClient(
             base_url=b.url,
-            timeout=httpx.Timeout(b.timeout, connect=b.connect_timeout),
+            timeout=httpx2.Timeout(b.timeout, connect=b.connect_timeout),
             follow_redirects=False,
             verify=b.verify_ssl,
         )

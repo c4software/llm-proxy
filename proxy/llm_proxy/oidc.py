@@ -50,7 +50,7 @@ oauth = OAuth()
 def register(**client_kwargs) -> None:
     """Déclare le fournisseur auprès d'Authlib (un registre neuf : la
     découverte et le JWKS seront relus). `client_kwargs` : passés au
-    client httpx d'Authlib (les tests y mettent un faux fournisseur)."""
+    client httpx2 d'Authlib (les tests y mettent un faux fournisseur)."""
     global oauth
     oauth = OAuth()
     oauth.register(

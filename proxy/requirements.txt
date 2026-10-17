@@ -1,6 +1,6 @@
 fastapi==0.118.0
 uvicorn[standard]==0.37.0
-httpx==0.28.1
+httpx2==2.13.1
 pypdf==6.19.0
 regex==2026.9.29
 Authlib==1.9.1

@@ -60,7 +60,7 @@ from dataclasses import dataclass
 from email.message import Message
 from urllib.parse import unquote, urlsplit
 
-import httpx
+import httpx2
 
 from .. import config, files
 from ..settings import log
@@ -509,7 +509,7 @@ class CodeExecution(Tool):
     async def run(self, args: dict, call: Call, transport=None,
                   downloads=None) -> Result:
         """`transport`, `downloads` : pour les tests — les transports
-        httpx vers l'exécuteur et vers le web."""
+        httpx2 vers l'exécuteur et vers le web."""
         language = args.get("language")
         language = LANGUAGES.get(language.strip().lower()) \
             if isinstance(language, str) else None
@@ -551,15 +551,15 @@ class CodeExecution(Tool):
         try:
             # trust_env=False : l'exécuteur est une adresse du réseau du
             # proxy, un HTTP_PROXY d'environnement n'a pas à s'en mêler.
-            async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(
+            async with httpx2.AsyncClient(
+                    timeout=httpx2.Timeout(
                         TIMEOUT + MARGIN - 5 + (INPUT_MARGIN if ready else 0),
                         connect=5),
                     transport=transport, trust_env=False) as c:
                 r = await c.post(
                     f"{URL}/v1/execute",
                     headers={"Authorization": f"Bearer {TOKEN}"}, json=body)
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise ToolError("unavailable", (
                 f"the sandbox service is unreachable ({type(exc).__name__}). "
                 f"Do not retry now: answer without running code, and say so."))

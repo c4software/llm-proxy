@@ -1,7 +1,7 @@
 """L'outil hébergé `transcribe` (llm_proxy/tools/transcribe.py) :
 téléchargement gardé de l'audio, reconnaissance du format, requête
 multipart au modèle de transcription, découpage et cache du texte. SANS
-réseau, comme test_tools.py : le web est un httpx.MockTransport, le DNS
+réseau, comme test_tools.py : le web est un httpx2.MockTransport, le DNS
 une table, et le backend de transcription un faux «asr» dont le client
 HTTP est lui aussi un MockTransport. La configuration est posée par
 monkeypatch sur les constantes du module.
@@ -18,7 +18,7 @@ import socket
 import sys
 import tempfile
 
-import httpx
+import httpx2
 import pytest
 
 import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
@@ -55,19 +55,19 @@ def dns(monkeypatch):
 
 class Asr:
     """Le faux backend de transcription : garde chaque requête reçue,
-    répond `reply` (un JSON servi en 200, une httpx.Response, une
+    répond `reply` (un JSON servi en 200, une httpx2.Response, une
     fonction, ou une exception à lever)."""
 
     def __init__(self):
         self.requests, self.reply = [], {"text": "bonjour tout le monde"}
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
+    def handler(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
         reply = self.reply(request) if callable(self.reply) else self.reply
         if isinstance(reply, Exception):
             raise reply
-        return reply if isinstance(reply, httpx.Response) \
-            else httpx.Response(200, json=reply)
+        return reply if isinstance(reply, httpx2.Response) \
+            else httpx2.Response(200, json=reply)
 
     def champ(self, name: str, n: int = -1) -> str | None:
         """Un champ texte du formulaire de la requête n."""
@@ -83,8 +83,8 @@ def asr(monkeypatch):
     lignes de statistiques écrites pour les requêtes au backend."""
     env = Asr()
     b = backends.Backend("asr", {"url": "http://asr.invalid", "api_key": "k"})
-    b.client = httpx.AsyncClient(base_url=b.url,
-                                 transport=httpx.MockTransport(env.handler))
+    b.client = httpx2.AsyncClient(base_url=b.url,
+                                 transport=httpx2.MockTransport(env.handler))
     env.backend, env.lines = b, []
     monkeypatch.setitem(backends.BACKENDS, "asr", b)
     monkeypatch.setattr(transcribe, "MODEL", "asr/whisper-test")
@@ -114,11 +114,11 @@ class Web:
     def __init__(self, pages=None):
         self.pages, self.requests = pages or {}, []
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
+    def handler(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
         page = self.pages.get((request.headers["host"], request.url.path))
         if page is None:
-            return httpx.Response(404, text="rien")
+            return httpx2.Response(404, text="rien")
         return page(request) if callable(page) else page
 
     def run(self, url, settings=None, **args) -> tools.Result:
@@ -127,7 +127,7 @@ class Web:
         try:
             return go(transcribe.TOOL.run(
                 {"url": url, **args}, tools.Call(settings or {}),
-                transport=httpx.MockTransport(self.handler)))
+                transport=httpx2.MockTransport(self.handler)))
         except tools.ToolError as exc:
             return tools.failure(exc.code, exc.message)
 
@@ -136,7 +136,7 @@ def audio(body=WAV, ct="audio/wav", status=200, **headers):
     h = dict(headers)
     if ct is not None:
         h["content-type"] = ct
-    return httpx.Response(status, content=body, headers=h)
+    return httpx2.Response(status, content=body, headers=h)
 
 
 def un_son(**kw):
@@ -237,7 +237,7 @@ def test_fichier_trop_gros_refuse_et_non_coupe(monkeypatch, asr):
             for _ in range(50):
                 lus.append(1)
                 yield WAV[:40] if len(lus) == 1 else b"\x00" * 40
-        return httpx.Response(200, content=blocs(),
+        return httpx2.Response(200, content=blocs(),
                               headers={"content-type": "audio/wav"})
 
     web = Web({("site.test", "/annonce.wav"): audio(WAV + b"\x00" * 200),
@@ -268,7 +268,7 @@ def test_cible_absente_ou_refusee_erreur_sans_aucune_requete(asr):
     for args, code, mot in cas:
         try:
             out = go(transcribe.TOOL.run(
-                args, tools.Call(), transport=httpx.MockTransport(web.handler)))
+                args, tools.Call(), transport=httpx2.MockTransport(web.handler)))
         except tools.ToolError as exc:
             out = tools.failure(exc.code, exc.message)
         assert (out.error, mot in out.text) == (code, True), (args, out)
@@ -277,7 +277,7 @@ def test_cible_absente_ou_refusee_erreur_sans_aucune_requete(asr):
 
 def test_redirection_suivie_et_recontrolee_a_chaque_saut(monkeypatch, asr):
     def vers(location):
-        return httpx.Response(302, headers={"location": location})
+        return httpx2.Response(302, headers={"location": location})
 
     web = Web({("site.test", "/r"): vers("https://autre.test/b.mp3"),
                ("autre.test", "/b.mp3"): audio(MP3, "audio/mpeg"),
@@ -310,7 +310,7 @@ def test_redirection_suivie_et_recontrolee_a_chaque_saut(monkeypatch, asr):
 
 def test_echec_du_telechargement_rendu_avec_son_code(asr):
     def panne(request):
-        raise httpx.ConnectError("refusé")
+        raise httpx2.ConnectError("refusé")
 
     web = Web({("site.test", "/429"): audio(b"", status=429),
                ("site.test", "/500"): audio(b"", status=500),
@@ -369,7 +369,7 @@ def test_transcription_longue_decoupee_par_offset_sans_rien_refaire(
 
 def test_un_echec_n_est_jamais_garde_en_cache(asr):
     web = un_son()
-    asr.reply = httpx.Response(500, text="boom")
+    asr.reply = httpx2.Response(500, text="boom")
     assert web.run("https://site.test/a.wav").error == "unavailable"
     asr.reply = {"text": ""}
     out = web.run("https://site.test/a.wav")
@@ -381,15 +381,15 @@ def test_un_echec_n_est_jamais_garde_en_cache(asr):
 
 def test_echec_du_backend_rendu_avec_son_code_sans_son_message(asr):
     web = un_son()
-    cas = [(httpx.Response(400, json={"error": {"message": "secret http://asr"}}),
+    cas = [(httpx2.Response(400, json={"error": {"message": "secret http://asr"}}),
             "unsupported", "could not read this audio file (HTTP 400)", 400),
-           (httpx.Response(429, text="doucement"),
+           (httpx2.Response(429, text="doucement"),
             "too_many_requests", "busy", 429),
-           (httpx.Response(503, text="chargement"),
+           (httpx2.Response(503, text="chargement"),
             "unavailable", "failed (HTTP 503)", 503),
-           (httpx.Response(200, json={"résultat": "?"}),
+           (httpx2.Response(200, json={"résultat": "?"}),
             "unavailable", "returned no text", 200),
-           (httpx.ConnectError("éteint"), "unavailable", "offline", 503)]
+           (httpx2.ConnectError("éteint"), "unavailable", "offline", 503)]
     for reply, code, mot, statut in cas:
         asr.reply = reply
         out = web.run("https://site.test/a.wav")
@@ -397,7 +397,7 @@ def test_echec_du_backend_rendu_avec_son_code_sans_son_message(asr):
         assert "secret" not in out.text
         assert asr.lines[-1][4] == statut, reply
     # Un backend qui ignore response_format et rend du texte nu.
-    asr.reply = httpx.Response(200, text="texte nu\n")
+    asr.reply = httpx2.Response(200, text="texte nu\n")
     assert web.run("https://site.test/a.wav").text.endswith("---\ntexte nu")
 
 
@@ -510,7 +510,7 @@ def test_formats_que_le_modele_lit_refus_avant_l_envoi(monkeypatch, asr):
             for _ in range(50):
                 lus.append(1)
                 yield MP3
-        return httpx.Response(200, content=blocs(),
+        return httpx2.Response(200, content=blocs(),
                               headers={"content-type": "audio/mpeg"})
 
     web = Web({("site.test", "/a.wav"): audio(),
@@ -683,7 +683,7 @@ def test_ce_que_rend_un_vrai_backend_langue_duree_et_refus_en_500(asr):
                         "language": "english", "duration": 11.0}
     assert asr.champ("language") == "en"
     transcribe.CACHE.clear()
-    asr.reply = httpx.Response(500, json={"error": {
+    asr.reply = httpx2.Response(500, json={"error": {
         "message": "Qwen3-ASR input must be a RIFF WAV",
         "type": "invalid_request_error", "code": "transcription_failed"}})
     out = un_son().run("https://site.test/a.wav")

@@ -156,7 +156,7 @@ def test_le_client_mcp_du_proxy_parle_a_son_serveur(mcp, monkeypatch):
     et retombe sur initialize."""
     import asyncio
 
-    import httpx
+    import httpx2
 
     from llm_proxy.tools import mcp as client_mcp
 
@@ -164,17 +164,17 @@ def test_le_client_mcp_du_proxy_parle_a_son_serveur(mcp, monkeypatch):
     monkeypatch.setattr(tools, "REGISTRY", list(tools.REGISTRY))
     monkeypatch.setattr(client_mcp, "MIN_GAP", 0)
 
-    def relais(request: httpx.Request) -> httpx.Response:
+    def relais(request: httpx2.Request) -> httpx2.Response:
         r = test_client.post("/mcp", content=request.content,
                              headers={k: v for k, v in request.headers.items()
                                       if k.lower() not in ("host", "content-length")})
-        return httpx.Response(r.status_code, content=r.content,
+        return httpx2.Response(r.status_code, content=r.content,
                               headers={"content-type": r.headers.get(
                                   "content-type", "application/json")})
 
     async def scenario():
         server = client_mcp.Server("moi", {"url": "http://proxy.test/mcp"},
-                                   transport=httpx.MockTransport(relais))
+                                   transport=httpx2.MockTransport(relais))
         server.open()
         ok = await server.refresh()
         outil = next(t for t in tools.REGISTRY if t.name == "moi_web_search")
