@@ -180,7 +180,8 @@
               :aria-pressed="String(m.id === metric)"
               @click="selectMetric(m.id)">{{ m.label }}</button>
     </div>
-    <span class="range-note">{{ note }}<template v-if="session.auth_required">
+    <span class="range-note">{{ note }}<template v-if="session.account && session.account.role === 'admin'">
+      · tous les comptes</template><template v-else-if="session.auth_required">
       · vos requêtes seulement</template> · raccourcis {{ shortcuts }}</span>
   </div>
 

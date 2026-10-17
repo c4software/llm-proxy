@@ -23,7 +23,7 @@ body {
 /* width: 100 % — dans la grille du menu latéral, des marges `auto`
    réduiraient sinon le bloc à la largeur de son contenu : chaque vue, et
    chaque conversation, aurait la sienne. */
-.wrap { width: 100%; max-width: 1180px; margin: 0 auto; padding: 48px 28px 72px; }
+.wrap { width: 100%; max-width: 1240px; margin: 0 auto; padding: 48px 28px 72px; }
 header { margin-bottom: 34px; }
 .brand {
   display: inline-flex; align-items: center; gap: 9px;

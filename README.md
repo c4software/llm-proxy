@@ -19,7 +19,7 @@ proxy exécute pour le modèle, un limiteur de quotas pour les backends qui
 en ont, des statistiques persistantes à la forme de l'Usage API d'OpenAI
 et un tableau de bord.
 
-![Tableau de bord /ui : cartes de synthèse (requêtes, tokens, modèles actifs, erreurs) et détail par modèle](docs/preview.jpg)
+![Tableau de bord /ui, vue Statistiques : menu latéral (chat et conversations, statistiques, configuration), cartes de synthèse (requêtes, tokens, modèles actifs, erreurs), trafic de la semaine empilé par modèle, détail par modèle et par outil hébergé](docs/preview.jpg)
 
 ## Le dépôt, un dossier par rôle
 
@@ -32,7 +32,7 @@ son image et ses tests.
     ├── .env.example                          les secrets
     ├── data/       la configuration et les statistiques DU DÉPLOIEMENT (config.toml,
     │               stats.db, non versionnés) ; config.example.toml, le modèle
-    ├── docs/       outils.md (le contrat des outils hébergés), preview.jpg
+    ├── docs/       outils.md (le contrat des outils hébergés), preview.jpg, keys.jpg
     ├── proxy/      LE PROXY : Dockerfile, requirements*.txt, main.py, le paquet
     │               llm_proxy/, ses tests (tests/)
     ├── services/   LES SERVICES TIERS de la pile
@@ -561,6 +561,8 @@ compte la voit parmi ses clés, et elle **suit son état** (compte en
 attente ou bloqué = `401`). Ce qu'elle avait rangé seule avant n'est
 **pas déplacé** : il reste sous son condensé, hors de vue du compte.
 La détacher la rend à son propre client.
+
+![Configuration → Clés, vue admin : une clé tout juste créée (montrée une fois, avec sa ligne export), puis les clés de tous les comptes et une clé du TOML rattachée à un compte](docs/keys.jpg)
 
 **Ce qui est partagé** : toutes les clés d'un compte, et le chat de sa
 page, ont **la même mémoire** (outil `memory`, échanges d'outils) — une
