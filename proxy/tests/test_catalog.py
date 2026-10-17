@@ -1,6 +1,6 @@
 """Le catalogue d'un backend (catalog.fetch_models) : gardé CATALOG_TTL,
-sa réponse comme son silence, et une seule lecture pour des appels
-simultanés."""
+sa réponse comme son silence, puis relu en arrière-plan ; une seule
+lecture pour des appels simultanés."""
 
 import asyncio
 
@@ -47,5 +47,12 @@ def test_silence_kept_then_retried(monkeypatch):
     assert asyncio.run(catalog.fetch_models(b)) is None
     assert b.calls == 1
     monkeypatch.setattr(catalog, "CATALOG_TTL", 0.0)
-    assert [e["id"] for e in asyncio.run(catalog.fetch_models(b))] == ["cat/m1"]
+
+    async def stale_then_fresh():
+        stale = await catalog.fetch_models(b)      # l'ancien, relu derrière
+        await asyncio.sleep(0.05)
+        return stale, catalog._cache[next(iter(catalog._cache))][1]
+    stale, fresh = asyncio.run(stale_then_fresh())
+    assert stale is None
+    assert [e["id"] for e in fresh] == ["cat/m1"]
     assert b.calls == 2

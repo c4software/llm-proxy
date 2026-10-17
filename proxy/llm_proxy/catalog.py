@@ -134,8 +134,10 @@ def forget() -> None:
 
 async def fetch_models(b: Backend, request: Request | None = None) -> list | None:
     """Le catalogue d'UN backend, normalisé et préfixé ; None s'il ne
-    répond pas. Gardé CATALOG_TTL secondes, sa réponse comme son silence.
-    Met à jour b.models et b.model_types à chaque lecture."""
+    répond pas. Gardé CATALOG_TTL secondes, sa réponse comme son silence,
+    puis relu en arrière-plan au premier appel qui le trouve périmé (cet
+    appel-là a encore l'ancien). Met à jour b.models et b.model_types à
+    chaque lecture."""
     headers = b.auth_headers() or (
         clean_headers(request, "") if request is not None else {})
     key = (b.name, tuple(sorted((k.lower(), v) for k, v in headers.items())))
@@ -145,14 +147,22 @@ async def fetch_models(b: Backend, request: Request | None = None) -> list | Non
     task = _reading.get(key)
     if task is None:
         task = _reading[key] = asyncio.ensure_future(_read_models(b, headers))
-        task.add_done_callback(lambda _t: _reading.pop(key, None))
-    entries = await asyncio.shield(task)
-    now = time.monotonic()
-    if len(_cache) > 256:            # une clé de client par entrée : borné
-        for k in [k for k, (t, _) in _cache.items() if now - t >= CATALOG_TTL]:
-            del _cache[k]
-    _cache[key] = (now, entries)
-    return entries
+
+        def keep(t: asyncio.Task) -> None:
+            _reading.pop(key, None)
+            if t.cancelled() or t.exception() is not None:
+                return
+            now = time.monotonic()
+            if len(_cache) > 256:        # une clé de client par entrée : borné
+                for k in [k for k, (at, _) in _cache.items() if now - at >= 10 * CATALOG_TTL]:
+                    del _cache[k]
+            _cache[key] = (now, t.result())
+        task.add_done_callback(keep)
+    # Périmé : l'ancien catalogue est rendu tout de suite, le nouveau se
+    # lit en arrière-plan — seule la toute première lecture attend.
+    if hit is not None:
+        return hit[1]
+    return await asyncio.shield(task)
 
 
 async def _read_models(b: Backend, headers: dict) -> list | None:

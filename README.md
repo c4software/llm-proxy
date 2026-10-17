@@ -3019,7 +3019,7 @@ url = "http://bigchuck:8009"
 | `api_keys` | `[]` | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>` à la OpenAI, ou `x-api-key: <clé>` à l'Anthropic). Liste vide = proxy ouvert ; 401 sinon, `/healthz` exempté (il n'y dit alors que `{"status": "ok"}`) ; `/ui` la demande à l'entrée, puis tient une session signée (le condensé de la clé, jamais la clé) |
 | `upstream_timeout` | `600` | Secondes ; large pour les longues générations |
 | `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info` — court, un backend lent ne doit pas bloquer le catalogue |
-| `catalog_ttl` | `30` | Secondes pendant lesquelles le catalogue d'un backend est gardé, sa réponse comme son silence (un backend éteint n'attend son `meta_timeout` qu'une fois par période) ; les lectures simultanées n'en font qu'une |
+| `catalog_ttl` | `30` | Secondes pendant lesquelles le catalogue d’un backend est gardé, sa réponse comme son silence ; passé ce délai il est relu en arrière-plan pendant que l’ancien est servi — seule la toute première lecture attend un backend éteint. Les lectures simultanées n’en font qu’une |
 | `tool_choice` | `"auto"` | Valeur injectée quand `tools` est présent sans `tool_choice`, pour les backends ayant `force_tool_choice = true`. L'injection est désactivée par défaut : elle s'active par backend |
 | `forward_post_paths` | `["/v1/completions", "/v1/embeddings", "/v1/rerank", "/v1/audio/transcriptions", "/v1/audio/speech", "/v1/images/generations", "/v1/images/edits", "/v1/ocr"]` | Routes POST relayées en plus des handlers dédiés ; le reste → 404 |
 | `exempt_paths` | `["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]` | Suffixes de routes exclus du limiteur |
