@@ -964,9 +964,10 @@ window.ChatPanel = {
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 11h20M5 11l2.5-6h9l2.5 6M10 16.5c1.3-.8 2.7-.8 4 0"/><circle cx="7" cy="16.5" r="3"/><circle cx="17" cy="16.5" r="3"/></svg>
           <span class="lbl">Incognito</span></button>
         <button type="button" class="btn ghost ico-btn" v-if="$props.session.memory"
-                :aria-pressed="String(memoryOpen)" @click="toggleMemory()" title="Mémoire">
+                :aria-pressed="String(memoryOpen)" @click="toggleMemory()"
+                title="Ce que les modèles ont retenu (l'outil Mémoire)">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6zM9 9h6M9 13h6M9 17h4"/></svg>
-          <span class="lbl">Mémoire</span></button>
+          <span class="lbl">Retenu</span></button>
         <button type="button" class="btn ghost ico-btn" :aria-pressed="String(settingsOpen)"
                 @click="settingsOpen = !settingsOpen" title="Réglages">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M16 5v4M10 15v4"/></svg>

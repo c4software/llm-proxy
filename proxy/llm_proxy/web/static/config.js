@@ -19,6 +19,10 @@
   dans le navigateur, à la demande). Seuls les réglages du formulaire sont
   écrits : tout autre garde son défaut (voir config.example.toml).
 
+  La CONFIGURATION COMPLÈTE en vigueur, sous le formulaire Proxy
+  (/ui/config, config_view.py) : fichier et défauts, secrets masqués,
+  modifiable et vérifiable dans la page, jamais écrite.
+
   CLÉS et COMPTES, avec les comptes OIDC seulement ([oidc]). Chacun crée
   ses clés (des uuid4, /ui/keys) pour ses clients — montrées UNE fois, à
   la création — et les révoque. Un admin voit aussi celles de tous et les
@@ -47,21 +51,23 @@ window.ConfigPanel = {
       { id: "clients", label: "Clients" },
       ...(account.value ? [{ id: "keys", label: "Clés" }] : []),
       ...(isAdmin.value ? [{ id: "accounts", label: "Comptes" }] : []),
-      ...(!account.value || isAdmin.value ? [{ id: "proxy", label: "Proxy" },
-                                             { id: "settings", label: "Paramètres" }] : []),
+      ...(!account.value || isAdmin.value ? [{ id: "proxy", label: "Proxy" }] : []),
     ]);
     const stored = ref((() => {
       try { return localStorage.getItem(STORE_PART) || "clients"; }
       catch { return "clients"; }
     })());
-    const part = computed(() => parts.value.some((p) => p.id === stored.value)
-      ? stored.value : "clients");
+    // « settings » : l'ancien onglet Paramètres, fondu dans Proxy.
+    const part = computed(() => {
+      const want = stored.value === "settings" ? "proxy" : stored.value;
+      return parts.value.some((p) => p.id === want) ? want : "clients";
+    });
     function setPart(p) {
       stored.value = p;
       try { localStorage.setItem(STORE_PART, p); } catch { /* sans stockage */ }
       if (p === "keys") loadKeys();
       if (p === "accounts") loadUsers();
-      if (p === "settings" && !settings.loaded) loadSettings();
+      if (p === "proxy" && !settings.loaded) loadSettings();
     }
 
     // ── paramètres : la configuration effective, en lecture seule ────────
@@ -260,7 +266,7 @@ window.ConfigPanel = {
     onMounted(() => {
       loadModels(); loadAllModels();
       if (part.value === "keys") loadKeys();
-      if (part.value === "settings") loadSettings();
+      if (part.value === "proxy") loadSettings();
       loadUsers();                    // admin : le nombre de comptes en attente
     });
 
@@ -628,7 +634,9 @@ window.ConfigPanel = {
         warn,
         files: [
           { name: "data/config.toml", download: "config.toml", lang: "toml",
-            note: "À poser à la place de data/config.toml (garder l'ancien en .bak), puis redémarrer le proxy.",
+            note: "Les seuls réglages du formulaire (tout autre reprend son défaut) : la configuration "
+              + "complète en vigueur est plus bas. À poser à la place de data/config.toml (garder "
+              + "l'ancien en .bak), puis redémarrer le proxy.",
             content: L.join("\n").replace(/\n{3,}/g, "\n\n") },
           { name: ".env", download: "llm-proxy.env", lang: "sh",
             note: "Les secrets que le TOML référence par ${VAR} : à côté du docker-compose.yml, "
@@ -809,39 +817,6 @@ window.ConfigPanel = {
       </div>
     </div>
 
-    <div class="config-keys config-settings" v-if="part === 'settings'">
-      <section class="panel">
-        <div class="panel-head"><h2>{{ settings.path || "config.toml" }}</h2>
-          <span class="config-actions">
-            <button type="button" class="btn ghost" @click="checkSettings"
-                    :disabled="!settings.loaded || settings.checking">Vérifier</button>
-            <button type="button" class="btn ghost" @click="settings.text = settings.original"
-                    :disabled="settings.text === settings.original">Annuler les modifications</button>
-            <button type="button" class="btn ghost" @click="loadSettings">Relire</button>
-            <button type="button" class="btn ghost" @click="copy(settingsFile)"
-                    :disabled="!settings.loaded">{{ copied === settingsFile.name ? "Copié" : "Copier" }}</button>
-            <button type="button" class="btn ghost" @click="download(settingsFile)"
-                    :disabled="!settings.loaded">Télécharger</button>
-          </span></div>
-        <p class="note">La configuration en vigueur : les valeurs du fichier, et celles que le proxy prend
-          d'office ({{ settings.defaults }}, suivies de « # défaut »). Les <code>\${VAR}</code> renvoient au
-          .env ; une valeur secrète écrite en clair est masquée. Modifiable ici pour préparer un fichier :
-          <strong>rien n'est écrit sur le proxy</strong> — remplacer data/config.toml sur l'hôte (valeurs
-          masquées remises), puis redémarrer.</p>
-        <p class="err" v-if="settings.error" role="status">{{ settings.error }}</p>
-        <div v-if="settings.check" class="settings-check" role="status">
-          <p class="err" v-if="!settings.check.ok">TOML invalide : {{ settings.check.error }}</p>
-          <p class="ok" v-else-if="!settings.check.unknown.length">TOML valide, toutes les clés sont connues du proxy.</p>
-          <p class="err" v-else>TOML valide, mais le proxy ne lit pas ces clés (faute de frappe, réglage retiré) :
-            <code v-for="k in settings.check.unknown" :key="k">{{ k }}</code></p>
-          <p class="note" v-if="settings.check.masked">{{ settings.check.masked }} valeur(s) masquée(s) à
-            remettre avant usage.</p>
-        </div>
-        <textarea v-model="settings.text" spellcheck="false" aria-label="config.toml"
-                  :placeholder="settings.loaded ? '' : 'Chargement…'"></textarea>
-      </section>
-    </div>
-
     <div class="config-grid" v-if="part === 'proxy'">
       <form class="panel config-form" @submit.prevent>
         <div class="panel-head"><h2>Proxy</h2>
@@ -972,6 +947,39 @@ window.ConfigPanel = {
           <pre>{{ f.content }}</pre>
         </section>
       </div>
+    </div>
+
+    <div class="config-keys config-settings" v-if="part === 'proxy'">
+      <section class="panel">
+        <div class="panel-head"><h2>Configuration complète en vigueur</h2>
+          <span class="config-actions">
+            <button type="button" class="btn ghost" @click="checkSettings"
+                    :disabled="!settings.loaded || settings.checking">Vérifier</button>
+            <button type="button" class="btn ghost" @click="settings.text = settings.original"
+                    :disabled="settings.text === settings.original">Annuler les modifications</button>
+            <button type="button" class="btn ghost" @click="loadSettings">Relire</button>
+            <button type="button" class="btn ghost" @click="copy(settingsFile)"
+                    :disabled="!settings.loaded">{{ copied === settingsFile.name ? "Copié" : "Copier" }}</button>
+            <button type="button" class="btn ghost" @click="download(settingsFile)"
+                    :disabled="!settings.loaded">Télécharger</button>
+          </span></div>
+        <p class="note"><code>{{ settings.path }}</code> : les valeurs du fichier, et celles que le proxy prend
+          d'office ({{ settings.defaults }}, suivies de « # défaut »). Les <code>\${VAR}</code> renvoient au
+          .env ; une valeur secrète écrite en clair est masquée. Modifiable ici pour préparer un fichier :
+          <strong>rien n'est écrit sur le proxy</strong> — remplacer data/config.toml sur l'hôte (valeurs
+          masquées remises), puis redémarrer.</p>
+        <p class="err" v-if="settings.error" role="status">{{ settings.error }}</p>
+        <div v-if="settings.check" class="settings-check" role="status">
+          <p class="err" v-if="!settings.check.ok">TOML invalide : {{ settings.check.error }}</p>
+          <p class="ok" v-else-if="!settings.check.unknown.length">TOML valide, toutes les clés sont connues du proxy.</p>
+          <p class="err" v-else>TOML valide, mais le proxy ne lit pas ces clés (faute de frappe, réglage retiré) :
+            <code v-for="k in settings.check.unknown" :key="k">{{ k }}</code></p>
+          <p class="note" v-if="settings.check.masked">{{ settings.check.masked }} valeur(s) masquée(s) à
+            remettre avant usage.</p>
+        </div>
+        <textarea v-model="settings.text" spellcheck="false" aria-label="config.toml"
+                  :placeholder="settings.loaded ? '' : 'Chargement…'"></textarea>
+      </section>
     </div>
   </div>`,
 };
