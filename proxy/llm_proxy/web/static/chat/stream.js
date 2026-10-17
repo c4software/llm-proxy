@@ -24,7 +24,7 @@ export async function readStream(stream, live, hooks = {}) {
       if (!data || data === "[DONE]") continue;
       let doc;
       try { doc = JSON.parse(data); } catch { continue; }
-      take(doc, live);
+      take(doc, live, hooks);
     }
   }
 }
