@@ -594,6 +594,23 @@ export const ChatPanel = {
       else q.picked = q.picked[0] === option ? [] : [option];
     }
     const answerAsk = (m) => settle(m, askTool.result(m.waiting));
+    // La question en attente de la conversation (sa dernière réponse), dans
+    // la feuille du bas : ouverte à chaque nouvelle question.
+    const asking = computed(() => {
+      const ms = (current.value && current.value.messages) || [];
+      const m = ms[ms.length - 1];
+      return m && m.waiting && m.waiting.kind === "ask" ? m : null;
+    });
+    const sheetOpen = ref(true);
+    const sheetBody = ref(null);
+    watch(() => asking.value && asking.value.waiting.id, (id) => {
+      if (!id) return;
+      sheetOpen.value = true;
+      nextTick(() => {
+        const first = sheetBody.value && sheetBody.value.querySelector("button, input");
+        if (first) first.focus({ preventScroll: true });
+      });
+    });
     const skipAsk = (m) => settle(m, "L'utilisateur a passé la question sans répondre.");
     async function applyWrite(m) {
       const ws = folders.get(current.value.id);
@@ -898,7 +915,7 @@ export const ChatPanel = {
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
-             askReady, togglePick, answerAsk, skipAsk, applyWrite, refuseWrite, writeDiff, diffCounts,
+             askReady, togglePick, answerAsk, asking, sheetOpen, sheetBody, skipAsk, applyWrite, refuseWrite, writeDiff, diffCounts,
              download, fileOf: (f) => ({ name: f.name, content: f.content }),
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
@@ -1064,25 +1081,12 @@ export const ChatPanel = {
             <details class="gen-prompt" v-if="m.image && m.prompt && m.prompt.includes('\\n')">
               <summary>prompt envoyé (avec le contexte)</summary><pre>{{ m.prompt }}</pre></details>
             <div class="md" v-html="html(m)"></div>
-            <!-- Une carte qui attend : question (ask_user) ou écriture dans le
-                 dossier ; la réponse de l'utilisateur relance le modèle. -->
-            <div class="tool-card ask-card" v-if="m.waiting && m.waiting.kind === 'ask'">
-              <div class="ask-q" v-for="(q, k) in m.waiting.questions" :key="k">
-                <p class="ask-text">{{ q.question }}<span class="dim" v-if="q.multiple"> · plusieurs choix</span></p>
-                <div class="ask-options">
-                  <button type="button" v-for="o in q.options" :key="o" class="btn ghost"
-                          :aria-pressed="String(q.picked.includes(o))" :disabled="streaming"
-                          @click="togglePick(q, o)">{{ o }}</button>
-                </div>
-                <input class="ask-other" v-model="q.other" :disabled="streaming"
-                       placeholder="Autre… (réponse libre)" @keydown.enter.prevent="askReady(m.waiting) && answerAsk(m)">
-              </div>
-              <div class="card-actions">
-                <button type="button" class="btn" :disabled="streaming || !askReady(m.waiting)"
-                        @click="answerAsk(m)">Répondre</button>
-                <button type="button" class="btn ghost" :disabled="streaming" @click="skipAsk(m)">Passer</button>
-              </div>
-            </div>
+            <!-- Ce qui attend l'utilisateur : une question (ask_user, dans la
+                 feuille du bas) ou une écriture dans le dossier (carte) ; sa
+                 réponse relance le modèle. -->
+            <button type="button" class="ask-pending" v-if="m.waiting && m.waiting.kind === 'ask'"
+                    @click="sheetOpen = true">{{ m.waiting.questions.length > 1
+                      ? m.waiting.questions.length + " questions attendent" : "Une question attend" }} votre réponse</button>
             <div class="tool-card write-card" v-if="m.waiting && m.waiting.kind === 'write'">
               <p class="write-head"><b>{{ m.waiting.created ? "Créer" : "Modifier" }}</b>
                 <code>{{ m.waiting.path }}</code>
@@ -1135,6 +1139,40 @@ export const ChatPanel = {
           </template>
         </article>
       </div>
+
+      <!-- ask_user : une feuille qui monte du bas du chat, par-dessus la
+           zone de saisie ; réduite, une barre la rouvre. -->
+      <transition name="sheet">
+      <section class="ask-sheet" v-if="asking" :class="{ min: !sheetOpen }" role="dialog"
+               aria-label="Le modèle vous pose une question" @keydown.esc="sheetOpen = false">
+        <button type="button" class="sheet-grip" @click="sheetOpen = !sheetOpen"
+                :aria-expanded="String(sheetOpen)" :title="sheetOpen ? 'Réduire pour relire le fil' : 'Rouvrir'">
+          <span class="grip" aria-hidden="true"></span>
+          <span class="sheet-title">{{ sheetOpen ? "Le modèle vous demande"
+            : (asking.waiting.questions.length > 1 ? asking.waiting.questions.length + " questions attendent"
+              : "Une question attend") + " votre réponse" }}</span>
+          <span class="dim">{{ sheetOpen ? "Réduire" : "Ouvrir" }}</span>
+        </button>
+        <div class="sheet-body" v-show="sheetOpen" ref="sheetBody">
+          <div class="ask-q" v-for="(q, k) in asking.waiting.questions" :key="k">
+            <p class="ask-text">{{ q.question }}<span class="dim" v-if="q.multiple"> · plusieurs choix</span></p>
+            <div class="ask-options">
+              <button type="button" v-for="o in q.options" :key="o" class="btn ghost"
+                      :aria-pressed="String(q.picked.includes(o))" :disabled="streaming"
+                      @click="togglePick(q, o)">{{ o }}</button>
+            </div>
+            <input class="ask-other" v-model="q.other" :disabled="streaming"
+                   placeholder="Autre… (réponse libre)" @keydown.enter.prevent="askReady(asking.waiting) && answerAsk(asking)">
+          </div>
+        </div>
+        <div class="card-actions sheet-actions" v-show="sheetOpen">
+          <button type="button" class="btn" :disabled="streaming || !askReady(asking.waiting)"
+                  @click="answerAsk(asking)">Répondre</button>
+          <button type="button" class="btn ghost" :disabled="streaming" @click="skipAsk(asking)">Passer</button>
+          <span class="dim">ou réduire pour écrire autre chose</span>
+        </div>
+      </section>
+      </transition>
 
       <form class="composer" :class="{ dragging }" @submit.prevent="send">
         <div class="queue" v-if="queue.length">

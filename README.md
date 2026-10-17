@@ -817,9 +817,10 @@ conversation : au message suivant, le modèle retrouve ce qu'il a lu,
 demandé ou produit. Un modèle qui sait appeler des outils est
 nécessaire.
 
-Certains **attendent l'utilisateur** : la réponse se met en pause sur
-une carte, et reprend dès qu'il répond. L'état est dans le message — la
-carte survit à un rechargement et reste répondable. Écrire un nouveau
+Certains **attendent l'utilisateur** : la réponse se met en pause — sur
+une feuille qui monte du bas du chat pour une question, sur une carte
+dans le fil pour une écriture — et reprend dès qu'il répond. L'état est
+dans le message : il survit à un rechargement et reste répondable. Écrire un nouveau
 message au lieu de répondre la clôt, sans réponse.
 
 | Outil | Ce qu'il fait | Attend l'utilisateur |
@@ -830,11 +831,14 @@ message au lieu de répondre la clôt, sans réponse.
 | `folder_list`, `folder_read`, `folder_search` | parcourir, lire (par tranches numérotées), chercher dans le dossier ouvert | non |
 | `folder_write`, `folder_edit` | créer ou remplacer un fichier, remplacer un passage exact | oui : diff, *Appliquer* ou *Refuser* |
 
-![Une carte ask_user : deux questions à choix (budget, rythme), un champ « Autre… » sous chacune, Répondre ou Passer](docs/chat-question.png)
+![La feuille ask_user en bas du chat : deux questions à choix, un champ « Autre… » sous chacune, Répondre ou Passer](docs/chat-question.png)
 
 - **Questions** (`ask_user`) : quand une décision revient à
   l'utilisateur ou qu'une précision manque. Sa réponse est rendue au
-  modèle question par question ; *Passer* le dit aussi.
+  modèle question par question ; *Passer* le dit aussi. La feuille
+  (`ask-sheet`) couvre la zone de saisie ; *Réduire* (ou Échap) la
+  replie en une barre au-dessus de celle-ci, pour relire le fil ou écrire
+  autre chose.
 - **Dossier ouvert** (*Joindre → Dossier…*, `chat/workspace.js`) : le
   dossier choisi reste **dans le navigateur**, rien n'est envoyé
   d'avance ; le modèle ne lit que ce dont il a besoin — un dépôt de mille
