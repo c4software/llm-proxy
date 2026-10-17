@@ -15,7 +15,7 @@ compteur de l'Usage API des outils (README principal, « Usage des outils
 hébergés »), lu avant et après, par route d'appel.
 
 Un scénario est SAUTÉ (SKIP, ni PASS ni FAIL) quand le proxy visé n'a pas
-ce qu'il vérifie — lu dans /healthz, exempté de clé : `tools.enabled` sans
+ce qu'il vérifie — lu dans /healthz, avec la clé : `tools.enabled` sans
 `web_search`, `chat.hosted_tools` faux, `responses.enabled` faux — ou, pour
 le compteur, quand la route d'usage des outils n'existe pas.
 """

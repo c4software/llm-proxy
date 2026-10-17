@@ -17,10 +17,11 @@ fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails + 1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$1"; skips=$((skips + 1)); }
 
 # Les outils que le proxy héberge, séparés par des espaces (« web_search
-# web_fetch »), lus dans /healthz — exempté de clé. Vide si aucun n'est
+# web_fetch »), lus dans /healthz — avec la clé (sans elle, il ne dit que « ok »). Vide si aucun n'est
 # activé, si le proxy est plus ancien que ces outils ou s'il ne répond pas.
 hosted=$(node -e '
-  fetch(process.argv[1] + "/healthz", {signal: AbortSignal.timeout(10000)})
+  fetch(process.argv[1] + "/healthz", {signal: AbortSignal.timeout(10000),
+    headers: {authorization: "Bearer " + (process.env.PROXY_API_KEY || "")}})
     .then(r => r.json())
     .then(j => process.stdout.write(((j.tools || {}).enabled || []).join(" ")))
     .catch(() => {});' "$ANTHROPIC_BASE_URL")

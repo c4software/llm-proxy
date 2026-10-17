@@ -495,6 +495,7 @@ createApp({
         if (!r.ok) { loginError.value = "Le proxy a répondu " + r.status + "."; return; }
         loginKey.value = "";
         await loadSession();
+        loadHealth();
         since.value = 0;
         poll();
       } catch (e) {
@@ -572,10 +573,11 @@ createApp({
       if (!document.hidden) poll();
     }
 
-    // /healthz est toujours accessible sans clé : le badge ne dépend
-    // pas de l'auth de la page.
+    // L'état détaillé du déploiement : /ui/health, sous la session de la
+    // page (/healthz sans clé ne dit plus que « ok »). Lu une fois la
+    // session ouverte.
     function loadHealth() {
-      fetch("/healthz", { headers: { accept: "application/json" } })
+      fetch("/ui/health", { headers: { accept: "application/json" } })
         .then((r) => (r.ok ? r.json() : null))
         // Un échec passager garde le dernier état connu : sinon les
         // exemples et le cache web clignoteraient à chaque relecture.
@@ -599,8 +601,8 @@ createApp({
       if (params.has("key") || params.has("auth_error")) {
         history.replaceState(null, "", location.pathname + location.hash);
       }
-      loadHealth();
       await loadSession();
+      loadHealth();
       poll();
       timers = [
         setInterval(() => { if (!document.hidden) poll(); }, REFRESH),

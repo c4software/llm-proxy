@@ -883,7 +883,25 @@ async def forward(call: Call, request: Request, path: str, body: bytes,
 
 
 @app.get("/healthz")
-async def healthz():
+async def healthz(request: Request):
+    """Vivant ? Sans clé (auth active) : `{"status": "ok"}`, et rien de
+    plus — ni URL de backend, ni modèles, ni outils : c'est ce que lit le
+    HEALTHCHECK du conteneur. Avec une clé valide (en-tête), ou proxy
+    ouvert : l'état détaillé (health_detail). La page le lit sous sa
+    session, par GET /ui/health."""
+    if auth_required() and await key_client(client_token(request)) is None:
+        return {"status": "ok"}
+    return health_detail()
+
+
+@app.get("/ui/health")
+async def ui_health():
+    """L'état détaillé, pour la page : sous /ui, la session suffit."""
+    return health_detail()
+
+
+def health_detail() -> dict:
+    """L'état du déploiement : backends, surfaces, outils, caches."""
     return {
         "status": "ok",
         "tool_choice": TOOL_CHOICE,

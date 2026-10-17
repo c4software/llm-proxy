@@ -166,7 +166,8 @@ vivait à la racine et les bancs s'appelaient `envTest/`.
   Voir [Mémoire persistante](#mémoire-persistante-memory).
 - **Plafond `max_tokens`** — optionnel, par backend : la valeur du
   client est ramenée au plafond (Claude Code en demande 32 000).
-- **Observabilité** — `GET /healthz` expose l'état de chaque backend
+- **Observabilité** — `GET /healthz` (avec la clé, si l'auth est active ;
+  sans elle, `{"status": "ok"}` seulement) expose l'état de chaque backend
   (URL, quotas restants par fenêtre, derniers modèles vus, réglages
   `tool_choice` / `max_tokens` / `images` / `tokenize_path`) et de la
   surface Anthropic ; un résumé périodique des compteurs est loggé
@@ -582,8 +583,8 @@ celle d'un admin montre tout le monde.
 *Proxy*, réservé aux admins dès que les comptes existent.
 
 `GET /ui/auth` (sans clé ni session) dit à la page comment entrer :
-`{"mode": "oidc" | "key" | null, "label": …}` ; `/healthz` le répète
-(`ui_login`), et `GET /ui/session` y ajoute le compte connecté
+`{"mode": "oidc" | "key" | null, "label": …}` ; `/healthz` détaillé le
+répète (`ui_login`), et `GET /ui/session` y ajoute le compte connecté
 (`account` : identifiant, e-mail, nom, rôle). Le journal dit au
 démarrage si les comptes sont actifs, et chaque connexion (compte,
 rôle) ; un retour refusé par le fournisseur ou un jeton invalide renvoie
@@ -745,8 +746,9 @@ navigateur — rien n'est écrit sur le proxy.
   et les clés de tous.
 - **Proxy** : un formulaire guidé pour `data/config.toml` — clés (une par
   personne), backends, surfaces, outils hébergés et leur limite, chat,
-  adresse publique, rétention. Prérempli d'après `/healthz`, l'état
-  public du déploiement (jamais un secret ; le nombre de clés n'y est
+  adresse publique, rétention. Prérempli d'après `GET /ui/health` (le
+  `/healthz` détaillé, sous la session de la page), l'état du
+  déploiement (jamais un secret ; le nombre de clés n'y est
   pas, la liste est à compléter) ; *Réinitialiser* y ramène le
   formulaire, clés saisies gardées. Les modèles se choisissent dans le
   catalogue (`/ui/models`, `?all=1` pour l'OCR, la transcription et les
@@ -2799,7 +2801,7 @@ url = "http://bigchuck:8009"
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `api_keys` | `[]` | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>` à la OpenAI, ou `x-api-key: <clé>` à l'Anthropic). Liste vide = proxy ouvert ; 401 sinon, `/healthz` exempté ; `/ui` la demande à l'entrée, puis tient une session signée (le condensé de la clé, jamais la clé) |
+| `api_keys` | `[]` | Clé(s) exigée(s) **des clients** pour appeler le proxy (`Authorization: Bearer <clé>` à la OpenAI, ou `x-api-key: <clé>` à l'Anthropic). Liste vide = proxy ouvert ; 401 sinon, `/healthz` exempté (il n'y dit alors que `{"status": "ok"}`) ; `/ui` la demande à l'entrée, puis tient une session signée (le condensé de la clé, jamais la clé) |
 | `upstream_timeout` | `600` | Secondes ; large pour les longues générations |
 | `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info` — court, un backend lent ne doit pas bloquer le catalogue |
 | `tool_choice` | `"auto"` | Valeur injectée quand `tools` est présent sans `tool_choice`, pour les backends ayant `force_tool_choice = true`. L'injection est désactivée par défaut : elle s'active par backend |
@@ -3111,13 +3113,21 @@ contexte d'un agent : lire
 [Ce qu'aucun garde-fou n'empêche](#ce-quaucun-garde-fou-nempêche) avant
 de les ouvrir. Et avec `code_execution`, du code écrit par un modèle
 tourne sur la machine : lire
-[Ce que le bac à sable vaut](#ce-que-le-bac-à-sable-vaut). La route
-`GET /v1/files/<jeton>/<nom>` est la seule, avec `/healthz`, servie
-**sans** la clé du proxy : le jeton du lien vaut droit d'accès.
+[Ce que le bac à sable vaut](#ce-que-le-bac-à-sable-vaut).
+
+Ce qui se sert **sans** la clé du proxy, auth active :
+`GET /v1/files/<jeton>/<nom>` (le jeton du lien vaut droit d'accès) ;
+`GET /healthz`, réduit à `{"status": "ok"}` (le détail — backends et
+leurs URL, outils, caches — exige une clé, ou la session de la page par
+`GET /ui/health`) ; et de la page, ce qu'il faut pour y entrer : `/`
+(redirige vers `/ui`), `/ui`, ses fichiers (`/ui/static/*`,
+`/ui/sw.js`), `GET /ui/auth`, `GET /ui/auth/login` et le retour OIDC,
+`POST /ui/login` et `POST /ui/logout`.
 
 ## Vérification
 
-    curl http://localhost:8000/healthz
+    curl http://localhost:8000/healthz       # {"status":"ok"} sans clé (auth active)
+    curl -H "Authorization: Bearer $CLE" http://localhost:8000/healthz   # le détail
 
     curl -s http://localhost:8000/v1/models | jq '.data[].id'
 

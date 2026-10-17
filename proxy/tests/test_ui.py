@@ -369,3 +369,24 @@ def test_chat_edits_an_attached_image(ui, monkeypatch):
     assert b"plus sombre" in raw and png in raw and b"image/png" in raw
     assert ui.client.post("/ui/images/edits", json={
         **body, "image": "data:image/png;base64,AAAA"}).status_code == 400
+
+
+def test_healthz_says_only_ok_without_a_key(ui):
+    """Auth active : sans clé, /healthz ne dit que « ok » — ni backends,
+    ni outils (c'est ce que lit le HEALTHCHECK du conteneur)."""
+    assert ui.client.get("/healthz").json() == {"status": "ok"}
+    assert ui.client.get("/healthz", headers={
+        "authorization": "Bearer faux"}).json() == {"status": "ok"}
+    full = ui.client.get("/healthz", headers={
+        "authorization": f"Bearer {KEY}"}).json()
+    assert full["status"] == "ok" and "backends" in full
+
+
+def test_the_page_reads_the_detail_under_its_session(ui):
+    assert ui.client.get("/ui/health").status_code == 401
+    login(ui)
+    assert "backends" in ui.client.get("/ui/health").json()
+
+
+def test_an_open_proxy_shows_its_health(proxy):
+    assert "backends" in proxy.client.get("/healthz").json()

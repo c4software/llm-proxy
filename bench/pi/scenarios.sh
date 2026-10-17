@@ -22,12 +22,13 @@ pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails + 1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$1"; skips=$((skips + 1)); }
 
-# Ce que le proxy héberge, lu dans /healthz — exempté de clé : `hosted`, ses
+# Ce que le proxy héberge, lu dans /healthz — avec la clé (sans elle, il ne dit que « ok ») : `hosted`, ses
 # outils actifs (« web_search web_fetch ») ; `mcp`, « true » si son serveur
 # MCP est actif. Vides si rien n'est activé, si le proxy est plus ancien que
 # ces réglages ou s'il ne répond pas.
 health=$(node -e '
-  fetch(process.argv[1] + "/healthz", {signal: AbortSignal.timeout(10000)})
+  fetch(process.argv[1] + "/healthz", {signal: AbortSignal.timeout(10000),
+    headers: {authorization: "Bearer " + (process.env.PROXY_API_KEY || "")}})
     .then(r => r.json())
     .then(j => process.stdout.write(((j.tools || {}).enabled || []).join(" ") + "|"
       + String(!!(j.mcp_server || {}).enabled)))
