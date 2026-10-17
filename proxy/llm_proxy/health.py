@@ -86,6 +86,11 @@ def health_detail() -> dict:
         "tools": {
             "enabled": [t.name for t in tools.enabled()],
             "max_calls": tools.MAX_CALLS,
+            # Le modèle des outils qui en visent un : de quoi préremplir
+            # le générateur de la page.
+            "models": {"image_generation": tools.image_generation.MODEL,
+                       "ocr": tools.ocr.MODEL,
+                       "transcribe": tools.transcribe.MODEL},
             "memory_entries": len(tools.MEMORY),
             # Cache web (tools/webcache.py) : pages et recherches gardées
             # quelques minutes, et ce qu'il a épargné depuis le démarrage.

@@ -394,6 +394,7 @@ def test_healthz_says_what_the_proxy_form_prefills(ui):
         "authorization": f"Bearer {KEY}"}).json()
     assert all(isinstance(b["fair_share"], bool) for b in full["backends"].values())
     assert isinstance(full["exempt_paths"], list)
+    assert set(full["tools"]["models"]) == {"image_generation", "ocr", "transcribe"}
     assert set(full["oidc"]) == {"enabled", "issuer", "redirect_uri", "new_accounts",
                                  "session_days", "max_keys_per_account", "label"}
 
