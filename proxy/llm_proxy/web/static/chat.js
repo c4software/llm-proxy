@@ -252,7 +252,7 @@ window.ChatPanel = {
     // Noms lisibles des types d'outils ; un type inconnu garde le sien.
     const TOOL_LABELS = {
       web_search: "Web", code_execution: "Code", code_interpreter: "Code",
-      image_generation: "Images", memory: "Mémoire", ocr: "OCR",
+      image_generation: "Images", memory: "Retenir", ocr: "OCR",
       transcribe: "Transcription",
     };
 
