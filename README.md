@@ -2786,6 +2786,52 @@ SearXNG : pour la recherche web, déployer une instance à part et y
 pointer `tools.web_search.searxng_url`. Ni l'exécuteur de code : c'est
 un second service, avec ses propres options de sécurité.
 
+### Sauvegarde et restauration
+
+`data/` porte ce qu'on ne peut pas reconstruire : les bases
+(`stats.db`, `memory.db`, `accounts.db`), **`client.secret`** — le perdre
+ou le remplacer, c'est perdre toutes les mémoires, toutes les clés
+gérées et toutes les sessions — et `config.toml`. Les bases sont en WAL :
+un `cp` pendant que le proxy écrit ne donne pas une copie fiable.
+`python -m llm_proxy.backup` les copie par l'API de sauvegarde de SQLite
+(cohérente à chaud, journal compris) et met le tout dans **une** archive
+datée, mode `600` (elle contient le secret) :
+
+    # sauvegarder (dans data/backups/, les 14 plus récentes gardées)
+    docker compose exec albert-proxy python -m llm_proxy.backup
+    docker compose exec albert-proxy python -m llm_proxy.backup /app/data/backups --keep 30
+
+    # vérifier une archive : chaque base rouverte (integrity_check, lignes
+    # par table), TOML relu, taille du secret — sans rien toucher
+    docker compose exec albert-proxy python -m llm_proxy.backup \
+      --check /app/data/backups/llm-proxy-20261017-030000.tar.gz
+
+**Chaque nuit**, sur l'hôte (crontab de l'utilisateur qui pilote la
+pile ; sur frontal, depuis `~/stacks`) :
+
+    0 3 * * * cd ~/stacks && docker compose exec -T albert-proxy python -m llm_proxy.backup >> ~/llm-proxy-backup.log 2>&1
+
+Les archives restent sur le même disque que `data/` : en **copier
+ailleurs** (une autre machine, un stockage externe), sinon la perte du
+disque emporte tout. Le **`.env`** (clé Albert, `OIDC_CLIENT_SECRET`…)
+n'est pas dans l'archive : il vit hors de `data/`, à sauvegarder à part.
+
+**Restaurer**, proxy arrêté (une base ouverte ne doit pas changer sous
+lui) :
+
+    cd ~/stacks
+    docker compose stop albert-proxy
+    docker compose run --rm --no-deps -T albert-proxy python -m llm_proxy.backup \
+      --restore /app/data/backups/llm-proxy-20261017-030000.tar.gz
+    docker compose start albert-proxy
+
+L'archive est d'abord vérifiée (abîmée : rien n'est touché) ; chaque
+fichier revient à son chemin configuré, et ce qui y était part dans
+`data/pre-restore-<date>/` — rien n'est écrasé. **Le test de
+restauration**, à faire de temps en temps sans toucher la production :
+`--check` sur la dernière archive, ou `--restore … --to /tmp/essai`
+puis un coup d'œil aux fichiers.
+
 ## Configuration
 
 **Tout vit dans `data/config.toml`.** Le fichier est créé au premier

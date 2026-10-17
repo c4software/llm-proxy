@@ -12,6 +12,13 @@ data/client.secret
 data/memory.db
 data/memory.db-wal
 data/memory.db-shm
+# Comptes OIDC et condensés de leurs clés ; sauvegardes (backup.py) et ce
+# qu'une restauration met de côté.
+data/accounts.db
+data/accounts.db-wal
+data/accounts.db-shm
+data/backups/
+data/pre-restore-*/
 .venv/
 .pytest_cache/
 bench/.env
