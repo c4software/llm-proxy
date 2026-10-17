@@ -12,16 +12,14 @@
   shell exporte dans une variable (LLM_PROXY_API_KEY par défaut).
 
   PROXY. Un formulaire guidé pour data/config.toml : accès, backends,
-  surfaces, outils, chat. Prérempli d'après /healthz (l'état public du
-  déploiement : backends, outils actifs, surfaces — jamais un secret).
+  surfaces, outils, chat. Prérempli d'après la configuration en vigueur
+  (/ui/config) ; ce qu'il change s'applique sur elle (/ui/config/merge),
+  et la page ne montre qu'UN fichier, complet.
   Les secrets sont des «${VAR}» dans le TOML ; leurs valeurs vont dans un
   .env à part, que la page produit aussi (clés du proxy tirées au hasard
-  dans le navigateur, à la demande). Seuls les réglages du formulaire sont
-  écrits : tout autre garde son défaut (voir config.example.toml).
-
-  La CONFIGURATION COMPLÈTE en vigueur, sous le formulaire Proxy
-  (/ui/config, config_view.py) : fichier et défauts, secrets masqués,
-  modifiable et vérifiable dans la page, jamais écrite.
+  dans le navigateur, à la demande). Le fichier montre aussi les défauts
+  (« # défaut »), masque les secrets écrits en clair, se modifie et se
+  vérifie dans la page — jamais écrit sur le proxy (config_view.py).
 
   CLÉS et COMPTES, avec les comptes OIDC seulement ([oidc]). Chacun crée
   ses clés (des uuid4, /ui/keys) pour ses clients — montrées UNE fois, à
@@ -72,20 +70,24 @@ window.ConfigPanel = {
       if (p === "proxy" && !settings.loaded) loadSettings();
     }
 
-    // ── paramètres : la configuration effective, en lecture seule ────────
+    // ── la configuration complète : UN fichier ───────────────────────────
     // GET /ui/config : tout ce que le proxy lit, valeurs du fichier ou
-    // défauts (« # défaut »), secrets masqués. Modifiable ICI seulement :
-    // vérifié par le proxy (POST /ui/config/check), copié, téléchargé —
-    // jamais écrit sur lui.
-    const settings = reactive({ loaded: false, path: "", defaults: 0, original: "",
-                                text: "", error: "", check: null, checking: false });
+    // défauts (« # défaut »), secrets masqués, et ces valeurs pour
+    // préremplir le formulaire. Le formulaire s'y applique (POST
+    // /ui/config/merge) : `generated`, le fichier complet qu'il donne.
+    // `text` : ce qu'affiche la page — `generated`, tant qu'on ne l'a pas
+    // modifié à la main. Vérifié par le proxy (POST /ui/config/check),
+    // copié, téléchargé — jamais écrit sur lui.
+    const settings = reactive({ loaded: false, path: "", defaults: 0, values: null,
+                                generated: "", text: "", error: "", check: null, checking: false });
     async function loadSettings() {
       settings.error = "";
       settings.check = null;
       try {
         const r = await call("GET", "/ui/config");
         Object.assign(settings, { loaded: true, path: r.path, defaults: r.defaults,
-                                  original: r.toml, text: r.toml });
+                                  values: r.values, generated: r.toml, text: r.toml });
+        if (!prefilled.value) prefill();
       } catch (e) { settings.error = e.message; }
     }
     async function checkSettings() {
@@ -98,6 +100,7 @@ window.ConfigPanel = {
     watch(() => settings.text, () => { settings.check = null; });
     const settingsFile = computed(() => ({ name: "config.toml", download: "config.toml",
                                            content: settings.text }));
+    const edited = computed(() => settings.text !== settings.generated);
 
     // ── clés et comptes (OIDC) ──────────────────────────────────────────
     const keys = ref([]);
@@ -484,50 +487,66 @@ window.ConfigPanel = {
       fairShare: 0, exempt: "/embeddings, /rerank, /audio/transcriptions, /ocr",
       // Comptes ([oidc]) : client_id et client_secret vont dans le .env.
       oidc: { on: false, issuer: "", redirectUri: "", newAccounts: "pending",
-              sessionDays: 7, maxKeys: 50, label: "Se connecter" },
+              sessionDays: 7, maxKeys: 50, label: "Se connecter",
+              idVar: "OIDC_CLIENT_ID", secretVar: "OIDC_CLIENT_SECRET" },
+      executorVar: "",                // la variable du jeton, lue dans le fichier
     });
     const prefilled = ref(false);
 
-    // Préremplissage depuis /healthz : ce que le déploiement dit de lui.
+    // Préremplissage depuis la configuration en vigueur (GET /ui/config,
+    // `values` : le fichier et les défauts, secrets masqués) — ce que le
+    // fichier dit vraiment, pas une estimation : le formulaire ne réécrit
+    // que ce qu'on y change.
+    const VAR_REF = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+    const varOf = (v) => (typeof v === "string" && (VAR_REF.exec(v) || [])[1]) || "";
     function prefill() {
-      const h = props.health;
-      if (!h) return;
-      px.backends = Object.entries(h.backends || {}).map(([name, b]) => ({
-        name, url: b.url || "", key: !!b.key_injection, quotas: !!b.quotas,
-        images: !!b.images, toolChoice: typeof b.tool_choice === "string" ? b.tool_choice : "",
+      const c = settings.values;
+      if (!c) return;
+      const g = (path, d) => {
+        const v = path.split(".").reduce((n, k) => (n && typeof n === "object" ? n[k] : undefined), c);
+        return v === undefined || v === null ? d : v;
+      };
+      px.logLevel = g("proxy.log_level", "INFO");
+      // Une clé écrite en clair (masquée) devient un ${VAR} : sa valeur va au .env.
+      px.keys = g("proxy.api_keys", []).map((k, i) => ({
+        name: varOf(k) || "PROXY_API_KEY_" + (i + 1), value: "", plain: !varOf(k) }));
+      px.exempt = g("proxy.exempt_paths", []).join(", ");
+      px.backends = Object.entries(g("backends", {})).map(([name, b]) => ({
+        name, url: b.url || "", key: !!b.api_key, keyVar: varOf(b.api_key), quotas: !!b.quotas,
+        images: !!b.images, toolChoice: typeof b.force_tool_choice === "string" ? b.force_tool_choice : "",
         maxTokens: b.max_tokens || "", fairShare: b.fair_share !== false,
       }));
-      px.fairShare = (h.fair_share || {}).tokens_per_hour || 0;
-      if (h.exempt_paths) px.exempt = h.exempt_paths.join(", ");
-      const o = h.oidc || {};
-      if (o.issuer !== undefined) {
-        Object.assign(px.oidc, { on: !!o.enabled, issuer: o.issuer || "",
-          redirectUri: o.redirect_uri || "", newAccounts: o.new_accounts || "pending",
-          sessionDays: o.session_days || 7, maxKeys: o.max_keys_per_account || 50,
-          label: o.label || "Se connecter" });
-      }
-      px.anthropic = !!(h.anthropic || {}).enabled;
-      px.defaultModel = ((h.anthropic || {}).model_map || {}).default || "";
-      px.responses = !!(h.responses || {}).enabled;
-      const chat = h.chat || {};
-      px.hostedTools = !!chat.hosted_tools;
-      px.always = (chat.always || []).join(", ");
-      px.alwaysExcept = (chat.always_except || []).join(", ");
-      const on = new Set(((h.tools || {}).enabled) || []);
-      for (const t of TOOL_LIST) px.tools[t.id] = on.has(t.id);
-      const toolModels = (h.tools || {}).models || {};
-      for (const id of Object.keys(px.toolModels)) px.toolModels[id] = toolModels[id] || "";
-      px.maxCalls = (h.tools || {}).max_calls || 8;
-      px.mcpServer = !!(h.mcp_server || {}).enabled;
-      px.uiChat = !!(props.session.chat || {}).enabled;
-      px.chatModel = (props.session.chat || {}).model || "";
-      if ((h.files || {}).public_url) px.publicUrl = origin;
-      if (!px.keys.length && h.auth_required && !px.oidc.on) {
-        px.keys = [{ name: "PROXY_API_KEY", value: "" }];
-      }
+      px.fairShare = g("fair_share.tokens_per_hour", 0);
+      const o = g("oidc", {});
+      Object.assign(px.oidc, { on: !!(o.issuer && o.client_id), issuer: o.issuer || "",
+        redirectUri: o.redirect_uri || "", newAccounts: o.new_accounts || "pending",
+        sessionDays: o.session_days || 7, maxKeys: o.max_keys_per_account || 50,
+        label: o.label || "Se connecter",
+        idVar: varOf(o.client_id) || "OIDC_CLIENT_ID", secretVar: varOf(o.client_secret) || "OIDC_CLIENT_SECRET" });
+      px.anthropic = !!g("anthropic.enabled", false);
+      px.defaultModel = g("anthropic.model_map.default", "");
+      px.responses = !!g("responses.enabled", false);
+      px.hostedTools = !!g("chat.hosted_tools", false);
+      px.always = g("chat.always", []).join(", ");
+      px.alwaysExcept = g("chat.always_except", []).join(", ");
+      px.maxCalls = g("tools.max_calls", 8);
+      for (const t of TOOL_LIST) px.tools[t.id] = !!g(`tools.${t.id}.enabled`, false);
+      for (const id of Object.keys(px.toolModels)) px.toolModels[id] = g(`tools.${id}.model`, "");
+      px.searxng = g("tools.web_search.searxng_url", px.searxng);
+      px.executor = g("tools.code_execution.url", px.executor);
+      px.executorVar = varOf(g("tools.code_execution.token", ""));
+      px.mcpServer = !!g("mcp_server.enabled", false);
+      px.uiChat = !!g("ui.chat", false);
+      px.chatModel = g("ui.chat_model", "");
+      px.publicUrl = g("files.public_url", "");
+      px.retention = g("stats.retention_days", 90);
       prefilled.value = true;
     }
-    watch(() => props.health, (h) => { if (h && !prefilled.value) prefill(); }, { immediate: true });
+    // Réinitialiser : relire la configuration, puis le formulaire.
+    async function resetProxy() {
+      prefilled.value = false;
+      await loadSettings();
+    }
 
     // Les modèles d'un menu : le catalogue, et la valeur en place si elle
     // n'y est pas (un modèle de configuration hors catalogue ne se perd
@@ -548,9 +567,6 @@ window.ConfigPanel = {
       const env = [];
       const L = [];
       const keyVars = px.keys.map((k) => envName(k.name)).filter(Boolean);
-      L.push("# data/config.toml — généré par l'onglet Configuration de /ui.",
-             "# Seuls ces réglages sont écrits ; tout autre garde son défaut",
-             "# (voir data/config.example.toml).", "");
       L.push("[proxy]", `log_level = ${q(px.logLevel)}`,
              `api_keys = ${list(keyVars.map((v) => "${" + v + "}"))}`,
              `exempt_paths = ${list(csv(px.exempt))}`, "");
@@ -559,8 +575,10 @@ window.ConfigPanel = {
         if (v) env.push(`${v}=${k.value || ""}`);
       }
       const oidcOn = px.oidc.on && !!px.oidc.issuer.trim();
-      if (!keyVars.length && !oidcOn) warn.push("Aucune clé : le proxy est ouvert à quiconque l'atteint "
-        + (px.uiChat ? "— chat de /ui compris, qui dépense des tokens." : "."));
+      for (const k of px.keys) if (k.plain) warn.push(`Une clé du proxy était écrite en clair : `
+        + `elle devient \${${envName(k.name)}}, sa valeur est à mettre dans le .env.`);
+      if (!keyVars.length && !oidcOn) warn.push("Aucune clé : le proxy est ouvert à quiconque l'atteint"
+        + (px.uiChat ? " — chat de /ui compris, qui dépense des tokens." : "."));
 
       const share = Math.max(0, Math.round(Number(px.fairShare) || 0));
       L.push("[fair_share]", `tokens_per_hour = ${share}`, "");
@@ -569,13 +587,13 @@ window.ConfigPanel = {
       if (px.oidc.on) {
         const o = px.oidc;
         L.push("[oidc]", `issuer = ${q(o.issuer.trim().replace(/\/+$/, ""))}`,
-               'client_id = "${OIDC_CLIENT_ID}"', 'client_secret = "${OIDC_CLIENT_SECRET}"');
+               `client_id = "\${${o.idVar}}"`, `client_secret = "\${${o.secretVar}}"`);
         if (o.redirectUri.trim()) L.push(`redirect_uri = ${q(o.redirectUri.trim())}`);
         L.push(`new_accounts = ${q(o.newAccounts)}`,
                `session_days = ${Math.max(1, Number(o.sessionDays) || 7)}`,
                `max_keys_per_account = ${Math.max(1, Number(o.maxKeys) || 50)}`,
                `label = ${q(o.label || "Se connecter")}`, "");
-        env.push("OIDC_CLIENT_ID=", "OIDC_CLIENT_SECRET=");
+        env.push(`${o.idVar}=`, `${o.secretVar}=`);
         if (!o.issuer.trim()) warn.push("Comptes OIDC : l'émetteur (issuer) est requis.");
         if (!o.redirectUri.trim() && !px.publicUrl.trim()) warn.push("Comptes OIDC : sans adresse de retour "
           + "ni adresse publique, elle est déduite de la requête — en http:// derrière un reverse proxy, "
@@ -592,12 +610,16 @@ window.ConfigPanel = {
         L.push(`[tools.${t.id}]`, `enabled = ${!!px.tools[t.id]}`);
         if (t.id === "web_search") L.push(`searxng_url = ${q(px.searxng)}`);
         if (t.id === "code_execution") {
-          L.push(`url = ${q(px.executor)}`, 'token = "${EXECUTOR_TOKEN}"');
-          if (px.tools[t.id]) env.push("EXECUTOR_TOKEN=");
+          // Le jeton : sa variable du fichier, sinon EXECUTOR_TOKEN dès que
+          // l'outil est actif (inactif et sans jeton : rien à écrire).
+          const tv = px.executorVar || (px.tools[t.id] ? "EXECUTOR_TOKEN" : "");
+          L.push(`url = ${q(px.executor)}`);
+          if (tv) L.push(`token = "\${${tv}}"`);
+          if (tv && px.tools[t.id]) env.push(`${tv}=`);
         }
         if (t.model) {
           const m = px.toolModels[t.id];
-          L.push(m ? `model = ${q(m)}` : `# model = "<backend>/<modèle>"`);
+          if (m) L.push(`model = ${q(m)}`);
           if (px.tools[t.id] && !m) warn.push(`${t.label} : un modèle est requis.`);
         }
         L.push("");
@@ -619,7 +641,7 @@ window.ConfigPanel = {
         names.add(name);
         L.push(`[backends.${name}]`, `url = ${q(b.url)}`);
         if (b.key) {
-          const v = envName(name) + "_API_KEY";
+          const v = b.keyVar || envName(name) + "_API_KEY";
           L.push(`api_key = "\${${v}}"`);
           env.push(`${v}=`);
         }
@@ -634,12 +656,11 @@ window.ConfigPanel = {
       if (px.always && !px.hostedTools) warn.push("[chat].always est sans effet sans hosted_tools.");
       return {
         warn,
+        // Le fichier PARTIEL du formulaire : le proxy l'applique sur la
+        // configuration en vigueur (POST /ui/config/merge) — la page ne
+        // montre que le fichier complet.
+        partial: L.join("\n").replace(/\n{3,}/g, "\n\n"),
         files: [
-          { name: "data/config.toml", download: "config.toml", lang: "toml",
-            note: "Les seuls réglages du formulaire (tout autre reprend son défaut) : la configuration "
-              + "complète en vigueur est plus bas. À poser à la place de data/config.toml (garder "
-              + "l'ancien en .bak), puis redémarrer le proxy.",
-            content: L.join("\n").replace(/\n{3,}/g, "\n\n") },
           { name: ".env", download: "llm-proxy.env", lang: "sh",
             note: "Les secrets que le TOML référence par ${VAR} : à côté du docker-compose.yml, "
               + "jamais dans le dépôt. À compléter là où la valeur est vide.",
@@ -648,7 +669,27 @@ window.ConfigPanel = {
       };
     });
 
-    return { KEYFILE, settings, loadSettings, checkSettings, settingsFile, part, parts, setPart, account, isAdmin, keys, tomlKeys, allKeys,
+    // Le formulaire change → le fichier complet se recalcule (un instant
+    // après la dernière frappe). Modifié à la main : il n'est plus écrasé,
+    // « Réappliquer le formulaire » le rend au formulaire.
+    let mergeTimer = 0;
+    async function mergeForm() {
+      if (!prefilled.value) return;
+      try {
+        const r = await call("POST", "/ui/config/merge", { toml: proxyOut.value.partial });
+        const follow = !edited.value;
+        settings.generated = r.toml;
+        settings.defaults = r.defaults;
+        if (follow) settings.text = r.toml;
+        settings.error = "";
+      } catch (e) { settings.error = e.message; }
+    }
+    watch(() => proxyOut.value.partial, () => {
+      clearTimeout(mergeTimer);
+      mergeTimer = setTimeout(mergeForm, 300);
+    });
+
+    return { KEYFILE, settings, loadSettings, checkSettings, settingsFile, edited, resetProxy, part, parts, setPart, account, isAdmin, keys, tomlKeys, allKeys,
              keyLabel, fresh, keyError, armed, createKey, revokeKey, loadKeys,
              users, userError, bindToml, ROLES, fair, num, shareMode,
              customShare, pickShare, typeShare, roleLabel, pendingCount, setRole, when,
@@ -826,11 +867,10 @@ window.ConfigPanel = {
     <div class="config-grid" v-if="part === 'proxy'">
       <form class="panel config-form" @submit.prevent>
         <div class="panel-head"><h2>Proxy</h2>
-          <button type="button" class="btn ghost" @click="prefill" :disabled="!health"
-                  title="Remplace le formulaire par l'état actuel du proxy (backends, surfaces, outils actifs, limites), lu sur /healthz. Les clés saisies sont gardées.">Réinitialiser</button></div>
-        <p class="note config-intro">Prérempli d'après l'état actuel du proxy (/healthz).
-          « Réinitialiser » y ramène le formulaire après des modifications ; les clés
-          saisies sont gardées.</p>
+          <button type="button" class="btn ghost" @click="resetProxy" :disabled="!settings.loaded"
+                  title="Relit la configuration en vigueur : formulaire et fichier y reviennent">Réinitialiser</button></div>
+        <p class="note config-intro">Prérempli d'après la configuration en vigueur ; ce qu'on y
+          change s'applique au fichier complet ci-contre. « Réinitialiser » y ramène l'un et l'autre.</p>
         <div class="config-fields">
           <fieldset><legend>Accès</legend>
             <p class="note">Une clé par personne : chacune a ses statistiques, sa mémoire, ses conversations.</p>
@@ -941,39 +981,24 @@ window.ConfigPanel = {
       </form>
       <div class="config-out">
         <p class="chat-warn panel" v-for="w in proxyOut.warn" :key="w">{{ w }}</p>
-        <section class="panel config-file" v-for="f in proxyOut.files" :key="f.name">
-          <header class="panel-head">
-            <h3>{{ f.name }}</h3>
-            <span class="config-actions">
-              <button type="button" class="btn ghost" @click="copy(f)">{{ copied === f.name ? "Copié" : "Copier" }}</button>
-              <button type="button" class="btn ghost" @click="download(f)">Télécharger</button>
-            </span>
-          </header>
-          <p class="note" v-if="f.note">{{ f.note }}</p>
-          <pre>{{ f.content }}</pre>
-        </section>
-      </div>
-    </div>
-
-    <div class="config-keys config-settings" v-if="part === 'proxy'">
-      <section class="panel">
-        <div class="panel-head"><h2>Configuration complète en vigueur</h2>
+        <section class="panel config-settings">
+        <div class="panel-head"><h3>data/config.toml</h3>
           <span class="config-actions">
             <button type="button" class="btn ghost" @click="checkSettings"
                     :disabled="!settings.loaded || settings.checking">Vérifier</button>
-            <button type="button" class="btn ghost" @click="settings.text = settings.original"
-                    :disabled="settings.text === settings.original">Annuler les modifications</button>
-            <button type="button" class="btn ghost" @click="loadSettings">Relire</button>
+            <button type="button" class="btn ghost" @click="settings.text = settings.generated"
+                    :disabled="!edited" title="Rend au fichier les valeurs du formulaire">Réappliquer le formulaire</button>
             <button type="button" class="btn ghost" @click="copy(settingsFile)"
                     :disabled="!settings.loaded">{{ copied === settingsFile.name ? "Copié" : "Copier" }}</button>
             <button type="button" class="btn ghost" @click="download(settingsFile)"
                     :disabled="!settings.loaded">Télécharger</button>
           </span></div>
-        <p class="note"><code>{{ settings.path }}</code> : les valeurs du fichier, et celles que le proxy prend
-          d'office ({{ settings.defaults }}, suivies de « # défaut »). Les <code>\${VAR}</code> renvoient au
-          .env ; une valeur secrète écrite en clair est masquée. Modifiable ici pour préparer un fichier :
-          <strong>rien n'est écrit sur le proxy</strong> — remplacer data/config.toml sur l'hôte (valeurs
-          masquées remises), puis redémarrer.</p>
+        <p class="note">Le fichier complet : <code>{{ settings.path }}</code> tel qu'il est, avec ce que le
+          formulaire y change, et les valeurs que le proxy prend d'office ({{ settings.defaults }}, suivies de
+          « # défaut »). Les <code>\${VAR}</code> renvoient au .env ; une valeur secrète écrite en clair est
+          masquée. <strong>Rien n'est écrit sur le proxy</strong> : remplacer data/config.toml sur l'hôte
+          (l'ancien en .bak, valeurs masquées remises), puis redémarrer.</p>
+        <p class="note" v-if="edited">Modifié à la main : le formulaire ne l'écrase plus.</p>
         <p class="err" v-if="settings.error" role="status">{{ settings.error }}</p>
         <div v-if="settings.check" class="settings-check" role="status">
           <p class="err" v-if="!settings.check.ok">TOML invalide : {{ settings.check.error }}</p>
@@ -986,6 +1011,18 @@ window.ConfigPanel = {
         <textarea v-model="settings.text" spellcheck="false" aria-label="config.toml"
                   :placeholder="settings.loaded ? '' : 'Chargement…'"></textarea>
       </section>
+        <section class="panel config-file" v-for="f in proxyOut.files" :key="f.name">
+          <header class="panel-head">
+            <h3>{{ f.name }}</h3>
+            <span class="config-actions">
+              <button type="button" class="btn ghost" @click="copy(f)">{{ copied === f.name ? "Copié" : "Copier" }}</button>
+              <button type="button" class="btn ghost" @click="download(f)">Télécharger</button>
+            </span>
+          </header>
+          <p class="note" v-if="f.note">{{ f.note }}</p>
+          <pre>{{ f.content }}</pre>
+        </section>
+      </div>
     </div>
   </div>`,
 };

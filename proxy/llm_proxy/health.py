@@ -1,20 +1,17 @@
 """
 L'état du proxy : GET /healthz (« ok » seul sans clé, le détail avec) et
-GET /ui/health, le même détail pour la page sous sa session. Le détail
-préremplit aussi le générateur de configuration de la page (config.js) :
-jamais un secret.
+GET /ui/health, le même détail pour la page sous sa session. Jamais un
+secret.
 """
 
 from fastapi import APIRouter, Request
 
-from . import accounts
 from . import albert
 from . import anthropic_api
 from . import chat_api
 from . import fairshare
 from . import files
 from . import mcp_server
-from . import oidc
 from . import responses_api
 from . import tools
 from .auth import auth_required, client_token, key_client
@@ -55,14 +52,6 @@ def health_detail() -> dict:
         # Comment la page s'ouvre : «oidc» (comptes), «key» (une clé du
         # TOML), None (proxy ouvert).
         "ui_login": ui_login_mode(),
-        # Les comptes ([oidc]) : de quoi préremplir le générateur de la
-        # page — jamais client_id ni client_secret.
-        "oidc": {"enabled": oidc.ENABLED, "issuer": oidc.ISSUER,
-                 "redirect_uri": oidc.REDIRECT_URI,
-                 "new_accounts": accounts.NEW_ROLE,
-                 "session_days": oidc.SESSION_DAYS,
-                 "max_keys_per_account": accounts.MAX_KEYS,
-                 "label": oidc.LABEL},
         "anthropic": {
             "enabled": anthropic_api.ENABLED,
             "model_map": anthropic_api.MODEL_MAP,
@@ -86,11 +75,6 @@ def health_detail() -> dict:
         "tools": {
             "enabled": [t.name for t in tools.enabled()],
             "max_calls": tools.MAX_CALLS,
-            # Le modèle des outils qui en visent un : de quoi préremplir
-            # le générateur de la page.
-            "models": {"image_generation": tools.image_generation.MODEL,
-                       "ocr": tools.ocr.MODEL,
-                       "transcribe": tools.transcribe.MODEL},
             "memory_entries": len(tools.MEMORY),
             # Cache web (tools/webcache.py) : pages et recherches gardées
             # quelques minutes, et ce qu'il a épargné depuis le démarrage.

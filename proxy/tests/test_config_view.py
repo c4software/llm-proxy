@@ -24,6 +24,7 @@ api_key = "${ALBERT_API_KEY}"
 [backends.local]
 url = "http://local:8080"
 api_key = "sk-local-en-clair"
+timeout = 30
 
 [tools.mcp.notes]
 url = "http://notes/mcp"
@@ -86,3 +87,51 @@ def test_the_chat_model_is_preselected(conf, monkeypatch):
     assert conf.client.get("/ui/session").json()["chat"]["model"] is None
     monkeypatch.setattr(ui_routes, "UI_CHAT_MODEL", "essai/qwen")
     assert conf.client.get("/ui/session").json()["chat"]["model"] == "essai/qwen"
+
+
+def test_the_form_applies_onto_the_whole_file(conf, tmp_path):
+    """POST /ui/config/merge : le fichier partiel du formulaire sur la
+    configuration en vigueur — ce qu'il écrit remplace, ce qu'il omet de
+    ce qu'il règle disparaît, le reste est gardé ; rien n'est écrit."""
+    before = (tmp_path / "config.toml").read_text()
+    values = conf.client.get("/ui/config").json()["values"]
+    assert values["backends"]["local"]["url"] == "http://local:8080"
+    r = conf.client.post("/ui/config/merge", json={"toml": """
+[proxy]
+log_level = "INFO"
+[fair_share]
+tokens_per_hour = 5000
+[backends.albert]
+url = "https://albert.example"
+api_key = "${ALBERT_API_KEY}"
+fair_share = false
+"""}).json()
+    tree = tomllib.loads(r["toml"])
+    assert tree["proxy"]["log_level"] == "INFO"
+    # Hors du formulaire : gardé tel quel (masqué s'il est secret).
+    assert tree["proxy"]["api_keys"] == [V.MASK, "${PROXY_API_KEY}"]
+    assert tree["tools"]["mcp"]["notes"]["url"] == "http://notes/mcp"
+    # Un backend absent du formulaire est retiré ; une valeur posée n'est
+    # plus un défaut.
+    assert list(tree["backends"]) == ["albert"]
+    assert tree["backends"]["albert"]["fair_share"] is False
+    assert "tokens_per_hour = 5000\n" in r["toml"]
+    # [oidc] omis par le formulaire, mais rien que des défauts : gardé, inactif.
+    assert tree["oidc"]["issuer"] == "" and "issuer = \"\"  # défaut" in r["toml"]
+    bad = conf.client.post("/ui/config/merge", json={"toml": "[proxy"})
+    assert bad.status_code == 400
+    assert (tmp_path / "config.toml").read_text() == before
+
+
+def test_a_backend_keeps_what_the_form_does_not_set(conf):
+    """Une clé de backend que le formulaire ne règle pas (timeout) reste ;
+    une qu'il règle et omet (api_key, case décochée) disparaît."""
+    r = conf.client.post("/ui/config/merge", json={"toml": """
+[backends.albert]
+url = "https://albert.example"
+[backends.local]
+url = "http://local:8080"
+"""}).json()
+    tree = tomllib.loads(r["toml"])
+    assert "api_key" not in tree["backends"]["albert"]
+    assert tree["backends"]["local"] == {"url": "http://local:8080", "timeout": 30}

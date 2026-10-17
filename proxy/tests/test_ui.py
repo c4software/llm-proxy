@@ -386,17 +386,11 @@ def test_healthz_says_only_ok_without_a_key(ui):
     assert full["status"] == "ok" and "backends" in full
 
 
-def test_healthz_says_what_the_proxy_form_prefills(ui):
-    """Le générateur Proxy de la page se préremplit du détail : partage
-    équitable par backend, routes exemptées, réglages [oidc] — jamais
-    client_id ni client_secret."""
+def test_healthz_says_each_backend_fair_share(ui):
     full = ui.client.get("/healthz", headers={
         "authorization": f"Bearer {KEY}"}).json()
     assert all(isinstance(b["fair_share"], bool) for b in full["backends"].values())
     assert isinstance(full["exempt_paths"], list)
-    assert set(full["tools"]["models"]) == {"image_generation", "ocr", "transcribe"}
-    assert set(full["oidc"]) == {"enabled", "issuer", "redirect_uri", "new_accounts",
-                                 "session_days", "max_keys_per_account", "label"}
 
 
 def test_the_page_reads_the_detail_under_its_session(ui):

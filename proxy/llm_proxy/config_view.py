@@ -6,7 +6,10 @@ modifier le texte, le vérifier, le copier ou le télécharger, jamais
 l'écrire sur le proxy (il faudrait un redémarrage, et les secrets vivent
 dans le .env de l'hôte).
 
-  GET  /ui/config        le TOML effectif, secrets masqués
+  GET  /ui/config        le TOML effectif, secrets masqués, et ses valeurs
+                         (de quoi préremplir le formulaire de la page)
+  POST /ui/config/merge  le fichier partiel du formulaire appliqué sur la
+                         configuration effective : le fichier complet
   POST /ui/config/check  un TOML modifié : syntaxe, clés inconnues du
                          proxy — rien n'est écrit
 
@@ -152,13 +155,105 @@ def forbidden(request: Request):
     return admin_only(request) if oidc.ENABLED else None
 
 
+# Ce que le formulaire de la page règle ET peut retirer : absent de son
+# fichier partiel, le réglage est retiré du fichier complet (case décochée,
+# champ vidé). Le reste du formulaire écrit toujours ses clés.
+FORM_DROPS = ("oidc", "oidc.redirect_uri", "anthropic.model_map.default",
+              "ui.chat_model", "tools.image_generation.model", "tools.ocr.model",
+              "tools.transcribe.model")
+# Les clés d'un backend que le formulaire règle ; les autres (délais,
+# tokenize_path…) restent. Un backend absent du formulaire est retiré.
+BACKEND_FORM_KEYS = ("url", "api_key", "quotas", "images", "force_tool_choice",
+                     "max_tokens", "fair_share")
+
+
+def _pop(tree: dict, path: str) -> None:
+    *parents, last = path.split(".")
+    for part in parents:
+        tree = tree.get(part)
+        if not isinstance(tree, dict):
+            return
+    tree.pop(last, None)
+
+
+def _overlay(base: dict, top: dict, path: tuple[str, ...], touched: set[str]):
+    """`top` posé sur `base`. `touched` : les chemins dont la valeur vient
+    désormais du formulaire — pas ceux où il redit la valeur en place
+    (un défaut redit reste un défaut)."""
+    for k, v in top.items():
+        p = path + (k,)
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _overlay(base[k], v, p, touched)
+        else:
+            if base.get(k) != v:
+                touched.add(".".join(p))
+                if isinstance(v, dict):      # une table neuve : ses clés aussi
+                    touched.update(".".join(p + (x,)) for x in v)
+            base[k] = v
+
+
+def _leaves(node, path: str) -> list[str]:
+    if not isinstance(node, dict):
+        return [path]
+    return [leaf for k, v in node.items() for leaf in _leaves(v, f"{path}.{k}")]
+
+
+def merged(partial: dict) -> tuple[dict, set[str]]:
+    """Le fichier partiel du formulaire appliqué sur la configuration
+    effective : ce qu'il écrit remplace, ce qu'il retire (FORM_DROPS,
+    backends) disparaît, tout le reste est gardé tel quel."""
+    tree, defaults = effective()
+    for path in FORM_DROPS:
+        node, current = partial, tree
+        for part in path.split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+            current = current.get(part) if isinstance(current, dict) else None
+        # Omis par le formulaire : retiré — sauf s'il n'y a là que des
+        # défauts (rien du fichier à retirer, la vue complète les garde).
+        if node is None and current is not None and \
+                any(leaf not in defaults for leaf in _leaves(current, path)):
+            _pop(tree, path)
+    if isinstance(partial.get("backends"), dict):
+        current = tree.get("backends") or {}
+        for name in list(current):
+            if name not in partial["backends"]:
+                del current[name]
+            else:
+                for key in BACKEND_FORM_KEYS:
+                    if key not in partial["backends"][name]:
+                        current[name].pop(key, None)
+    touched: set[str] = set()
+    _overlay(tree, partial, (), touched)
+    return tree, {d for d in defaults if d not in touched}
+
+
 @router.get("/ui/config")
 async def ui_config(request: Request):
     if (bad := forbidden(request)) is not None:
         return bad
     tree, defaults = effective()
     return {"path": config.CONFIG_PATH, "toml": dumps(tree, defaults),
-            "defaults": len(defaults)}
+            "defaults": len(defaults), "values": tree}
+
+
+@router.post("/ui/config/merge")
+async def ui_config_merge(request: Request):
+    """Le formulaire Proxy de la page → le fichier complet. Rien n'est
+    écrit."""
+    if (bad := forbidden(request)) is not None:
+        return bad
+    body = parse_json(await request.body())
+    text = body.get("toml") if isinstance(body, dict) else None
+    if not isinstance(text, str):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps attendu : {\"toml\": \"…\"}")
+    try:
+        partial = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return error_response("openai", 400, "invalid_request_error",
+                              f"TOML du formulaire invalide : {exc}")
+    tree, defaults = merged(partial)
+    return {"toml": dumps(tree, defaults), "defaults": len(defaults)}
 
 
 @router.post("/ui/config/check")
