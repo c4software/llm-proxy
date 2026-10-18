@@ -41,6 +41,8 @@ import { attachVideo as attach } from "./media.js";
 import { failure } from "./contract.js";
 
 export { TOOL, FAMILY } from "./contract.js";
+// La base SQL d'une conversation (run_sql), pour la télécharger.
+export { load as sqlBase } from "./sandbox/sqlbase.js";
 
 // L'ordre du menu Outils.
 export const FAMILIES = [context, location, notifications, clipboard, calendar, links, share,

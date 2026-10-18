@@ -863,6 +863,14 @@ export const ChatPanel = {
       settle(m, out.result);
     }
     const deviceView = (w) => device.view(w);
+    // Un fichier sous la réponse : son texte, ou la base SQL de la
+    // conversation (run_sql), telle qu'elle est au moment du clic.
+    async function downloadOut(f) {
+      if (!f.base) { download({ name: f.name, content: f.content }, f.type); return; }
+      const bytes = await device.sqlBase(f.base);
+      if (bytes) download({ name: f.name, content: bytes }, f.type);
+      else status.value = "Base introuvable dans ce navigateur (supprimée, ou créée sur un autre).";
+    }
     const attachVideo = (el, w) => device.attachVideo(el, w);
     const refuseWrite = (m) => settle(m, `Refusé par l'utilisateur : « ${m.waiting.path} » n'a pas été modifié.`
       + (m.waiting.comment ? ` Son commentaire : « ${m.waiting.comment} »` : ""));
@@ -1165,7 +1173,7 @@ export const ChatPanel = {
              voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
              askReady, answerAsk, asking, sheetOpen, sheetBody, askTab, askQ, askOptions,
              askAnswered, askCount, showTab, pick, pickOther, onSheetKey, skipAsk, applyWrite, refuseWrite, deviceAct, deviceView, attachVideo, writeDiff, diffCounts,
-             download, fileOf: (f) => ({ name: f.name, content: f.content }),
+             download, downloadOut,
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
              host };
@@ -1373,7 +1381,7 @@ export const ChatPanel = {
             </div>
             <div class="out-files" v-if="m.files && m.files.length">
               <button type="button" class="chip file" v-for="f in m.files" :key="f.name"
-                      @click="download(fileOf(f), f.type)" title="Télécharger">{{ f.name }}
+                      @click="downloadOut(f)" title="Télécharger">{{ f.name }}
                 <span class="dim">{{ size(f.size) }}</span></button>
             </div>
             <div class="typing" v-if="streaming && i === current.messages.length - 1 && !m.error

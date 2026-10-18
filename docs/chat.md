@@ -264,7 +264,7 @@ tokens).
 | Écran allumé | `keep_screen_on` | empêche la veille tant que la page est visible | non | non |
 | JavaScript | `run_javascript` | du JavaScript dans le bac (10 s au plus) | non | non |
 | PHP | `run_php` | un script PHP 8.3 dans le bac : sortie, erreurs, code de sortie (30 s au plus) | non | non |
-| SQL | `run_sql` | un script SQLite dans le bac, sur une base vide en mémoire : un tableau par requête (20 s au plus) | non | non |
+| SQL | `run_sql` | un script SQLite dans le bac, sur la base de la conversation ; importe des fichiers du dossier ouvert ou des pièces jointes ; un tableau par requête (60 s au plus) | non | non |
 
 Ce qui touche à l'appareil n'est **jamais** lu sans un clic sur la
 carte, même si la permission du navigateur est déjà accordée. Une image
@@ -276,12 +276,32 @@ Le **bac** de JavaScript, PHP et SQL : le code tourne dans un Worker,
 créé dans un cadre `sandbox` sans origine (ni la page, ni sa session, ni
 ses cookies), sous une politique qui coupe tout réseau. Une boucle sans
 fin ne fige pas la page : le bac est supprimé au délai dépassé. Chaque
-appel part de zéro. PHP (≈ 18 Mo) et SQLite (≈ 700 Ko) sont des runtimes
+appel de JavaScript ou de PHP part de zéro. PHP (≈ 18 Mo) et SQLite (≈ 700 Ko) sont des runtimes
 WASM servis par le proxy (`/ui/static/vendor/`) et téléchargés
 seulement au premier appel, puis revalidés par le navigateur sans être
 retéléchargés. L'image Docker les construit ; hors Docker, `npm ci &&
 npm run build` dans `proxy/wasm/`, sinon ces deux outils répondent que
 le runtime manque.
+
+**SQL sur ses propres données.** `run_sql` travaille sur une base
+SQLite propre à la conversation, gardée dans **ce navigateur**
+(IndexedDB ; en mémoire seulement pour une conversation incognito) et
+jamais envoyée au proxy. Elle est effacée avec la conversation. Son
+paramètre `files` importe d'abord des fichiers en tables : ceux du
+dossier ouvert ou les pièces jointes texte du fil.
+
+| Fichier | Import |
+|---|---|
+| `.csv`, `.tsv`, `.txt` | séparateur deviné (`,` `;` tabulation), en-tête, types déduits (INTEGER, REAL, TEXT) ; `3,14` vaut 3.14 sous `;` ; `007` reste du texte |
+| `.json`, `.jsonl` | un tableau d'objets, ou un objet par ligne ; valeurs imbriquées en JSON |
+| `.sqlite`, `.db` | ses tables, index et vues, copiés |
+
+La table porte le nom du fichier, ses colonnes ceux de l'en-tête, en
+minuscules sans accents. L'import rend le schéma au modèle. Les
+fichiers sont lus par la page et passés au bac : le modèle ne reçoit
+que les résultats de ses requêtes (200 lignes au plus par résultat),
+pas les fichiers. `reset` vide la base ; `download` met la base sous la
+réponse en `.sqlite`, telle qu'elle est au moment du clic.
 
 Chaque outil suit le contrat de `chat/device/contract.js` : un nom de
 `TOOL`, une famille de `FAMILY`, sa description et ses paramètres, et
