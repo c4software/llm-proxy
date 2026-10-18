@@ -62,7 +62,6 @@ tableau de bord est sur `http://localhost:8000/ui`.
 | Recherche et lecture web, OCR, transcription, images, mémoire, MCP | [Outils hébergés](docs/outils-heberges.md) |
 | Le bac à sable de `code_execution` | [Exécution de code](docs/execution-de-code.md) |
 | Écrire un outil hébergé : le contrat | [docs/outils.md](docs/outils.md) |
-| Laisser un modèle piloter votre navigateur (extension Chrome, outil `browser`) | [docs/extension.md](docs/extension.md) |
 | Vérifier un déploiement | [Vérification](docs/verification.md) |
 | Ce qui ne marche pas, ou pas encore | [Limites connues](docs/limites.md) |
 | Les bancs de vrais clients | [bench/README.md](bench/README.md) |

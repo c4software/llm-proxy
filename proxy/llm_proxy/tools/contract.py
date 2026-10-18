@@ -34,7 +34,6 @@ class ToolName(StrEnum):
     CODE_EXECUTION = "code_execution"
     IMAGE_GENERATION = "image_generation"
     MEMORY = "memory"
-    BROWSER = "browser"
 
 # Les codes d'erreur, liste FERMÉE. Un outil n'en rend pas d'autre (un
 # code inconnu est ramené à `unavailable` par l'exécuteur) ; chaque

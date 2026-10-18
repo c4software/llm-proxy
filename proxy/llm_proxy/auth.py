@@ -16,7 +16,6 @@ dit ce que /ui sert sans clé ni session.
 """
 
 import asyncio
-import contextvars
 import hmac
 from typing import NamedTuple
 
@@ -152,11 +151,6 @@ async def key_client(token: str) -> Who | None:
     return Who(digest, account_owner(uid), uid)
 
 
-# Le client logiciel de la requête (son User-Agent, borné) : ce que
-# l'extension de navigateur montre de qui l'appelle (tools/browser.py).
-AGENT: contextvars.ContextVar[str] = contextvars.ContextVar("agent", default="")
-
-
 def identify(request: Request, who: Who) -> None:
     """Pose sur la requête ce qui en découle : son api_key_id pour ses
     lignes de statistiques (stats.CLIENT), son client pour ce que ses
@@ -198,9 +192,6 @@ async def ui_account(request: Request) -> JSONResponse | None:
 
 
 async def require_proxy_key(request: Request, call_next):
-    # Le logiciel client, même sans clé (proxy ouvert) : ce que montre
-    # l'extension de navigateur (AGENT).
-    AGENT.set(request.headers.get("user-agent", "")[:200])
     # /v1/files/<jeton>/<nom> : ouvert par un NAVIGATEUR, qui n'envoie pas
     # la clé du proxy. Le jeton du chemin vaut droit d'accès (files.py).
     served = request.method in ("GET", "HEAD") \

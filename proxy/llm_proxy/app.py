@@ -26,7 +26,6 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
 from . import auth
-from . import browser_link
 from . import catalog
 from . import config_view
 from . import conversation_routes
@@ -54,7 +53,7 @@ app.add_middleware(UISession)
 # Les routes des modules, le relais (son catch-all) EN DERNIER, qui sinon
 # les prendrait toutes.
 for module in (surfaces, catalog, usage_api, ui_static, ui_routes,
-               conversation_routes, config_view, health, tool_routes, browser_link):
+               conversation_routes, config_view, health, tool_routes):
     app.include_router(module.router)
 
 

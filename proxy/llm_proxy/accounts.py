@@ -368,19 +368,6 @@ def resolve(digest: str) -> dict | None:
     return _cached(("key", digest), load)
 
 
-def key_name(digest: str) -> str:
-    """Le nom d'une clé gérée (son libellé, sinon ses premiers
-    caractères) : ce que l'extension de navigateur montre de qui
-    l'appelle. «» pour une clé inconnue."""
-    def load():
-        def go(conn):
-            row = conn.execute("SELECT hint, label FROM keys WHERE digest = ?",
-                               (digest,)).fetchone()
-            return (row["label"] or row["hint"] + "…") if row else ""
-        return _run(go)
-    return _cached(("name", digest), load)
-
-
 def touch_due(kid: str) -> bool:
     """Faut-il noter l'usage de la clé `kid` ? Au plus une fois par
     minute ; vrai = c'est fait pour la minute qui vient (appeler touch)."""

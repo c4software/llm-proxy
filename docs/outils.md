@@ -731,16 +731,6 @@ Un vrai backend (gufo, `Qwen-Image-2.1-heretic`) rend `b64_json`, sans
 `usage` : zéros dans la ligne de statistiques. La retouche n'y a pas été
 essayée.
 
-### `browser` : un outil exécuté AILLEURS, par un lien
-
-`browser` (tools/browser.py) n'exécute rien lui-même : il relaie l'appel à
-l'extension de navigateur du client (`call.client`), connectée par une
-WebSocket (browser_link.py), et rend sa réponse en `Result`. Pas
-d'extension connectée : `unavailable`. Une réponse en échec garde son code
-s'il est dans `ERRORS`, sinon `failed`. Une capture devient un fichier
-(`Artifact`). Son plafond d'appels est à lui (`max_calls`, 60), car une
-tâche dans un site en demande beaucoup. Voir [extension.md](extension.md).
-
 ## Serveurs MCP
 
 `tools/mcp.py` est un **client MCP**. Le proxy demande leurs outils

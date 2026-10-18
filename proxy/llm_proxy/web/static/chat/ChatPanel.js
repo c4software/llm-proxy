@@ -79,7 +79,7 @@ export const ChatPanel = {
     const TOOL_LABELS = {
       web_search: "Web", code_execution: "Code", code_interpreter: "Code",
       image_generation: "Images", memory: "Mémoire", ocr: "OCR",
-      transcribe: "Transcription", browser: "Navigateur piloté",
+      transcribe: "Transcription",
     };
 
     const chat = computed(() => props.session.chat || {});
@@ -376,13 +376,6 @@ export const ChatPanel = {
     // ferment au clic dehors.
     const attachOpen = ref(false);
     const toolsOpen = ref(false);
-    // L'outil `browser` agit par l'extension du compte : le menu dit si
-    // elle est connectée (relu à chaque ouverture).
-    const browserLink = ref(null);
-    watch(toolsOpen, async (open) => {
-      if (!open || !available.value.has("browser")) return;
-      try { browserLink.value = await (await fetch("/ui/browser/link")).json(); } catch { browserLink.value = null; }
-    });
     function onDocClick(e) {
       if (attachOpen.value && !e.target.closest(".attach-menu:not(.tools-menu)")) attachOpen.value = false;
       if (toolsOpen.value && !e.target.closest(".tools-menu")) toolsOpen.value = false;
@@ -1275,7 +1268,7 @@ export const ChatPanel = {
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
-             toolsOpen, browserLink, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
+             toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, voiceName, voiceSupported: voice.supported, playing, listen,
@@ -1648,10 +1641,7 @@ export const ChatPanel = {
                        :title="current.incognito && g.type === 'memory' ? 'Pas de mémoire en incognito' : ''">
                   <input type="checkbox" :checked="hostedOn(g)" @change="toggleTool(g.type)"
                          :disabled="current.incognito && g.type === 'memory'">
-                  <span>{{ g.label }}<small v-if="g.type === 'browser'">{{ browserLink && browserLink.connected
-                    ? "extension connectée" : "extension non connectée" }} ·
-                    <a href="/ui/browser/extension.zip" download @click.stop>télécharger l'extension</a></small>
-                    <small v-else>{{ current.incognito && g.type === 'memory'
+                  <span>{{ g.label }}<small>{{ current.incognito && g.type === 'memory'
                     ? "pas de mémoire en incognito" : g.tools.join(", ") }}</small></span></label>
               </template>
               <p class="menu-note" v-else-if="caps.hostedTools && !chat.hosted_tools"
