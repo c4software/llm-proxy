@@ -28,7 +28,8 @@ est exécuté par le CLIENT : la surface Messages n'a rien à remplacer.
 import asyncio
 import time
 
-from .. import config, memories
+from ..core import config
+from ..storage import memories
 from .contract import Call, Result, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.memory.enabled", False)

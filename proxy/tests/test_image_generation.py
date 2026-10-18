@@ -18,7 +18,8 @@ import pytest
 
 from fakes import (PUBLIC, fake_backend, fake_dns, go, net_guard, quotas,
                    rendu as run)
-from llm_proxy import files, tools
+from llm_proxy.storage import files
+from llm_proxy import tools
 from llm_proxy.tools import image_generation as ig
 
 # Un PNG de 512×512 (l'en-tête suffit : rien ne le décode) et un JPEG.

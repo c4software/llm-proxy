@@ -37,13 +37,36 @@ import re
 import time
 from collections import OrderedDict
 
-from .. import config, stats
-from ..settings import log
-from . import (code_execution, image_generation, mcp, memory, net,  # noqa: F401
-               ocr, transcribe, web_fetch, web_grep, web_search, webcache)
-from .contract import (ERRORS, Anthropic, Artifact, Call,  # noqa: F401
-                       Responses, Result, Source, Tool, ToolError, ToolName,
-                       failure, faults)
+from ..core import config
+from ..core.settings import log
+from ..storage import stats
+from . import (  # noqa: F401
+    code_execution,
+    image_generation,
+    mcp,
+    memory,
+    net,
+    ocr,
+    transcribe,
+    web_fetch,
+    web_grep,
+    web_search,
+    webcache,
+)
+from .contract import (  # noqa: F401
+    ERRORS,
+    Anthropic,
+    Artifact,
+    Call,
+    Responses,
+    Result,
+    Source,
+    Tool,
+    ToolError,
+    ToolName,
+    failure,
+    faults,
+)
 
 # Le registre : tous les outils que le proxy SAIT héberger, actifs ou non,
 # dans l'ordre où ils sont présentés au modèle.

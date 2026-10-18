@@ -26,7 +26,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx2
 
-from .. import config
+from ..core import config
 from .contract import ToolError
 
 # Clés lues dans [tools.web_fetch] faute d'être dans [tools.net], et clés

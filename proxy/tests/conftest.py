@@ -30,7 +30,7 @@ def secret_client(monkeypatch, tmp_path):
 def fresh_catalog():
     """Chaque test relit les catalogues des backends (catalog.fetch_models
     les garde CATALOG_TTL)."""
-    from llm_proxy import catalog
+    from llm_proxy.upstream import catalog
     catalog.forget()
     yield
     catalog.forget()
@@ -52,9 +52,13 @@ def proxy(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fakes import hosted_tools
-    from llm_proxy import anthropic_api, app, backends, responses_api, stats, tools
-    from llm_proxy import auth, relaying
-    from llm_proxy.backends import Backend
+    from llm_proxy.surfaces import anthropic_api, responses_api
+    from llm_proxy import app, tools
+    from llm_proxy.upstream import backends
+    from llm_proxy.storage import stats
+    from llm_proxy.access import auth
+    from llm_proxy.upstream import relaying
+    from llm_proxy.upstream.backends import Backend
 
     env = types.SimpleNamespace(replies=[], sent=[], lines=[],
                                 hosted=hosted_tools())

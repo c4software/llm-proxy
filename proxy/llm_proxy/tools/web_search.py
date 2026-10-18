@@ -24,10 +24,18 @@ import re
 
 import httpx2
 
-from .. import config
+from ..core import config
 from . import webcache
-from .contract import (Anthropic, Call, Responses, Result, Source, Tool,
-                       ToolError, ToolName)
+from .contract import (
+    Anthropic,
+    Call,
+    Responses,
+    Result,
+    Source,
+    Tool,
+    ToolError,
+    ToolName,
+)
 from .net import domain_match as _domain_match
 
 ENABLED = config.flag("tools.web_search.enabled", False)

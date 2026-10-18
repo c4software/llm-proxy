@@ -5,8 +5,10 @@ les routes de la section Mémoire de /ui. Sur une base temporaire."""
 import pytest
 
 from fakes import bearer, go, rendu, rpc
-from llm_proxy import auth
-from llm_proxy import mcp_server, memories, tools
+from llm_proxy.access import auth
+from llm_proxy.exposure import mcp_server
+from llm_proxy.storage import memories
+from llm_proxy import tools
 from llm_proxy.tools import memory
 
 

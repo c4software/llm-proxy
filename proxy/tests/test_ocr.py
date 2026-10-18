@@ -20,7 +20,8 @@ import pytest
 
 from fakes import (PUBLIC, FakeWeb, fake_backend, fake_dns, go, net_guard,
                    pdf_bytes, rendu, sans_liaison)
-from llm_proxy import albert, backends, tools
+from llm_proxy.upstream import albert, backends
+from llm_proxy import tools
 from llm_proxy.tools import ocr, webcache
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"image png"

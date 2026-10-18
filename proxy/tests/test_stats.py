@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from llm_proxy import stats
+from llm_proxy.storage import stats
 
 
 def test_usage_collector_reads_cached_tokens_from_sse():
@@ -357,13 +357,13 @@ def test_page_ui_versionne_ses_fichiers_statiques():
     from llm_proxy import app as A
     r = TestClient(A.app).get("/ui")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
-    from llm_proxy import ui_static
+    from llm_proxy.ui import static_files
     for name in ("app.js", "dashboard.css", "vue.global.prod.js"):
-        assert f'/ui/static/v/{ui_static.VERSION}/{name}"' in r.text, name
+        assert f'/ui/static/v/{static_files.VERSION}/{name}"' in r.text, name
     c = TestClient(A.app)
-    got = c.get(f"/ui/static/v/{ui_static.VERSION}/chat/ChatPanel.js")
+    got = c.get(f"/ui/static/v/{static_files.VERSION}/chat/ChatPanel.js")
     assert got.status_code == 200 and "immutable" in got.headers["cache-control"]
     # Une empreinte périmée : servie, mais pas gardée ; hors de static : 404.
     assert c.get("/ui/static/v/0/app.js").headers["cache-control"] == "no-cache"
     assert c.get("/ui/static/icon.svg").headers["cache-control"] == "no-cache"
-    assert c.get("/ui/static/v/0/../../ui_routes.py").status_code == 404
+    assert c.get("/ui/static/v/0/../../dashboard.py").status_code == 404

@@ -14,6 +14,6 @@ globalThis.VueUse = new Proxy({}, { get: () => () => new Proxy({}, { get: () => 
 if (!globalThis.navigator) globalThis.navigator = {};
 globalThis.location = { href: "http://localhost/ui" };
 
-const tools = await import("../llm_proxy/web/static/chat/tools/index.js");
+const tools = await import("../llm_proxy/ui/web/static/chat/tools/index.js");
 const names = tools.FAMILIES.flatMap((f) => f.tools.map((t) => t.name));
 console.log(`Outils de la page : ${tools.FAMILIES.length} familles, ${names.length} outils — conformes.`);

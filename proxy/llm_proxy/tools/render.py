@@ -37,7 +37,7 @@ from urllib.parse import urlsplit
 
 import httpx2
 
-from .. import config
+from ..core import config
 from . import net
 from .contract import ToolError
 

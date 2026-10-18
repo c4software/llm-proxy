@@ -702,7 +702,7 @@ def test_declaration_connue_des_qu_un_serveur_est_configure(monkeypatch):
     configuration liste un serveur — avant toute découverte : le client
     reçoit alors le refus du proxy, qui dit pourquoi, et non celui d'un
     backend. Sans serveur configuré, ces types ne sont pas ceux du proxy."""
-    from llm_proxy import anthropic_api, chat_api, responses_api
+    from llm_proxy.surfaces import anthropic_api, chat_api, responses_api
     assert mcp.kinds() == frozenset() and "mcp" not in tools.kinds()
     fake = FakeMcp()
     server = serveur(fake)

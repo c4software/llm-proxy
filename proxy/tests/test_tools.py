@@ -22,7 +22,9 @@ import pytest
 from fakes import (FOUND, PUBLIC, RESULTS, SEARCHED, Echo, FakeUpstream,
                    FakeWeb, chat_doc, fake_dns, go, hosted_chat, outil,
                    pdf_bytes, rendu)
-from llm_proxy import auth, catalog, tool_loop
+from llm_proxy.access import auth
+from llm_proxy.upstream import catalog
+from llm_proxy.surfaces import tool_loop
 from llm_proxy import tools
 from llm_proxy.tools import html_text, net, web_fetch, web_grep, web_search, webcache
 
@@ -1141,7 +1143,7 @@ def test_type_d_un_modele_sans_type_au_catalogue():
     """Un catalogue qui ne dit pas ce que sont ses modèles (llama-swap) :
     le nom tranche, un motif de configuration l'emporte, et ce que le
     backend déclare n'est jamais deviné à sa place."""
-    from llm_proxy.backends import Backend
+    from llm_proxy.upstream.backends import Backend
     b = Backend("essai", {"url": "http://x", "model_types": {"*-voice-chat": "text-generation"}})
     for model, attendu in [
         ({"id": "qwen3.8-flash-next"}, "text-generation"),
@@ -1267,7 +1269,7 @@ def test_contrat_outil_minimal_sans_liaison(proxy, monkeypatch):
     /v1/chat/completions, où son appel reste caché du client ; les
     surfaces Responses et Anthropic, qui n'auraient rien pour en rendre
     compte, l'ignorent."""
-    from llm_proxy import anthropic_api, responses_api
+    from llm_proxy.surfaces import anthropic_api, responses_api
     monkeypatch.setattr(tools, "REGISTRY", [])
     # Hors de ToolName : un outil FOURNI (un outil natif y aurait son nom).
     with pytest.raises(ValueError, match="nom hors de ToolName"):
@@ -1289,8 +1291,7 @@ def test_contrat_outil_minimal_sans_liaison(proxy, monkeypatch):
     assert list(spec["function"]) == ["name", "description", "parameters"]
     assert spec["function"]["description"] == \
         "Return the given text, unchanged."
-    from llm_proxy.tools import (code_execution, image_generation, mcp, ocr,
-                                 transcribe)
+    from llm_proxy.tools import code_execution, image_generation, mcp, ocr, transcribe
     for cls in (Echo, web_search.WebSearch, web_fetch.WebFetch, ocr.Ocr,
                 transcribe.Transcribe, code_execution.CodeExecution,
                 image_generation.ImageGeneration, mcp.McpTool):
@@ -1476,7 +1477,8 @@ def test_contrat_fichiers_en_liens_et_code_failed(proxy, monkeypatch):
     les mémoires et le tour suivant ne portent que `text`. Et `failed`,
     le code d'un outil qui a tourné et dit avoir échoué : une erreur comme
     une autre, comptée `error`."""
-    from llm_proxy import anthropic_api, files
+    from llm_proxy.surfaces import anthropic_api
+    from llm_proxy.storage import files
     monkeypatch.setattr(files, "PUBLIC_URL", "")
     monkeypatch.setattr(files, "STORE", files.Store(60, 10_000, 5_000))
     lines = []
@@ -1585,7 +1587,7 @@ def test_net_table_commune_et_repli_sur_l_ancienne_place(monkeypatch):
     """[tools.net] règle le garde-fou de tous les outils qui téléchargent.
     Un déploiement d'avant, dont les clés sont dans [tools.web_fetch],
     continue de marcher : elles y sont lues, et le démarrage le dit."""
-    from llm_proxy import config
+    from llm_proxy.core import config
 
     def lu(conf):
         monkeypatch.setattr(config, "CONFIG", {"tools": conf})
@@ -1731,7 +1733,7 @@ def test_blocked_urls_refusees_avec_leur_message(monkeypatch):
     """[tools.net].blocked_urls : refusées avant toute requête, avec le
     message de l'entrée (ou un message par défaut) ; une expression
     invalide est écartée sans empêcher le démarrage."""
-    from llm_proxy import config
+    from llm_proxy.core import config
     from llm_proxy.tools import net
     monkeypatch.setitem(config.CONFIG, "tools", {**config.CONFIG.get("tools", {}), "net": {"blocked_urls": [
         {"pattern": r"^https?://routify[^/]*file[^/]*\.aliyuncs\.(com|io)(:\d+)?/", "message": "Do NOT retry it."},

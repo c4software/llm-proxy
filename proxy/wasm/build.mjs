@@ -1,5 +1,5 @@
 // Les runtimes des bacs du navigateur, construits dans un dossier servi
-// par la page (défaut : ../llm_proxy/web/static/vendor) :
+// par la page (défaut : ../llm_proxy/ui/web/static/vendor) :
 //   php.js, php.wasm    PHP 8.3 (@php-wasm, GPL-2.0-or-later)
 //   sql.js, sql.wasm    SQLite (sql.js, MIT)
 //   chart.js            Chart.js (MIT), pour le bac JavaScript
@@ -13,7 +13,7 @@ import { build } from "esbuild";
 import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const out = resolve(process.argv[2] || "../llm_proxy/web/static/vendor");
+const out = resolve(process.argv[2] || "../llm_proxy/ui/web/static/vendor");
 await mkdir(out, { recursive: true });
 
 // Les bibliothèques standard de TypeScript, embarquées dans son bundle.

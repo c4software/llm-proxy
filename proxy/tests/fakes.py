@@ -238,7 +238,7 @@ def search_then_answer(streamed=True) -> list:
 def hosted_chat(monkeypatch):
     """[chat].hosted_tools actif, avec une mémoire des échanges cachés
     neuve — rendue, pour qui veut la lire."""
-    from llm_proxy import chat_api
+    from llm_proxy.surfaces import chat_api
     memory = chat_api.Memory(8, 60, 100_000)
     monkeypatch.setattr(chat_api, "ENABLED", True)
     monkeypatch.setattr(chat_api, "MEMORY", memory)
@@ -249,7 +249,7 @@ def sans_liaison(tool):
     """Un outil sans liaison de protocole, activé par le test : déclarable
     par son nom sur chat/completions, ignoré des surfaces Responses et
     Anthropic."""
-    from llm_proxy import anthropic_api, responses_api
+    from llm_proxy.surfaces import anthropic_api, responses_api
     h = tools.Hosted()
     assert h.for_kind(tool.name) == [tool]
     assert tool not in h.for_responses("web_search")
@@ -336,7 +336,7 @@ class FakeWeb:
 def fake_backend(monkeypatch, name, conf, handler):
     """Un backend `name` du proxy dont le client HTTP parle à `handler`
     (un httpx2.MockTransport) ; rendu, pour que le test le règle."""
-    from llm_proxy import backends
+    from llm_proxy.upstream import backends
     b = backends.Backend(name, conf)
     b.client = httpx2.AsyncClient(base_url=b.url,
                                  transport=httpx2.MockTransport(handler))
@@ -348,7 +348,7 @@ def quotas(monkeypatch, backend, accepted=1) -> list:
     """Un backend à quotas dont le limiteur accepte `accepted` requêtes,
     puis répond « quota épuisé pour 20 min ». Rendu : le coût de chaque
     demande au limiteur."""
-    from llm_proxy import albert
+    from llm_proxy.upstream import albert
     taken = []
 
     class Limiter:

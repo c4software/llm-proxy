@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY proxy/main.py .
 COPY proxy/llm_proxy/ llm_proxy/
-COPY --from=wasm /vendor/ llm_proxy/web/static/vendor/
+COPY --from=wasm /vendor/ llm_proxy/ui/web/static/vendor/
 # Le modèle seul : data/ est un volume, où le proxy crée config.toml
 # s'il est absent.
 COPY data/config.example.toml data/

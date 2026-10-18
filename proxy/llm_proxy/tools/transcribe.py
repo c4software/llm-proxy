@@ -51,8 +51,10 @@ from urllib.parse import urlsplit
 
 import httpx2
 
-from .. import albert, backends, config, stats
-from ..settings import is_exempt, log
+from ..core import config
+from ..core.settings import is_exempt, log
+from ..storage import stats
+from ..upstream import albert, backends
 from . import net, webcache
 from .contract import Call, Result, Source, Tool, ToolError, ToolName
 

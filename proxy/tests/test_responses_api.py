@@ -15,9 +15,13 @@ from fakes import (ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
                    SEARCH_TURN, SEARCHED, FakeUpstream, chat_doc, chunk, feed,
                    hosted_tools, search_then_answer, sse, sse_events, stream,
                    tool_call, usage)
-from llm_proxy import auth, relaying, tool_loop
-from llm_proxy import responses_api as R
-from llm_proxy import anthropic_api, backends, tools
+from llm_proxy.access import auth
+from llm_proxy.upstream import relaying
+from llm_proxy.surfaces import tool_loop
+from llm_proxy.surfaces import responses_api as R
+from llm_proxy.surfaces import anthropic_api
+from llm_proxy.upstream import backends
+from llm_proxy import tools
 from llm_proxy.tools import web_fetch, web_search
 
 

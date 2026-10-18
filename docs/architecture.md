@@ -28,7 +28,7 @@ Commandes :
 
 - `proxy/` : `pytest`, `uvicorn main:app` ;
 - `proxy/wasm/` : `npm ci && npm run build`, qui écrit les runtimes des
-  bacs dans `web/static/vendor/` (non versionné ; l'image le fait
+  bacs dans `llm_proxy/ui/web/static/vendor/` (non versionné ; l'image le fait
   elle-même), et `npm run check`, qui vérifie les types du code de la
   page (fichiers en `// @ts-check`) et le registre de ses outils (aussi
   lancé par pytest) ;
@@ -81,7 +81,7 @@ Une requête suit toujours le même chemin.
 | `services/searxng/settings.yml` | Réglages de SearXNG : ses défauts plus le format JSON. Monté en lecture seule |
 | `bench/` | Validation avec de vrais clients en conteneurs jetables, scénarios PASS/FAIL. Voir [bench/README.md](../bench/README.md) |
 
-### Le proxy : base et routes
+### Le proxy : l'image et l'assemblage
 
 | Fichier | Rôle |
 |---|---|
@@ -89,32 +89,52 @@ Une requête suit toujours le même chemin.
 | `proxy/requirements.txt`, `requirements-dev.txt` | Dépendances du proxy ; celles de ses tests |
 | `proxy/main.py` | Point d'entrée (`uvicorn main:app`), trois lignes |
 | `proxy/tests/` | Tests du proxy, sans réseau (`cd proxy && pytest`, `pytest.ini`) |
-| `llm_proxy/app.py` | L'application FastAPI : routes et middlewares, catch-all en dernier |
-| `llm_proxy/startup.py` | Démarrage et arrêt : stats, clients upstream, partage équitable, serveurs MCP, journal, limites des backends à quotas |
-| `llm_proxy/config.py` | Lecture de `data/config.toml` : `${VAR}`, accès typés, création depuis l'exemple |
-| `llm_proxy/settings.py` | La table `[proxy]` en constantes typées |
-| `llm_proxy/config_view.py` | La configuration effective pour la page (secrets masqués), le formulaire, la vérification d'un TOML modifié. N'écrit jamais |
-| `llm_proxy/auth.py` | Clés (TOML, comptes), session signée de la page, middleware d'auth |
-| `llm_proxy/backends.py` | Backends, clients HTTP, routage au préfixe de modèle |
-| `llm_proxy/albert.py` | Spécificités d'Albert : limiteur de quotas, familles de modèles, `/v1/me/info` |
-| `llm_proxy/fairshare.py` | Partage équitable : une part de tokens par client sur une heure glissante, puis attente |
-| `llm_proxy/relaying.py` | Le relais : `Call`, porte de quota, `forward` |
-| `llm_proxy/catalog.py` | `/v1/models` fusionné et préfixé, type et contexte de chaque modèle |
-| `llm_proxy/surfaces.py` | `/v1/chat/completions`, `/v1/messages` (et `count_tokens`), `/v1/responses` |
-| `llm_proxy/anthropic_api.py` | Traduction Messages ↔ chat/completions, flux compris ; `model_map` ; outils serveur `web_search` et `web_fetch` |
-| `llm_proxy/responses_api.py` | Traduction Responses ↔ chat/completions, flux compris ; outils hébergés ; `namespace` aplatis |
-| `llm_proxy/chat_api.py` | Outils hébergés sur `/v1/chat/completions` : une seule réponse pour plusieurs tours upstream |
-| `llm_proxy/tool_loop.py` | La boucle des outils hébergés, commune aux trois surfaces |
-| `llm_proxy/multipart.py` | Champ `model` d'un corps multipart : lu pour router, préfixe retiré |
-| `llm_proxy/relay_routes.py` | `GET /v1/audio/voices` et le catch-all (`forward_post_paths`, sinon `404`) |
-| `llm_proxy/stats.py` | Compteurs SQLite (par requête, par exécution d'outil), lecture de l'`usage` dans le flux |
-| `llm_proxy/usage_api.py` | L'Usage API (`/v1/organization/usage/*`) et ce qu'une page connectée en voit |
-| `llm_proxy/health.py` | `/healthz` et `/ui/health` : état détaillé du déploiement |
-| `llm_proxy/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON |
+| `app.py` | L'application FastAPI : routes et middlewares, catch-all en dernier |
+| `startup.py` | Démarrage et arrêt : stats, clients upstream, partage équitable, serveurs MCP, journal, limites des backends à quotas |
 
-Les chemins `llm_proxy/` sont sous `proxy/`.
+Le code est dans `proxy/llm_proxy/`, rangé en paquets par domaine. Chacun
+a un `__init__.py` qui dit ce qu'il contient ; les chemins ci-dessous sont
+sous `proxy/llm_proxy/`.
 
-### Outils hébergés
+### `core/` : le noyau
+
+| Fichier | Rôle |
+|---|---|
+| `core/config.py` | Lecture de `data/config.toml` : `${VAR}`, accès typés, création depuis l'exemple |
+| `core/settings.py` | La table `[proxy]` en constantes typées |
+| `core/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON |
+| `core/multipart.py` | Champ `model` d'un corps multipart : lu pour router, préfixe retiré |
+
+### `access/` : qui parle au proxy
+
+| Fichier | Rôle |
+|---|---|
+| `access/auth.py` | Clés (TOML, comptes), session signée de la page, middleware d'auth |
+| `access/accounts.py` | Comptes et clés gérées (`data/accounts.db`) : création, révocation, rôles, part de chacun |
+| `access/oidc.py` | La connexion de la page par OIDC (Authlib) |
+| `access/fairshare.py` | Partage équitable : une part de tokens par client sur une heure glissante, puis attente |
+
+### `upstream/` : les backends
+
+| Fichier | Rôle |
+|---|---|
+| `upstream/backends.py` | Backends, clients HTTP, routage au préfixe de modèle |
+| `upstream/albert.py` | Spécificités d'Albert : limiteur de quotas, familles de modèles, `/v1/me/info` |
+| `upstream/relaying.py` | Le relais : `Call`, porte de quota, `forward` |
+| `upstream/catalog.py` | `/v1/models` fusionné et préfixé, type et contexte de chaque modèle |
+
+### `surfaces/` : les API de conversation
+
+| Fichier | Rôle |
+|---|---|
+| `surfaces/endpoints.py` | `/v1/chat/completions`, `/v1/messages` (et `count_tokens`), `/v1/responses` |
+| `surfaces/chat_api.py` | Outils hébergés sur `/v1/chat/completions` : une seule réponse pour plusieurs tours upstream |
+| `surfaces/responses_api.py` | Traduction Responses ↔ chat/completions, flux compris ; outils hébergés ; `namespace` aplatis |
+| `surfaces/anthropic_api.py` | Traduction Messages ↔ chat/completions, flux compris ; `model_map` ; outils serveur `web_search` et `web_fetch` |
+| `surfaces/tool_loop.py` | La boucle des outils hébergés, commune aux trois surfaces |
+| `surfaces/relay_routes.py` | `GET /v1/audio/voices` et le catch-all (`forward_post_paths`, sinon `404`) |
+
+### `tools/` : les outils hébergés
 
 | Fichier | Rôle |
 |---|---|
@@ -132,24 +152,37 @@ Les chemins `llm_proxy/` sont sous `proxy/`.
 | `tools/image_generation.py` | `image_generation` : génération ou retouche par un backend, image rendue en fichier |
 | `tools/memory.py` | `memory` : `view`, `create`, `str_replace`, `insert`, `delete`, `rename` |
 | `tools/mcp.py` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés |
-| `memories.py` | Magasin de la mémoire persistante (`data/memory.db`), par client, sous `/memories` |
-| `files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
-| `mcp_server.py` | Serveur MCP (`POST /mcp`), sans état, sur les outils hébergés actifs |
-| `tool_routes.py` | `/v1/tools`, `/mcp`, fichiers rendus |
+| `tools/render.py` | Le rendu des pages en JavaScript par browserless (`render: true` de `web_fetch` et `web_grep`) |
 
-Ces chemins sont sous `proxy/llm_proxy/`.
-
-### Tableau de bord et chat
+### `exposure/` : les outils offerts tels quels
 
 | Fichier | Rôle |
 |---|---|
-| `ui_routes.py` | Routes `/ui/*` : entrée, session, comptes et clés, chat, mémoire |
-| `ui_static.py` | Fichiers de la page sous un chemin versionné (`/ui/static/v/<empreinte>/…`, gardés un an) |
-| `conversations.py`, `conversation_routes.py` | Historique du chat (`data/conversations.db`) : conversations et images par compte, `/ui/conversations`, `/ui/assets` |
-| `web/templates/index.html` | Squelette de la page |
-| `web/static/` | Modules ES par domaine : `app.js` (session, vues, menu), `stats/`, `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème), plus `dashboard.css`, `vue.global.prod.js` et `vueuse.iife.min.js` (VueUse 15, ses modules `shared` et `core`) |
-| `web/static/chat/` | `ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.js`, `voice.js`, `notify.js` |
-| `web/static/chat/tools/` | Les outils que la page exécute : `contract.js` (les listes `TOOL` et `FAMILY`, l'interface `PageTool`), `index.js` (le registre, qui vérifie chaque outil au chargement), `page/` (questions, fichiers, artifacts, dossier), `device/` (l'appareil ; `vueuse.js`, les composables VueUse des outils ; `media.js`, les flux), `sandbox/` (`bac.js`, le bac commun ; `files.js` ; `javascript.js`, `typescript.js`, `php.js`, `sql.js`, `sqlbase.js`). Voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page) |
-| `web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js), `html-to-image.js` (la capture d'un artifact), `sucrase.js`, `typescript.js` (le compilateur TypeScript 6 et ses `lib.*.d.ts`) |
+| `exposure/mcp_server.py` | Serveur MCP (`POST /mcp`), sans état, sur les outils hébergés actifs |
+| `exposure/tool_routes.py` | `/v1/tools`, `/mcp`, fichiers rendus |
 
-Ces chemins sont sous `proxy/llm_proxy/`.
+### `storage/` : ce que le proxy garde dans `data/`
+
+| Fichier | Rôle |
+|---|---|
+| `storage/stats.py` | Compteurs SQLite (par requête, par exécution d'outil), lecture de l'`usage` dans le flux |
+| `storage/conversations.py` | Historique du chat de la page (`data/conversations.db`) : conversations et images par compte |
+| `storage/memories.py` | Magasin de la mémoire persistante (`data/memory.db`), par client, sous `/memories` |
+| `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
+| `storage/backup.py` | Sauvegarde et restauration de `data/` |
+
+### `ui/` : le tableau de bord et le chat
+
+| Fichier | Rôle |
+|---|---|
+| `ui/dashboard.py` | Routes `/ui/*` : entrée, session, comptes et clés, chat, mémoire |
+| `ui/static_files.py` | Fichiers de la page sous un chemin versionné (`/ui/static/v/<empreinte>/…`, gardés un an) |
+| `ui/conversation_routes.py` | `/ui/conversations`, `/ui/assets` : l'historique du chat (`storage/conversations.py`) |
+| `ui/config_view.py` | La configuration effective pour la page (secrets masqués), le formulaire, la vérification d'un TOML modifié. N'écrit jamais |
+| `ui/usage_api.py` | L'Usage API (`/v1/organization/usage/*`) et ce qu'une page connectée en voit |
+| `ui/health.py` | `/healthz` et `/ui/health` : état détaillé du déploiement |
+| `ui/web/templates/index.html` | Squelette de la page |
+| `ui/web/static/` | Modules ES par domaine : `app.js` (session, vues, menu), `stats/`, `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème), plus `dashboard.css`, `vue.global.prod.js` et `vueuse.iife.min.js` (VueUse 15, ses modules `shared` et `core`) |
+| `ui/web/static/chat/` | `ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.js`, `voice.js`, `notify.js` |
+| `ui/web/static/chat/tools/` | Les outils que la page exécute : `contract.js` (les listes `TOOL` et `FAMILY`, l'interface `PageTool`), `index.js` (le registre, qui vérifie chaque outil au chargement), `page/` (questions, fichiers, artifacts, dossier), `device/` (l'appareil ; `vueuse.js`, les composables VueUse des outils ; `media.js`, les flux), `sandbox/` (`bac.js`, le bac commun ; `files.js` ; `javascript.js`, `typescript.js`, `php.js`, `sql.js`, `sqlbase.js`). Voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page) |
+| `ui/web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js), `html-to-image.js` (la capture d'un artifact), `sucrase.js`, `typescript.js` (le compilateur TypeScript 6 et ses `lib.*.d.ts`) |

@@ -10,9 +10,14 @@ import pytest
 
 from fakes import (ANSWER_TURN, FakeUpstream, hosted_chat, search_then_answer,
                    stream)
-from llm_proxy import auth, catalog, relaying, ui_routes, usage_api
-from llm_proxy import chat_api as C
-from llm_proxy import backends, oidc, stats, tools
+from llm_proxy.access import auth
+from llm_proxy.upstream import catalog, relaying
+from llm_proxy.ui import dashboard, usage_api
+from llm_proxy.surfaces import chat_api as C
+from llm_proxy.upstream import backends
+from llm_proxy.access import oidc
+from llm_proxy.storage import stats
+from llm_proxy import tools
 
 KEY = "sk-alice"
 JSON = {"content-type": "application/json"}
@@ -24,7 +29,7 @@ def ui(proxy, monkeypatch):
     outils hébergés de chat/completions actifs ; `clients` note le client
     de chaque ligne de statistiques (stats.CLIENT au moment d'écrire)."""
     monkeypatch.setattr(auth, "PROXY_API_KEYS", [KEY, "sk-bob"])
-    monkeypatch.setattr(ui_routes, "UI_CHAT", True)
+    monkeypatch.setattr(dashboard, "UI_CHAT", True)
     hosted_chat(monkeypatch)
     proxy.clients = []
     monkeypatch.setattr(stats, "record",
@@ -142,7 +147,7 @@ def test_writing_routes_want_a_json_body(ui):
 
 def test_chat_is_closed_unless_enabled(ui, monkeypatch):
     login(ui)
-    monkeypatch.setattr(ui_routes, "UI_CHAT", False)
+    monkeypatch.setattr(dashboard, "UI_CHAT", False)
     assert chat(ui).status_code == 404
     assert ui.client.get("/ui/session").json()["chat"] == {
         "enabled": False, "model": None, "hosted_tools": False, "tools": [], "always": [],
@@ -238,7 +243,7 @@ def test_chat_generates_an_image_with_an_image_model(ui, monkeypatch):
     assert ui.sent[-1] == {**body, "model": "flux"}
     assert ui.clients == [tools.owner(KEY)]
     assert ui.client.post("/ui/images/generations", content="{}").status_code == 415
-    monkeypatch.setattr(ui_routes, "UI_CHAT", False)
+    monkeypatch.setattr(dashboard, "UI_CHAT", False)
     assert ui.client.post("/ui/images/generations", json=body).status_code == 404
 
 
@@ -253,7 +258,7 @@ def test_chat_speaks_through_the_proxy(ui, monkeypatch):
     assert r.status_code == 200 and r.content == b"RIFF....WAVE"
     assert ui.sent[-1] == {**body, "model": "tts"}
     assert ui.client.post("/ui/audio/speech", content="{}").status_code == 415
-    monkeypatch.setattr(ui_routes, "UI_CHAT", False)
+    monkeypatch.setattr(dashboard, "UI_CHAT", False)
     assert ui.client.post("/ui/audio/speech", json=body).status_code == 404
     assert ui.client.get("/ui/audio/voices?model=essai/tts").status_code == 404
 
@@ -349,8 +354,8 @@ def test_incognito_chat_never_declares_memory(ui, monkeypatch):
 def test_incognito_keeps_no_web_cache_and_short_lived_files():
     """Sous settings.INCOGNITO : le cache web ne range rien, et un fichier
     rendu n'est gardé que files.INCOGNITO_TTL."""
-    from llm_proxy import files
-    from llm_proxy.settings import INCOGNITO
+    from llm_proxy.storage import files
+    from llm_proxy.core.settings import INCOGNITO
     from llm_proxy.tools import webcache
     cache = webcache.Cache(60, 8, 1000)
     store = files.Store(4 * 3600, 10_000, 10_000)
@@ -370,7 +375,7 @@ def test_chat_edits_an_attached_image(ui, monkeypatch):
     formulaire de /v1/images/edits — préfixe retiré, image lue dans ses
     octets ; refusé sans image lisible."""
     import base64
-    from llm_proxy import multipart
+    from llm_proxy.core import multipart
     seen = []
 
     async def send_upstream(call, request, path, body):

@@ -1,6 +1,6 @@
 """L'outil hébergé `code_execution` (llm_proxy/tools/code_execution.py)
 contre un FAUX exécuteur — httpx2.MockTransport, aucun réseau, aucun
-conteneur — et le magasin des fichiers rendus (llm_proxy/files.py). La
+conteneur — et le magasin des fichiers rendus (llm_proxy/storage/files.py). La
 configuration est posée par monkeypatch sur les constantes des modules.
 
 Ce qui est vérifié : ce que l'outil envoie, le texte qu'il écrit pour le
@@ -17,7 +17,8 @@ import httpx2
 import pytest
 
 from fakes import PUBLIC, fake_dns, go, net_guard, rendu as run
-from llm_proxy import files, tools
+from llm_proxy.storage import files
+from llm_proxy import tools
 from llm_proxy.tools import code_execution
 
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(40)

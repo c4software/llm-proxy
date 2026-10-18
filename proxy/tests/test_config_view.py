@@ -6,8 +6,9 @@ import tomllib
 
 import pytest
 
-from llm_proxy import config, ui_routes
-from llm_proxy import config_view as V
+from llm_proxy.core import config
+from llm_proxy.ui import dashboard
+from llm_proxy.ui import config_view as V
 import test_ui
 from test_ui import login
 
@@ -85,7 +86,7 @@ def test_the_page_needs_its_session(ui):
 
 def test_the_chat_model_is_preselected(conf, monkeypatch):
     assert conf.client.get("/ui/session").json()["chat"]["model"] is None
-    monkeypatch.setattr(ui_routes, "UI_CHAT_MODEL", "essai/qwen")
+    monkeypatch.setattr(dashboard, "UI_CHAT_MODEL", "essai/qwen")
     assert conf.client.get("/ui/session").json()["chat"]["model"] == "essai/qwen"
 
 

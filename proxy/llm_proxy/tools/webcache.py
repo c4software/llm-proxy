@@ -26,8 +26,8 @@ du cache.
 import time
 from collections import OrderedDict
 
-from .. import config
-from ..settings import INCOGNITO
+from ..core import config
+from ..core.settings import INCOGNITO
 
 TTL = config.num("tools.web_cache_ttl", 600)
 ENTRIES = config.integer("tools.web_cache_entries", 256)

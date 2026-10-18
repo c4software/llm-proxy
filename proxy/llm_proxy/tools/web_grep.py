@@ -20,7 +20,7 @@ asyncio ne l'attend pas.
 import asyncio
 import bisect
 
-from .. import config
+from ..core import config
 from . import web_fetch
 from .contract import Call, Responses, Result, Source, Tool, ToolError, ToolName
 

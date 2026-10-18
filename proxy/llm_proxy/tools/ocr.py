@@ -39,9 +39,11 @@ import zlib
 
 import httpx2
 
-from .. import albert, config, stats
-from ..backends import Backend, route_backend
-from ..settings import log
+from ..core import config
+from ..core.settings import log
+from ..storage import stats
+from ..upstream import albert
+from ..upstream.backends import Backend, route_backend
 from . import net, webcache
 from .contract import Call, Result, Source, Tool, ToolError, ToolName
 

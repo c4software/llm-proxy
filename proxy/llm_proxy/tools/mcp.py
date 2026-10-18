@@ -65,8 +65,8 @@ from urllib.parse import urlsplit
 
 import httpx2
 
-from .. import config
-from ..settings import log
+from ..core import config
+from ..core.settings import log
 from .contract import Call, Result, Source, Tool, ToolError
 
 # Délai (s) d'un appel, tout compris (session rouverte incluse), et de
@@ -799,7 +799,7 @@ class Server:
         enregistré (à la suite : l'ordre des fonctions déjà présentées ne
         bouge pas), un outil connu reçoit sa définition du jour, un outil
         disparu est désactivé — et retrouve sa place s'il revient."""
-        from .. import tools as registry    # à l'usage : pas de cycle
+        from .. import tools as registry  # à l'usage : pas de cycle
 
         kept = {}
         for entry in found:

@@ -9,7 +9,8 @@ import time
 import pytest
 
 from fakes import FakeUpstream, chat_doc
-from llm_proxy import auth, fairshare, tools
+from llm_proxy.access import auth, fairshare
+from llm_proxy import tools
 
 KEY = "sk-alice"
 
@@ -47,7 +48,7 @@ def test_seed_refills_the_windows():
 def shared(proxy, monkeypatch):
     """`proxy` avec une clé, une part de 100 tokens par défaut et une
     fenêtre de 0,4 s ; chaque réponse du backend coûte 150 tokens."""
-    from llm_proxy import chat_api
+    from llm_proxy.surfaces import chat_api
     monkeypatch.setattr(auth, "PROXY_API_KEYS", [KEY])
     monkeypatch.setattr(chat_api, "ENABLED", False)     # relais brut
     monkeypatch.setattr(fairshare, "DEFAULT_SHARE", 100)
@@ -85,7 +86,7 @@ def test_no_default_share_means_no_limit(shared, monkeypatch):
 
 
 def test_an_excluded_backend_neither_counts_nor_waits(shared, monkeypatch):
-    from llm_proxy.backends import BACKENDS
+    from llm_proxy.upstream.backends import BACKENDS
     monkeypatch.setattr(BACKENDS["essai"], "fair_share", False)
     ask(shared)
     assert fairshare.used(tools.owner(KEY)) == 0
@@ -114,7 +115,9 @@ def test_startup_reads_the_last_hour_back(tmp_path, monkeypatch, proxy):
     qu'une heure, ni un backend inconnu."""
     import sqlite3
 
-    from llm_proxy import accounts, oidc, startup, stats
+    from llm_proxy.access import accounts, oidc
+    from llm_proxy import startup
+    from llm_proxy.storage import stats
     monkeypatch.setattr(stats, "DB_PATH", str(tmp_path / "stats.db"))
     monkeypatch.setattr(accounts, "DB_PATH", str(tmp_path / "accounts.db"))
     monkeypatch.setattr(accounts, "_cache", {})

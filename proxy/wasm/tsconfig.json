@@ -19,7 +19,7 @@
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["../llm_proxy/web/static/**/*.js", "types/*.d.ts"],
-  "exclude": ["../llm_proxy/web/static/vendor/**", "../llm_proxy/web/static/vue.global.prod.js",
-              "../llm_proxy/web/static/vueuse.iife.min.js"]
+  "include": ["../llm_proxy/ui/web/static/**/*.js", "types/*.d.ts"],
+  "exclude": ["../llm_proxy/ui/web/static/vendor/**", "../llm_proxy/ui/web/static/vue.global.prod.js",
+              "../llm_proxy/ui/web/static/vueuse.iife.min.js"]
 }

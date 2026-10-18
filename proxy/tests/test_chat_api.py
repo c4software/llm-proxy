@@ -1,5 +1,5 @@
 """Les outils hébergés sur /v1/chat/completions (chat_api.py, et
-surfaces.chat_hosted) : la route entière, par la fixture `proxy` de
+endpoints.chat_hosted) : la route entière, par la fixture `proxy` de
 conftest.py — seul l'envoi au backend est remplacé. Aucun réseau."""
 
 import json
@@ -11,9 +11,13 @@ from fakes import (
     FakeUpstream, chat_doc, chunk, hosted_chat, search_then_answer, stream, tool_call,
     usage,
 )
-from llm_proxy import auth, relaying, tool_loop
-from llm_proxy import chat_api as C
-from llm_proxy import backends, stats, tools
+from llm_proxy.access import auth
+from llm_proxy.upstream import relaying
+from llm_proxy.surfaces import tool_loop
+from llm_proxy.surfaces import chat_api as C
+from llm_proxy.upstream import backends
+from llm_proxy.storage import stats
+from llm_proxy import tools
 from llm_proxy.tools import web_search
 
 WEB = {"type": "web_search"}
@@ -685,7 +689,7 @@ def test_files_come_back_as_links_and_the_session_follows_the_conversation(
     et écrit leurs liens à la FIN de la réponse, en flux comme en JSON ;
     la réponse ainsi complétée est celle que la mémoire reconnaît, et la
     session de l'outil (Call.session) est la même à la requête suivante."""
-    from llm_proxy import files
+    from llm_proxy.storage import files
     monkeypatch.setattr(files, "PUBLIC_URL", "https://proxy.test")
     monkeypatch.setattr(files, "STORE", files.Store(60, 10_000, 5_000))
     png = b"\x89PNG\r\n\x1a\n" + bytes(8)

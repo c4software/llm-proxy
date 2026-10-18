@@ -9,7 +9,10 @@ import tarfile
 
 import pytest
 
-from llm_proxy import accounts, backup, config, conversations, memories, stats, tools
+from llm_proxy.access import accounts
+from llm_proxy.storage import backup, conversations, memories, stats
+from llm_proxy.core import config
+from llm_proxy import tools
 
 
 @pytest.fixture

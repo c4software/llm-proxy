@@ -5,7 +5,9 @@ import base64
 
 import pytest
 
-from llm_proxy import auth, conversations, ui_routes
+from llm_proxy.access import auth
+from llm_proxy.storage import conversations
+from llm_proxy.ui import dashboard
 
 PNG = (b"\x89PNG\r\n\x1a\n" + b"\0" * 32)
 PNG_URL = "data:image/png;base64," + base64.b64encode(PNG).decode()
@@ -15,7 +17,7 @@ PNG_URL = "data:image/png;base64," + base64.b64encode(PNG).decode()
 def base(monkeypatch, tmp_path):
     monkeypatch.setattr(conversations, "DB_PATH", str(tmp_path / "conversations.db"))
     monkeypatch.setattr(conversations, "MAX_TOTAL_BYTES", 2_000_000_000)
-    monkeypatch.setattr(ui_routes, "UI_CHAT", True)
+    monkeypatch.setattr(dashboard, "UI_CHAT", True)
 
 
 @pytest.fixture
@@ -101,6 +103,6 @@ def test_routes_du_compte_connecte(proxy):
 
 
 def test_chat_ferme(proxy, monkeypatch):
-    monkeypatch.setattr(ui_routes, "UI_CHAT", False)
+    monkeypatch.setattr(dashboard, "UI_CHAT", False)
     proxy.post("/ui/login", json={"key": "sk-a"})
     assert proxy.get("/ui/conversations").status_code == 404

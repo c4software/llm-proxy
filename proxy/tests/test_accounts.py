@@ -20,9 +20,10 @@ from joserfc.jwk import RSAKey
 from fastapi.testclient import TestClient
 
 from fakes import bearer
-from llm_proxy import accounts, oidc
+from llm_proxy.access import accounts, oidc
 from llm_proxy import app as A
-from llm_proxy import auth, tools
+from llm_proxy.access import auth
+from llm_proxy import tools
 
 ISSUER = "https://idp.test"
 JSON = {"content-type": "application/json"}
@@ -335,7 +336,8 @@ def test_the_admin_sets_an_account_share(idp, monkeypatch):
     import time
 
     from fakes import FakeUpstream, chat_doc
-    from llm_proxy import chat_api, fairshare
+    from llm_proxy.surfaces import chat_api
+    from llm_proxy.access import fairshare
     fairshare.reset()
     monkeypatch.setattr(chat_api, "ENABLED", False)
     monkeypatch.setattr(fairshare, "DEFAULT_SHARE", 100)
@@ -379,7 +381,9 @@ def test_an_admin_downloads_a_backup(idp, tmp_path, monkeypatch):
     import io
     import tarfile
 
-    from llm_proxy import config, memories, stats, tools
+    from llm_proxy.core import config
+    from llm_proxy.storage import memories, stats
+    from llm_proxy import tools
     (tmp_path / "config.toml").write_text("[proxy]\n")
     monkeypatch.setattr(config, "CONFIG_PATH", str(tmp_path / "config.toml"))
     monkeypatch.setattr(memories, "DB_PATH", str(tmp_path / "memory.db"))
@@ -404,7 +408,7 @@ def test_no_backup_download_without_accounts(proxy):
 
 def test_only_an_admin_sees_the_settings(idp, tmp_path, monkeypatch):
     """Configuration → Paramètres, avec les comptes : admin seulement."""
-    from llm_proxy import config
+    from llm_proxy.core import config
     (tmp_path / "config.toml").write_text("[proxy]\n")
     monkeypatch.setattr(config, "CONFIG_PATH", str(tmp_path / "config.toml"))
     alice = connect(idp)

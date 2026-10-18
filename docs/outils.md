@@ -70,7 +70,7 @@ est une phrase en anglais, ponctuée, sans le préfixe.
 
 ### Les fichiers produits
 
-- Le magasin `proxy/llm_proxy/files.py` les garde quelques heures, en
+- Le magasin `proxy/llm_proxy/storage/files.py` les garde quelques heures, en
   mémoire vive.
 - Il les sert par `GET <public_url>/v1/files/<jeton>/<nom>`, sans clé du
   proxy (un navigateur n'en envoie pas). Le jeton, imprévisible, vaut droit

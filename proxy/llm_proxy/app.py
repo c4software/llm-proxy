@@ -25,19 +25,20 @@ import mimetypes
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
-from . import auth
-from . import catalog
-from . import config_view
-from . import conversation_routes
-from . import health
-from . import relay_routes
-from . import surfaces
-from . import tool_routes
-from . import ui_routes
-from . import ui_static
-from . import usage_api
-from .auth import UISession
+from .access import auth
+from .access.auth import UISession
+from .exposure import tool_routes
 from .startup import lifespan
+from .surfaces import endpoints, relay_routes
+from .ui import (
+    config_view,
+    conversation_routes,
+    dashboard,
+    health,
+    static_files,
+    usage_api,
+)
+from .upstream import catalog
 
 app = FastAPI(title="albert-proxy", lifespan=lifespan)
 
@@ -52,7 +53,7 @@ app.add_middleware(UISession)
 
 # Les routes des modules, le relais (son catch-all) EN DERNIER, qui sinon
 # les prendrait toutes.
-for module in (surfaces, catalog, usage_api, ui_static, ui_routes,
+for module in (endpoints, catalog, usage_api, static_files, dashboard,
                conversation_routes, config_view, health, tool_routes):
     app.include_router(module.router)
 

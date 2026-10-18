@@ -18,8 +18,10 @@ from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
                    failed, feed, hosted_tools, search_then_answer, sse, stream,
                    tool_call, usage)
 from fakes import sse_events as events
-from llm_proxy import anthropic_api as A
-from llm_proxy import anthropic_api, backends, stats
+from llm_proxy.surfaces import anthropic_api as A
+from llm_proxy.surfaces import anthropic_api
+from llm_proxy.upstream import backends
+from llm_proxy.storage import stats
 from llm_proxy import tools
 from llm_proxy.tools import web_fetch, web_search
 
@@ -877,7 +879,7 @@ def test_loop_turn_and_client_replay_send_the_same_bytes():
     t = translator(request, hosted)
     turn(t, chunk({"reasoning_content": "Hum."}), *SEARCH_TURN)
     t.resolve(t.pending[0], SEARCHED)
-    # Tour 2, comme surfaces.messages le reconstruit.
+    # Tour 2, comme endpoints.messages le reconstruit.
     rebuilt = lambda: A.to_openai(
         {**request, "messages": request["messages"] + [
             {"role": "assistant", "content": t.content}]},

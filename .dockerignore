@@ -11,7 +11,7 @@
 **/.pytest_cache/
 # Les runtimes WASM : l'image les construit elle-même (étape `wasm`).
 **/node_modules/
-proxy/llm_proxy/web/static/vendor/
+proxy/llm_proxy/ui/web/static/vendor/
 README.md
 docs/
 services/

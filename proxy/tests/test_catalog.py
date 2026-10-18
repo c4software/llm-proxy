@@ -6,7 +6,7 @@ import asyncio
 
 import httpx
 
-from llm_proxy import backends, catalog
+from llm_proxy.upstream import backends, catalog
 
 
 def backend(replies):

@@ -3,7 +3,7 @@ retirer le préfixe de backend, le reste du corps recopié tel quel."""
 
 import pytest
 
-from llm_proxy import multipart as M
+from llm_proxy.core import multipart as M
 
 CT = "multipart/form-data; boundary=----b0undary"
 

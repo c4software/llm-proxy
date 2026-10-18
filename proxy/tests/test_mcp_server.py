@@ -7,8 +7,10 @@ dans test_mcp.py.)"""
 import pytest
 
 from fakes import rpc
-from llm_proxy import auth
-from llm_proxy import files, mcp_server, tools
+from llm_proxy.access import auth
+from llm_proxy.storage import files
+from llm_proxy.exposure import mcp_server
+from llm_proxy import tools
 from llm_proxy.tools import web_fetch, web_search
 
 

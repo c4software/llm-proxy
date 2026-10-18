@@ -24,7 +24,8 @@ import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
 
 from fakes import (PUBLIC, FakeWeb, fake_backend, fake_dns, go, net_guard,
                    quotas, rendu, sans_liaison)
-from llm_proxy import multipart, tools
+from llm_proxy.core import multipart
+from llm_proxy import tools
 from llm_proxy.tools import net, transcribe
 
 WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
@@ -468,7 +469,7 @@ def test_formats_que_le_modele_lit_refus_avant_l_envoi(monkeypatch, asr):
     description = transcribe.TOOL.spec(())["function"]["description"]
     assert "return the text (wav; up to 25 MB)" in description
     # La configuration : des formats connus, au moins un.
-    from llm_proxy import config
+    from llm_proxy.core import config
     for value, ok in ((["WAV", ".flac"], ["wav", "flac"]), (["wma"], None),
                       ([], None)):
         monkeypatch.setattr(config, "CONFIG", {"tools": {"transcribe": {

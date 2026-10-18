@@ -27,10 +27,19 @@ import io
 import logging
 import time
 
-from .. import config
+from ..core import config
 from . import net, render as renderer, webcache
-from .contract import (Anthropic, Artifact, Call, Responses, Result, Source,
-                       Tool, ToolError, ToolName)
+from .contract import (
+    Anthropic,
+    Artifact,
+    Call,
+    Responses,
+    Result,
+    Source,
+    Tool,
+    ToolError,
+    ToolName,
+)
 from .html_text import html_to_text
 
 ENABLED = config.flag("tools.web_fetch.enabled", False)

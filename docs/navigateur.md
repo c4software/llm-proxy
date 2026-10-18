@@ -354,7 +354,7 @@ L'image Docker construit les runtimes (PHP, SQLite, Chart.js, sucrase,
 TypeScript) dans l'étape `wasm` de `proxy/Dockerfile`. Hors Docker, il faut les construire une fois :
 
 ```bash
-cd proxy/wasm && npm ci && npm run build   # → proxy/llm_proxy/web/static/vendor/
+cd proxy/wasm && npm ci && npm run build   # → proxy/llm_proxy/ui/web/static/vendor/
 ```
 
 Sans eux, `run_php`, `run_sql` et `check_typescript` répondent que le

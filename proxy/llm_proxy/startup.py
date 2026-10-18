@@ -12,22 +12,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from . import accounts
-from . import albert
-from . import anthropic_api
-from . import auth
-from . import chat_api
-from . import config
-from . import fairshare
-from . import files
-from . import oidc
-from . import responses_api
-from . import stats
 from . import tools
-from .auth import account_owner
-from .backends import BACKENDS, FALLBACK_BACKEND, close_clients, open_clients
-from .catalog import always_shown
-from .settings import EXEMPT_SUFFIXES, is_exempt, log
+from .access import accounts, auth, fairshare, oidc
+from .access.auth import account_owner
+from .core import config
+from .core.settings import EXEMPT_SUFFIXES, is_exempt, log
+from .storage import files, stats
+from .surfaces import anthropic_api, chat_api, responses_api
+from .upstream import albert
+from .upstream.backends import BACKENDS, FALLBACK_BACKEND, close_clients, open_clients
+from .upstream.catalog import always_shown
 
 
 def seed_fair_share() -> int:
