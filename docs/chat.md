@@ -222,7 +222,8 @@ description, *Autre* en dernier, *Envoyer les réponses* ou *Passer*.
 
 Le bouton *Artifacts* de l'en-tête ouvre le panneau, à droite du fil :
 un artifact à la fois, ses versions, *Source*, *Copier*, *Télécharger*,
-*Large*. Les artifacts sont gardés avec la conversation.
+*Large*, *Plein écran* (Échap pour en sortir). Les artifacts sont gardés
+avec la conversation.
 
 Un artifact est **isolé** : cadre `sandbox` sans `allow-same-origin`,
 sans accès à la page, à sa session ni à ses clés. Sa politique de
@@ -244,13 +245,20 @@ clic.
 
 ### Outils du navigateur
 
-Le modèle peut aussi solliciter l'**appareil** : heure, position,
-notifications, presse-papiers, agenda, liens, partage, capture d'écran,
-caméra, codes, pipette, écran allumé. Il peut aussi faire tourner du
-**JavaScript**, du **TypeScript**, du **PHP** ou du **SQL** dans un bac isolé, sur les
+Le modèle peut aussi solliciter l'**appareil** : heure et état de
+l'appareil, position, notifications, presse-papiers, agenda, liens,
+partage, capture d'écran, caméra, codes, pipette, écran allumé, lecture
+à voix haute. Il peut aussi faire tourner du **JavaScript**, du
+**TypeScript**, du **PHP** ou du **SQL** dans un bac isolé, sur les
 fichiers du dossier ouvert. Ces outils se cochent par famille, dans la
-section *Navigateur* du menu **Outils**. Ce qui touche à l'appareil
-passe toujours par une carte que l'utilisateur accepte ou refuse.
+section *Navigateur* du menu **Outils**.
+
+Ce qui touche à l'appareil passe toujours par une carte que
+l'utilisateur accepte ou refuse. Ce qui reste utile après la réponse
+(un lien, un texte à partager ou à recopier, un rappel) laisse une
+**carte durable** sous la réponse, rejouable à volonté. Les bacs de code
+peuvent aussi être offerts aux agents du navigateur (WebMCP), sur
+réglage.
 
 Chaque outil, avec un exemple et sa capture :
 [Les outils du navigateur](navigateur.md).

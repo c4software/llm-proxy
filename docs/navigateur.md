@@ -16,7 +16,7 @@ outils ; les résultats affichés sont ceux qu'ils ont vraiment rendus.
 
 ## Activer les outils
 
-![Le menu Outils, section Navigateur : quinze familles cochables (Date et heure, Position, Notifications, Presse-papiers, Agenda, Liens, Partage, Capture d'écran, Caméra, QR et codes-barres, Pipette, Écran allumé, JavaScript et TypeScript, PHP, SQL), chacune avec une ligne d'explication](navigateur-outils.png)
+![Le menu Outils, section Navigateur : seize familles cochables (Date et heure, Position, Notifications, Presse-papiers, Agenda, Liens, Partage, Capture d'écran, Caméra, QR et codes-barres, Pipette, Écran allumé, Lecture à voix haute, JavaScript et TypeScript, PHP, SQL), chacune avec une ligne d'explication](navigateur-outils.png)
 
 Les outils sont rangés par **famille**, dans la section *Navigateur* du
 menu **Outils**. On les coche par conversation, et une conversation
@@ -32,13 +32,18 @@ neuve reprend le dernier choix fait dans ce navigateur.
 - Un modèle qui tourne dans le navigateur (Gemini Nano) ne reçoit pas
   ces outils.
 
-## Le principe : une carte avant l'appareil
+Les API du navigateur passent par [VueUse](https://vueuse.org)
+(`static/vueuse.iife.min.js`, chargé avec Vue) : presse-papiers,
+partage, pipette, verrou d'écran, caméra et écran, synthèse vocale,
+réseau, batterie.
 
-Ce qui touche à l'appareil n'est **jamais** lu sans un clic de
-l'utilisateur. Le modèle n'obtient pas la position, le presse-papiers,
-une photo ou une capture parce que la permission du navigateur est déjà
-accordée : une **carte** apparaît dans le fil, avec la raison donnée par
-le modèle, et attend.
+## Deux sortes de cartes
+
+**Une carte qui attend.** Ce qui touche à l'appareil n'est **jamais** lu
+sans un clic de l'utilisateur. Le modèle n'obtient pas la position, le
+presse-papiers, une photo ou une capture parce que la permission du
+navigateur est déjà accordée : une carte apparaît dans le fil, avec la
+raison donnée par le modèle, et la réponse attend.
 
 - Répondue, la carte devient le résultat de l'outil, et la réponse du
   modèle reprend.
@@ -50,18 +55,41 @@ le modèle, et attend.
 - Tout l'état est dans le message : une carte survit à un rechargement
   de la page.
 
-Les outils sans effet sur l'appareil (date, agenda, code) s'exécutent
-aussitôt.
+**Une carte durable.** Ce qui reste utile après la réponse laisse une
+carte **sous la réponse**, que l'utilisateur rejoue quand il veut :
+partager, rouvrir un lien, recopier un texte, reprendre une couleur,
+rallumer l'écran, annuler un rappel, relire un texte. Elle est gardée
+avec la conversation et revient après un rechargement. Ses boutons
+n'envoient plus rien au modèle : la réponse est finie.
+
+| Outil | Carte qui attend | Carte durable |
+|---|---|---|
+| `get_location` | oui | — |
+| `notify` | si la permission manque | le rappel : *Annuler*, *Le reprogrammer*, *Renvoyer* |
+| `clipboard_write` | — | le texte : *Copier* |
+| `clipboard_read` | oui | — |
+| `open_link` | — | l'adresse : *Ouvrir dans un onglet*, *Copier* |
+| `share` | — | le texte : *Partager…*, *Copier* |
+| `capture_screen`, `take_photo` | oui (aperçu) | — (l'image reste sous la réponse) |
+| `scan_code` | oui | le code : *Copier*, *Ouvrir l'adresse* |
+| `pick_color` | oui | la pastille : *Copier*, *Prendre une autre couleur* |
+| `keep_screen_on` | — | l'état de l'écran : le basculer |
+| `speak` | — | le texte : *Relire*, *Arrêter* |
+
+Les autres outils (date, agenda, code) s'exécutent aussitôt.
 
 ## Les outils un par un
 
 ### Date et heure — `device_context`
 
-![Le modèle appelle device_context, qui rend la date et l'heure locales, le fuseau horaire et les langues ; il en déduit dans combien de jours ouvre le marché de Noël](navigateur-date.png)
+![Le modèle appelle device_context, qui rend la date et l'heure locales, le fuseau, les langues, et l'état de l'appareil ; il en déduit dans combien de jours ouvre le marché de Noël](navigateur-date.png)
 
-La date et l'heure locales, le fuseau horaire et les langues du
-navigateur. Le modèle l'appelle avant de parler d'« aujourd'hui », de
-« demain » ou d'une heure. Pas de carte.
+La date et l'heure locales, le fuseau horaire et les langues, et ce que
+le navigateur dit de l'appareil : en ligne ou non, le type et le débit
+de la connexion, la batterie, le thème et le mouvement préférés, la
+taille de la fenêtre. Ce que le navigateur ne sait pas n'est pas dit. Le
+modèle l'appelle avant de parler d'« aujourd'hui », ou pour adapter sa
+réponse à l'appareil. Pas de carte.
 
 ### Position — `get_location`
 
@@ -72,21 +100,27 @@ Le modèle donne la raison, montrée sur la carte. L'utilisateur choisit :
 
 ### Notifications — `notify`
 
-![Carte « Le modèle veut vous envoyer une notification » : « Sortir le pain du four » dans 20 minutes, avec Autoriser les notifications et Non merci](navigateur-notification.png)
+![Carte durable « Rappel programmé à 13:39 » : Sortir le pain du four, avec Annuler le rappel](navigateur-notification.png)
 
 Une notification tout de suite, ou un rappel dans N minutes (24 h au
 plus). Le rappel n'arrive que si la page reste ouverte ; pour un
-rendez-vous, l'agenda vaut mieux. La carte n'apparaît que si le
-navigateur n'a pas encore la permission, puisqu'il ne la demande que sur
-un clic. Ensuite, les notifications partent sans carte.
+rendez-vous, l'agenda vaut mieux.
+
+- Si le navigateur n'a pas encore la permission, une carte la demande
+  d'abord, puisqu'il ne la demande que sur un clic.
+- Chaque notification laisse une carte durable. Un rappel programmé
+  s'**annule** ; perdu par un rechargement, il se **reprogramme** ;
+  passé, il se **renvoie**.
 
 ### Presse-papiers — `clipboard_write`, `clipboard_read`
 
-![Deux appels : clipboard_write copie une commande de déploiement aussitôt ; clipboard_read affiche une carte « Le modèle demande le contenu de votre presse-papiers » avec Coller le presse-papiers et Refuser](navigateur-presse-papiers.png)
+![clipboard_write copie une commande de déploiement et la laisse en carte durable, avec Copier ; clipboard_read affiche une carte « Le modèle demande le contenu de votre presse-papiers » avec Coller le presse-papiers et Refuser](navigateur-presse-papiers.png)
 
 **Copier** se fait aussitôt : une commande, une adresse, un message à
-coller ailleurs. **Lire** passe par une carte, car le presse-papiers
-peut contenir n'importe quoi.
+coller ailleurs. Le texte reste en carte durable, à recopier. Si le
+navigateur refuse la copie (la page n'avait pas le focus), la carte
+permet de copier d'un clic. **Lire** passe par une carte qui attend, car
+le presse-papiers peut contenir n'importe quoi.
 
 ### Agenda — `add_to_calendar`
 
@@ -99,11 +133,13 @@ notification, le rendez-vous survit à la page.
 
 ### Liens — `open_link`
 
-![Carte « Le modèle propose d'ouvrir une page », avec la raison et l'adresse complète d'un itinéraire OpenStreetMap, boutons Ouvrir dans un onglet et Refuser](navigateur-lien.png)
+![open_link laisse une carte durable « Lien proposé » : la raison, l'adresse complète d'un itinéraire OpenStreetMap, avec Ouvrir dans un onglet et Copier](navigateur-lien.png)
 
 Une adresse http(s) à ouvrir dans un nouvel onglet : un itinéraire, une
-recherche, une page de documentation. L'adresse est montrée **en
-entier** avant le clic.
+recherche, une page de documentation. L'appel n'attend pas : il laisse
+une carte durable où l'adresse se lit **en entier**, à ouvrir quand on
+veut, et à rouvrir plus tard. Le modèle ne sait pas si elle a été
+ouverte.
 
 ### Partage — `share`
 
@@ -111,14 +147,10 @@ entier** avant le clic.
 
 Un texte, et éventuellement une adresse, à envoyer vers une autre
 application (messagerie, mail, notes) par le partage du système. L'appel
-n'attend pas : il laisse sous la réponse une **carte durable**, que
-l'utilisateur partage quand il veut, et autant de fois qu'il veut.
-
-- La carte reste dans la conversation et revient après un rechargement.
-- Sur un appareil sans partage (Linux, ou la conversation rouverte
-  ailleurs), elle propose seulement *Copier*.
-- Le modèle ne sait pas si l'utilisateur a partagé : la réponse est déjà
-  finie.
+n'attend pas : il laisse une carte durable, que l'utilisateur partage
+quand il veut, et autant de fois qu'il veut. Sur un appareil sans
+partage (Linux, ou la conversation rouverte ailleurs), elle propose
+seulement *Copier*.
 
 ### Capture d'écran — `capture_screen`
 
@@ -139,26 +171,40 @@ vérifie en aperçu, puis l'envoie ou la reprend. L'image est réduite à
 
 ### QR et codes-barres — `scan_code`
 
-![Carte « Le modèle demande de lire un code », avec les boutons Caméra, Sur l'écran et Refuser](navigateur-qr-code.png)
+![Le code lu (la configuration d'un réseau Wi-Fi) part au modèle et reste en carte durable « Code lu », avec Copier](navigateur-qr-code.png)
 
 Un QR code ou un code-barres lu à la caméra ou sur une capture d'écran
-(API `BarcodeDetector` : macOS, Android, ChromeOS). Seul le **texte**
-lu part au modèle, pas d'image.
+(API `BarcodeDetector` : macOS, Android, ChromeOS), sur une carte qui
+attend. Seul le **texte** lu part au modèle, pas d'image. Le code reste
+en carte durable : à copier, ou à ouvrir si c'est une adresse.
 
 ### Pipette — `pick_color`
 
-![Carte « Le modèle demande une couleur », avec Prendre une couleur et Refuser](navigateur-pipette.png)
+![La couleur prise part au modèle et reste en carte durable « Couleur prise » : le code #4f7cac, sa pastille, Copier et Prendre une autre couleur](navigateur-pipette.png)
 
 Une couleur prise n'importe où à l'écran, rendue en hexadécimal (API
-`EyeDropper` : Chrome et Edge).
+`EyeDropper` : Chrome et Edge). La carte durable montre la pastille et
+le code, à copier ; *Prendre une autre couleur* la remplace.
 
 ### Écran allumé — `keep_screen_on`
 
-![keep_screen_on rend « Écran maintenu allumé tant que la page est visible », puis le modèle commence la recette pas à pas](navigateur-ecran-allume.png)
+![keep_screen_on laisse une carte durable « Écran maintenu allumé », avec Rendre à la veille, puis le modèle commence la recette](navigateur-ecran-allume.png)
 
 Empêche la mise en veille pendant une recette, un pas-à-pas ou une
-présentation, tant que la page est visible. Le verrou est repris quand
-la page revient au premier plan.
+présentation, tant que la page est visible ; le verrou est repris quand
+la page revient au premier plan. La carte durable montre l'état de
+l'écran et le bascule, après un rechargement aussi.
+
+### Lecture à voix haute — `speak`
+
+![speak lit une étape de recette et laisse une carte durable « Lu à voix haute », avec Relire](navigateur-voix.png)
+
+Le navigateur lit un texte avec sa synthèse vocale : une étape d'un
+pas-à-pas mains libres, un résumé à écouter. La lecture part aussitôt
+(l'utilisateur vient d'écrire, la page a eu son geste) ; la carte
+durable permet de **relire**, ou d'**arrêter** pendant la lecture. La
+langue suit celle du navigateur, ou celle que donne le modèle
+(`lang`).
 
 ## Le code dans le navigateur
 
@@ -298,6 +344,24 @@ Sans eux, `run_php`, `run_sql` et `check_typescript` répondent que le
 runtime manque. `run_javascript` fonctionne toujours, mais sans
 `chart()` ni TypeScript.
 
+## Les agents du navigateur (WebMCP)
+
+[WebMCP](https://github.com/webmachinelearning/webmcp) permet à une page
+d'offrir ses outils aux **agents qui pilotent le navigateur** (une
+extension, l'assistant du navigateur). La page peut y exposer les
+outils marqués `agent` : `device_context` et les bacs de code
+(`run_javascript`, `check_typescript`, `run_php`, `run_sql`).
+
+- Coupé par défaut : la case *Agents du navigateur* des **Réglages**
+  du chat l'active, dans ce navigateur seulement. La case n'apparaît
+  que si le navigateur a l'API (`document.modelContext`, expérimentale,
+  Chrome).
+- Un agent appelle ces outils **hors de toute conversation** : sans
+  dossier ouvert, sans pièce jointe, sans appareil ; `run_sql` a une
+  base à lui, en mémoire. Seul le texte du résultat lui revient.
+- L'enregistrement passe par `useWebMCP` (VueUse) : décocher la case
+  retire les outils.
+
 ## Écrire un outil de la page
 
 Tous les outils que la page exécute suivent la même **interface** :
@@ -344,11 +408,12 @@ class GetLocation extends PageTool {
 |---|---|---|
 | `super({name, description, params, required})` | ce que le modèle lit : le nom (de `TOOL`), la description, les paramètres | — |
 | `placement`, `component` (dans `super`) | une carte dans le fil ou dans la feuille du bas ; un composant Vue à la place du gabarit commun | dans le fil, gabarit commun |
+| `agent` (dans `super`) | exposé aux [agents du navigateur](#les-agents-du-navigateur-webmcp) : un outil qui s'exécute aussitôt, sans appareil, dossier ni conversation | non |
 | `run(args, ctx)` | l'exécution, aussitôt : un texte, ou `{result, image?, artifact?, keep?}` | — |
 | `waits(args, ctx)` | attend-il l'utilisateur ? | non |
 | `prepare(args, ctx)` | l'état de la carte, ou `{error}` | `{}` |
 | `view(w)` | ce que la carte montre : titre, détail, boutons, aperçu, flux vidéo, citation | — |
-| `act(w, action, ctx, payload)` | un bouton : `{result, image?}` quand la carte est répondue, `null` si elle attend encore ; une erreur levée s'affiche | — |
+| `act(w, action, ctx, payload)` | un bouton : `{result, image?, keep?}` quand la carte est répondue, `null` si elle attend encore ; une erreur levée s'affiche | — |
 | `release(w)` | la carte est fermée : couper la caméra, l'écran | rien |
 | `abandoned(w)` | le résultat d'une carte laissée sans réponse | « L'utilisateur n'a pas répondu… » |
 | `notice(w)`, `pending(w)` | le texte de la notification ; la ligne qui rouvre la feuille | le titre de la carte |
@@ -359,6 +424,12 @@ class GetLocation extends PageTool {
 
 `ctx` donne au tour la conversation, le message, le dossier ouvert,
 `vision` (le modèle lit-il les images ?) et `download`.
+
+Les API du navigateur passent par VueUse : `tools/device/vueuse.js` crée
+ses composables une fois, dans une portée qui vit autant que la page
+(`useClipboard`, `useShare`, `useEyeDropper`, `useWakeLock`,
+`useSpeechSynthesis`…) ; la caméra et l'écran ont la leur, par carte
+(`useUserMedia`, `useDisplayMedia`).
 
 ### La famille
 
