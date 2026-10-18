@@ -96,6 +96,7 @@ from collections import OrderedDict
 
 from . import config, files
 from .settings import log
+from .tools.contract import ToolName
 
 # Inactif par défaut : un backend peut avoir SA lecture de
 # `{"type": "web_search"}` dans `tools` (Zhipu en a une).
@@ -222,9 +223,9 @@ def prepare(payload: dict, hosted, kinds, always=()) -> Context:
     tools = list(tools) if isinstance(tools, list) else []
     if "web_search_options" in payload:
         del payload["web_search_options"]
-        if not any(isinstance(t, dict) and "web_search" == t.get("type")
+        if not any(isinstance(t, dict) and ToolName.WEB_SEARCH == t.get("type")
                    for t in tools):
-            tools.append({"type": "web_search"})
+            tools.append({"type": ToolName.WEB_SEARCH})
     # Une fonction du client garde son nom : l'outil hébergé homonyme
     # n'est alors pas présenté (même règle que la surface Responses).
     taken = {t["function"].get("name") for t in tools

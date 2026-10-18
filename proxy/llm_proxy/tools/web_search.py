@@ -27,7 +27,7 @@ import httpx2
 from .. import config
 from . import webcache
 from .contract import (Anthropic, Call, Responses, Result, Source, Tool,
-                       ToolError)
+                       ToolError, ToolName)
 from .net import domain_match as _domain_match
 
 ENABLED = config.flag("tools.web_search.enabled", False)
@@ -39,12 +39,12 @@ LANGUAGE = config.text("tools.web_search.language", "")
 CATEGORIES = config.text("tools.web_search.categories", "")
 SNIPPET_CHARS = 240
 
-NAME = "web_search"
+NAME = ToolName.WEB_SEARCH
 
 # La description dit au modèle de lire une page par `web_fetch` : seulement
 # là où `web_fetch` lui est présenté aussi (`present` de prompt), pour
 # qu'il n'appelle pas une fonction qui n'existe pas.
-_FETCH = "web_fetch"
+_FETCH = ToolName.WEB_FETCH
 _FETCH_HINT = f"Use {_FETCH} to read a result page. "
 
 

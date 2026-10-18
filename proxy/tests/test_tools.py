@@ -1269,9 +1269,12 @@ def test_contrat_outil_minimal_sans_liaison(proxy, monkeypatch):
     compte, l'ignorent."""
     from llm_proxy import anthropic_api, responses_api
     monkeypatch.setattr(tools, "REGISTRY", [])
-    echo = tools.register(Echo())
-    with pytest.raises(ValueError):             # le nom est la clé
+    # Hors de ToolName : un outil FOURNI (un outil natif y aurait son nom).
+    with pytest.raises(ValueError, match="nom hors de ToolName"):
         tools.register(Echo())
+    echo = tools.register(Echo(), provider="exemple")
+    with pytest.raises(ValueError, match="nom déjà pris"):   # le nom est la clé
+        tools.register(Echo(), provider="exemple")
     assert tools.enabled() == [echo] and tools.kinds() == {"echo"}
     # L'annuaire que montent les routes : ce que le registre active (la
     # fixture `proxy` a remplacé tools.Hosted par le sien).
@@ -1676,3 +1679,49 @@ def test_net_download_bornes_de_l_outil_et_erreurs_du_contrat(monkeypatch):
         with pytest.raises(tools.ToolError) as exc:
             dl(url, 100, settings)
         assert (exc.value.code, exc.value.message) == (code, message), url
+
+
+def test_le_registre_refuse_un_outil_hors_contrat(monkeypatch):
+    """register() tient l'interface fermée de Tool : un membre public
+    inconnu (une faute de frappe), un prompt ou un run non écrit, un nom
+    natif pris par un outil fourni, une liaison mal formée. Et chaque
+    entrée de ToolName a son outil dans le registre du proxy."""
+    monkeypatch.setattr(tools, "REGISTRY", [])
+
+    class Typo(Echo):
+        def sumary(self, args, result=None):        # summary, mal écrit
+            return {"type": "echo"}
+
+    class SansRun(tools.Tool):
+        name = "sans_run"
+
+        def prompt(self, present):
+            return "x"
+
+    class Usurpe(Echo):
+        name = tools.ToolName.WEB_SEARCH
+
+    class Liaison(Echo):
+        responses = ("echo",)                       # pas un tools.Responses
+
+    class Etat(Echo):
+        extra = frozenset({"server"})               # réservé aux outils fournis
+
+    for tool, provider, fault in [
+            (Typo(), "exemple", "membre public inconnu 'sumary'"),
+            (SansRun(), "exemple", "run() non écrit"),
+            (Usurpe(), "exemple", "un nom d'outil natif"),
+            (Liaison(), "exemple", "`responses` doit être un Responses"),
+            (Etat(), "", "`extra` est réservé"),
+            (object(), "exemple", "n'hérite pas de Tool")]:
+        assert any(fault in f for f in tools.faults(tool, provider)), fault
+        with pytest.raises(ValueError):
+            tools.register(tool, provider)
+    assert tools.REGISTRY == []
+    # Les outils du dépôt, eux, sont conformes, et tous inscrits.
+    from llm_proxy.tools import mcp
+    for tool in (web_search.TOOL, web_fetch.TOOL):
+        assert tools.faults(tool) == []
+    assert tools.faults(mcp.McpTool(None, "lire", "srv__lire"), "mcp") == []
+    monkeypatch.undo()
+    assert {t.name for t in tools.REGISTRY} >= set(tools.ToolName)

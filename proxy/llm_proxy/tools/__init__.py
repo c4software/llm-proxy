@@ -42,19 +42,23 @@ from ..settings import log
 from . import (code_execution, image_generation, mcp, memory, net,  # noqa: F401
                ocr, transcribe, web_fetch, web_grep, web_search, webcache)
 from .contract import (ERRORS, Anthropic, Artifact, Call,  # noqa: F401
-                       Responses, Result, Source, Tool, ToolError, failure)
+                       Responses, Result, Source, Tool, ToolError, ToolName,
+                       failure, faults)
 
 # Le registre : tous les outils que le proxy SAIT héberger, actifs ou non,
 # dans l'ordre où ils sont présentés au modèle.
 REGISTRY: list[Tool] = []
 
 
-def register(tool: Tool) -> Tool:
-    """Ajoute un outil au registre. Le nom est la clé : deux outils ne le
-    partagent pas."""
-    if not tool.name or any(t.name == tool.name for t in REGISTRY):
-        raise ValueError(f"outil hébergé sans nom, ou nom déjà pris : "
-                         f"{tool.name!r}")
+def register(tool: Tool, provider: str = "") -> Tool:
+    """Ajoute un outil au registre, s'il tient le contrat (faults). Le nom
+    est la clé : deux outils ne le partagent pas. `provider` : celui qui
+    FOURNIT l'outil (« mcp ») ; vide, c'est un outil natif (ToolName)."""
+    errors = faults(tool, provider)
+    if any(t.name == tool.name for t in REGISTRY):
+        errors.append(f"outil {tool.name!r} : nom déjà pris")
+    if errors:
+        raise ValueError("outil hébergé non conforme :\n  " + "\n  ".join(errors))
     REGISTRY.append(tool)
     return tool
 
@@ -67,6 +71,11 @@ register(transcribe.TOOL)
 register(code_execution.TOOL)
 register(image_generation.TOOL)
 register(memory.TOOL)
+
+# Chaque outil natif de ToolName est inscrit : une entrée sans outil est
+# une erreur de démarrage, pas un outil qui manque en silence.
+if missing := set(ToolName) - {t.name for t in REGISTRY}:
+    raise ValueError(f"ToolName sans outil : {sorted(missing)}")
 
 # Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
 # reçoit une erreur qui lui demande de conclure.

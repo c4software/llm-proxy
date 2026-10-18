@@ -54,7 +54,7 @@ import httpx2
 from .. import albert, backends, config, stats
 from ..settings import is_exempt, log
 from . import net, webcache
-from .contract import Call, Result, Source, Tool, ToolError
+from .contract import Call, Result, Source, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.transcribe.enabled", False)
 # «<backend>/<modèle>», préfixé comme tout modèle du proxy. Vide → l'outil
@@ -82,7 +82,7 @@ PATH = "/v1/audio/transcriptions"
 # consomme se distingue ainsi de ce que les clients consomment.
 ENDPOINT = "/v1/tools/transcribe"
 
-NAME = "transcribe"
+NAME = ToolName.TRANSCRIBE
 
 # Le cache des transcriptions : (URL lue, texte, langue, durée). Borné en
 # entrées et en caractères, en mémoire vive, commun à tous les clients

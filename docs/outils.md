@@ -14,7 +14,8 @@ Le code vit dans `proxy/llm_proxy/tools/` :
 - un **fournisseur**, `mcp.py`, qui ajoute les outils des
   [serveurs MCP](#serveurs-mcp) configurés ;
 - le contrat, `contract.py`, réexporté par le paquet :
-  `from llm_proxy import tools`, puis `tools.Tool`, `tools.Result`…
+  `from llm_proxy import tools`, puis `tools.Tool`, `tools.Result`,
+  `tools.ToolName`…
 
 Ce que le contrat prévoit sans qu'aucune surface le fasse encore :
 [Prévu, pas construit](#prévu-pas-construit).
@@ -109,6 +110,37 @@ arguments. Le reste a un défaut.
 | `responses`, `anthropic` | Les [liaisons](#liaisons-aux-protocoles), ou `None` |
 | `kinds` | Calculé : les types qui le déclarent dans `tools` en chat/completions. Ceux de sa liaison Responses, sinon son nom |
 | `render(args, sources) -> str` | Refait le texte depuis des sources. Seulement pour un outil lié au bloc Anthropic `web_search_tool_result`, dont le client rejoue les sources et non le texte |
+| `extra` | Les membres publics qu'un outil **fourni** ajoute à l'interface (l'état d'un outil MCP : `server`, `schema`…). Vide pour un outil natif |
+
+### Les noms : `ToolName`
+
+Les outils **natifs** sont nommés par une liste fermée, `ToolName` (une
+`StrEnum`) : `WEB_SEARCH`, `WEB_FETCH`, `OCR`, `WEB_GREP`, `TRANSCRIBE`,
+`CODE_EXECUTION`, `IMAGE_GENERATION`, `MEMORY`. Le reste du proxy les
+nomme par elle (`ToolName.MEMORY`), jamais par une chaîne. Un membre vaut
+sa chaîne partout : en JSON, en SQLite, en comparaison.
+
+Les outils **fournis** (ceux des serveurs MCP) n'y sont pas : leurs noms
+se découvrent. Ils ne peuvent pas prendre un nom natif.
+
+### L'interface est fermée
+
+`register(tool, provider="")` vérifie l'outil avant de l'inscrire
+(`tools.faults`) et refuse :
+
+- un objet qui n'hérite pas de `Tool` ;
+- un **membre public que `Tool` ne déclare pas**, comme `sumary` au lieu
+  de `summary`. Une aide de l'outil est `_privée`, ou une fonction du
+  module ; un outil fourni déclare son état dans `extra` ;
+- un `prompt` ou un `run` non écrit ;
+- un nom natif hors de `ToolName`, ou un outil fourni qui prend un nom
+  natif ; un nom déjà pris ;
+- une liaison `responses` ou `anthropic` qui n'est pas un `Responses`
+  (avec ses `kinds`) ou un `Anthropic`.
+
+Au démarrage, chaque entrée de `ToolName` doit avoir son outil inscrit.
+Une dérive arrête donc le proxy au lieu de passer en silence ; pytest la
+joue (`test_le_registre_refuse_un_outil_hors_contrat`).
 
 ### Ce que `run` reçoit : `Call`
 
@@ -403,8 +435,11 @@ class Echo(tools.Tool):
         return tools.Result(text, meta={"chars": len(text)})
 
 
-tools.register(Echo())
+tools.register(Echo(), provider="exemple")
 ```
+
+`echo` n'est pas dans `ToolName` : hors du dépôt, l'outil s'inscrit comme
+**fourni** (`provider`). Un outil du dépôt est natif (voir plus bas).
 
 Une fois enregistré, sans une ligne de plus ailleurs :
 
@@ -421,17 +456,18 @@ POST /v1/chat/completions, "tools": [{"type": "echo"}]
 
 Pour un outil du dépôt :
 
-1. Un module dans `proxy/llm_proxy/tools/`. Il importe le contrat par
+1. Son nom dans `ToolName` (`contract.py`).
+2. Un module dans `proxy/llm_proxy/tools/`. Il importe le contrat par
    `from .contract import …`, pas par le paquet (qui importe ses outils),
-   lit `[tools.<nom>]` (`config.flag`, `config.text`…) et finit par
-   `TOOL = MonOutil()`.
-2. `register(mon_outil.TOOL)` dans `proxy/llm_proxy/tools/__init__.py`.
+   pose `NAME = ToolName.MON_OUTIL` et `name = NAME`, lit `[tools.<nom>]`
+   (`config.flag`, `config.text`…) et finit par `TOOL = MonOutil()`.
+3. `register(mon_outil.TOOL)` dans `proxy/llm_proxy/tools/__init__.py`.
    L'ordre du registre est l'ordre de présentation.
-3. Une table `[tools.<nom>]` commentée dans `data/config.example.toml`, et
+4. Une table `[tools.<nom>]` commentée dans `data/config.example.toml`, et
    sa section dans `docs/outils-heberges.md` (ou `docs/configuration.md`).
-4. Une liaison, si un protocole a un nom pour lui.
+5. Une liaison, si un protocole a un nom pour lui.
 
-Un fournisseur (`mcp.py`) appelle `register` par outil découvert, au
+Un fournisseur (`mcp.py`) appelle `register(tool, provider="mcp")` par outil découvert, au
 démarrage puis à chaque découverte. Le registre ne sait pas retirer : un
 outil disparu reste enregistré, avec `enabled` faux.
 

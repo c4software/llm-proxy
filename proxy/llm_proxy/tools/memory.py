@@ -29,10 +29,10 @@ import asyncio
 import time
 
 from .. import config, memories
-from .contract import Call, Result, Tool, ToolError
+from .contract import Call, Result, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.memory.enabled", False)
-NAME = "memory"
+NAME = ToolName.MEMORY
 # Lignes au plus rendues par `view` d'un fichier sans `view_range`.
 VIEW_LINES = 2000
 COMMANDS = ("view", "create", "str_replace", "insert", "delete", "rename")

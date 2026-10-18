@@ -48,7 +48,7 @@ import httpx2
 from .. import config, files
 from ..settings import log
 from . import net
-from .contract import Artifact, Call, Result, Tool, ToolError
+from .contract import Artifact, Call, Result, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.code_execution.enabled", False)
 # Base de l'exécuteur : une adresse de CONFIGURATION, privée.
@@ -92,12 +92,12 @@ INPUT_MARGIN = 45
 USER_AGENT = ("llm-proxy code_execution "
               "(+https://github.com/c4software/llm-proxy)")
 
-NAME = "code_execution"
+NAME = ToolName.CODE_EXECUTION
 
 # La description renvoie le modèle à `web_fetch` et à `ocr` pour ce qui
 # n'est qu'à LIRE : vrai seulement là où ils lui sont présentés aussi
 # (`present` de prompt).
-_READERS = ("web_fetch", "ocr")
+_READERS = (ToolName.WEB_FETCH, ToolName.OCR)
 
 # Ce que le modèle écrit → le langage de l'exécuteur (sandbox.LANGS).
 # Go et Rust ont leur valeur plutôt que de passer par `bash` : l'exécuteur

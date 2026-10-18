@@ -51,7 +51,7 @@ async def chat(request: Request, page: bool = False):
             and isinstance(payload.get("tools"), list):
         # Incognito : pas de mémoire persistante, même déclarée.
         kept = [t for t in payload["tools"]
-                if not (isinstance(t, dict) and t.get("type") == "memory")]
+                if not (isinstance(t, dict) and t.get("type") == tools.ToolName.MEMORY)]
         if len(kept) != len(payload["tools"]):
             payload["tools"] = kept
             raw = json.dumps(payload, ensure_ascii=False).encode()

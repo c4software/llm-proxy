@@ -24,7 +24,7 @@ import time
 from .. import config
 from . import net, webcache
 from .contract import (Anthropic, Call, Responses, Result, Source, Tool,
-                       ToolError)
+                       ToolError, ToolName)
 from .html_text import html_to_text
 
 ENABLED = config.flag("tools.web_fetch.enabled", False)
@@ -43,15 +43,15 @@ USER_AGENT = "llm-proxy web_fetch (+https://github.com/c4software/llm-proxy)"
 ACCEPT = ("text/html,application/xhtml+xml,application/json,"
           "text/plain;q=0.9,*/*;q=0.5")
 
-NAME = "web_fetch"
+NAME = ToolName.WEB_FETCH
 
 # La description renvoie le modèle à `web_search` : seulement là où
 # `web_search` lui est présenté aussi (`present` de prompt).
-_SEARCH = "web_search"
+_SEARCH = ToolName.WEB_SEARCH
 _SEARCH_HINT = f"Use it to read a page found with {_SEARCH}. "
 
 # Et à `ocr`, de même : pour ce que cet outil-ci ne lit pas.
-_OCR = "ocr"
+_OCR = ToolName.OCR
 _OCR_HINT = (f"For an image, or a PDF with no extractable text (a scan), "
              f"use {_OCR} with the same URL. ")
 

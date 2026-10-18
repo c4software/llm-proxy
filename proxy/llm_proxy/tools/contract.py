@@ -16,7 +16,24 @@ GET /v1/tools.
 """
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Mapping
+
+
+class ToolName(StrEnum):
+    """Les outils NATIFS du proxy, liste FERMÉE : le nom de la fonction
+    présentée au modèle. Le reste du proxy les nomme par elle, jamais par
+    une chaîne ; chacun est implémenté une fois (tools/__init__.py le
+    vérifie au démarrage). Les outils FOURNIS (les serveurs MCP) n'y
+    sont pas : leurs noms se découvrent."""
+    WEB_SEARCH = "web_search"
+    WEB_FETCH = "web_fetch"
+    OCR = "ocr"
+    WEB_GREP = "web_grep"
+    TRANSCRIBE = "transcribe"
+    CODE_EXECUTION = "code_execution"
+    IMAGE_GENERATION = "image_generation"
+    MEMORY = "memory"
 
 # Les codes d'erreur, liste FERMÉE. Un outil n'en rend pas d'autre (un
 # code inconnu est ramené à `unavailable` par l'exécuteur) ; chaque
@@ -149,7 +166,12 @@ class Anthropic:
 class Tool:
     """Un outil hébergé. Une classe de base légère : `name`, `prompt` et
     `run` sont à écrire — `parameters` aussi dès que l'outil prend des
-    arguments —, le reste a un défaut."""
+    arguments —, le reste a un défaut.
+
+    L'INTERFACE est fermée : un outil n'a pas d'autre membre public que
+    ceux de Tool (une aide est `_privée`, ou une fonction du module) ; un
+    outil fourni qui porte son propre état le déclare dans `extra`.
+    register() refuse le reste (faults)."""
 
     # Le nom de la fonction présentée au modèle, et celui de /v1/tools.
     name = ""
@@ -167,6 +189,9 @@ class Tool:
     # Ce que le refus par limite d'appels dit des appels comptés au
     # plafond commun : «the limit of 8 <family> tool calls». «» = rien.
     family = ""
+    # Les membres publics qu'un outil FOURNI ajoute à l'interface (l'état
+    # d'un outil MCP : son serveur, son schéma…). Un outil natif n'en a pas.
+    extra: frozenset[str] = frozenset()
 
     @property
     def kinds(self) -> tuple[str, ...]:
@@ -216,3 +241,49 @@ class Tool:
         bloc `web_search_tool_result` d'Anthropic). À écrire par un outil
         lié à un tel bloc, et par lui seul."""
         raise NotImplementedError
+
+
+NATIVE = frozenset(ToolName)
+
+# Les membres publics de l'interface : un outil n'en a pas d'autres.
+MEMBERS = frozenset(n for n in dir(Tool) if not n.startswith("_"))
+
+
+def faults(tool, provider: str = "") -> list[str]:
+    """Ce qu'un outil a de trop ou de travers, au regard du contrat : la
+    liste des fautes, vide s'il est conforme. `provider` : celui qui
+    FOURNIT l'outil (« mcp ») ; vide, c'est un outil natif, nommé par
+    ToolName."""
+    if not isinstance(tool, Tool):
+        return [f"{tool!r} : n'hérite pas de Tool"]
+    where = f"outil {tool.name!r}"
+    out = []
+    if not tool.name or not isinstance(tool.name, str):
+        out.append(f"{where} : sans nom")
+    elif not provider and tool.name not in NATIVE:
+        out.append(f"{where} : nom hors de ToolName (un outil natif)")
+    elif provider and tool.name in NATIVE:
+        out.append(f"{where} : fourni par {provider}, mais un nom d'outil natif")
+    if tool.extra and not provider:
+        out.append(f"{where} : `extra` est réservé aux outils fournis")
+    # Les membres : ceux de l'interface, et ce que l'outil fourni déclare.
+    allowed = MEMBERS | tool.extra
+    own = set(vars(tool))
+    for cls in type(tool).__mro__:
+        if cls is Tool:
+            break
+        own |= set(vars(cls))
+    for name in sorted(own):
+        if not name.startswith("_") and name not in allowed:
+            out.append(f"{where} : membre public inconnu {name!r} (pas dans Tool)")
+    # Ce qui est à écrire.
+    for method in ("prompt", "run"):
+        if getattr(type(tool), method) is getattr(Tool, method):
+            out.append(f"{where} : {method}() non écrit")
+    # Les liaisons aux protocoles.
+    if tool.responses is not None and not (
+            isinstance(tool.responses, Responses) and tool.responses.kinds):
+        out.append(f"{where} : `responses` doit être un Responses, avec ses kinds")
+    if tool.anthropic is not None and not isinstance(tool.anthropic, Anthropic):
+        out.append(f"{where} : `anthropic` doit être un Anthropic")
+    return out

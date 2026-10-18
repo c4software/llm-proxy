@@ -43,7 +43,7 @@ from .. import albert, config, stats
 from ..backends import Backend, route_backend
 from ..settings import log
 from . import net, webcache
-from .contract import Call, Result, Source, Tool, ToolError
+from .contract import Call, Result, Source, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.ocr.enabled", False)
 # Le modèle de vision, PRÉFIXÉ comme dans une requête d'un client
@@ -98,11 +98,11 @@ MIN_SIDE = 64
 # en 300 points par pouce, RVB : 26 Mo).
 MAX_RAW = 64_000_000
 
-NAME = "ocr"
+NAME = ToolName.OCR
 
 # La description renvoie le modèle depuis `web_fetch` : vrai seulement là
 # où `web_fetch` lui est présenté aussi (`present` de prompt).
-_FETCH = "web_fetch"
+_FETCH = ToolName.WEB_FETCH
 _FETCH_HINT = (f"Use it when {_FETCH} reports an image, or a PDF with no "
                f"extractable text (a scan): pass the same URL. ")
 
@@ -603,7 +603,7 @@ class Ocr(Tool):
                     f"which this tool does not read."))
             pages = {1: [(kind, body)]}
 
-        texts = await read_pages(("ocr", base, MODEL), pages, deadline)
+        texts = await read_pages((NAME, base, MODEL), pages, deadline)
         read = {n: t for n, t in texts.items() if not isinstance(t, ToolError)}
 
         # Le texte : les pages dans l'ordre demandé, tant qu'elles tiennent

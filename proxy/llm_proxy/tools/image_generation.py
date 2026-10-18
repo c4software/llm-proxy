@@ -50,7 +50,7 @@ import httpx2
 from .. import albert, backends, config, files, stats
 from ..settings import is_exempt, log
 from . import net
-from .contract import Artifact, Call, Result, Tool, ToolError
+from .contract import Artifact, Call, Result, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.image_generation.enabled", False)
 # «<backend>/<modèle>», préfixé comme tout modèle du proxy. Vide → l'outil
@@ -86,7 +86,7 @@ PATH_EDITS = "/v1/images/edits"
 # la route du proxy d'où elles naissent (voir transcribe.ENDPOINT).
 ENDPOINT = "/v1/tools/image_generation"
 
-NAME = "image_generation"
+NAME = ToolName.IMAGE_GENERATION
 
 _EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
         "image/webp": "webp"}

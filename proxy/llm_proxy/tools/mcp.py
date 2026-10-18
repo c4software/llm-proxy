@@ -318,6 +318,9 @@ class McpTool(Tool):
     que le proxy : sa définition suit la liste du serveur (`define`), et
     `live` dit s'il y figure encore."""
 
+    # Son état, propre à un outil fourni : ajouté à l'interface (Tool.extra).
+    extra = frozenset({"server", "remote", "live", "description", "schema", "params", "define"})
+
     def __init__(self, server: "Server", remote: str, name: str):
         self.server, self.remote, self.name = server, remote, name
         self.live = False
@@ -819,7 +822,7 @@ class Server:
             if tool is None:
                 tool = McpTool(self, remote, function_name(self.prefix, remote))
                 try:
-                    registry.register(tool)
+                    registry.register(tool, provider=KIND)
                 except ValueError:
                     self._say(("name", remote), "MCP %s : outil %r écarté — "
                               "le nom de fonction %s est déjà pris",

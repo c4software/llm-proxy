@@ -22,7 +22,7 @@ import bisect
 
 from .. import config
 from . import web_fetch
-from .contract import Call, Responses, Result, Source, Tool, ToolError
+from .contract import Call, Responses, Result, Source, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.web_grep.enabled", False)
 # Lignes qui répondent rendues quand le modèle ne précise pas
@@ -40,11 +40,11 @@ REGEX_TIMEOUT = config.num("tools.web_grep.regex_timeout", 1.0)
 LINE_CHARS = 300
 MAX_PATTERN = 500
 
-NAME = "web_grep"
+NAME = ToolName.WEB_GREP
 
 # La description renvoie à `web_fetch` pour lire la suite d'une
 # correspondance : vrai seulement là où il est présenté aussi.
-_FETCH = "web_fetch"
+_FETCH = ToolName.WEB_FETCH
 _FETCH_HINT = (f" Pass a line's offset to {_FETCH} as `offset` to read the "
                f"page from there.")
 
