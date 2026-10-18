@@ -43,6 +43,17 @@ async function project(ctx, wanted, override) {
       files[p] = await ws.files.get(p).text();
     }
   }
+  // Tout le dossier, ou un sous-dossier, sans dossier ouvert : rien à
+  // chercher — le dire, et comment vérifier un extrait.
+  // Avec un extrait (`code`), ces chemins-là sont ignorés.
+  if (!ws) {
+    const folderish = (w) => w === "" || !/\.[cm]?tsx?$/.test(w);
+    if (!override && wanted.some(folderish)) {
+      throw new Error("aucun dossier ouvert dans la conversation ; pour vérifier un extrait de code, "
+        + "le passer dans `code` (sans `files`)");
+    }
+    wanted = wanted.filter((w) => !folderish(w));
+  }
   const roots = new Set();
   const missing = [];
   for (const w of wanted) {
@@ -73,12 +84,13 @@ export class CheckTypescript extends PageTool {
         + "Le tsconfig.json à la racine du dossier est appliqué (sinon : strict, ES2022, modules "
         + "ESNext) ; les imports relatifs sont résolus dans le dossier ; les paquets (pas de "
         + "node_modules) valent `any`. Rend les erreurs « fichier(ligne,colonne): error TSxxxx: "
-        + "message » (100 au plus). `code` + `path` : vérifier une version modifiée d'un fichier "
-        + "avant de l'écrire. 60 s au plus (le premier appel charge le compilateur).",
+        + "message » (100 au plus). `code` seul : vérifier un extrait (celui de la conversation, "
+        + "sans dossier) ; `code` + `path` : une version modifiée d'un fichier, avant de l'écrire. "
+        + "60 s au plus (le premier appel charge le compilateur).",
       params: {
         files: { type: "array", items: { type: "string" },
                  description: "Fichiers ou sous-dossiers à vérifier (« . » : tout le dossier)." },
-        code: { type: "string", description: "Un texte TypeScript à vérifier à la place du fichier `path` (facultatif)." },
+        code: { type: "string", description: "Un texte TypeScript à vérifier : seul (sans dossier ouvert, un extrait de la conversation), ou à la place du fichier `path`." },
         path: { type: "string", description: "Le chemin de ce texte dans le projet (défaut : extrait.ts)." },
       },
     });
