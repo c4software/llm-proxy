@@ -158,7 +158,6 @@ partie qui l'a importé.
 | `tools/image_generation.py` | `image_generation` : génération ou retouche par un backend, image rendue en fichier |
 | `tools/memory.py` | `memory` : `view`, `create`, `str_replace`, `insert`, `delete`, `rename` |
 | `tools/mcp/` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés. Paquet : `protocol`, `tool` (`McpTool`), `server`, `registry` |
-| `tools/render.py` | Le rendu des pages en JavaScript par browserless (`render: true` de `web_fetch` et `web_grep`) |
 
 ### `exposure/` : les outils offerts tels quels
 

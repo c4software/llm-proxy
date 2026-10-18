@@ -20,12 +20,6 @@ services:
       ALBERT_API_KEY: "${ALBERT_API_KEY}"
       # [tools.code_execution].token ; le service est dans l'override.
       EXECUTOR_TOKEN: "${EXECUTOR_TOKEN:-}"
-      # Le rendu des pages (browserless, dans l'override) : son jeton
-      # ([tools.web_fetch].render_token), et les domaines internes que le
-      # navigateur ne joint jamais (séparés par des virgules ; ici et non
-      # dans le dépôt ni le TOML).
-      BROWSERLESS_TOKEN: "${BROWSERLESS_TOKEN:-}"
-      RENDER_BLOCKED_HOSTS: "${RENDER_BLOCKED_HOSTS:-}"
       # Si [proxy].api_keys référence «${PROXY_API_KEY}».
       PROXY_API_KEY: "${PROXY_API_KEY:-}"
       # [oidc].client_id et client_secret, si les comptes sont actifs.

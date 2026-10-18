@@ -152,8 +152,6 @@ class WebGrep(Tool):
                                 "description": f"Maximum number of matching "
                                                f"lines (default {MAX_MATCHES}, "
                                                f"at most {MAX_MATCHES_LIMIT})."},
-                **({"render": web_fetch.RENDER_PARAMS["render"]}
-                   if web_fetch.renderer.available() else {}),
             },
             "required": ["url", "pattern"],
         }
@@ -184,8 +182,7 @@ class WebGrep(Tool):
         max_matches = _bounded(args.get("max_matches"), MAX_MATCHES, 1,
                                MAX_MATCHES_LIMIT)
         context = _bounded(args.get("context"), CONTEXT, 0, MAX_CONTEXT)
-        page = await web_fetch.load(url, call.settings, transport,
-                                    rendered=args.get("render") is True)
+        page = await web_fetch.load(url, call.settings, transport)
         ct, title, text = web_fetch.page_text(*page)
         try:
             lines, total = await asyncio.to_thread(

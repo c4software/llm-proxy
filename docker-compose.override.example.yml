@@ -123,31 +123,6 @@ services:
       retries: 3
       start_period: 60s
 
-  # ── Bloc 1 bis : le rendu des pages en JavaScript (web_fetch render) ──
-  # browserless : un Chromium headless servi en REST, que web_fetch et
-  # web_grep appellent pour `render: true` (tools/render.py). Avec : le
-  # proxy aussi sur le réseau `render` (ajouter `- render` à ses
-  # `networks`, Bloc 1), BROWSERLESS_TOKEN (et RENDER_BLOCKED_HOSTS) dans
-  # .env, [tools.web_fetch] render_url / render_token dans config.toml.
-  # Réseau à lui, SANS les autres conteneurs : le navigateur sort vers
-  # Internet, mais ne voit aucun service de la pile par son nom. L'accès au
-  # réseau local n'est qu'ATTÉNUÉ (docs/outils.md, « Le rendu des pages »).
-  # Image lourde (~2,5 Go), ~400 Mo de RAM par rendu.
-  # browserless:
-  #   # Tag daté : https://github.com/browserless/browserless/pkgs/container/chromium
-  #   image: ghcr.io/browserless/chromium:v2.57.1
-  #   restart: unless-stopped
-  #   environment:
-  #     TOKEN: "${BROWSERLESS_TOKEN:?BROWSERLESS_TOKEN dans .env}"
-  #     CONCURRENT: "2"       # rendus en parallèle ; les suivants attendent
-  #     QUEUED: "4"           # au-delà : 429, rendu à l'outil comme « occupé »
-  #     TIMEOUT: "60000"      # vie maximale d'un rendu (ms)
-  #   shm_size: 1gb
-  #   mem_limit: 2g
-  #   cpus: 2
-  #   networks:
-  #     - render
-
   # ── Bloc 2 : adapter la pile à la machine ─────────────────────────────
   # Une clé posée ici remplace une valeur simple et s'ajoute à une liste ;
   # `!reset` vide une liste héritée, `!override` la remplace.
@@ -173,5 +148,3 @@ networks:
     internal: true
   # Sortie du seul relais de paquets (SANDBOX_EGRESS), à part du proxy.
   # sandbox-egress: {}
-  # Le proxy et browserless, et rien d'autre (Bloc 1 bis).
-  # render: {}

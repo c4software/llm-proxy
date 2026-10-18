@@ -178,18 +178,6 @@ max_bytes = 2000000
 pdf_max_bytes = 20000000
 # Caractères rendus par appel ; la suite se demande par `offset`.
 max_chars = 20000
-# Le RENDU des pages en JavaScript (`render: true`, aussi pour web_grep) :
-# l'adresse d'un browserless (docker-compose.override.example.yml, Bloc
-# 1 bis) ; vide = pas de rendu, l'option n'est pas présentée au modèle.
-# Le navigateur ne passe pas par [tools.net] : seule l'URL demandée y passe,
-# ses sous-requêtes vers une IP privée, localhost, un nom sans point ou un
-# suffixe local sont refusées, ainsi que les domaines de [tools.net]
-# blocked_domains et de RENDER_BLOCKED_HOSTS (.env). Voir docs/outils.md.
-# render_url = "http://browserless:3000"
-# render_token = "${BROWSERLESS_TOKEN}"
-# Chargement de la page (s), et attente après lui (ms).
-# render_timeout = 25
-# render_settle_ms = 1000
 
 # Recherche d'une regex dans une page (lue par web_fetch, même cache) : rend
 # les lignes trouvées et leur offset. Absente de /v1/messages.
@@ -221,7 +209,7 @@ allow_private = false
 # URL refusées, quel que soit leur domaine : expressions régulières sur l'URL
 # entière (insensibles à la casse), avec un message rendu au modèle. Vérifiées
 # à chaque redirection, pour tout outil qui télécharge (web_fetch, web_grep,
-# ocr, transcribe, rendu). Une chaîne seule vaut une expression sans message.
+# ocr, transcribe). Une chaîne seule vaut une expression sans message.
 # Ici : l'hôte de stockage qu'un modèle Qwen (3.8 Flash Next) appelle de
 # mémoire, en parallèle d'appels utiles — toujours 403. Refusé avant toute
 # requête, avec un message qui arrête ses réessais.
