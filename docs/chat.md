@@ -181,6 +181,8 @@ réponse.
 | `show_artifact` | page HTML, Markdown, SVG, Mermaid ou code dans le panneau latéral ; même `id` = nouvelle version | non |
 | `edit_artifact` | remplace des passages exacts (uniques, ou `replace_all`) de la dernière version, tous ou aucun → nouvelle version | non |
 | `read_artifact` | relit la dernière version d'un artifact | non |
+| `request_artifact_debug` | propose d'activer le débogage d'un artifact | oui : *Activer le débogage* ou *Non merci* |
+| `inspect_artifact`, `run_in_artifact` | console, erreurs, page, capture ; un script dans la page affichée (si le débogage est activé) | non |
 | `save_file` | un fichier texte (CSV, script…) à télécharger sous la réponse | non |
 | [*outils du navigateur*](navigateur.md) | position, notifications, caméra… par famille | selon l'outil |
 | `folder_list`, `folder_read`, `folder_search` | parcourir, lire (tranches numérotées), chercher dans le dossier ouvert | non |
@@ -225,8 +227,29 @@ description, *Autre* en dernier, *Envoyer les réponses* ou *Passer*.
 
 Le bouton *Artifacts* de l'en-tête ouvre le panneau, à droite du fil :
 un artifact à la fois, ses versions, *Source*, *Copier*, *Télécharger*,
-*Large*, *Plein écran* (Échap pour en sortir). Les artifacts sont gardés
-avec la conversation.
+*Réseau*, *Débogage*, *Large*, *Plein écran* (Échap pour en sortir). Les
+artifacts sont gardés avec la conversation.
+
+**Déboguer un artifact.** Quand un artifact ne marche pas, le modèle peut
+le tester tel qu'il tourne dans le panneau, sous vos yeux : lire sa
+console et ses erreurs, exécuter du code dans la page (cliquer, saisir,
+lire un état), la capturer en image. C'est **coupé par défaut**, pour
+chaque artifact :
+
+- quand vous signalez un problème, le modèle propose de l'activer sur une
+  carte (*Activer le débogage*, *Non merci*) ;
+- le bouton *Débogage* du panneau l'active ou le coupe à tout moment ;
+  basculer recharge l'artifact (la page de débogage s'y ajoute ou s'en
+  retire) ;
+- un bandeau signale quand le modèle est en train de tester ;
+- l'artifact reste isolé : le modèle n'atteint que sa page, ni la vôtre,
+  ni votre session.
+
+Le modèle inspecte (`inspect_artifact` : console depuis le chargement,
+erreurs, page en texte, capture à la demande), reproduit
+(`run_in_artifact`, avec `click`, `type`, `key`, `wait`, `text`, `all`),
+corrige (`edit_artifact`) puis revérifie. La capture passe par
+html-to-image, servi par le proxy : rien n'est chargé d'ailleurs.
 
 Un artifact est **isolé** : cadre `sandbox` sans `allow-same-origin`,
 sans accès à la page, à sa session ni à ses clés. Sa politique de

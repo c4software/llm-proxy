@@ -10,10 +10,24 @@
     read_artifact  la dernière version, telle qu'elle est (après des
                    retouches, le modèle ne l'a plus en entier sous les yeux)
 
+  Et pour DÉBOGUER la page affichée — celle que l'utilisateur voit, dans
+  le panneau (chat/artifact-bridge.js). Coupé par défaut, par artifact
+  (`art.debug`) : le modèle propose de l'activer par une carte, et
+  l'utilisateur le coupe d'un clic (bouton Débogage du panneau).
+
+    request_artifact_debug  la carte qui propose de l'activer (s'il y a un
+                            artifact sans débogage)
+    inspect_artifact        sa console, ses erreurs, sa structure ; une
+                            capture                    ┐ si un artifact a
+    run_in_artifact         un script dans la page,    │ son débogage
+                            avec click, type, key,     ┘ activé
+                            wait, text, all
+
   Les artifacts sont gardés avec la conversation (conv.artifacts) ; leur
   rendu isolé est dans chat/artifacts.js.
 */
-import { TOOL, FAMILY, PageTool, defineFamily, failure } from "../contract.js";
+import { TOOL, FAMILY, PageTool, defineFamily, failure, clip } from "../contract.js";
+import * as bridge from "../../artifact-bridge.js";
 
 const MAX_ARTIFACT = 5e5;      // caractères d'un artifact
 const TYPES = ["html", "markdown", "svg", "mermaid", "code"];
@@ -178,7 +192,183 @@ class ReadArtifact extends PageTool {
   summary(a) { return a.id || ""; }
 }
 
+// ── déboguer la page affichée ───────────────────────────────────────────
+const MAX_OUT = 20_000;
+
+/** La console rendue au modèle : une ligne par entrée, les erreurs marquées.
+ * @param {any[]} logs */
+const consoleText = (logs) => (logs || []).map((l) => `[${l.level}] ${l.text}`).join("\n");
+
+/** L'artifact visé, son débogage activé. @param {any} conv @param {any} id */
+function target(conv, id) {
+  const art = findArtifact(conv, id);
+  if (!art) throw new Error(`artifact « ${id} » inconnu (artifacts : ${known(conv)}).`);
+  if (!art.debug) {
+    throw new Error(`le débogage de l'artifact « ${art.id} » n'est pas activé (l'utilisateur l'a coupé) : `
+      + "le proposer avec request_artifact_debug.");
+  }
+  return art;
+}
+
+/** @param {any} conv */
+const artifactsOf = (conv) => (conv && conv.artifacts) || [];
+
+class RequestArtifactDebug extends PageTool {
+  constructor() {
+    super({
+      name: TOOL.REQUEST_ARTIFACT_DEBUG,
+      description: "Propose à l'utilisateur, sur une carte qu'il accepte ou refuse, d'activer le "
+        + "DÉBOGAGE d'un artifact : le modèle pourra alors lire sa console et ses erreurs, y "
+        + "exécuter du code et le capturer (inspect_artifact, run_in_artifact). À proposer dès que "
+        + "l'utilisateur dit qu'un artifact ne marche pas, plutôt que de deviner la cause.",
+      params: {
+        id: { type: "string", description: "L'identifiant de l'artifact." },
+        reason: { type: "string", description: "Ce qui ne marche pas, en une phrase, montré à l'utilisateur." },
+      },
+      required: ["id"],
+    });
+  }
+
+  /** @override */
+  waits() { return true; }
+  /** @override @param {any} a */
+  summary(a) { return [a.id, a.reason].filter(Boolean).join(" · "); }
+
+  /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
+  prepare(args, ctx) {
+    const art = findArtifact(ctx.conv, args.id);
+    if (!art) return { error: failure(`artifact « ${args.id} » inconnu (artifacts : ${known(ctx.conv)}).`) };
+    if (art.debug) return { error: `Le débogage de « ${art.id} » est déjà activé : inspect_artifact et run_in_artifact sont disponibles.` };
+    return { artId: art.id, title: art.title, reason: String(args.reason || "").trim().slice(0, 300) };
+  }
+
+  /** @override @param {import("../contract.js").Card} w */
+  view(w) {
+    return { title: `Le modèle propose de déboguer « ${w.title} »`, detail: w.reason,
+             note: "il pourra lire sa console, y exécuter du code et le capturer ; à couper d'un clic (Débogage, dans le panneau)",
+             actions: [{ id: "on", label: "Activer le débogage", primary: true }, { id: "refuse", label: "Non merci" }] };
+  }
+
+  /** @override @param {import("../contract.js").Card} w @param {string} action @param {import("../contract.js").Ctx} ctx */
+  act(w, action, ctx) {
+    if (action === "refuse") return { result: "L'utilisateur a refusé le débogage de l'artifact : ne pas insister ; "
+      + "lui demander de décrire le problème, ou de copier les erreurs de la console de son navigateur." };
+    const art = findArtifact(ctx.conv, w.artId);
+    if (!art) return { result: failure(`artifact « ${w.artId} » disparu.`) };
+    art.debug = true;
+    return { result: `Débogage de « ${art.id} » activé par l'utilisateur : inspect_artifact et run_in_artifact `
+      + "sont disponibles (la page a été rechargée : la console part du chargement)." };
+  }
+}
+
+/** @param {any} art @param {number} version */
+const which = (art, version) => `Artifact « ${art.id} », version ${version}`
+  + (version < art.versions.length ? ` (affichée par l'utilisateur ; la dernière est la ${art.versions.length})` : "");
+
+class InspectArtifact extends PageTool {
+  constructor() {
+    super({
+      name: TOOL.INSPECT_ARTIFACT,
+      description: "Inspecte un artifact tel qu'il tourne dans le panneau, sous les yeux de "
+        + "l'utilisateur : sa console et ses erreurs depuis le chargement (scripts, ressources "
+        + "bloquées, promesses rejetées), et sa page en texte (un élément par ligne : balise, id, "
+        + "classes, texte, valeurs). `screenshot` : une capture de la page, jointe si le modèle lit "
+        + "les images. À utiliser quand l'utilisateur signale qu'un artifact ne marche pas, avant "
+        + "de le corriger, et après pour vérifier.",
+      params: {
+        id: { type: "string", description: "L'identifiant de l'artifact." },
+        screenshot: { type: "boolean", description: "Joindre une capture de la page (facultatif)." },
+      },
+      required: ["id"],
+    });
+  }
+
+  /** @override @param {any} a */
+  summary(a) { return [a.id, a.screenshot ? "capture" : ""].filter(Boolean).join(" · "); }
+
+  /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
+  async run(args, ctx) {
+    let art;
+    try { art = target(ctx.conv, args.id); } catch (e) { return failure(e.message); }
+    let r;
+    try { r = await bridge.call(art.id, art.versions.length, "inspect"); } catch (e) { return failure(e.message + "."); }
+    if (r.error) return failure("inspection impossible : " + r.error);
+    const errors = (r.logs || []).filter((l) => l.level === "error").length;
+    const out = [`${which(art, r.version)} — fenêtre ${r.size[0]} × ${r.size[1]} px, page de ${r.scroll[2]} px de haut`
+                 + (r.title ? `, titre « ${r.title} »` : "") + ".",
+                 r.logs.length ? `Console (${r.logs.length} entrées, dont ${errors} erreur${errors > 1 ? "s" : ""}) :\n${consoleText(r.logs)}`
+                   : "Console : vide, aucune erreur.",
+                 "Page :\n" + r.outline];
+    let image = "";
+    if (args.screenshot) {
+      try {
+        const shot = await bridge.call(art.id, art.versions.length, "shot");
+        if (shot.error) out.push("Capture impossible : " + shot.error);
+        else if (!ctx.vision) out.push("Capture prise, non jointe : le modèle de la conversation ne lit pas les images.");
+        else { image = shot.image; out.push(`Capture de la page (${shot.size[0]} × ${shot.size[1]} px) jointe à ce résultat.`); }
+      } catch (e) {
+        out.push("Capture impossible : " + e.message);
+      }
+    }
+    const result = clip(out.join("\n\n"), MAX_OUT);
+    return image ? { result, image, name: `${art.id}.jpg` } : result;
+  }
+}
+
+class RunInArtifact extends PageTool {
+  constructor() {
+    super({
+      name: TOOL.RUN_IN_ARTIFACT,
+      description: "Exécute du JavaScript DANS un artifact tel qu'il tourne dans le panneau (l'état "
+        + "que voit l'utilisateur), pour reproduire un bug ou lire un état : le corps d'une fonction "
+        + "async, `return` la valeur voulue. Aides : click(sélecteur), type(sélecteur, texte), "
+        + "key(sélecteur, touche), wait(ms), text(sélecteur), all(sélecteur) ; le DOM et les "
+        + "variables globales de la page sont accessibles. Rend la valeur, et la console et les "
+        + "erreurs survenues pendant l'exécution. Ne corrige rien : pour corriger, edit_artifact, "
+        + "puis revérifier.",
+      params: {
+        id: { type: "string", description: "L'identifiant de l'artifact." },
+        code: { type: "string", description: "Le corps de la fonction async (avec `return`)." },
+      },
+      required: ["id", "code"],
+    });
+  }
+
+  /** @override @param {any} a */
+  summary(a) { return [a.id, String(a.code || "").replace(/\s+/g, " ").slice(0, 100)].filter(Boolean).join(" · "); }
+
+  /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
+  async run(args, ctx) {
+    const code = String(args.code || "");
+    if (!code.trim()) return failure("`code` attendu.");
+    let art;
+    try { art = target(ctx.conv, args.id); } catch (e) { return failure(e.message); }
+    let r;
+    try { r = await bridge.call(art.id, art.versions.length, "run", { code }); } catch (e) { return failure(e.message + "."); }
+    const out = [which(art, r.version) + " :"];
+    if (r.error) out.push(failure(r.error));
+    else out.push(r.value === undefined ? "(aucune valeur rendue)" : "Résultat : " + r.value);
+    if (r.logs && r.logs.length) out.push("Console pendant l'exécution :\n" + consoleText(r.logs));
+    return clip(out.join("\n"), MAX_OUT);
+  }
+}
+
 export const FAMILIES = [defineFamily({
   key: FAMILY.ARTIFACTS, label: "Artifacts", hint: "le panneau latéral", fixed: true,
   tools: [new ShowArtifact(), new EditArtifact(), new ReadArtifact()],
+}), defineFamily({
+  key: FAMILY.ARTIFACT_DEBUG_OFFER, label: "Proposer le débogage", hint: "une carte pour l'activer", fixed: true,
+  enabled: (ctx) => artifactsOf(ctx.conv).some((a) => !a.debug),
+  guidance: () => "Quand l'utilisateur signale qu'un artifact ne marche pas (un bouton sans effet, une "
+    + "page blanche, une erreur) et que son débogage n'est pas activé : le proposer avec "
+    + "request_artifact_debug plutôt que de deviner la cause.",
+  tools: [new RequestArtifactDebug()],
+}), defineFamily({
+  key: FAMILY.ARTIFACT_DEBUG, label: "Déboguer un artifact", hint: "tester la page affichée", fixed: true,
+  enabled: (ctx) => artifactsOf(ctx.conv).some((a) => a.debug),
+  guidance: (ctx) => `Débogage activé pour : ${artifactsOf(ctx.conv).filter((a) => a.debug).map((a) => `« ${a.id} »`).join(", ")}. `
+    + "Quand un de ces artifacts ne marche pas, ne pas deviner : l'inspecter (inspect_artifact : "
+    + "console, erreurs, page), reproduire le problème (run_in_artifact), corriger (edit_artifact), "
+    + "puis revérifier de la même façon.",
+  tools: [new InspectArtifact(), new RunInArtifact()],
 })];

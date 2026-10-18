@@ -4,6 +4,8 @@
 //   sql.js, sql.wasm    SQLite (sql.js, MIT)
 //   chart.js            Chart.js (MIT), pour le bac JavaScript
 //   sucrase.js          sucrase (MIT) : TypeScript exécuté, types retirés
+//   html-to-image.js    html-to-image (MIT) : la capture d'un artifact
+//                       (inspect_artifact), passée à son cadre par la page
 //   typescript.js       le compilateur TypeScript 6 et ses lib.*.d.ts
 //                       (Apache-2.0) : la vérification des types
 // Usage : npm ci && npm run build [-- <dossier>]
@@ -35,9 +37,11 @@ for (const name of ["php", "sql", "chart", "sucrase", "typescript"]) {
 }
 await copyFile("node_modules/@php-wasm/web-8-3/asyncify/8_3_33/php_8_3.wasm", `${out}/php.wasm`);
 await copyFile("node_modules/sql.js/dist/sql-wasm-browser.wasm", `${out}/sql.wasm`);
+await copyFile("node_modules/html-to-image/dist/html-to-image.js", `${out}/html-to-image.js`);
 await copyFile("node_modules/@php-wasm/universal/LICENSE", `${out}/LICENSE-php-wasm`);
 await copyFile("node_modules/sql.js/LICENSE", `${out}/LICENSE-sql.js`);
 await copyFile("node_modules/chart.js/LICENSE.md", `${out}/LICENSE-chart.js`);
 await copyFile("node_modules/sucrase/LICENSE", `${out}/LICENSE-sucrase`);
+await copyFile("node_modules/html-to-image/LICENSE", `${out}/LICENSE-html-to-image`);
 await copyFile("node_modules/typescript/LICENSE.txt", `${out}/LICENSE-typescript`);
 console.log(`runtimes → ${out}`);

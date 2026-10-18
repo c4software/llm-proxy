@@ -47,6 +47,7 @@ import { catalog, catalogState, refreshCatalog } from "../lib/catalog.js";
 import * as workspace from "./workspace.js";
 import * as notify from "./notify.js";
 import * as tools from "./tools/index.js";
+import * as artifactBridge from "./artifact-bridge.js";
 import { ArtifactPanel } from "./ArtifactPanel.js";
 import { download } from "../lib/files.js";
 import * as voice from "./voice.js";
@@ -128,6 +129,9 @@ export const ChatPanel = {
       artifactsOpen.value = true;
       memoryOpen.value = false;
     }
+    // Le modèle teste un artifact (inspect_artifact, run_in_artifact) : le
+    // panneau s'ouvre dessus s'il ne l'est pas.
+    artifactBridge.setOpener(openArtifact);
     function toggleArtifacts(open = !artifactsOpen.value) {
       artifactsOpen.value = open;
       if (open) memoryOpen.value = false;

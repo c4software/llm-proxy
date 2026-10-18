@@ -35,6 +35,9 @@ export const TOOL = Object.freeze(/** @type {const} */ ({
   SHOW_ARTIFACT: "show_artifact",
   EDIT_ARTIFACT: "edit_artifact",
   READ_ARTIFACT: "read_artifact",
+  REQUEST_ARTIFACT_DEBUG: "request_artifact_debug",
+  INSPECT_ARTIFACT: "inspect_artifact",
+  RUN_IN_ARTIFACT: "run_in_artifact",
   FOLDER_LIST: "folder_list",
   FOLDER_READ: "folder_read",
   FOLDER_SEARCH: "folder_search",
@@ -69,6 +72,8 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
   ASK: "ask",
   SAVE: "save",
   ARTIFACTS: "artifacts",
+  ARTIFACT_DEBUG_OFFER: "artifact_debug_offer",
+  ARTIFACT_DEBUG: "artifact_debug",
   FOLDER: "folder",
   // Le menu Outils, section Navigateur
   CONTEXT: "context",

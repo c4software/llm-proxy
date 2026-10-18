@@ -3,16 +3,19 @@
   ce que le modèle a montré par show_artifact dans la conversation — un
   artifact à la fois, ses versions, rendu dans un cadre ISOLÉ (sandbox
   sans allow-same-origin : il ne voit ni la page, ni sa session ; sa
-  politique de contenu est dans outputs.artifactDoc). Le source se copie
+  politique de contenu est dans artifacts.js). Le source se copie
   ou se télécharge ; « Large » élargit le panneau. « Réseau » l'ouvre à
   internet, pour CET artifact (`art.network`, gardé avec lui), après un
   avertissement : un artifact écrit par le modèle peut alors envoyer ce
-  qu'il contient à n'importe quel site.
+  qu'il contient à n'importe quel site. « Débogage » (`art.debug`, coupé
+  par défaut) permet au modèle de tester cet artifact (artifact-bridge.js) ;
+  le modèle le propose par une carte (request_artifact_debug).
 */
 import { artifactDoc, artifactFile } from "./artifacts.js";
 import { useCopy, download } from "../lib/files.js";
+import * as bridge from "./artifact-bridge.js";
 
-const { ref, computed, watch } = Vue;
+const { ref, computed, watch, onUnmounted } = Vue;
 
 export const ArtifactPanel = {
   props: {
@@ -33,7 +36,7 @@ export const ArtifactPanel = {
       return v[versionIndex.value < 0 ? v.length - 1 : versionIndex.value];
     });
     const doc = computed(() => (version.value
-      ? artifactDoc(version.value, { network: !!art.value.network }) : ""));
+      ? artifactDoc(version.value, { network: !!art.value.network, debug: !!art.value.debug }) : ""));
     // Le réseau : coupé d'un clic, ouvert après l'avertissement.
     const asking = ref(false);
     watch(() => art.value && art.value.id, () => { asking.value = false; });
@@ -45,13 +48,29 @@ export const ArtifactPanel = {
       art.value.network = true;
       asking.value = false;
     }
+    // Le cadre affiché, inscrit au pont (artifact-bridge.js) à chaque
+    // chargement : le modèle teste la version que l'utilisateur voit.
+    const frame = ref(null);
+    const shownVersion = computed(() => {
+      if (!art.value) return 0;
+      return versionIndex.value < 0 ? art.value.versions.length : versionIndex.value + 1;
+    });
+    // Seulement si le débogage est actif : sinon le document n'a pas de pont.
+    function onFrameLoad() {
+      if (frame.value && art.value && art.value.debug) bridge.register(art.value.id, shownVersion.value, frame.value);
+    }
+    // Un autre document (version, réseau, débogage) : l'ancien n'est plus
+    // à interroger, le nouveau s'inscrira à son chargement.
+    watch(doc, () => { if (frame.value) bridge.unregister(frame.value); });
+    onUnmounted(() => { if (frame.value) bridge.unregister(frame.value); });
+    const inspecting = computed(() => !!art.value && bridge.busy.value === art.value.id);
     const wide = ref(false);
     // Plein écran : le panneau entier, son en-tête compris (de quoi en sortir).
     const panel = ref(null);
     const { isSupported: canFull, isFullscreen: full, toggle: toggleFull } = VueUse.useFullscreen(panel);
     const showSource = ref(false);
     const file = computed(() => (art.value && version.value ? artifactFile(art.value, version.value) : null));
-    return { art, version, versionIndex, doc, wide, panel, canFull, full, toggleFull, showSource, file, copied, copy, download,
+    return { art, version, versionIndex, doc, frame, onFrameLoad, inspecting, wide, panel, canFull, full, toggleFull, showSource, file, copied, copy, download,
              asking, toggleNetwork, allowNetwork,
              pick: (id) => emit("select", id), close: () => emit("close") };
   },
@@ -83,9 +102,13 @@ export const ArtifactPanel = {
                 :title="art.network ? 'Réseau ouvert à cet artifact : couper' : 'Réseau bloqué : l’ouvrir à cet artifact (cartes, API…)'"
                 aria-label="Réseau">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></button>
+        <button type="button" class="btn ghost art-btn net dbg" :aria-pressed="String(!!art.debug)" @click="art.debug = !art.debug"
+                :title="art.debug ? 'Débogage actif : le modèle peut lire la console de cet artifact, y exécuter du code, le capturer — couper (recharge l’artifact)' : 'Débogage coupé : le permettre au modèle pour cet artifact (console, code, capture)'"
+                aria-label="Débogage">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6a4 4 0 0 1 8 0M7 9h10v5a5 5 0 0 1-10 0V9zM12 9v10M4 12h3M17 12h3M5 18l2.5-1.5M19 18l-2.5-1.5M5 7l2.5 2M19 7l-2.5 2"/></svg></button>
         <button type="button" class="btn ghost art-btn" :aria-pressed="String(wide)" @click="wide = !wide"
                 :title="wide ? 'Réduire le panneau' : 'Élargir le panneau'" aria-label="Large">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg></button>
         <button type="button" class="btn ghost art-btn" v-if="canFull" :aria-pressed="String(full)" @click="toggleFull()"
                 :title="full ? 'Quitter le plein écran (Échap)' : 'Plein écran'" aria-label="Plein écran">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path v-if="!full" d="M3 3h6M3 3v6M21 3h-6M21 3v6M3 21h6M3 21v-6M21 21h-6M21 21v-6"/><path v-else d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"/></svg></button>
@@ -103,8 +126,9 @@ export const ArtifactPanel = {
         <button type="button" class="btn ghost" @click="asking = false">Annuler</button>
       </div>
     </div>
+    <p class="artifact-inspect" v-if="inspecting" role="status">Le modèle teste cet artifact…</p>
     <pre class="artifact-source" v-if="showSource">{{ version.content }}</pre>
-    <iframe v-else class="artifact-frame" :srcdoc="doc" sandbox="allow-scripts"
-            referrerpolicy="no-referrer" :title="art.title"></iframe>
+    <iframe v-else class="artifact-frame" ref="frame" :srcdoc="doc" sandbox="allow-scripts"
+            referrerpolicy="no-referrer" :title="art.title" @load="onFrameLoad"></iframe>
   </section>`,
 };

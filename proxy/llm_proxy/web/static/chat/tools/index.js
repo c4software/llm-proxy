@@ -9,6 +9,9 @@
     page/save.js          Fichiers            save_file               un fichier sous la réponse
     page/artifacts.js     Artifacts           show_artifact,          le panneau latéral
                                               edit_artifact, read_artifact
+                          Déboguer            request_artifact_debug  une carte pour l'activer
+                                              inspect_artifact,       la page affichée, si
+                                              run_in_artifact         l'utilisateur l'a activé
     page/folder.js        Dossier ouvert      folder_list, _read,     s'il est ouvert ; écrire
                                               _search, _write, _edit  attend l'accord (le diff)
     device/context.js     Date et heure       device_context

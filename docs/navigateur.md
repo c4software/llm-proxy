@@ -372,7 +372,7 @@ ceux du navigateur, et aussi la question à choix (`ask_user`),
 |---|---|
 | `tools/contract.js` | le contrat : les listes `TOOL` et `FAMILY`, les types, l'interface `PageTool`, `defineFamily` |
 | `tools/index.js` | le registre : l'inscription des modules, leur vérification, ce que le chat appelle |
-| `tools/page/` | questions (`ask.js`), fichiers (`save.js`), artifacts, dossier ouvert (`folder.js`) |
+| `tools/page/` | questions (`ask.js`), fichiers (`save.js`), artifacts et leur débogage, dossier ouvert (`folder.js`) |
 | `tools/device/` | l'appareil, un module par famille ; `media.js`, les flux caméra et écran |
 | `tools/sandbox/` | les bacs de code ; `bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits |
 
