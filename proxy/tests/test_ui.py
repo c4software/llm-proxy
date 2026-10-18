@@ -33,9 +33,9 @@ def ui(proxy, monkeypatch):
     monkeypatch.setattr(dashboard, "UI_CHAT", True)
     hosted_chat(monkeypatch)
     proxy.clients = []
-    monkeypatch.setattr(stats, "record",
+    everywhere(monkeypatch, stats, "record",
                         lambda *a: proxy.clients.append(stats.CLIENT.get()))
-    monkeypatch.setattr(stats, "record_tool", lambda *a: None)
+    everywhere(monkeypatch, stats, "record_tool", lambda *a: None)
     return proxy
 
 

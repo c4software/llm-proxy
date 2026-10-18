@@ -6,6 +6,8 @@ import time
 
 import pytest
 
+from fakes import everywhere
+
 from llm_proxy.storage import stats
 
 
@@ -38,7 +40,7 @@ def test_cached_tokens_helper():
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
-    monkeypatch.setattr(stats, "DB_PATH", str(tmp_path / "stats.db"))
+    everywhere(monkeypatch, stats, "DB_PATH", str(tmp_path / "stats.db"))
     stats.init()
     yield
     stats.close()
@@ -58,7 +60,7 @@ def test_migration_adds_cached_column_to_old_base(tmp_path, monkeypatch):
     conn.execute("INSERT INTO requests VALUES (NULL, ?, 'a/m', 'a', 'm', "
                  "'/v1/chat/completions', 200, 1.0, 10, 2, 1, 0)", (time.time(),))
     conn.commit(); conn.close()
-    monkeypatch.setattr(stats, "DB_PATH", str(path))
+    everywhere(monkeypatch, stats, "DB_PATH", str(path))
     stats.init()
     try:
         with stats._reader() as r:
@@ -315,7 +317,7 @@ def test_migration_adds_tool_calls_to_a_base_with_requests_only(tmp_path, monkey
                                 "/v1/chat/completions", 200, 1.0, 10, 2, 1, 0, 0,
                                 ""))
     conn.commit(); conn.close()
-    monkeypatch.setattr(stats, "DB_PATH", str(path))
+    everywhere(monkeypatch, stats, "DB_PATH", str(path))
     stats.init()
     try:
         stats.record_tool("web_search", "/v1/tools", "", "ok", 0.2, 12)
@@ -340,10 +342,10 @@ def test_purge_drops_old_tool_calls_with_old_requests(db, monkeypatch):
         conn.commit()
         count = lambda: [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
                          for t in stats.TABLES]
-        monkeypatch.setattr(stats, "RETENTION_DAYS", 0)
+        everywhere(monkeypatch, stats, "RETENTION_DAYS", 0)
         stats._purge(conn)
         assert count() == [2, 2]
-        monkeypatch.setattr(stats, "RETENTION_DAYS", 7)
+        everywhere(monkeypatch, stats, "RETENTION_DAYS", 7)
         stats._purge(conn)
         assert count() == [1, 1]
         assert conn.execute("SELECT ts FROM tool_calls").fetchone()[0] == recent

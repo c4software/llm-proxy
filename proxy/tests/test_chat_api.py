@@ -49,7 +49,7 @@ def chat(proxy, monkeypatch):
 
     monkeypatch.setattr(relaying, "send_upstream", send_upstream)
     hosted_chat(monkeypatch)
-    monkeypatch.setattr(stats, "record_tool",
+    everywhere(monkeypatch, stats, "record_tool",
                         lambda *a: proxy.tool_lines.append(a))
     return proxy
 

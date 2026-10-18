@@ -118,7 +118,7 @@ def test_startup_reads_the_last_hour_back(tmp_path, monkeypatch, proxy):
     from llm_proxy.access import accounts, oidc
     from llm_proxy import startup
     from llm_proxy.storage import stats
-    monkeypatch.setattr(stats, "DB_PATH", str(tmp_path / "stats.db"))
+    everywhere(monkeypatch, stats, "DB_PATH", str(tmp_path / "stats.db"))
     monkeypatch.setattr(accounts, "DB_PATH", str(tmp_path / "accounts.db"))
     monkeypatch.setattr(accounts, "_cache", {})
     monkeypatch.setattr(oidc, "ENABLED", True)

@@ -387,7 +387,7 @@ def test_an_admin_downloads_a_backup(idp, tmp_path, monkeypatch):
     (tmp_path / "config.toml").write_text("[proxy]\n")
     monkeypatch.setattr(config, "CONFIG_PATH", str(tmp_path / "config.toml"))
     monkeypatch.setattr(memories, "DB_PATH", str(tmp_path / "memory.db"))
-    monkeypatch.setattr(stats, "DB_PATH", str(tmp_path / "absente.db"))
+    everywhere(monkeypatch, stats, "DB_PATH", str(tmp_path / "absente.db"))
     tools.owner("x")                                  # crée client.secret
     alice = connect(idp)
     bob = connect(idp, "bob", "bob@example.org")

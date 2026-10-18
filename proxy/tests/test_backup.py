@@ -9,6 +9,8 @@ import tarfile
 
 import pytest
 
+from fakes import everywhere
+
 from llm_proxy.access import accounts
 from llm_proxy.storage import backup, conversations, memories, stats
 from llm_proxy.core import config
@@ -28,7 +30,7 @@ def data(tmp_path, monkeypatch):
     monkeypatch.setattr(memories, "DB_PATH", str(d / "memory.db"))
     monkeypatch.setattr(accounts, "DB_PATH", str(d / "accounts.db"))
     monkeypatch.setattr(accounts, "_cache", {})
-    monkeypatch.setattr(stats, "DB_PATH", str(d / "stats.db"))
+    everywhere(monkeypatch, stats, "DB_PATH", str(d / "stats.db"))
     monkeypatch.setattr(conversations, "DB_PATH", str(d / "conversations.db"))
     conversations.save("cle", "c1", {"id": "c1", "title": "à garder", "messages": []})
     memories.write("cle", "/memories/note.md", "à garder")

@@ -1305,7 +1305,7 @@ def test_app_search_then_fetch_each_under_its_own_max_uses(proxy, monkeypatch):
         return PAGE_READ
 
     proxy.hosted.by_name["web_fetch"].run = read
-    monkeypatch.setattr(stats, "record_tool", lambda *a: lines.append(a))
+    everywhere(monkeypatch, stats, "record_tool", lambda *a: lines.append(a))
     call = lambda name, args: FakeUpstream(chat_doc({"content": None, "tool_calls": [
         {"id": "c", "function": {"name": name, "arguments": args}}]},
         "tool_calls", 10, 1))
