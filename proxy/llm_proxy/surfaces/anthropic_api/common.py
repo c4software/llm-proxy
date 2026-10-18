@@ -7,6 +7,7 @@ catalogue et l'estimation des tokens.
 import datetime as _dt
 import json
 import re
+
 from ...core import config
 
 

@@ -1,400 +1,48 @@
 """
-Client MCP (Model Context Protocol) : le proxy se connecte aux serveurs
-MCP listés dans la configuration, découvre leurs outils, et chacun
-devient un outil hébergé (contract.Tool) — présentable sur
-/v1/chat/completions (déclaré, ou d'office par [chat].always), exécutable
-par `POST /v1/tools/<nom>`. Sans liaison de protocole : les surfaces
-Responses et Anthropic ne les présentent pas.
-
-Ce qui est permis, et rien d'autre :
-  * HTTP seulement (transport « Streamable HTTP »). Pas de stdio : le
-    proxy ne lance aucun processus ;
-  * une liste FERMÉE de serveurs, [tools.mcp.<serveur>] de config.toml.
-    Jamais d'URL venue d'un client ou du modèle. L'URL est une adresse de
-    CONFIGURATION, en général privée : le garde-fou des adresses publiques
-    (net.py) ne s'y applique pas, comme pour l'instance SearXNG ;
-  * des en-têtes STATIQUES pour l'authentification (secrets par ${VAR}).
-    Pas d'OAuth : un serveur qui l'exige répond 401, et le journal le dit.
-
-Le protocole est écrit ici avec httpx2 seul, sans SDK. Deux ÈRES, que la
-spécification du 28/07/2026 distingue (basic/versioning) :
-  * « moderne » (2026-07-28) : sans état. Ni `initialize` ni session :
-    chaque requête porte sa version et les capacités du client dans
-    `params._meta`, recopiées en en-têtes (`MCP-Protocol-Version`,
-    `Mcp-Method`, `Mcp-Name`, et `Mcp-Param-<nom>` pour un paramètre que
-    le schéma de l'outil marque `x-mcp-header`) ;
-  * « héritée » (2025-03-26 → 2025-11-25) : `initialize`, puis
-    `notifications/initialized`, puis les requêtes, sous `Mcp-Session-Id`
-    si le serveur en a donné un. Session expirée = 404 : le client DOIT
-    en rouvrir une — fait UNE fois, puis la requête est rejouée.
-L'ère est celle du SERVEUR : sondée une fois par `server/discover`
-(requête moderne), gardée, re-sondée après un échec de découverte. Un
-400 qui ne porte pas une erreur JSON-RPC moderne (-32020 à -32022), ou
-un résultat sans `resultType`, désigne un serveur hérité.
-Dans les deux ères : un POST par message ; la réponse est un objet JSON
-ou un flux SSE (`text/event-stream`) qui se termine par elle — les deux
-sont lus, les notifications du flux sont ignorées, sauf
-`notifications/tools/list_changed` qui avance la prochaine découverte.
-
-DÉCOUVERTE. Asynchrone, elle peut échouer, et la liste change : `start()`
-au démarrage, `stop()` à l'arrêt ; une tâche par serveur redemande
-`tools/list` à période fixe (voir pause()). Un serveur éteint au démarrage
-ne bloque rien : ses outils apparaissent quand il répond. Le registre ne sait pas retirer :
-un outil enregistré le reste, et c'est son `enabled` qui suit la liste
-du serveur — il garde ainsi sa place parmi les fonctions présentées au
-modèle, donc le préfixe d'un backend à cache.
-
-Ce qui entre dans le prompt du modèle vient d'un TIERS : nom, description
-et schéma de chaque outil, puis ses résultats. Tout est borné ici ; rien
-n'en est interprété. Le choix des serveurs, et de leurs outils (`tools`,
-`exclude`), est le seul garde-fou : un outil exposé l'est à TOUS les
-clients du proxy, avec le compte que portent les en-têtes configurés.
+Un SERVEUR MCP de la configuration : sa session (Streamable HTTP), la
+découverte de ses outils, leurs appels, et sa veille (rafraîchissement,
+reprise après panne).
 """
 
 import asyncio
-import base64
-import copy
 import fnmatch
-import hashlib
 import itertools
 import json
 import random
-import re
 import time
 from urllib.parse import urlsplit
 
 import httpx2
 
-from ..core import config
-from ..core.settings import log
-from .contract import Call, Result, Source, Tool, ToolError
+from ...core import config
+from ...core.settings import log
 
-# Délai (s) d'un appel, tout compris (session rouverte incluse), et de
-# chaque requête.
-TIMEOUT = config.num("tools.mcp.timeout", 30)
-# Ce que l'exécuteur laisse de plus : le temps de rendre l'erreur de délai
-# d'ici, qui nomme l'outil et sa durée.
-GRACE = 5
-# Période (s) entre deux `tools/list` d'un serveur ; 0 = une découverte
-# au démarrage, puis seulement quand le serveur signale un changement.
-REFRESH = config.num("tools.mcp.refresh", 300)
-# Ce que le démarrage du proxy attend, au plus, de la première découverte.
-STARTUP_WAIT = config.num("tools.mcp.startup_wait", 5)
-# Outils exposés par serveur : chacun pèse dans le prompt de toute requête.
-MAX_TOOLS = config.integer("tools.mcp.max_tools", 64)
-DESCRIPTION_CHARS = config.integer("tools.mcp.description_chars", 1024)
-SCHEMA_CHARS = config.integer("tools.mcp.schema_chars", 8000)
-# Octets lus au plus sur une réponse (une image en base64 pèse vite).
-MAX_BYTES = config.integer("tools.mcp.max_bytes", 4_000_000)
-
-# Le type qui déclare les outils MCP dans `tools` d'une requête
-# chat/completions : `mcp` (tous), `mcp:<serveur>` (ceux d'un serveur).
-KIND = "mcp"
-MODERN = "2026-07-28"
-LEGACY = ("2025-11-25", "2025-06-18", "2025-03-26")
-# Erreurs JSON-RPC qu'un serveur moderne seul sait rendre : HeaderMismatch,
-# MissingRequiredClientCapability, UnsupportedProtocolVersion.
-HEADER_MISMATCH, MISSING_CAPABILITY, UNSUPPORTED_VERSION = -32020, -32021, -32022
-METHOD_NOT_FOUND, INVALID_PARAMS = -32601, -32602
-CLIENT = {"name": "llm-proxy", "version": "1.0"}
-USER_AGENT = "llm-proxy mcp (+https://github.com/c4software/llm-proxy)"
-_META = "io.modelcontextprotocol/"
-
-# `structuredContent` rendu au client dans `meta`, s'il tient là-dedans.
-STRUCTURED_CHARS = 24_000
-MAX_PAGES = 20            # pages de `tools/list` suivies
-MIN_GAP = 10              # s entre deux découvertes d'un même serveur
-SCHEMA_DEPTH = 64
-# Un nom de fonction, chez tous les backends chat/completions.
-NAME_CHARS = 64
-_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}")
-_UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
-# En-têtes que le client pose lui-même : la configuration n'y touche pas.
-RESERVED = ("accept", "content-type", "content-length", "host",
-            "transfer-encoding", "connection")
-_TOKEN = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")           # RFC 9110, tchar
-_PLAIN = re.compile(r"[\x21-\x7e]([\x20\x09\x21-\x7e]*[\x21-\x7e])?")
-
-
-class Failure(Exception):
-    """Un échange qui n'a pas abouti. `code` : celui du contrat
-    (contract.ERRORS) ; `message` : une phrase en anglais, que le modèle
-    peut lire ; `rpc` : le code de l'erreur JSON-RPC, s'il y en a une."""
-
-    def __init__(self, code: str, message: str, rpc: int | None = None):
-        super().__init__(message)
-        self.code, self.message, self.rpc = code, message, rpc
-
-
-def _clean(text, limit: int, lines: bool = False) -> str:
-    """Un texte venu du serveur, avant d'entrer dans le prompt : sans
-    caractères de contrôle, borné. `lines` garde les sauts de ligne."""
-    text = text if isinstance(text, str) else ""
-    keep = "\n\t" if lines else ""
-    text = "".join(c if c >= " " and c != "\x7f" or c in keep else " "
-                   for c in text)
-    text = text.strip() if lines else " ".join(text.split())
-    return text if len(text) <= limit else text[:limit].rstrip() + "…"
-
-
-def function_name(prefix: str, remote: str) -> str:
-    """Le nom de la fonction présentée au modèle : `<préfixe>_<outil>`.
-    Le préfixe (le nom du serveur dans la configuration, sauf `prefix`)
-    sépare deux serveurs qui ont chacun un `search` — le `serverInfo` que
-    le serveur annonce, lui, n'est pas garanti unique. Un nom MCP admet
-    le point et 128 caractères, un nom de fonction ni l'un ni l'autre :
-    tout caractère hors [A-Za-z0-9_-] devient «_», et un nom trop long
-    est coupé et fini par un condensé du nom entier, pour rester unique."""
-    raw = f"{prefix}_{remote}" if prefix else remote
-    name = _UNSAFE.sub("_", raw)
-    if len(name) > NAME_CHARS:
-        digest = hashlib.blake2s(raw.encode("utf-8", "surrogatepass"),
-                                 digest_size=4).hexdigest()
-        name = f"{name[:NAME_CHARS - 9]}_{digest}"
-    return name
-
-
-def header_value(value) -> str:
-    """Une valeur recopiée en en-tête (`Mcp-Name`, `Mcp-Param-…`) : telle
-    quelle si c'est de l'ASCII visible, sinon — et si elle ressemble à la
-    forme encodée — en `=?base64?…?=` de son UTF-8."""
-    text = ("true" if value else "false") if isinstance(value, bool) \
-        else str(value)
-    if _PLAIN.fullmatch(text) and not (
-            text.startswith("=?base64?") and text.endswith("?=")):
-        return text
-    encoded = base64.b64encode(text.encode("utf-8", "surrogatepass"))
-    return f"=?base64?{encoded.decode('ascii')}?="
-
-
-def param_headers(schema: dict) -> tuple:
-    """Les paramètres que le schéma marque `x-mcp-header`, en (chemin de
-    propriétés, nom d'en-tête). Lève ValueError pour une annotation que
-    la spécification interdit — l'outil entier est alors écarté : nom
-    vide ou hors syntaxe d'en-tête, doublon, type non primitif, ou
-    propriété qui ne s'atteint pas par une suite de `properties`."""
-    found, names = [], set()
-
-    def walk(node, path, static, depth):
-        if depth > SCHEMA_DEPTH:
-            raise ValueError("schéma trop profond")
-        if isinstance(node, list):
-            for item in node:
-                walk(item, path, False, depth + 1)
-            return
-        if not isinstance(node, dict):
-            return
-        if "x-mcp-header" in node:
-            name = node["x-mcp-header"]
-            if not static or not path:
-                raise ValueError("x-mcp-header hors d'une propriété "
-                                 "atteignable par `properties`")
-            if not isinstance(name, str) or not _TOKEN.fullmatch(name):
-                raise ValueError(f"x-mcp-header invalide : {name!r}")
-            if node.get("type") not in ("string", "integer", "boolean"):
-                raise ValueError(f"x-mcp-header «{name}» sur un type non "
-                                 f"primitif")
-            if name.lower() in names:
-                raise ValueError(f"x-mcp-header «{name}» en double")
-            names.add(name.lower())
-            found.append((path, name))
-        for key, value in node.items():
-            if key == "x-mcp-header":
-                continue
-            # Des tables de sous-schémas : leurs CLÉS sont des noms, pas
-            # des mots-clés (une propriété peut s'appeler «x-mcp-header»).
-            if key in ("properties", "patternProperties", "$defs",
-                       "definitions", "dependentSchemas") \
-                    and isinstance(value, dict):
-                for prop, sub in value.items():
-                    walk(sub, path + (prop,),
-                         static and key == "properties", depth + 1)
-            else:
-                walk(value, path, False, depth + 1)
-
-    walk(schema, (), True, 0)
-    return tuple(found)
-
-
-def definition(tool: dict, server: str, modern: bool) -> tuple[str, dict, tuple]:
-    """Une entrée de `tools/list` → (description, schéma, en-têtes de
-    paramètres) de la fonction présentée au modèle. Lève ValueError pour
-    une définition qu'on ne présente pas."""
-    schema = tool.get("inputSchema")
-    if not isinstance(schema, dict) or schema.get("type") != "object":
-        raise ValueError("inputSchema n'est pas un schéma d'objet")
-    # `$schema` nomme un dialecte : rien ici ne valide, et des backends
-    # refusent le mot-clé. Les `$ref` ne sont jamais suivis.
-    schema = {k: v for k, v in schema.items() if k != "$schema"}
-    size = len(json.dumps(schema, ensure_ascii=False))
-    if size > SCHEMA_CHARS:
-        raise ValueError(f"schéma de {size} caractères (plus de "
-                         f"{SCHEMA_CHARS})")
-    # Parcouru dans les deux ères, pour la borne de profondeur ; les
-    # en-têtes ne partent que vers un serveur moderne.
-    params = param_headers(schema)
-    description = _clean(tool.get("description") or tool.get("title"),
-                         DESCRIPTION_CHARS, lines=True) \
-        or f"Tool {_clean(tool.get('name'), 128)} of the MCP server {server}."
-    return description, schema, params if modern else ()
-
-
-def render(result: dict, server: str, remote: str) -> Result:
-    """Le résultat de `tools/call` → celui du contrat. Le contrat ne porte
-    que du TEXTE : un contenu `text` est rendu tel quel, une ressource
-    textuelle sous son URI, et tout le reste (image, audio, ressource
-    binaire) par une ligne qui dit ce qui a été omis — le modèle sait
-    alors qu'il y avait autre chose. `structuredContent` : rendu en JSON
-    s'il n'y a aucun texte (un serveur le double d'ordinaire d'un bloc de
-    texte), et donné au client dans `meta`."""
-    kind = result.get("resultType", "complete")   # absent = serveur hérité
-    if kind == "input_required":
-        raise ToolError("unsupported", (
-            "this tool asks for input from the user (elicitation or "
-            "sampling), which this proxy cannot provide."))
-    if kind != "complete":
-        raise ToolError("unavailable", "the MCP server returned a result "
-                                       "of an unknown type.")
-    parts, omitted, sources, texts = [], [], [], 0
-    content = result.get("content")
-    for block in content if isinstance(content, list) else []:
-        if not isinstance(block, dict):
-            continue
-        what = block.get("type")
-        if what == "text":
-            if isinstance(block.get("text"), str) and block["text"]:
-                parts.append(block["text"])
-                texts += 1
-            continue
-        resource = block.get("resource") if what == "resource" else block
-        resource = resource if isinstance(resource, dict) else {}
-        uri = _clean(resource.get("uri"), 300)
-        mime = _clean(resource.get("mimeType"), 80)
-        if what == "resource" and isinstance(resource.get("text"), str):
-            parts.append(f"[resource {uri}]\n{resource['text']}")
-            texts += 1
-        elif what == "resource_link":
-            name = _clean(block.get("name"), 120)
-            about = _clean(block.get("description"), 300)
-            parts.append(f"[resource link: {name or uri} — {uri}"
-                         + (f" ({mime})" if mime else "") + "]"
-                         + (f" {about}" if about else ""))
-            if uri.startswith(("http://", "https://")):
-                sources.append(Source(uri, name, snippet=about))
-        else:
-            label = _clean(what, 40) or "unknown"
-            data = resource.get("data", resource.get("blob"))
-            size = len(data) * 3 // 4 if isinstance(data, str) else 0
-            detail = ", ".join(x for x in (
-                mime, uri, f"{size} bytes" if size else "") if x)
-            parts.append(f"[{label} content omitted"
-                         + (f": {detail}" if detail else "")
-                         + " — this proxy returns text only]")
-            omitted.append(mime or label)
-    structured = result.get("structuredContent")
-    dumped = "" if structured is None \
-        else json.dumps(structured, ensure_ascii=False)
-    if dumped and not texts:
-        parts.insert(0, dumped)
-    meta = {"server": server, "tool": remote}
-    if omitted:
-        meta["omitted"] = omitted
-    if dumped and len(dumped) <= STRUCTURED_CHARS:
-        meta["structured"] = structured
-    text = "\n\n".join(parts).strip()
-    if result.get("isError") is True:
-        # Une erreur d'EXÉCUTION de l'outil : il a tourné, et dit lui-même
-        # avoir échoué (validation, API tierce, règle métier) — `failed`.
-        # Son texte est écrit pour que le modèle corrige et réessaie.
-        return Result("Error: " + (text or "the tool reported an error "
-                                           "without a message."),
-                      "failed", meta=meta)
-    return Result(text or "The tool returned no content.",
-                  sources=tuple(sources), meta=meta)
-
-
-class McpTool(Tool):
-    """Un outil d'un serveur MCP, en outil hébergé. L'objet vit autant
-    que le proxy : sa définition suit la liste du serveur (`define`), et
-    `live` dit s'il y figure encore."""
-
-    # Son état, propre à un outil fourni : ajouté à l'interface (Tool.extra).
-    extra = frozenset({"server", "remote", "live", "description", "schema", "params", "define"})
-
-    def __init__(self, server: "Server", remote: str, name: str):
-        self.server, self.remote, self.name = server, remote, name
-        self.live = False
-        self.description, self.schema, self.params = "", {"type": "object"}, ()
-
-    @property
-    def enabled(self) -> bool:
-        return self.live and self.server.enabled
-
-    @property
-    def timeout(self) -> float:
-        """Celui du serveur, tenu dans run(), plus de quoi rendre son
-        erreur."""
-        return self.server.timeout + GRACE
-
-    @property
-    def kinds(self) -> tuple[str, ...]:
-        """Ce qui le déclare dans `tools` d'une requête chat/completions :
-        son nom, `mcp:<serveur>` (tous les outils du serveur) ou `mcp`
-        (tous ceux de tous les serveurs)."""
-        return (self.name, f"{KIND}:{self.server.name}", KIND)
-
-    def define(self, description: str, schema: dict, params: tuple) -> None:
-        self.description, self.schema, self.params = description, schema, params
-
-    def prompt(self, present) -> str:
-        """La description du SERVEUR, bornée (`description_chars`) : un
-        texte tiers, que le proxy n'écrit pas."""
-        return self.description
-
-    def parameters(self, present) -> dict:
-        """Le schéma du serveur — une copie : la définition vit autant
-        que le proxy."""
-        return copy.deepcopy(self.schema)
-
-    def _headers(self, args: dict) -> dict:
-        """Les `Mcp-Param-<nom>` de cet appel : la valeur lue au chemin
-        exact de la propriété annotée ; absente ou nulle, pas d'en-tête."""
-        headers = {}
-        for path, name in self.params:
-            value = args
-            for step in path:
-                value = value.get(step) if isinstance(value, dict) else None
-            if value is None:
-                continue
-            if not isinstance(value, (str, int)) or (
-                    isinstance(value, int) and abs(value) >= 2 ** 53):
-                raise ToolError("invalid_input", (
-                    f"`{'.'.join(path)}` must be a string, an integer or "
-                    f"a boolean."))
-            headers[f"Mcp-Param-{name}"] = header_value(value)
-        return headers
-
-    async def run(self, args: dict, call: Call) -> Result:
-        """Les arguments partent tels que le modèle les a écrits : c'est
-        le serveur qui les valide (aucun validateur JSON Schema ici), et
-        son refus revient en erreur que le modèle lit."""
-        server = self.server
-        try:
-            async with asyncio.timeout(server.timeout):
-                result = await server.request(
-                    "tools/call", {"name": self.remote, "arguments": args},
-                    self._headers(args))
-        except TimeoutError:
-            raise ToolError("timeout", f"{self.name} timed out after "
-                                       f"{int(server.timeout)} s.")
-        except Failure as exc:
-            # Outil inconnu, paramètres ou en-têtes refusés : la liste a
-            # peut-être changé chez le serveur — la redemander sans
-            # attendre la période.
-            if exc.rpc in (METHOD_NOT_FOUND, INVALID_PARAMS, HEADER_MISMATCH):
-                server.changed()
-            raise ToolError(exc.code, exc.message)
-        return render(result, server.name, self.remote)
+from .protocol import (
+    CLIENT,
+    HEADER_MISMATCH,
+    INVALID_PARAMS,
+    KIND,
+    LEGACY,
+    MAX_BYTES,
+    MAX_PAGES,
+    MAX_TOOLS,
+    MIN_GAP,
+    MISSING_CAPABILITY,
+    MODERN,
+    REFRESH,
+    RESERVED,
+    TIMEOUT,
+    UNSUPPORTED_VERSION,
+    USER_AGENT,
+    definition,
+    Failure,
+    function_name,
+    header_value,
+    _META,
+    _NAME,
+    _clean,
+)
+from .tool import McpTool
 
 
 def _setting(table: dict, key: str, default, cast, label: str, name: str):
@@ -799,7 +447,7 @@ class Server:
         enregistré (à la suite : l'ordre des fonctions déjà présentées ne
         bouge pas), un outil connu reçoit sa définition du jour, un outil
         disparu est désactivé — et retrouve sa place s'il revient."""
-        from .. import tools as registry  # à l'usage : pas de cycle
+        from ... import tools as registry  # à l'usage : pas de cycle
 
         kept = {}
         for entry in found:
@@ -903,79 +551,3 @@ class Server:
             # Un signal répété (un modèle qui insiste sur un outil refusé)
             # ne fait pas une découverte par appel.
             await asyncio.sleep(max(0.0, started + MIN_GAP - time.monotonic()))
-
-
-def load(table) -> list[Server]:
-    """[tools.mcp] → les serveurs : chaque sous-table en est un, sous son
-    nom ; les valeurs simples de la table sont les réglages communs."""
-    if not isinstance(table, dict):
-        return []
-    return [Server(name, t) for name, t in table.items() if isinstance(t, dict)]
-
-
-SERVERS: list[Server] = load(config.get("tools.mcp", {}))
-_TASKS: list[asyncio.Task] = []
-_RUNNING: list[Server] = []
-
-
-async def start(servers=None, transport=None) -> None:
-    """À appeler au DÉMARRAGE de l'application, avant qu'elle n'annonce
-    ses outils. Ouvre les serveurs actifs, lance leur découverte et
-    l'attend STARTUP_WAIT secondes au plus : passé ce délai, ou pour un
-    serveur éteint, le proxy démarre sans ses outils, qui s'enregistrent
-    quand il répond. Ne lève pas pour un serveur injoignable."""
-    await stop()
-    for server in SERVERS if servers is None else servers:
-        if not server.enabled:
-            continue
-        if server.missing:
-            log.warning("MCP %s : en-tête(s) %s sans valeur (variable "
-                        "d'environnement absente ?) — non envoyé(s)",
-                        server.name, ", ".join(server.missing))
-        server.open(transport)
-        _RUNNING.append(server)
-        _TASKS.append(asyncio.create_task(server.watch(),
-                                          name=f"mcp-{server.name}"))
-    if not _RUNNING:
-        return
-    try:
-        await asyncio.wait_for(
-            asyncio.gather(*(s.first.wait() for s in _RUNNING)), STARTUP_WAIT)
-    except asyncio.TimeoutError:
-        log.warning("MCP : %s sans réponse après %d s — le proxy démarre, "
-                    "leurs outils viendront",
-                    ", ".join(s.name for s in _RUNNING if not s.first.is_set()),
-                    int(STARTUP_WAIT))
-
-
-async def stop() -> None:
-    """À appeler à l'ARRÊT de l'application : arrête les découvertes,
-    ferme les sessions et les clients. Les outils restent au registre,
-    désactivés."""
-    for task in _TASKS:
-        task.cancel()
-    await asyncio.gather(*_TASKS, return_exceptions=True)
-    for server in _RUNNING:
-        await server.close()
-    _TASKS.clear()
-    _RUNNING.clear()
-
-
-def kinds() -> frozenset:
-    """Les types de déclaration des serveurs de la CONFIGURATION, qu'ils
-    aient répondu ou non : `mcp`, et `mcp:<serveur>` pour chacun. Un
-    client qui déclare `{"type": "mcp"}` alors qu'aucun serveur n'a encore
-    été joint reçoit ainsi le refus du proxy, qui dit pourquoi, et non
-    celui d'un backend à qui ce type ne dit rien."""
-    if not SERVERS:
-        return frozenset()
-    return frozenset({KIND, *(f"{KIND}:{s.name}" for s in SERVERS)})
-
-
-def status() -> list[dict]:
-    """L'état des serveurs, pour un tableau de bord ou /healthz : jamais
-    les en-têtes, ni la requête de l'URL."""
-    return [{"name": s.name, "url": s.where, "enabled": s.enabled,
-             "up": s.up, "error": s.error, "protocol": s.version if s.era
-             else None, "era": s.era,
-             "tools": [t.name for t in s.live()]} for s in SERVERS]

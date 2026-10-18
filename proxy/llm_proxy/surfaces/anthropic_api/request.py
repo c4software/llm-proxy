@@ -4,6 +4,7 @@ outils serveur rejoués, choix d'outil).
 """
 
 import json
+
 from ...tools.contract import Source
 
 from .common import CHARS_PER_TOKEN

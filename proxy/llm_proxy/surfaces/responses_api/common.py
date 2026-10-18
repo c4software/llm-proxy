@@ -5,6 +5,7 @@ les réglages de la surface, le refus d'une requête, le contexte d'un échange.
 
 import json
 import uuid
+
 from ...core import config
 
 

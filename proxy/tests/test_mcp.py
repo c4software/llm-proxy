@@ -142,7 +142,7 @@ def registre(monkeypatch):
     """Un registre vide : les outils MCP s'y enregistrent, rien d'autre
     n'y est. Et pas d'attente entre deux découvertes."""
     monkeypatch.setattr(tools, "REGISTRY", [])
-    monkeypatch.setattr(mcp, "MIN_GAP", 0)
+    everywhere(monkeypatch, mcp, "MIN_GAP", 0)
     return tools.REGISTRY
 
 
@@ -493,7 +493,7 @@ def test_serveur_eteint_au_demarrage_puis_liste_qui_change():
 
 
 def test_demarrage_n_attend_pas_un_serveur_lent(monkeypatch):
-    monkeypatch.setattr(mcp, "STARTUP_WAIT", 0.05)
+    everywhere(monkeypatch, mcp, "STARTUP_WAIT", 0.05)
     fake = FakeMcp()
     fake.delay = 0.2
 
@@ -517,8 +517,8 @@ def test_outils_choisis_bornes_ecartes(monkeypatch):
     """Ce qui entre dans le prompt est choisi (`tools`, `exclude`,
     `max_tools`) et borné (description, schéma) ; une définition
     inutilisable écarte SON outil, pas les autres."""
-    monkeypatch.setattr(mcp, "DESCRIPTION_CHARS", 20)
-    monkeypatch.setattr(mcp, "SCHEMA_CHARS", 200)
+    everywhere(monkeypatch, mcp, "DESCRIPTION_CHARS", 20)
+    everywhere(monkeypatch, mcp, "SCHEMA_CHARS", 200)
     obj = {"type": "object"}
     defs = [
         {"name": "get_a", "description": "x" * 50 + "\x00", "inputSchema": obj},
@@ -706,7 +706,7 @@ def test_declaration_connue_des_qu_un_serveur_est_configure(monkeypatch):
     assert mcp.kinds() == frozenset() and "mcp" not in tools.kinds()
     fake = FakeMcp()
     server = serveur(fake)
-    monkeypatch.setattr(mcp, "SERVERS", [server])
+    everywhere(monkeypatch, mcp, "SERVERS", [server])
     assert mcp.kinds() == tools.kinds() == {"mcp", "mcp:docs"}
 
     def requete(kind):

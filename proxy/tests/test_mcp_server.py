@@ -6,7 +6,7 @@ dans test_mcp.py.)"""
 
 import pytest
 
-from fakes import rpc
+from fakes import rpc, everywhere
 from llm_proxy.access import auth
 from llm_proxy.storage import files
 from llm_proxy.exposure import mcp_server
@@ -157,7 +157,7 @@ def test_le_client_mcp_du_proxy_parle_a_son_serveur(mcp, monkeypatch):
 
     test_client, seen, _ = mcp
     monkeypatch.setattr(tools, "REGISTRY", list(tools.REGISTRY))
-    monkeypatch.setattr(client_mcp, "MIN_GAP", 0)
+    everywhere(monkeypatch, client_mcp, "MIN_GAP", 0)
 
     def relais(request: httpx2.Request) -> httpx2.Response:
         r = test_client.post("/mcp", content=request.content,
