@@ -6,8 +6,8 @@
   réactive même si le code boucle ; le cadre, et le Worker avec lui, est
   supprimé à la fin, ou au délai dépassé.
 
-  Un runtime WASM (vendor/<nom>.js et .wasm, construits par proxy/wasm)
-  n'est téléchargé qu'au premier appel, par la PAGE — le bac n'a pas le
+  Un runtime (vendor/<nom>.js, et <nom>.wasm s'il en a un ; construits
+  par proxy/wasm) n'est téléchargé qu'au premier appel, par la PAGE — le bac n'a pas le
   droit de le faire —, gardé en mémoire, puis passé au bac à chaque appel.
 
   exec({driver, input, runtime, timeout}) → {ok, value, error, logs}
@@ -15,7 +15,7 @@
               dans le Worker : passée en TEXTE, elle ne voit rien de ce
               module ; `mod` est le module du runtime, `wasm` son binaire
     input     ce qu'elle reçoit (clonable)
-    runtime   le nom d'un runtime de vendor/, ou rien
+    runtime   le nom d'un runtime de RUNTIMES, ou rien
     logs      ce que le code a écrit sur la console
 */
 
@@ -40,7 +40,8 @@ self.onmessage = async ({ data: { driver, input, runtime } }) => {
     const value = await drive(input, { mod, wasm: runtime && runtime.wasm, fmt });
     postMessage({ ok: true, value, logs });
   } catch (err) {
-    postMessage({ ok: false, error: String(err), logs });
+    // Une Error simple : son message seul (« Error: » est ajouté par l'outil).
+    postMessage({ ok: false, error: err && err.name === "Error" ? err.message : String(err), logs });
   }
 };`;
 
@@ -56,10 +57,13 @@ onmessage = (e) => {
   worker.onmessage = (m) => parent.postMessage(m.data, "*");
   worker.onerror = (err) => { err.preventDefault(); parent.postMessage({ ok: false, error: String(err.message || "erreur du bac"), logs: [] }, "*"); };
   const runtime = e.data.runtime;
-  worker.postMessage(e.data, runtime ? [runtime.wasm] : []);
+  worker.postMessage(e.data, runtime && runtime.wasm ? [runtime.wasm] : []);
 };
 parent.postMessage({ ready: true }, "*");
 <\/script>`;
+
+// Les runtimes de vendor/ : a-t-il un binaire WASM ?
+const RUNTIMES = { php: { wasm: true }, sql: { wasm: true }, chart: { wasm: false } };
 
 // nom → promesse de {js, wasm} ; un échec est oublié (réessayé au suivant).
 const runtimes = new Map();
@@ -71,7 +75,8 @@ function load(name) {
       if (!r.ok) throw new Error(`${file} : HTTP ${r.status}`);
       return r[as]();
     };
-    const p = Promise.all([get(`${name}.js`, "text"), get(`${name}.wasm`, "arrayBuffer")])
+    const p = Promise.all([get(`${name}.js`, "text"),
+                           RUNTIMES[name].wasm ? get(`${name}.wasm`, "arrayBuffer") : null])
       .then(([js, wasm]) => ({ js, wasm }));
     p.catch(() => runtimes.delete(name));
     runtimes.set(name, p);
@@ -105,8 +110,8 @@ export async function exec({ driver, input, runtime, timeout }) {
       const d = e.data || {};
       if (!d.ready) { finish({ logs: [], ...d }); return; }
       // Une copie du binaire : celle du cache reste à la page.
-      const msg = { driver: String(driver), input, runtime: rt && { js: rt.js, wasm: rt.wasm.slice(0) } };
-      frame.contentWindow.postMessage(msg, "*", msg.runtime ? [msg.runtime.wasm] : []);
+      const msg = { driver: String(driver), input, runtime: rt && { js: rt.js, wasm: rt.wasm && rt.wasm.slice(0) } };
+      frame.contentWindow.postMessage(msg, "*", msg.runtime && msg.runtime.wasm ? [msg.runtime.wasm] : []);
     }
     window.addEventListener("message", onMessage);
     timer = setTimeout(() => finish({ ok: false, logs: [], error: `arrêté après ${timeout / 1000} s.` }), timeout);

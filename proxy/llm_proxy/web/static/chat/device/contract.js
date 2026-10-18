@@ -11,8 +11,11 @@
   «Error: » (failure), le modèle s'adapte.
 
   Deux façons de s'exécuter :
-    aussitôt            run(args, ctx) → le texte du résultat (ou sa
-                        promesse). `ctx` : {live, conv, ws} du tour.
+    aussitôt            run(args, ctx) → le texte du résultat, ou
+                        {result, image} : une image (data URL) jointe
+                        au résultat pour le modèle (ou leur promesse).
+                        `ctx` : {live, conv, ws, vision} du tour —
+                        `vision` : le modèle lit-il les images ?
     en attendant        waits(args) vrai : prepare(args) → l'état de la
     l'utilisateur       carte (`kind: "device"`, ou {error}), view(w) →
                         ce qu'elle montre ({title, detail, actions,

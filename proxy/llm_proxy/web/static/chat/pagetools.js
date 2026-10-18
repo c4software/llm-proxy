@@ -38,7 +38,7 @@ export const waitsForUser = (name) => name === "ask_user" || device.waits(name)
 
 const parse = (json) => { try { return json ? JSON.parse(json) : {}; } catch { return null; } };
 
-// Un outil qui s'exécute aussitôt → {result, artifact?}.
+// Un outil qui s'exécute aussitôt → {result, artifact?, image?}.
 export async function run(ctx, call) {
   const args = parse(call.arguments);
   if (args === null) return { result: "Error: arguments illisibles (JSON attendu)." };
@@ -52,7 +52,10 @@ export async function run(ctx, call) {
     return { result, artifact: id };
   }
   if (call.name === "read_artifact") return { result: outputs.readArtifact(ctx.conv, args) };
-  if (device.isTool(call.name)) return { result: await device.run(call.name, args, ctx) };
+  if (device.isTool(call.name)) {
+    const got = await device.run(call.name, args, ctx);
+    return typeof got === "string" ? { result: got } : got;
+  }
   if (workspace.TOOL_NAMES.has(call.name)) {
     if (!ctx.ws) return { result: "Error: aucun dossier ouvert (l'utilisateur doit le rouvrir)." };
     return { result: await workspace.run(ctx.ws, call.name, call.arguments) };

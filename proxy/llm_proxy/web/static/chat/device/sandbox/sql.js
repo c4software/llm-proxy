@@ -20,12 +20,11 @@
 import { TOOL, FAMILY, defineTool, defineFamily, clip, failure, oneLine } from "../contract.js";
 import { exec } from "./bac.js";
 import * as sqlbase from "./sqlbase.js";
+import { FILES_PARAM, paths as pathsOf, inputs } from "./files.js";
 
 const TIMEOUT = 60_000;              // un gros import compris
 const MAX_OUT = 20_000;
 const MAX_ROWS = 200;                // lignes montrées par résultat
-const MAX_FILE = 100e6;              // octets d'un fichier importé
-const MAX_FILES = 20;
 
 // Exécutée dans le Worker du bac : elle ne voit que ses arguments.
 async function driver({ sql, maxRows, base, files }, { mod, wasm }) {
@@ -204,27 +203,6 @@ async function driver({ sql, maxRows, base, files }, { mod, wasm }) {
   return { text: out.join("\n\n"), statements: n, tables, base: bytes };
 }
 
-const clean = (p) => String(p || "").trim().replace(/^\.?\/+/, "").replace(/\/+$/, "");
-
-// Les octets d'un fichier nommé par le modèle : le dossier ouvert d'abord,
-// puis la pièce jointe texte la plus récente de ce nom.
-async function fileBytes(ctx, path) {
-  const ws = ctx.ws;
-  if (ws && ws.files.has(path)) {
-    const file = ws.files.get(path);
-    if (file.size > MAX_FILE) throw new Error(`plus de ${MAX_FILE / 1e6} Mo`);
-    return new Uint8Array(await file.arrayBuffer());
-  }
-  const base = path.split("/").pop();
-  const msgs = (ctx.conv && ctx.conv.messages) || [];
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const a = (msgs[i].attachments || []).find((x) => x.kind === "text" && (x.name === path || x.name === base));
-    if (a) return new TextEncoder().encode(a.data);
-  }
-  throw new Error(ws ? `introuvable dans le dossier « ${ws.name} » ni dans les pièces jointes`
-    : "introuvable dans les pièces jointes (et aucun dossier n'est ouvert)");
-}
-
 const runSql = defineTool({
   name: TOOL.RUN_SQL,
   description: "Exécute un script SQL (dialecte SQLite 3) dans un bac isolé du navigateur, sur la "
@@ -237,25 +215,17 @@ const runSql = defineTool({
     + `chaque résultat en tableau (${MAX_ROWS} lignes au plus) : agréger en SQL plutôt que tout lire.`,
   params: {
     sql: { type: "string", description: "Le script : une ou plusieurs instructions séparées par `;` (vide : seulement importer)." },
-    files: { type: "array", items: { type: "string" },
-             description: "Fichiers à importer avant le script : chemins dans le dossier ouvert, ou noms de pièces jointes." },
+    files: { ...FILES_PARAM.files, description: "Fichiers à importer avant le script : chemins dans le dossier ouvert, ou noms de pièces jointes." },
     reset: { type: "boolean", description: "Vider la base de la conversation avant (défaut : non)." },
     download: { type: "boolean", description: "Proposer à l'utilisateur de télécharger la base (.sqlite) sous la réponse." },
   },
   summary: (a) => oneLine([...(a.files || []), a.sql].filter(Boolean).join(" · ")),
   async run(args, ctx) {
     const sql = String(args.sql || "");
-    const paths = (Array.isArray(args.files) ? args.files : args.files ? [args.files] : []).map(clean).filter(Boolean);
+    const paths = pathsOf(args);
     if (!sql.trim() && !paths.length && !args.download) return failure("`sql` ou `files` attendu.");
-    if (paths.length > MAX_FILES) return failure(`${MAX_FILES} fichiers au plus par appel.`);
-    const files = [];
-    for (const p of paths) {
-      try {
-        files.push({ name: p, bytes: await fileBytes(ctx, p) });
-      } catch (e) {
-        return failure(`fichier « ${p} » : ${e.message}.`);
-      }
-    }
+    let files;
+    try { files = await inputs(ctx, paths); } catch (e) { return failure(e.message + "."); }
     const conv = ctx.conv || {};
     const id = conv.id || "";
     const base = args.reset || !id ? null : await sqlbase.load(id);

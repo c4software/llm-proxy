@@ -262,8 +262,8 @@ tokens).
 | QR et codes-barres | `scan_code` | lus à la caméra ou à l'écran ; seul le texte part (macOS, Android, ChromeOS) | oui | non |
 | Pipette | `pick_color` | une couleur prise à l'écran, en hexadécimal | *Prendre une couleur* | non |
 | Écran allumé | `keep_screen_on` | empêche la veille tant que la page est visible | non | non |
-| JavaScript | `run_javascript` | du JavaScript dans le bac (10 s au plus) | non | non |
-| PHP | `run_php` | un script PHP 8.3 dans le bac : sortie, erreurs, code de sortie (30 s au plus) | non | non |
+| JavaScript | `run_javascript` | du JavaScript dans le bac : fichiers fournis, fichiers et graphiques produits (15 s au plus) | non | non |
+| PHP | `run_php` | un script PHP 8.3 dans le bac : fichiers fournis sous `/data`, produits sous `/out` ; sortie, erreurs, code de sortie (30 s au plus) | non | non |
 | SQL | `run_sql` | un script SQLite dans le bac, sur la base de la conversation ; importe des fichiers du dossier ouvert ou des pièces jointes ; un tableau par requête (60 s au plus) | non | non |
 
 Ce qui touche à l'appareil n'est **jamais** lu sans un clic sur la
@@ -282,6 +282,26 @@ seulement au premier appel, puis revalidés par le navigateur sans être
 retéléchargés. L'image Docker les construit ; hors Docker, `npm ci &&
 npm run build` dans `proxy/wasm/`, sinon ces deux outils répondent que
 le runtime manque.
+
+**Fichiers fournis, fichiers produits.** Les trois outils de code
+prennent `files` : des chemins du dossier ouvert, ou des noms de pièces
+jointes texte. La page les lit et les passe au bac ; ils ne partent pas
+au modèle.
+
+- JavaScript : `readText(chemin)` et `readBytes(chemin)` les lisent ;
+  `output(nom, données)` produit un fichier (texte, octets, Blob, ou un
+  `OffscreenCanvas` en PNG) ; `chart(config, {width, height, name})`
+  dessine un graphique Chart.js 4 en PNG, sur fond blanc. Chart.js
+  (`vendor/chart.js`) n'est chargé que si le code appelle `chart(`.
+- PHP : les fichiers sont copiés sous `/data`, le dossier courant, avec
+  leurs chemins (`require "lib/util.php"` marche). Ce que le script
+  écrit sous `/out` est rendu ; GD est là pour les images.
+
+Un fichier texte produit arrive sous la réponse, comme avec `save_file`.
+Une image (png, jpeg, webp, gif) s'affiche sous la réponse et, si le
+modèle de la conversation lit les images, la première est jointe au
+résultat : le modèle voit son graphique. Dix fichiers au plus par
+appel, 5 Mo par image ; un autre binaire est refusé.
 
 **SQL sur ses propres données.** `run_sql` travaille sur une base
 SQLite propre à la conversation, gardée dans **ce navigateur**

@@ -550,7 +550,7 @@ export const ChatPanel = {
       const ws = can.folder ? folders.get(conv.id) || null : null;
       body.tools = [...hosted.map((type) => ({ type })), ...pagetools.toolsFor(ws, conv.device || defaultDevice())
         .filter((t) => !can.pageTools || can.pageTools.includes(t.function.name))];
-      const ctx = { conv, live, ws };
+      const ctx = { conv, live, ws, vision: !!(modelEntry(conv.model) || {}).vision };
       let paused = false;
       try {
         for (;;) {
@@ -629,6 +629,7 @@ export const ChatPanel = {
             } else {
               const got = await pagetools.run(ctx, c);
               result = got.result;
+              image = got.image || "";
               if (got.artifact) openArtifact(got.artifact);
             }
             Object.assign(chip, { status: result.startsWith("Error:") ? "error" : "done",
