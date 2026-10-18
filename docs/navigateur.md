@@ -1,0 +1,279 @@
+# Les outils du navigateur
+
+Dans le [chat](chat.md) de la page, le modèle peut solliciter
+l'**appareil** de l'utilisateur : son heure, sa position, son
+presse-papiers, sa caméra, son écran. Il peut aussi faire tourner du
+**code** (JavaScript, PHP, SQL) dans un bac isolé du navigateur, sur des
+fichiers qui ne quittent pas l'appareil.
+
+Ces outils ne passent pas par le proxy. Il les rend au navigateur en
+`tool_calls`, comme à tout client : la page les exécute et renvoie leur
+résultat au modèle.
+
+Cette page présente chaque outil avec un exemple réel. Les captures ont
+été prises dans la page, avec un modèle de démonstration qui appelle les
+outils ; les résultats affichés sont ceux qu'ils ont vraiment rendus.
+
+## Activer les outils
+
+![Le menu Outils, section Navigateur : quinze familles cochables (Date et heure, Position, Notifications, Presse-papiers, Agenda, Liens, Partage, Capture d'écran, Caméra, QR et codes-barres, Pipette, Écran allumé, JavaScript, PHP, SQL), chacune avec une ligne d'explication](navigateur-outils.png)
+
+Les outils sont rangés par **famille**, dans la section *Navigateur* du
+menu **Outils**. On les coche par conversation, et une conversation
+neuve reprend le dernier choix fait dans ce navigateur.
+
+- Seules les familles que le navigateur sait faire sont proposées : pas
+  de *Partage* sous Linux, pas de *Pipette* hors Chrome et Edge, pas de
+  *QR et codes-barres* hors macOS, Android et ChromeOS.
+- Seules les familles cochées sont déclarées au modèle, car chaque outil
+  coûte des tokens à chaque requête.
+- Cochées d'office : Date et heure, Notifications, Presse-papiers,
+  Agenda, Liens.
+- Un modèle qui tourne dans le navigateur (Gemini Nano) ne reçoit pas
+  ces outils.
+
+## Le principe : une carte avant l'appareil
+
+Ce qui touche à l'appareil n'est **jamais** lu sans un clic de
+l'utilisateur. Le modèle n'obtient pas la position, le presse-papiers,
+une photo ou une capture parce que la permission du navigateur est déjà
+accordée : une **carte** apparaît dans le fil, avec la raison donnée par
+le modèle, et attend.
+
+- Répondue, la carte devient le résultat de l'outil, et la réponse du
+  modèle reprend.
+- Refusée, le modèle lit « L'utilisateur a refusé… » et s'adapte.
+- Une nouvelle question pendant qu'une carte attend la ferme sans
+  réponse.
+- La caméra et l'écran sont coupés dès que la carte est répondue ou
+  abandonnée.
+- Tout l'état est dans le message : une carte survit à un rechargement
+  de la page.
+
+Les outils sans effet sur l'appareil (date, agenda, code) s'exécutent
+aussitôt.
+
+## Les outils un par un
+
+### Date et heure — `device_context`
+
+![Le modèle appelle device_context, qui rend la date et l'heure locales, le fuseau horaire et les langues ; il en déduit dans combien de jours ouvre le marché de Noël](navigateur-date.png)
+
+La date et l'heure locales, le fuseau horaire et les langues du
+navigateur. Le modèle l'appelle avant de parler d'« aujourd'hui », de
+« demain » ou d'une heure. Pas de carte.
+
+### Position — `get_location`
+
+![Carte « Le modèle demande votre position », avec la raison et trois boutons : Position approximative, Position précise, Refuser](navigateur-position.png)
+
+Le modèle donne la raison, montrée sur la carte. L'utilisateur choisit :
+**approximative** (arrondie à environ 1 km), **précise**, ou refus.
+
+### Notifications — `notify`
+
+![Carte « Le modèle veut vous envoyer une notification » : « Sortir le pain du four » dans 20 minutes, avec Autoriser les notifications et Non merci](navigateur-notification.png)
+
+Une notification tout de suite, ou un rappel dans N minutes (24 h au
+plus). Le rappel n'arrive que si la page reste ouverte ; pour un
+rendez-vous, l'agenda vaut mieux. La carte n'apparaît que si le
+navigateur n'a pas encore la permission, puisqu'il ne la demande que sur
+un clic. Ensuite, les notifications partent sans carte.
+
+### Presse-papiers — `clipboard_write`, `clipboard_read`
+
+![Deux appels : clipboard_write copie une commande de déploiement aussitôt ; clipboard_read affiche une carte « Le modèle demande le contenu de votre presse-papiers » avec Coller le presse-papiers et Refuser](navigateur-presse-papiers.png)
+
+**Copier** se fait aussitôt : une commande, une adresse, un message à
+coller ailleurs. **Lire** passe par une carte, car le presse-papiers
+peut contenir n'importe quoi.
+
+### Agenda — `add_to_calendar`
+
+![add_to_calendar produit un fichier Revue-du-proxy-LLM.ics sous la réponse, avec titre, horaires, lieu et rappel](navigateur-agenda.png)
+
+Un événement au format `.ics` sous la réponse, que l'utilisateur ouvre
+dans son agenda (Google, Outlook, Apple…). Les heures sont locales ; un
+rappel N minutes avant est possible. Contrairement à un rappel par
+notification, le rendez-vous survit à la page.
+
+### Liens — `open_link`
+
+![Carte « Le modèle propose d'ouvrir une page », avec la raison et l'adresse complète d'un itinéraire OpenStreetMap, boutons Ouvrir dans un onglet et Refuser](navigateur-lien.png)
+
+Une adresse http(s) à ouvrir dans un nouvel onglet : un itinéraire, une
+recherche, une page de documentation. L'adresse est montrée **en
+entier** avant le clic.
+
+### Partage — `share`
+
+![Carte « Le modèle propose de partager » : la recette des crêpes et un lien, boutons Partager… et Refuser](navigateur-partage.png)
+
+Un texte, et éventuellement une adresse, envoyé vers une autre
+application (messagerie, mail, notes) par le partage du système. Pas
+disponible sous Linux.
+
+### Capture d'écran — `capture_screen`
+
+![Carte « Le modèle demande une capture d'écran », avec la raison et Choisir quoi capturer](navigateur-capture-ecran.png)
+
+L'utilisateur choisit un onglet, une fenêtre ou l'écran entier dans le
+sélecteur du navigateur, voit l'**aperçu**, puis envoie, reprend ou
+refuse. L'image part au modèle jointe au résultat : il faut un modèle
+qui lit les images.
+
+### Caméra — `take_photo`
+
+![Carte « Le modèle demande une photo » : l'aperçu de la photo d'une étiquette de confiture, avec Envoyer la photo, Reprendre et Refuser](navigateur-photo.png)
+
+La caméra arrière s'active sur un clic. L'utilisateur prend la photo, la
+vérifie en aperçu, puis l'envoie ou la reprend. L'image est réduite à
+1920 pixels de côté au plus.
+
+### QR et codes-barres — `scan_code`
+
+![Carte « Le modèle demande de lire un code », avec les boutons Caméra, Sur l'écran et Refuser](navigateur-qr-code.png)
+
+Un QR code ou un code-barres lu à la caméra ou sur une capture d'écran
+(API `BarcodeDetector` : macOS, Android, ChromeOS). Seul le **texte**
+lu part au modèle, pas d'image.
+
+### Pipette — `pick_color`
+
+![Carte « Le modèle demande une couleur », avec Prendre une couleur et Refuser](navigateur-pipette.png)
+
+Une couleur prise n'importe où à l'écran, rendue en hexadécimal (API
+`EyeDropper` : Chrome et Edge).
+
+### Écran allumé — `keep_screen_on`
+
+![keep_screen_on rend « Écran maintenu allumé tant que la page est visible », puis le modèle commence la recette pas à pas](navigateur-ecran-allume.png)
+
+Empêche la mise en veille pendant une recette, un pas-à-pas ou une
+présentation, tant que la page est visible. Le verrou est repris quand
+la page revient au premier plan.
+
+## Le code dans le navigateur
+
+Trois outils exécutent du code : **JavaScript**, **PHP** et **SQL**.
+
+### Le bac
+
+- Le code tourne dans un **Worker**, créé dans un cadre `sandbox` sans
+  origine : il n'a accès ni à la page, ni à sa session, ni à ses
+  cookies.
+- Une politique de sécurité coupe **tout réseau** : `fetch`, ou
+  `file_get_contents` sur une URL en PHP, échouent.
+- Une boucle sans fin ne fige pas la page : le bac est supprimé au délai
+  dépassé (15 s pour JavaScript, 30 s pour PHP, 60 s pour SQL).
+- PHP 8.3 (≈ 18 Mo), SQLite (≈ 700 Ko) et Chart.js (≈ 200 Ko) sont
+  servis par le proxy sous `/ui/static/vendor/`. Ils ne sont téléchargés
+  qu'au premier appel, puis revalidés par le navigateur sans être
+  retéléchargés.
+
+### Fichiers fournis, fichiers produits
+
+Les trois outils prennent un paramètre `files` : des chemins du
+**dossier ouvert** (*Joindre → Dossier…*) ou des noms de **pièces
+jointes** texte du fil. La page lit ces fichiers et les passe au bac :
+ils ne partent pas au modèle, qui ne reçoit que ce que son code
+renvoie.
+
+Ce que le code produit arrive sous la réponse :
+
+- un fichier **texte** (CSV, JSON, SVG, Markdown…) se télécharge, comme
+  avec `save_file` ;
+- une **image** (png, jpeg, webp, gif) s'affiche. Si le modèle de la
+  conversation lit les images, la première lui est jointe : il peut
+  vérifier son graphique.
+
+Dix fichiers au plus par appel, et 5 Mo par image. Les autres binaires
+sont refusés.
+
+### SQL — `run_sql`
+
+![run_sql importe data/ventes-2026.csv du dossier ouvert (2 400 lignes, types déduits) et agrège le chiffre d'affaires par région ; run_javascript en dessine le graphique en barres avec Chart.js ; le modèle résume avec un tableau](navigateur-sql-graphique.png)
+
+`run_sql` travaille sur une base **SQLite propre à la conversation**.
+Elle est gardée dans ce navigateur (IndexedDB) et jamais envoyée au
+proxy. En incognito, elle reste en mémoire seulement. Elle est effacée
+avec la conversation.
+
+`files` importe d'abord des fichiers en tables :
+
+| Fichier | Import |
+|---|---|
+| `.csv`, `.tsv`, `.txt` | séparateur deviné (`,`, `;` ou tabulation), première ligne pour les noms de colonnes, types déduits (INTEGER, REAL, TEXT) ; `3,14` vaut 3.14 avec `;` ; `007` reste du texte |
+| `.json`, `.jsonl` | un tableau d'objets, ou un objet par ligne ; les valeurs imbriquées sont gardées en JSON |
+| `.sqlite`, `.db` | ses tables, index et vues, copiés |
+
+- La table porte le nom du fichier, et ses colonnes ceux de l'en-tête,
+  en minuscules sans accents (`Région` devient `region`).
+- L'import renvoie le schéma au modèle.
+- Chaque requête rend un tableau, 200 lignes au plus : le modèle agrège
+  en SQL plutôt que de tout lire.
+
+![Une question suivante interroge la table ventes_2026 importée plus tôt, sans relire le CSV ; la base est proposée en conversation.sqlite sous la réponse](navigateur-sql-base.png)
+
+Les tables restent d'un message à l'autre. `reset` vide la base.
+`download` met sous la réponse un fichier `conversation.sqlite`, avec la
+base telle qu'elle est au moment du clic.
+
+### JavaScript — `run_javascript`
+
+Le code est le corps d'une fonction `async` : `return` rend une valeur,
+et la sortie de `console.log` est rendue aussi. Le code dispose de :
+
+| Fonction | Rôle |
+|---|---|
+| `readText(chemin)`, `readBytes(chemin)` | lire un fichier fourni par `files` |
+| `files` | tous les fichiers fournis : `{chemin: Uint8Array}` |
+| `output(nom, données)` | produire un fichier : texte, objet (en JSON), `Uint8Array`, `Blob`, ou `OffscreenCanvas` (en PNG) |
+| `chart(config, {width, height, name})` | dessiner un graphique Chart.js 4 en PNG, sur fond blanc ; Chart.js n'est chargé que si le code appelle `chart(` |
+
+Le graphique de la section SQL ci-dessus est un appel à `chart()`.
+
+### PHP — `run_php`
+
+![run_php charge lib/tva.php du dossier ouvert avec require, lit le CSV des ventes, affiche un tableau HT, TVA, TTC par produit et produit ttc-par-produit.csv sous la réponse](navigateur-php.png)
+
+Un script PHP 8.3 en ligne de commande, sans serveur web.
+
+- Les fichiers de `files` sont copiés sous `/data`, qui est le dossier
+  courant, avec leurs chemins : `require "lib/tva.php"` fonctionne.
+- Ce que le script écrit sous `/out` est rendu sous la réponse. GD est
+  présent pour produire des images.
+- Le résultat donne la sortie (`echo`, `print_r`, `var_dump`), les
+  erreurs et le code de sortie.
+
+Chaque appel repart de zéro.
+
+### Installer les runtimes
+
+L'image Docker construit PHP, SQLite et Chart.js (étape `wasm` de
+`proxy/Dockerfile`). Hors Docker, il faut les construire une fois :
+
+```bash
+cd proxy/wasm && npm ci && npm run build   # → proxy/llm_proxy/web/static/vendor/
+```
+
+Sans eux, `run_php` et `run_sql` répondent que le runtime manque.
+`run_javascript` fonctionne toujours, mais sans `chart()`.
+
+## Écrire un outil du navigateur
+
+Chaque outil suit le contrat de `chat/device/contract.js`, sur le modèle
+de celui des [outils hébergés](outils.md) :
+
+- un nom pris dans `TOOL` et une famille prise dans `FAMILY`, deux
+  listes fermées (une clé ne change pas : l'historique des
+  conversations la garde) ;
+- `defineTool({...})` pour l'outil : sa description et ses paramètres
+  (ce que le modèle lit), un `summary` (la ligne de sa puce dans le
+  fil), et soit `run(args, ctx)` pour un outil qui s'exécute aussitôt,
+  soit `waits`, `prepare`, `view` et `act` pour un outil à carte ;
+- `defineFamily({...})` pour la famille : son libellé dans le menu, et
+  `available()` si le navigateur peut ne pas la proposer.
+
+Un module par famille, inscrit dans `chat/device/index.js` : le registre
+ne connaît d'un outil que son contrat.

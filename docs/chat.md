@@ -179,7 +179,7 @@ réponse.
 | `edit_artifact` | remplace des passages exacts (uniques, ou `replace_all`) de la dernière version, tous ou aucun → nouvelle version | non |
 | `read_artifact` | relit la dernière version d'un artifact | non |
 | `save_file` | un fichier texte (CSV, script…) à télécharger sous la réponse | non |
-| [*outils du navigateur*](#outils-du-navigateur) | position, notifications, caméra… par famille | selon l'outil |
+| [*outils du navigateur*](navigateur.md) | position, notifications, caméra… par famille | selon l'outil |
 | `folder_list`, `folder_read`, `folder_search` | parcourir, lire (tranches numérotées), chercher dans le dossier ouvert | non |
 | `folder_write`, `folder_edit` | créer ou remplacer un fichier, remplacer un passage exact | oui : diff, *Appliquer* ou *Refuser* |
 
@@ -241,91 +241,16 @@ clic.
 
 ### Outils du navigateur
 
-Le modèle peut aussi solliciter l'**appareil**. Ces outils sont rangés
-par famille, dans la section *Navigateur* du menu **Outils**. Une
-conversation neuve reprend le dernier choix fait dans ce navigateur.
-Seules les familles prises en charge par le navigateur sont proposées,
-et seules les actives sont déclarées au modèle (chacune coûte des
-tokens).
+Le modèle peut aussi solliciter l'**appareil** : heure, position,
+notifications, presse-papiers, agenda, liens, partage, capture d'écran,
+caméra, codes, pipette, écran allumé. Il peut aussi faire tourner du
+**JavaScript**, du **PHP** ou du **SQL** dans un bac isolé, sur les
+fichiers du dossier ouvert. Ces outils se cochent par famille, dans la
+section *Navigateur* du menu **Outils**. Ce qui touche à l'appareil
+passe toujours par une carte que l'utilisateur accepte ou refuse.
 
-| Famille | Outil | Ce qu'il fait | Carte | D'office |
-|---|---|---|---|---|
-| Date et heure | `device_context` | date et heure locales, fuseau, langues | non | oui |
-| Position | `get_location` | latitude et longitude, avec la raison montrée | *Position approximative* (≈ 1 km), *Position précise*, *Refuser* | non |
-| Notifications | `notify` | maintenant, ou rappel dans N minutes (24 h au plus, page ouverte) | si la permission manque | oui |
-| Presse-papiers | `clipboard_write`, `clipboard_read` | copier un texte ; lire ce qui a été copié | pour lire : *Coller le presse-papiers* | oui |
-| Agenda | `add_to_calendar` | un événement `.ics` sous la réponse (heures locales, alerte facultative) | non | oui |
-| Liens | `open_link` | ouvrir une adresse http(s) dans un onglet, montrée en entier | *Ouvrir dans un onglet* | oui |
-| Partage | `share` | un texte vers une autre application (pas sous Linux) | *Partager…* | non |
-| Capture d'écran | `capture_screen` | un onglet, une fenêtre ou l'écran | aperçu : *Envoyer*, *Reprendre* | non |
-| Caméra | `take_photo` | une photo | caméra, puis aperçu | non |
-| QR et codes-barres | `scan_code` | lus à la caméra ou à l'écran ; seul le texte part (macOS, Android, ChromeOS) | oui | non |
-| Pipette | `pick_color` | une couleur prise à l'écran, en hexadécimal | *Prendre une couleur* | non |
-| Écran allumé | `keep_screen_on` | empêche la veille tant que la page est visible | non | non |
-| JavaScript | `run_javascript` | du JavaScript dans le bac : fichiers fournis, fichiers et graphiques produits (15 s au plus) | non | non |
-| PHP | `run_php` | un script PHP 8.3 dans le bac : fichiers fournis sous `/data`, produits sous `/out` ; sortie, erreurs, code de sortie (30 s au plus) | non | non |
-| SQL | `run_sql` | un script SQLite dans le bac, sur la base de la conversation ; importe des fichiers du dossier ouvert ou des pièces jointes ; un tableau par requête (60 s au plus) | non | non |
-
-Ce qui touche à l'appareil n'est **jamais** lu sans un clic sur la
-carte, même si la permission du navigateur est déjà accordée. Une image
-(capture, photo) s'affiche sous la réponse, part au modèle avec le
-résultat de l'outil et reste dans l'historique. Caméra et écran sont
-coupés dès que la carte est répondue ou abandonnée.
-
-Le **bac** de JavaScript, PHP et SQL : le code tourne dans un Worker,
-créé dans un cadre `sandbox` sans origine (ni la page, ni sa session, ni
-ses cookies), sous une politique qui coupe tout réseau. Une boucle sans
-fin ne fige pas la page : le bac est supprimé au délai dépassé. Chaque
-appel de JavaScript ou de PHP part de zéro. PHP (≈ 18 Mo) et SQLite (≈ 700 Ko) sont des runtimes
-WASM servis par le proxy (`/ui/static/vendor/`) et téléchargés
-seulement au premier appel, puis revalidés par le navigateur sans être
-retéléchargés. L'image Docker les construit ; hors Docker, `npm ci &&
-npm run build` dans `proxy/wasm/`, sinon ces deux outils répondent que
-le runtime manque.
-
-**Fichiers fournis, fichiers produits.** Les trois outils de code
-prennent `files` : des chemins du dossier ouvert, ou des noms de pièces
-jointes texte. La page les lit et les passe au bac ; ils ne partent pas
-au modèle.
-
-- JavaScript : `readText(chemin)` et `readBytes(chemin)` les lisent ;
-  `output(nom, données)` produit un fichier (texte, octets, Blob, ou un
-  `OffscreenCanvas` en PNG) ; `chart(config, {width, height, name})`
-  dessine un graphique Chart.js 4 en PNG, sur fond blanc. Chart.js
-  (`vendor/chart.js`) n'est chargé que si le code appelle `chart(`.
-- PHP : les fichiers sont copiés sous `/data`, le dossier courant, avec
-  leurs chemins (`require "lib/util.php"` marche). Ce que le script
-  écrit sous `/out` est rendu ; GD est là pour les images.
-
-Un fichier texte produit arrive sous la réponse, comme avec `save_file`.
-Une image (png, jpeg, webp, gif) s'affiche sous la réponse et, si le
-modèle de la conversation lit les images, la première est jointe au
-résultat : le modèle voit son graphique. Dix fichiers au plus par
-appel, 5 Mo par image ; un autre binaire est refusé.
-
-**SQL sur ses propres données.** `run_sql` travaille sur une base
-SQLite propre à la conversation, gardée dans **ce navigateur**
-(IndexedDB ; en mémoire seulement pour une conversation incognito) et
-jamais envoyée au proxy. Elle est effacée avec la conversation. Son
-paramètre `files` importe d'abord des fichiers en tables : ceux du
-dossier ouvert ou les pièces jointes texte du fil.
-
-| Fichier | Import |
-|---|---|
-| `.csv`, `.tsv`, `.txt` | séparateur deviné (`,` `;` tabulation), en-tête, types déduits (INTEGER, REAL, TEXT) ; `3,14` vaut 3.14 sous `;` ; `007` reste du texte |
-| `.json`, `.jsonl` | un tableau d'objets, ou un objet par ligne ; valeurs imbriquées en JSON |
-| `.sqlite`, `.db` | ses tables, index et vues, copiés |
-
-La table porte le nom du fichier, ses colonnes ceux de l'en-tête, en
-minuscules sans accents. L'import rend le schéma au modèle. Les
-fichiers sont lus par la page et passés au bac : le modèle ne reçoit
-que les résultats de ses requêtes (200 lignes au plus par résultat),
-pas les fichiers. `reset` vide la base ; `download` met la base sous la
-réponse en `.sqlite`, telle qu'elle est au moment du clic.
-
-Chaque outil suit le contrat de `chat/device/contract.js` : un nom de
-`TOOL`, une famille de `FAMILY`, sa description et ses paramètres, et
-soit `run` (aussitôt), soit `prepare`, `view` et `act` (une carte).
+Chaque outil, avec un exemple et sa capture :
+[Les outils du navigateur](navigateur.md).
 
 ## Routes
 
