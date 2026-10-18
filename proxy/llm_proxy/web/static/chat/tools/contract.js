@@ -106,10 +106,11 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
  */
 
 /** Le résultat d'un `run` : le texte pour le modèle, ou ce texte et ses
- * effets — une image jointe (data URL), un artifact à ouvrir, une carte
- * DURABLE à laisser sous la réponse (`keep` : son état, voir Kept).
+ * effets — une image jointe (data URL), un artifact à ouvrir, des cartes
+ * DURABLES à laisser dans la réponse (`keep` : l'état d'une carte, ou une
+ * liste ; voir Kept).
  * @typedef {string | {result: string, image?: string, name?: string, artifact?: string,
- *   keep?: object}} RunResult */
+ *   keep?: object | object[]}} RunResult */
 
 /** Une carte répondue : son résultat, et peut-être une image, ou une carte
  * durable à laisser sous la réponse (`keep`, comme pour run).
@@ -136,11 +137,14 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
  * @typedef {{id: string, name: ToolName, args: any, result?: string, busy?: boolean,
  *   [k: string]: any}} Card */
 
-/** Une carte DURABLE, laissée sous la réponse par un `run` (`keep`) et
- * gardée dans le message (m.kept) : elle survit à un rechargement, et ses
- * boutons se rejouent à volonté (partager à nouveau). `id` : le sien ;
- * `name` : l'outil ; le reste vient de `keep`.
- * @typedef {{id: string, name: ToolName, [k: string]: any}} Kept */
+/** Une carte DURABLE, laissée par un `run` (`keep`) et gardée dans le
+ * message (m.kept) : elle survit à un rechargement, et ses boutons se
+ * rejouent à volonté (partager à nouveau). `id` : le sien ; `name` :
+ * l'outil ; le reste vient de `keep`. Avec un `slot`, elle se place DANS
+ * le texte de la réponse, là où le modèle écrit, sur une ligne seule,
+ * `![titre](chart:<slot>)` — sinon en tête du corps de la réponse ; sans
+ * `slot`, sous la réponse.
+ * @typedef {{id: string, name: ToolName, slot?: string, [k: string]: any}} Kept */
 
 /** Un fichier produit sous la réponse, dont le contenu est relu au clic.
  * @typedef {{name: string, type: string, size: number, source: {tool: ToolName, ref: string}}} SourcedFile */
@@ -156,6 +160,8 @@ const NO_ANSWER = "L'utilisateur n'a pas répondu : il a écrit un nouveau messa
  * @property {Record<string, object>} [params]  ses paramètres : {nom: schéma JSON}, leurs `description` comprises
  * @property {string[]} [required]     ceux qui sont obligatoires
  * @property {"card" | "sheet"} [placement]  où sa carte s'affiche : dans le fil, ou dans la feuille du bas
+ * @property {object} [keptComponent]  un composant Vue de carte DURABLE, à la place du gabarit commun
+ *                                     (keptView) : il reçoit `k` (la carte)
  * @property {object} [component]      un composant Vue de carte, à la place du gabarit commun (view) ;
  *                                     il reçoit `w` (la carte), `busy` et `ctx`, il émet
  *                                     `act(action, payload)`, et `minimize` dans la feuille
@@ -190,6 +196,8 @@ export class PageTool {
     this.placement = spec.placement || "card";
     /** @type {object | null} */
     this.component = spec.component || null;
+    /** @type {object | null} */
+    this.keptComponent = spec.keptComponent || null;
   }
 
   /** Attend-il l'utilisateur ? (une carte)
@@ -268,7 +276,7 @@ export class PageTool {
 // Les membres de l'interface : un outil n'en a pas d'autres.
 export const MEMBERS = Object.freeze(new Set([
   ...Object.getOwnPropertyNames(PageTool.prototype),
-  "name", "description", "params", "required", "placement", "component",
+  "name", "description", "params", "required", "placement", "component", "keptComponent",
 ]));
 
 /*

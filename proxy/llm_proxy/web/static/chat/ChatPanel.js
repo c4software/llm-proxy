@@ -928,6 +928,41 @@ export const ChatPanel = {
       return entry[field].html;
     }
 
+    // Le CORPS d'une réponse : son texte, et les cartes durables qui s'y
+    // placent (un graphique interactif : celles à `slot` et à composant).
+    // Le modèle en place une en écrivant, sur une ligne seule,
+    // ![titre](chart:<slot>) ; une carte qu'il ne place pas va en tête.
+    const SLOT_MARK = /^[ \t]*!\[[^\]\n]*\]\((?:chart|card):([\w.-]+)\)[ \t]*$/gm;
+    const slotted = (m) => (m.kept || []).filter((k) => k.slot && tools.keptComponent(k));
+    function body(m) {
+      const cards = slotted(m);
+      if (!cards.length) return [{ html: html(m) }];
+      const raw = toRaw(m);
+      let entry = cache.get(raw);
+      if (!entry) cache.set(raw, entry = {});
+      const src = m.content || "";
+      const key = src + "\u0000" + cards.map((k) => k.id).join(",");
+      if (entry.body && entry.body.key === key) return entry.body.parts;
+      const bySlot = new Map(cards.map((k) => [k.slot, k]));
+      const used = new Set();
+      const parts = [];
+      let last = 0;
+      for (const hit of src.matchAll(SLOT_MARK)) {
+        const k = bySlot.get(hit[1]);
+        if (!k || used.has(k.id)) continue;
+        parts.push({ html: Markdown.render(src.slice(last, hit.index)) }, { k });
+        used.add(k.id);
+        last = hit.index + hit[0].length;
+      }
+      parts.push({ html: Markdown.render(src.slice(last)) });
+      const out = [...cards.filter((k) => !used.has(k.id)).map((k) => ({ k })),
+                   ...parts.filter((p) => p.k || p.html.trim())];
+      entry.body = { key, parts: out };
+      return out;
+    }
+    const keptComponent = (k) => tools.keptComponent(k);
+    const keptBelow = (m) => (m.kept || []).filter((k) => !(k.slot && tools.keptComponent(k)));
+
     // Copier : le bouton des blocs de code (rendus en v-html, donc par
     // délégation) et celui de chaque réponse.
     const clipboard = VueUse.useClipboard({ legacy: true });
@@ -1062,7 +1097,7 @@ export const ChatPanel = {
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, voiceName, voiceSupported: voice.supported, playing, listen,
-             sheet, sheetOpen, cardAct, cardView, keptView, keptAct, keptNotes, cardComponent, cardPlacement, cardPending, folderCtx,
+             sheet, sheetOpen, cardAct, cardView, keptView, keptAct, keptNotes, body, keptComponent, keptBelow, cardComponent, cardPlacement, cardPending, folderCtx,
              download, downloadOut, extOf,
              dropZone, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
@@ -1227,7 +1262,10 @@ export const ChatPanel = {
             </div>
             <details class="gen-prompt" v-if="m.image && m.prompt && m.prompt.includes('\\n')">
               <summary>prompt envoyé (avec le contexte)</summary><pre>{{ m.prompt }}</pre></details>
-            <div class="md" v-html="html(m)"></div>
+            <template v-for="(part, n) in body(m)" :key="part.k ? part.k.id : 'md' + n">
+              <component v-if="part.k" :is="keptComponent(part.k)" :k="part.k"></component>
+              <div class="md" v-else v-html="part.html"></div>
+            </template>
             <!-- Ce qui attend l'utilisateur : la CARTE d'un outil (tools/) —
                  son composant, ou le gabarit commun (view) ; une carte de la
                  feuille du bas n'a ici qu'une ligne qui la rouvre. -->
@@ -1255,7 +1293,7 @@ export const ChatPanel = {
                 </template>
               </div>
             </template>
-            <div class="tool-card device-card kept-card" v-for="k in (m.kept || [])" :key="k.id">
+            <div class="tool-card device-card kept-card" v-for="k in keptBelow(m)" :key="k.id">
               <template v-for="v in [keptView(k)]" :key="k.id">
                 <p class="write-head"><b>{{ v.title }}</b></p>
                 <p class="dim" v-if="v.detail">{{ v.detail }}</p>

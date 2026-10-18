@@ -19,6 +19,7 @@ import { TOOL, FAMILY, PageTool, defineFamily, clip, failure, oneLine } from "..
 import { exec } from "./bac.js";
 import { FILES_PARAM, paths, inputs, deliver } from "./files.js";
 import { CheckTypescript } from "./typescript.js";
+import { ChartCard } from "./chart-card.js";
 
 const TIMEOUT = 15_000;
 const MAX_OUT = 20_000;
@@ -67,7 +68,13 @@ async function driver({ code, files, typescript }, { mods, fmt }) {
     const c = new Chart(canvas, { ...config,
       options: { ...(config.options || {}), responsive: false, animation: false, devicePixelRatio: 1 },
       plugins: [...(config.plugins || []), background] });
+    // Sa configuration, sans ses fonctions (elles ne se gardent pas) : la
+    // carte interactive de la réponse la rejoue.
+    const plain = JSON.parse(JSON.stringify(config, (k, v) => (typeof v === "function" ? undefined : v)));
+    const i = produced.length;
     try { await output(name, canvas); } finally { c.destroy(); }
+    Object.assign(produced[i], { chart: plain, width, height,
+                                 title: config.options?.plugins?.title?.text || "" });
     return name;
   }
 
@@ -91,6 +98,7 @@ class RunJavascript extends PageTool {
   constructor() {
     super({
       name: TOOL.RUN_JAVASCRIPT,
+      keptComponent: ChartCard,
       description: "Exécute du JavaScript dans un bac isolé du navigateur (un Worker : aucun réseau, "
         + "aucun accès à la page ni au DOM), pour calculer exactement, transformer des données, "
         + "produire un fichier ou un graphique. Le code est le corps d'une fonction async : `return` "
@@ -98,8 +106,10 @@ class RunJavascript extends PageTool {
         + "readBytes(chemin) lisent les fichiers passés dans `files` (dossier ouvert ou pièces jointes, "
         + "qui restent sur l'appareil) ; output(nom, données) produit un fichier sous la réponse (texte, "
         + "Uint8Array, Blob, OffscreenCanvas en PNG) ; chart(config, {width, height, name}) dessine un "
-        + "graphique Chart.js 4 en PNG (config : {type, data, options}). Une image produite est "
-        + "montrée à l'utilisateur et jointe au résultat si le modèle lit les images. "
+        + "graphique Chart.js 4 (config : {type, data, options}, sans fonctions), montré INTERACTIF "
+        + "dans la réponse (survol, légende) et joint en PNG au résultat si le modèle lit les "
+        + "images ; le résultat dit comment le placer dans le texte. Une image produite par output "
+        + "est montrée sous la réponse. "
         + "`language: \"typescript\"` accepte du TypeScript (types retirés, non vérifiés : "
         + "check_typescript les vérifie). 15 s au plus.",
       params: {
@@ -125,17 +135,19 @@ class RunJavascript extends PageTool {
     const r = await exec({ driver, input: { code, files, typescript }, runtime, timeout: TIMEOUT });
     const out = [];
     let image = "";
+    let keep = [];
     if (r.ok) {
       out.push(r.value.value === undefined ? "(aucune valeur rendue)" : "Résultat : " + r.value.value);
       const got = await deliver(ctx, r.value.produced.filter(Boolean));
       out.push(...got.lines);
       image = got.image;
+      keep = got.keep;
     } else {
       out.push(failure(r.error));
     }
     if (r.logs.length) out.push("Console :\n" + r.logs.join("\n"));
     const result = clip(out.join("\n"), MAX_OUT);
-    return image ? { result, image } : result;
+    return { result, ...(image ? { image } : {}), ...(keep.length ? { keep } : {}) };
   }
 }
 

@@ -1054,6 +1054,11 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .device-card > .dim { margin: 0; }
 .device-url { display: block; overflow-wrap: anywhere; font-size: 12.5px; }
+/* Un graphique interactif (chart-card.js), dans le corps de la réponse. */
+.chart-card { margin: 10px 0; padding: 12px; max-width: 760px; background: var(--panel); }
+.chart-card canvas { max-width: 100%; }
+.chart-card .card-actions { margin-top: 8px; }
+.chart-card.full { max-width: none; display: flex; flex-direction: column; justify-content: center; }
 .device-swatch { display: block; width: 56px; height: 32px; border-radius: 6px; border: 1px solid var(--line); }
 .device-quote {
   margin: 0; max-height: 160px; overflow: auto; white-space: pre-wrap; font-size: 12.5px;

@@ -11,6 +11,9 @@
     image (png, jpeg, webp, gif)  montrée sous la réponse, et jointe au
                                   résultat pour le modèle s'il lit les
                                   images (la première seulement)
+    graphique (chart() du bac)    une carte INTERACTIVE dans le corps de la
+                                  réponse (Chart.js, chart-card.js), son
+                                  PNG joint au résultat comme une image
 */
 import { saveFile } from "../page/save.js";
 
@@ -75,12 +78,15 @@ const dataUrl = (bytes, type) => new Promise((resolve, reject) => {
   r.readAsDataURL(new Blob([bytes], { type }));
 });
 
-// Les fichiers produits ({name, bytes | text}) → sous la réponse. Rend
-// {lines, image} : ce que le résultat en dit, et l'image pour le modèle.
+// Les fichiers produits ({name, bytes | text, chart?}) → dans la réponse.
+// Rend {lines, image, keep} : ce que le résultat en dit, l'image pour le
+// modèle, et les cartes durables (les graphiques interactifs).
 export async function deliver(ctx, produced) {
   const lines = [];
+  const keep = [];
   let image = "";
   const live = ctx.live || {};
+  const charts = (produced || []).filter((f) => f.chart).length;
   for (const [i, f] of (produced || []).entries()) {
     const name = String(f.name || "").split("/").pop().trim();
     if (i >= MAX_OUTPUTS) { lines.push(`Error: « ${name} » non rendu (${MAX_OUTPUTS} fichiers au plus).`); continue; }
@@ -89,8 +95,18 @@ export async function deliver(ctx, produced) {
     if (IMAGE[e] && f.bytes) {
       if (f.bytes.length > MAX_IMAGE) { lines.push(`Error: image « ${name} » de plus de ${MAX_IMAGE / 1e6} Mo.`); continue; }
       const data = await dataUrl(f.bytes, IMAGE[e]);
-      (live.attachments || (live.attachments = [])).push({ kind: "image", name, data });
-      let line = `Image « ${name} » montrée à l'utilisateur sous la réponse`;
+      let line;
+      if (f.chart) {
+        // Un graphique : sa carte interactive, rejouée depuis sa configuration.
+        const slot = name.replace(/\.[^.]+$/, "");
+        keep.push({ slot, title: f.title || slot, chart: f.chart, width: f.width, height: f.height, file: name });
+        line = `Graphique interactif « ${slot} » affiché à l'utilisateur dans le corps de la réponse`
+          + (charts > 1 ? ` (${charts} graphiques en tout, tous visibles)` : "")
+          + ` ; pour le placer dans ton texte, écrire sur une ligne seule : ![${f.title || slot}](chart:${slot})`;
+      } else {
+        (live.attachments || (live.attachments = [])).push({ kind: "image", name, data });
+        line = `Image « ${name} » montrée à l'utilisateur sous la réponse`;
+      }
       if (!ctx.vision) line += " (non jointe : le modèle de la conversation ne lit pas les images).";
       else if (image) line += " (non jointe : seule la première image l'est).";
       else { image = data; line += " ; jointe à ce résultat, à la suite."; }
@@ -104,5 +120,5 @@ export async function deliver(ctx, produced) {
     }
     lines.push(`Error: « ${name} » : seuls le texte et les images png, jpeg, webp, gif sont rendus.`);
   }
-  return { lines, image };
+  return { lines, image, keep };
 }

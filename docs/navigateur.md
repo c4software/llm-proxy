@@ -285,9 +285,25 @@ et la sortie de `console.log` est rendue aussi. Le code dispose de :
 | `readText(chemin)`, `readBytes(chemin)` | lire un fichier fourni par `files` |
 | `files` | tous les fichiers fournis : `{chemin: Uint8Array}` |
 | `output(nom, données)` | produire un fichier : texte, objet (en JSON), `Uint8Array`, `Blob`, ou `OffscreenCanvas` (en PNG) |
-| `chart(config, {width, height, name})` | dessiner un graphique Chart.js 4 en PNG, sur fond blanc ; Chart.js n'est chargé que si le code appelle `chart(` |
+| `chart(config, {width, height, name})` | dessiner un graphique Chart.js 4 : **interactif dans la réponse**, et en PNG pour le modèle (ci-dessous) ; Chart.js n'est chargé que si le code appelle `chart(` |
 
 Le graphique de la section SQL ci-dessus est un appel à `chart()`.
+
+**Un graphique `chart()` est interactif.** Il s'affiche dans le **corps de
+la réponse** comme une carte durable, avec le vrai graphique Chart.js
+rejoué depuis sa configuration : valeurs au survol, légende cliquable
+pour masquer une série, *Télécharger en PNG*, *Plein écran*. Il revient
+après un rechargement, puisque seule sa configuration est gardée avec la
+conversation.
+
+- Par défaut, la carte va en tête de la réponse. Le modèle peut la
+  placer dans son texte en écrivant, sur une ligne seule,
+  `![titre](chart:<nom>)` ; le résultat de l'outil le lui indique, avec
+  le nombre de graphiques affichés.
+- Le modèle reçoit le PNG du graphique (le premier, s'il lit les
+  images), pour vérifier ce qu'il a dessiné.
+- Les fonctions de la configuration (un formateur d'étiquettes) ne se
+  gardent pas : la carte interactive s'en passe.
 
 Avec `language: "typescript"`, le code est du **TypeScript** : sucrase
 en retire les types avant l'exécution, sans les vérifier (c'est le rôle
@@ -399,7 +415,8 @@ class GetLocation extends PageTool {
 | `release(w)` | la carte est fermée : couper la caméra, l'écran | rien |
 | `abandoned(w)` | le résultat d'une carte laissée sans réponse | « L'utilisateur n'a pas répondu… » |
 | `notice(w)`, `pending(w)` | le texte de la notification ; la ligne qui rouvre la feuille | le titre de la carte |
-| `keptView(k)`, `keptAct(k, action, ctx)` | une carte **durable**, laissée sous la réponse par un `run` qui rend `{result, keep}` : ce qu'elle montre, et ses boutons, rejouables à volonté (rien ne part plus au modèle) | aucune |
+| `keptView(k)`, `keptAct(k, action, ctx)` | une carte **durable**, laissée sous la réponse par un `run` qui rend `{result, keep}` (`keep` : une carte, ou une liste) : ce qu'elle montre, et ses boutons, rejouables à volonté (rien ne part plus au modèle) | aucune |
+| `keptComponent` (dans `super`) | un composant Vue de carte durable, à la place de `keptView` ; avec un `slot`, la carte se place **dans le texte** de la réponse (`![titre](chart:<slot>)`), sinon en tête | gabarit commun, sous la réponse |
 | `summary(args)` | la ligne de la puce de l'appel dans le fil | vide |
 | `fileContent(ref)` | le contenu, relu au clic, d'un fichier produit avec `source: {tool, ref}` | aucun |
 | `forget(convId)` | la conversation est supprimée : effacer ce que l'outil garde pour elle | rien |

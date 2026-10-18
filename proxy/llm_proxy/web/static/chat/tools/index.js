@@ -103,7 +103,9 @@ export function faults(tool) {
   }
   // Une carte qui ne s'affiche que si la permission manque (notify) a aussi un run.
   if (!card && !overrides(tool, "run")) out.push(`${where} : ni run, ni carte`);
-  if (overrides(tool, "keptView") !== overrides(tool, "keptAct")) out.push(`${where} : keptView et keptAct vont ensemble`);
+  if (!tool.keptComponent && overrides(tool, "keptView") !== overrides(tool, "keptAct")) {
+    out.push(`${where} : keptView et keptAct vont ensemble`);
+  }
   if (!["card", "sheet"].includes(tool.placement)) out.push(`${where} : placement inconnu`);
   if (tool.placement === "sheet" && !tool.component) out.push(`${where} : une feuille sans component`);
   for (const r of tool.required) if (!(r in tool.params)) out.push(`${where} : « ${r} » requis mais pas dans params`);
@@ -175,8 +177,10 @@ export const waits = (name, args, ctx) => !!TOOLS.get(name)?.waits(args || {}, c
  * le message (m.kept).
  * @param {string} name @param {any} got @param {Ctx} ctx */
 function keep(name, got, ctx) {
-  if (got && got.keep && ctx.live) {
-    (ctx.live.kept || (ctx.live.kept = [])).push({ id: "kept_" + crypto.randomUUID(), name, ...got.keep });
+  if (!got || !got.keep || !ctx.live) return;
+  const list = ctx.live.kept || (ctx.live.kept = []);
+  for (const k of Array.isArray(got.keep) ? got.keep : [got.keep]) {
+    list.push({ id: "kept_" + crypto.randomUUID(), name, ...k });
   }
 }
 
@@ -234,6 +238,8 @@ export function abandon(w) {
 }
 /** Une carte durable (Kept). @param {any} k */
 export const keptView = (k) => TOOLS.get(k.name).keptView(k);
+/** Le composant d'une carte durable, ou null (le gabarit commun). @param {any} k */
+export const keptComponent = (k) => TOOLS.get(k.name)?.keptComponent || null;
 /** @param {any} k @param {string} action @param {Ctx} ctx */
 export const keptAct = (k, action, ctx) => TOOLS.get(k.name).keptAct(k, action, ctx);
 /** La ligne d'une puce d'appel. @param {string} name @param {any} args */
