@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from fakes import FakeUpstream, chat_doc
+from fakes import FakeUpstream, chat_doc, everywhere
 from llm_proxy.access import auth, fairshare
 from llm_proxy import tools
 
@@ -50,7 +50,7 @@ def shared(proxy, monkeypatch):
     fenêtre de 0,4 s ; chaque réponse du backend coûte 150 tokens."""
     from llm_proxy.surfaces import chat_api
     monkeypatch.setattr(auth, "PROXY_API_KEYS", [KEY])
-    monkeypatch.setattr(chat_api, "ENABLED", False)     # relais brut
+    everywhere(monkeypatch, chat_api, "ENABLED", False)     # relais brut
     monkeypatch.setattr(fairshare, "DEFAULT_SHARE", 100)
     monkeypatch.setattr(fairshare, "WINDOW", 0.4)
     monkeypatch.setattr(fairshare, "CHECK_EVERY", 0.05)

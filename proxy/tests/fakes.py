@@ -240,8 +240,8 @@ def hosted_chat(monkeypatch):
     neuve — rendue, pour qui veut la lire."""
     from llm_proxy.surfaces import chat_api
     memory = chat_api.Memory(8, 60, 100_000)
-    monkeypatch.setattr(chat_api, "ENABLED", True)
-    monkeypatch.setattr(chat_api, "MEMORY", memory)
+    everywhere(monkeypatch, chat_api, "ENABLED", True)
+    everywhere(monkeypatch, chat_api, "MEMORY", memory)
     return memory
 
 

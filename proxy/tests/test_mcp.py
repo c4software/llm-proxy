@@ -14,7 +14,7 @@ import json
 import httpx2
 import pytest
 
-from fakes import go
+from fakes import go, everywhere
 from llm_proxy import tools
 from llm_proxy.tools import mcp
 
@@ -739,7 +739,7 @@ def test_declaration_connue_des_qu_un_serveur_est_configure(monkeypatch):
             # n'est pas une forme de cette liste.
             for always, noms in ((["mcp:docs", "docs_search"], ["docs_search"]),
                                  (["mcp:autre", "mcp"], [])):
-                monkeypatch.setattr(chat_api, "ALWAYS", always)
+                everywhere(monkeypatch, chat_api, "ALWAYS", always)
                 assert chat_api.offered(h.tools) == noms, always
             # Sans liaison : ni Responses, ni Anthropic.
             assert h.for_responses("mcp") == [] and h.for_server("mcp_1") is None

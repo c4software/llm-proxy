@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from fakes import everywhere
 from fakes import (
     ANSWER_TURN, FOUND, QUERY, SEARCH_DOC, SEARCH_TURN,
     FakeUpstream, chat_doc, chunk, hosted_chat, search_then_answer, stream, tool_call,
@@ -115,7 +116,7 @@ def test_request_without_declaration_is_relayed_byte_for_byte(chat, monkeypatch)
     answer = stream(chunk({"role": "assistant", "content": "Bonjour"}),
                     chunk(finish="stop"), usage(7, 2))
     for enabled in (True, False):
-        monkeypatch.setattr(C, "ENABLED", enabled)
+        everywhere(monkeypatch, C, "ENABLED", enabled)
         chat.replies = [FakeUpstream(answer)]
         r = chat.client.post("/v1/chat/completions", content=body)
         assert raws.pop() == body and r.content == answer
@@ -228,7 +229,7 @@ def test_cited_sources_come_back_as_url_citations(chat, monkeypatch):
     assert message["annotations"] == expected
     assert message["content"][start:start + len(URL)] == URL
 
-    monkeypatch.setattr(C, "ANNOTATIONS", False)
+    everywhere(monkeypatch, C, "ANNOTATIONS", False)
     chat.replies = replies()
     assert "annotations" not in post(
         chat, stream=False).json()["choices"][0]["message"]
@@ -403,14 +404,14 @@ def test_in_doubt_nothing_is_reinserted(chat, monkeypatch):
         ("question changée", [{**Q1, "content": "Autre ?"}, A1, Q2], None),
         ("expirée", [Q1, A1, Q2], lambda: setattr(C.MEMORY, "ttl", -1)),
         ("[chat].memory = false", [Q1, A1, Q2],
-         lambda: monkeypatch.setattr(C, "MEMORY_ENABLED", False)),
+         lambda: everywhere(monkeypatch, C, "MEMORY_ENABLED", False)),
     ):
-        monkeypatch.setattr(C, "MEMORY", C.Memory(8, 60, 100_000))
+        everywhere(monkeypatch, C, "MEMORY", C.Memory(8, 60, 100_000))
         searched(chat)
         if setup:
             setup()
         assert ask(chat, messages) == messages, case
-        monkeypatch.setattr(C, "MEMORY_ENABLED", True)
+        everywhere(monkeypatch, C, "MEMORY_ENABLED", True)
 
     # Cloisonnée par client dès que le proxy a des clés.
     monkeypatch.setattr(auth, "PROXY_API_KEYS", ["un", "deux"])
@@ -455,13 +456,13 @@ def test_without_declaration_the_history_is_not_read(chat, monkeypatch):
     body = json.dumps({"model": "essai/qwen", "messages": [Q1, A1, Q2],
                        "stream": True}, ensure_ascii=False).encode()
     inner = C.restore
-    monkeypatch.setattr(C, "restore", None)     # appelée = 500
+    everywhere(monkeypatch, C, "restore", None)     # appelée = 500
     chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
     r = chat.client.post("/v1/chat/completions", content=body)
     # Seul le préfixe du backend est retiré du modèle.
     assert r.status_code == 200
     assert chat.raws[-1] == body.replace(b"essai/qwen", b"qwen")
-    monkeypatch.setattr(C, "restore", inner)
+    everywhere(monkeypatch, C, "restore", inner)
     assert len(ask(chat, [Q1, A1, Q2])) == 5
 
 
@@ -553,7 +554,7 @@ def test_always_presents_the_hosted_tools_to_a_request_that_declares_nothing(
     """[chat].always : mêmes fonctions, même boucle, mêmes annotations et
     même mémoire qu'une requête qui déclare. Un nom que le registre n'a
     pas (encore) est passé."""
-    monkeypatch.setattr(C, "ALWAYS", ["web_search", "ocr", "web_fetch"])
+    everywhere(monkeypatch, C, "ALWAYS", ["web_search", "ocr", "web_fetch"])
     names = lambda sent: [t["function"]["name"] for t in sent["tools"]]
     forced = {"type": "function", "function": {"name": "ls"}}
     for extra, expected in (
@@ -629,7 +630,7 @@ def test_always_leaves_these_requests_untouched(chat, monkeypatch):
     backend = backends.BACKENDS["essai"]
     for case, extra, setup in (
         ("[chat].always vide (le défaut)", {},
-         lambda: monkeypatch.setattr(C, "ALWAYS", [])),
+         lambda: everywhere(monkeypatch, C, "ALWAYS", [])),
         ("tool_choice none", {"tools": [fn("ls")], "tool_choice": "none"}, None),
         # Une déclaration y est refusée ; ici le client n'a rien déclaré.
         ("n > 1", {"n": 2}, None),
@@ -641,15 +642,15 @@ def test_always_leaves_these_requests_untouched(chat, monkeypatch):
                                      {"qwen": "text-to-image"})),
         # Le modèle de tâches d'une interface : motif sur le nom préfixé.
         ("modèle de [chat].always_except", {},
-         lambda: monkeypatch.setattr(C, "ALWAYS_EXCEPT",
+         lambda: everywhere(monkeypatch, C, "ALWAYS_EXCEPT",
                                      ["autre/*", "essai/qw*"])),
         ("outils inactifs", {},
          lambda: setattr(chat, "hosted", type(chat.hosted)(tools=[]))),
         ("[chat].hosted_tools = false", {},
-         lambda: monkeypatch.setattr(C, "ENABLED", False)),
+         lambda: everywhere(monkeypatch, C, "ENABLED", False)),
     ):
         hosted = chat.hosted
-        monkeypatch.setattr(C, "ALWAYS", always)
+        everywhere(monkeypatch, C, "ALWAYS", always)
         if setup:
             setup()
         chat.replies = [FakeUpstream(upstream)]
@@ -658,9 +659,9 @@ def test_always_leaves_these_requests_untouched(chat, monkeypatch):
         assert chat.raws[-1] == body.replace(b"essai/qwen", b"qwen"), case
         assert not hosted.runs and not chat.replies, case
         chat.hosted = hosted
-        monkeypatch.setattr(C, "ENABLED", True)
+        everywhere(monkeypatch, C, "ENABLED", True)
         monkeypatch.setattr(backend, "model_types", {})
-        monkeypatch.setattr(C, "ALWAYS_EXCEPT", [])
+        everywhere(monkeypatch, C, "ALWAYS_EXCEPT", [])
     # Un modèle que le catalogue dit de conversation, ou qu'il ne connaît
     # pas, les reçoit.
     for types in ({"qwen": "image-text-to-text"}, {"autre": "text-to-image"}):
@@ -671,11 +672,11 @@ def test_always_leaves_these_requests_untouched(chat, monkeypatch):
     # Un modèle excepté ne reçoit rien D'OFFICE ; ce que le client lui
     # déclare reste honoré. Un motif qui ne couvre pas son nom ne l'exclut
     # pas.
-    monkeypatch.setattr(C, "ALWAYS_EXCEPT", ["essai/qwen"])
+    everywhere(monkeypatch, C, "ALWAYS_EXCEPT", ["essai/qwen"])
     chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
     bare(chat, tools=[WEB])
     assert len(chat.sent[-1]["tools"]) == 2
-    monkeypatch.setattr(C, "ALWAYS_EXCEPT", ["qwen", "essai/qwen-*"])
+    everywhere(monkeypatch, C, "ALWAYS_EXCEPT", ["qwen", "essai/qwen-*"])
     chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]
     bare(chat)
     assert len(chat.sent[-1]["tools"]) == 2

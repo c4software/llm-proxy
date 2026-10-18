@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+from fakes import everywhere
 from fakes import (ANSWER_TURN, FakeUpstream, hosted_chat, search_then_answer,
                    stream)
 from llm_proxy.access import auth
@@ -282,7 +283,7 @@ def test_chat_ignores_always(ui, monkeypatch):
     """Les interrupteurs de la page font foi : [chat].always ne s'ajoute
     pas à une requête qui ne déclare rien."""
     login(ui)
-    monkeypatch.setattr(C, "ALWAYS", ["web_search"])
+    everywhere(monkeypatch, C, "ALWAYS", ["web_search"])
     ui.replies = [FakeUpstream(stream(*ANSWER_TURN))]
     chat(ui)
     assert "tools" not in ui.sent[-1]
@@ -339,7 +340,7 @@ def test_incognito_chat_never_declares_memory(ui, monkeypatch):
     """L'outil `memory` (persistant) est retiré d'une requête incognito,
     même déclaré ; une requête ordinaire le garde."""
     login(ui)
-    monkeypatch.setattr(C, "ENABLED", False)    # relais brut : `tools` tel quel
+    everywhere(monkeypatch, C, "ENABLED", False)    # relais brut : `tools` tel quel
     for headers, kept in (({"x-incognito": "1"}, []),
                           ({}, [{"type": "memory"}])):
         ui.replies = [FakeUpstream(stream(*ANSWER_TURN))]

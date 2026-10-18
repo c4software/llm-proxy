@@ -19,7 +19,7 @@ from joserfc import jwt
 from joserfc.jwk import RSAKey
 from fastapi.testclient import TestClient
 
-from fakes import bearer
+from fakes import bearer, everywhere
 from llm_proxy.access import accounts, oidc
 from llm_proxy import app as A
 from llm_proxy.access import auth
@@ -339,7 +339,7 @@ def test_the_admin_sets_an_account_share(idp, monkeypatch):
     from llm_proxy.surfaces import chat_api
     from llm_proxy.access import fairshare
     fairshare.reset()
-    monkeypatch.setattr(chat_api, "ENABLED", False)
+    everywhere(monkeypatch, chat_api, "ENABLED", False)
     monkeypatch.setattr(fairshare, "DEFAULT_SHARE", 100)
     monkeypatch.setattr(fairshare, "WINDOW", 0.4)
     monkeypatch.setattr(fairshare, "CHECK_EVERY", 0.05)
