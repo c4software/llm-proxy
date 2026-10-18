@@ -1074,7 +1074,7 @@ export const ChatPanel = {
       if (!el || narrow.value || !inputShown() || document.visibilityState !== "visible") return;
       const a = document.activeElement;
       if (a && a !== document.body && a !== el && (a.matches("input, textarea, select, iframe, [contenteditable]")
-          || a.closest(".menu, .ask-sheet, .sheet-inner, .artifact-panel, .chat-settings, [role=dialog]"))) return;
+          || a.closest(".menu, .ask-sheet, .sheet-inner, .artifact-side, .chat-settings, [role=dialog]"))) return;
       if (String(window.getSelection ? window.getSelection() : "").trim()) return;
       el.focus({ preventScroll: true });
     }

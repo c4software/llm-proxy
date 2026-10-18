@@ -26,6 +26,13 @@ presse-papiers, caméra, capture d'écran, agenda… Il fait tourner du
 les fichiers d'un dossier ouvert, qui ne quittent pas l'appareil : seul
 le résultat des requêtes revient au modèle.
 
+**En vidéo** (1 min 20, sans son) : synthèse, recherche web sourcée,
+questions, artifact interactif retouché, graphique, SQL sur un dossier,
+agenda et rappels, `/compact`. Les réponses y sont celles d'un modèle de
+démonstration scénarisé ; l'interface, les outils et les calculs sont réels.
+
+[![Présentation du chat : un tableau de bord de budget construit par le modèle, ses curseurs déplacés, les barres recalculées — cliquer pour lire la vidéo](docs/presentation.jpg)](docs/presentation.mp4)
+
 ![Dans le chat, un dossier ouvert : run_sql importe un CSV de 2 400 ventes et l'agrège par région, run_javascript en dessine le graphique, le modèle résume](docs/navigateur-sql-graphique.png)
 
 Voir [Les outils du navigateur](docs/navigateur.md), chaque outil avec sa
