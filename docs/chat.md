@@ -109,6 +109,13 @@ coller) :
 
 *Joindre → Dossier…* ouvre un [dossier](#dossier-ouvert).
 
+**Modifier un message** : la flèche du haut, dans un champ vide, remet le
+dernier message dans la zone de saisie ; *Modifier*, sous un message, fait
+de même pour n'importe lequel. Un bandeau le signale, et rien n'est retiré
+de la conversation tant qu'on n'a pas envoyé. L'envoi reprend la
+conversation de ce message : ce qui le suivait disparaît. **Échap**, ou
+vider le champ, annule la modification.
+
 **Rendu Markdown** : titres, listes, tableaux, citations, code avec
 *Copier*, liens et images. Tout le texte est échappé : aucun HTML du
 modèle ne passe. Seuls `http(s)`, `mailto` et les chemins du proxy

@@ -453,6 +453,16 @@ export const ChatPanel = {
       const item = { id: uid(), content: draft.value.trim(), attachments: pending.value };
       draft.value = "";
       pending.value = [];
+      // Un message modifié (flèche du haut, « Modifier ») : la conversation
+      // reprend de lui — ce qui le suivait disparaît, maintenant seulement.
+      const k = editing.value;
+      editing.value = null;
+      if (k !== null && !streaming.value && c.messages[k] && c.messages[k].role === "user") {
+        abandonWaiting(c);
+        c.messages.splice(k);
+        ask(c, item);
+        return;
+      }
       // Une réponse en cours, ou une file en pause : à la suite de la file,
       // dans l'ordre où les messages ont été écrits.
       if (streaming.value || (c.queue && c.queue.length)) {
@@ -1054,17 +1064,51 @@ export const ChatPanel = {
 
     // Modifier une question : elle revient dans la zone de saisie, et la
     // conversation reprend d'elle.
+    // Modifier une question (« Modifier », ou flèche du haut dans un champ
+    // vide) : elle revient dans la zone de saisie ; rien n'est retiré de la
+    // conversation avant l'ENVOI, qui la reprend d'elle (send). Échap, ou
+    // un champ vidé, annule.
+    const editing = ref(null);       // l'indice du message modifié
     function edit(i) {
       const c = current.value;
-      if (streaming.value || !c) return;
+      if (streaming.value || !c || !c.messages[i] || c.messages[i].role !== "user") return;
       const m = c.messages[i];
+      editing.value = i;
       draft.value = m.content;
       pending.value = [...(m.attachments || [])].filter((a) => a.data);
-      c.messages.splice(i);
-      nextTick(() => { if (input.value) { input.value.focus(); autosize(); } });
+      nextTick(() => {
+        const el = input.value;
+        if (el) { el.focus(); autosize(); el.setSelectionRange(el.value.length, el.value.length); }
+      });
     }
+    function cancelEdit() {
+      if (editing.value === null) return;
+      editing.value = null;
+      draft.value = "";
+      pending.value = [];
+    }
+    const lastUser = () => {
+      const msgs = (current.value && current.value.messages) || [];
+      for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === "user") return i;
+      return -1;
+    };
+    // Le champ vidé pendant une modification : elle est abandonnée.
+    watch(draft, (v, old) => { if (editing.value !== null && !v.trim() && (old || "").trim()) cancelEdit(); });
+    watch(() => current.value && current.value.id, () => { editing.value = null; });
 
     function onKey(e) {
+      // Flèche du haut dans un champ vide : le dernier message, à modifier.
+      if (e.key === "ArrowUp" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !e.isComposing
+          && !draft.value && !pending.value.length && !streaming.value && editing.value === null) {
+        const i = lastUser();
+        if (i >= 0) { e.preventDefault(); edit(i); }
+        return;
+      }
+      if (e.key === "Escape" && editing.value !== null) {
+        e.preventDefault();
+        cancelEdit();
+        return;
+      }
       if (e.key === "Tab" && commandHints.value.length && draft.value !== commandHints.value[0].name + " ") {
         e.preventDefault();
         useCommand(commandHints.value[0]);
@@ -1277,7 +1321,7 @@ export const ChatPanel = {
              dropZone, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
              host, context, contextTitle, sentFrom, autoCompact, ctxOpen, compactNow, uncompact,
-             retryCompacted, tooLong, commandHints, useCommand, kTokens: Compact.kTokens, estimate: Compact.estimate,
+             retryCompacted, tooLong, editing, cancelEdit, commandHints, useCommand, kTokens: Compact.kTokens, estimate: Compact.estimate,
              AUTO_AT: Compact.AUTO_AT };
   },
   template: `
@@ -1594,6 +1638,11 @@ export const ChatPanel = {
             {{ a.name }} <span class="dim">{{ size(a.size) }}</span>
             <button type="button" class="icon" title="Retirer" @click="pending.splice(k, 1)">×</button>
           </span>
+        </div>
+        <div class="editing-note" v-if="editing !== null">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4"/></svg>
+          <span>Modification d'un message : l'envoyer reprend la conversation de lui (la suite disparaît)</span>
+          <button type="button" class="link" @click="cancelEdit">Annuler <kbd>Échap</kbd></button>
         </div>
         <div class="command-hints" v-if="commandHints.length" role="listbox">
           <button type="button" v-for="c in commandHints" :key="c.name" role="option"

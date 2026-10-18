@@ -1347,3 +1347,10 @@ a.btn { display: inline-block; text-decoration: none; }
 .command-hints kbd { font-size: 11px; color: var(--muted); }
 .compact-body .md :is(h1, h2, h3, h4) { font: 600 14px/1.4 inherit; font-family: inherit; margin: 10px 0 3px; }
 .compact-body .md :is(p, ul, ol) { margin: 3px 0; }
+
+/* Un message en cours de modification (flèche du haut, « Modifier »). */
+.editing-note { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 6px 10px;
+  border-left: 3px solid var(--accent); border-radius: 6px; background: var(--accent-soft); font-size: 12.5px; color: var(--ink); }
+.editing-note span { flex: 1; }
+.editing-note .ico { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.editing-note kbd { font-size: 11px; color: var(--muted); }
