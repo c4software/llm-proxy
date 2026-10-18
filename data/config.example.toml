@@ -218,6 +218,16 @@ allow_private = false
 # Seule parade à la fuite de la conversation par une URL.
 # allowed_domains = ["github.com", "docs.python.org", "wikipedia.org"]
 # blocked_domains = ["pastebin.com"]
+# URL refusées, quel que soit leur domaine : expressions régulières sur l'URL
+# entière (insensibles à la casse), avec un message rendu au modèle. Vérifiées
+# à chaque redirection, pour tout outil qui télécharge (web_fetch, web_grep,
+# ocr, transcribe, rendu). Une chaîne seule vaut une expression sans message.
+# Ici : l'hôte de stockage qu'un modèle Qwen (3.8 Flash Next) appelle de
+# mémoire, en parallèle d'appels utiles — toujours 403. Refusé avant toute
+# requête, avec un message qui arrête ses réessais.
+blocked_urls = [
+  { pattern = '^https?://routify[^/]*file[^/]*\.aliyuncs\.(com|io)(:\d+)?/', message = "This URL is a dead file-proxy artifact (an address memorized during training, not a real resource). Do NOT retry it or any similar URL; use the URLs from the conversation or from search results." },
+]
 
 # OCR d'une image (PNG, JPEG, GIF, WebP) ou d'un PDF scanné, par URL, lu par
 # un MODÈLE DE VISION d'un backend. Sur /v1/chat/completions ({"type":

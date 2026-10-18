@@ -19,6 +19,8 @@ taille et de durée, elles, restent à chaque outil.
 
 import asyncio
 import ipaddress
+import logging
+import re
 import socket
 from urllib.parse import urljoin, urlsplit
 
@@ -58,6 +60,37 @@ ALLOW_PRIVATE = _setting("allow_private", config.flag)
 ALLOWED_DOMAINS = _setting("allowed_domains", config.strings)
 BLOCKED_DOMAINS = _setting("blocked_domains", config.strings)
 MAX_REDIRECTS = 5
+
+
+def _blocked_urls() -> list[tuple[re.Pattern, str]]:
+    """[tools.net].blocked_urls : des expressions régulières sur l'URL
+    ENTIÈRE (insensibles à la casse), chacune avec un `message` facultatif
+    rendu au modèle. Une entrée est une chaîne (l'expression) ou une table
+    {pattern, message}. Une expression invalide est écartée, dite au
+    journal : le proxy démarre quand même."""
+    out = []
+    for entry in config.get("tools.net.blocked_urls") or []:
+        pattern, message = (entry, "") if isinstance(entry, str) else (
+            (entry.get("pattern"), str(entry.get("message") or "").strip())
+            if isinstance(entry, dict) else (None, ""))
+        if not isinstance(pattern, str) or not pattern:
+            logging.getLogger("albert-proxy").warning(
+                "[tools.net].blocked_urls : entrée sans `pattern` écartée (%r)", entry)
+            continue
+        try:
+            out.append((re.compile(pattern, re.IGNORECASE), message))
+        except re.error as exc:
+            logging.getLogger("albert-proxy").warning(
+                "[tools.net].blocked_urls : expression invalide écartée (%r : %s)", pattern, exc)
+    return out
+
+
+# Des URL refusées, quel que soit leur domaine : par exemple celles qu'un
+# modèle invente de mémoire (l'hôte « routify…file-proxy » d'aliyuncs, que
+# Qwen 3.8 Flash Next appelle en parallèle d'appels utiles). Un message
+# clair (« ne pas réessayer ») arrête les réessais ; une consigne au prompt,
+# non.
+BLOCKED_URLS = _blocked_urls()
 
 
 class Blocked(Exception):
@@ -152,6 +185,11 @@ def check(url: str, settings=None) -> None:
     `allowed_domains` / `blocked_domains`) — qui s'AJOUTENT aux premières,
     elles n'en lèvent rien. Lève ToolError `not_allowed`."""
     settings = settings or {}
+    for rx, message in BLOCKED_URLS:
+        if rx.search(url):
+            raise ToolError("not_allowed", message or (
+                f"{urlsplit(url).hostname or url} is a blocked address, which "
+                f"this proxy does not read."))
     if any(not domain_match(url, allowed)
            for allowed in (ALLOWED_DOMAINS, settings.get("allowed_domains"))
            if allowed) \

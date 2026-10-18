@@ -507,6 +507,23 @@ Ce qu'il faut tenir :
 `web_grep` est lié comme `web_fetch` côté Responses, mais pas à l'API
 Messages : Anthropic n'a pas d'outil serveur de recherche dans une page.
 
+#### Les URL refusées (`[tools.net].blocked_urls`)
+
+`blocked_domains` refuse des domaines. `blocked_urls` refuse des **URL**,
+décrites par des expressions régulières sur l'URL entière (insensibles à
+la casse), chacune avec un `message` facultatif rendu au modèle. Le
+contrôle a lieu dans `net.check` : à chaque redirection, pour tout outil
+qui télécharge (`web_fetch`, `web_grep`, `ocr`, `transcribe`, le rendu),
+avant toute requête. Une expression invalide est écartée et signalée au
+journal.
+
+L'exemple livré vise un cas réel : **Qwen 3.8 Flash Next** appelle de
+mémoire un hôte de stockage d'Alibaba (`routify…file-proxy….aliyuncs.com/
+proxy_temp_file/…`), en parallèle d'appels utiles, et reçoit toujours un
+403. Son message (« URL morte, ne pas réessayer ») arrête ses réessais ;
+d'après ceux qui l'ont mesuré, une consigne dans le prompt n'y fait rien
+([qwen-block-proxy-artifacts](https://github.com/yope/qwen-block-proxy-artifacts)).
+
 #### Le rendu des pages en JavaScript (`render`)
 
 Certaines pages n'affichent leur contenu qu'après l'exécution de leur

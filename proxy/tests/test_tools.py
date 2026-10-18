@@ -1725,3 +1725,25 @@ def test_le_registre_refuse_un_outil_hors_contrat(monkeypatch):
     assert tools.faults(mcp.McpTool(None, "lire", "srv__lire"), "mcp") == []
     monkeypatch.undo()
     assert {t.name for t in tools.REGISTRY} >= set(tools.ToolName)
+
+
+def test_blocked_urls_refusees_avec_leur_message(monkeypatch):
+    """[tools.net].blocked_urls : refusées avant toute requête, avec le
+    message de l'entrée (ou un message par défaut) ; une expression
+    invalide est écartée sans empêcher le démarrage."""
+    from llm_proxy import config
+    from llm_proxy.tools import net
+    monkeypatch.setitem(config.CONFIG, "tools", {**config.CONFIG.get("tools", {}), "net": {"blocked_urls": [
+        {"pattern": r"^https?://routify[^/]*file[^/]*\.aliyuncs\.(com|io)(:\d+)?/", "message": "Do NOT retry it."},
+        r"/secret/", {"pattern": "(invalide"}, {"message": "sans motif"}]}})
+    rules = net._blocked_urls()
+    assert len(rules) == 2
+    monkeypatch.setattr(net, "BLOCKED_URLS", rules)
+    with pytest.raises(tools.ToolError) as exc:
+        net.check("https://routify-file-proxy-sg.oss-ap-southeast-1.aliyuncs.com/proxy_temp_file/x?Signature=y")
+    assert exc.value.code == "not_allowed" and exc.value.message == "Do NOT retry it."
+    with pytest.raises(tools.ToolError) as exc:
+        net.check("https://exemple.fr/secret/a")
+    assert "blocked address" in exc.value.message
+    net.check("https://cdn.aliyuncs.com/image.png")          # le reste d'aliyuncs passe
+    net.check("https://exemple.fr/public")
