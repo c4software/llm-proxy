@@ -109,6 +109,17 @@ coller) :
 
 *Joindre → Dossier…* ouvre un [dossier](#dossier-ouvert).
 
+**Le clavier** :
+
+- **Le focus** revient au champ de saisie quand l'onglet du navigateur le
+  reprend, ou quand on revient sur la vue Chat. Il n'est jamais volé à un
+  autre champ, un menu, la feuille de questions, un artifact ou une
+  sélection de texte, et jamais sur un écran étroit, où il ouvrirait le
+  clavier.
+- **Échap arrête la génération en cours.** La touche garde d'abord ses
+  autres rôles : fermer l'image agrandie, annuler la modification d'un
+  message, replier la feuille de questions.
+
 **Modifier un message** : la flèche du haut, dans un champ vide, remet le
 dernier message dans la zone de saisie ; *Modifier*, sous un message, fait
 de même pour n'importe lequel. Un bandeau le signale, et rien n'est retiré

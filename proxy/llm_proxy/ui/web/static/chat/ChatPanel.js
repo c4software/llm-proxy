@@ -1055,7 +1055,33 @@ export const ChatPanel = {
       zoom.value = null;
       nextTick(() => { if (input.value) input.value.focus(); });
     }
-    VueUse.onKeyStroke("Escape", () => { if (zoom.value) zoom.value = null; });
+    // Échap : ferme l'image agrandie ; sinon, une génération en cours
+    // s'arrête — sauf si la touche a déjà servi (modification annulée,
+    // feuille de questions, champ d'un menu).
+    VueUse.onKeyStroke("Escape", (e) => {
+      if (zoom.value) { zoom.value = null; return; }
+      if (e.defaultPrevented || !inputShown()) return;
+      if (streaming.value) { e.preventDefault(); stop(); }
+    });
+
+    // Le champ de saisie reprend le focus quand l'onglet du navigateur le
+    // reprend, ou que la vue Chat réapparaît — sans le voler à un autre
+    // champ, un menu, la feuille de questions ou un artifact, ni à une
+    // sélection de texte ; jamais sur un écran étroit (le clavier).
+    const inputShown = () => !!(input.value && input.value.offsetParent);
+    function refocus() {
+      const el = input.value;
+      if (!el || narrow.value || !inputShown() || document.visibilityState !== "visible") return;
+      const a = document.activeElement;
+      if (a && a !== document.body && a !== el && (a.matches("input, textarea, select, iframe, [contenteditable]")
+          || a.closest(".menu, .ask-sheet, .sheet-inner, .artifact-panel, .chat-settings, [role=dialog]"))) return;
+      if (String(window.getSelection ? window.getSelection() : "").trim()) return;
+      el.focus({ preventScroll: true });
+    }
+    VueUse.useEventListener(window, "focus", refocus);
+    VueUse.useEventListener(document, "visibilitychange", () => { if (document.visibilityState === "visible") refocus(); });
+    const inputVisible = VueUse.useElementVisibility(input);
+    watch(inputVisible, (v) => { if (v) nextTick(refocus); });
 
     function stop() { if (controller) controller.abort(); }
 
