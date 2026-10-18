@@ -279,7 +279,8 @@ class Hosted:
     async def run(self, name: str, arguments: str, used: int,
                   limit: int | None = None, options: dict | None = None,
                   endpoint: str = "", model: str = "",
-                  client: str = "", session: str = "") -> Result:
+                  client: str = "", session: str = "",
+                  hosts: frozenset | None = None) -> Result:
         """Exécute la fonction `name`. `used` : appels déjà exécutés pour
         cette réponse AU COMPTE dont relève l'outil (own()) ; `limit` : voir
         cap(). `options` : ce que le CLIENT a réglé sur son outil, par nom
@@ -301,7 +302,7 @@ class Hosted:
         if result is None:
             result = await self._execute(tool, arguments, Call(
                 (options or {}).get(name, {}), endpoint, model, client,
-                session))
+                session, hosts))
         # L'issue des statistiques : le code, pas le texte. `limit` : le
         # refus d'ici, ou celui que l'outil prononce lui-même — sans durée.
         outcome = "ok" if result.error is None \

@@ -181,7 +181,7 @@ async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
     ping = b": ping\n\n" if robinet.sse \
         and anthropic_api.PING_INTERVAL > 0 else None
     loop = hosted_loop(call, request, hosted, robinet, upstream, estimate,
-                       rebuild, ping=ping)
+                       rebuild, ping=ping, messages=base)
     if robinet.sse:
         return StreamingResponse(loop, status_code=upstream.status_code,
                                  headers=response_headers(upstream))
@@ -267,7 +267,7 @@ async def messages(request: Request):
                 if robinet.sse and anthropic_api.PING_INTERVAL > 0 else None
             return hosted_loop(call, request, hosted, robinet, upstream, cost,
                                rebuild, limit=ctx.limits, options=ctx.options,
-                               ping=ping)
+                               ping=ping, messages=openai_payload.get("messages"))
     else:
         body = None
 
@@ -499,7 +499,8 @@ async def responses(request: Request):
         stream = relay(call, upstream, robinet, estimate)
     else:
         stream = hosted_stream(call, request, payload, images, hosted,
-                               robinet, upstream, estimate)
+                               robinet, upstream, estimate,
+                               messages=chat_payload.get("messages"))
     return StreamingResponse(stream, status_code=upstream.status_code,
                              headers=response_headers(upstream))
 

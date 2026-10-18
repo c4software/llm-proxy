@@ -22,7 +22,7 @@ import logging
 import time
 
 from ..core import config
-from . import net, webcache
+from . import net, provenance, webcache
 from .contract import (Anthropic, Call, Responses, Result, Source, Tool,
                        ToolError, ToolName)
 from .html_text import html_to_text
@@ -234,6 +234,7 @@ class WebFetch(Tool):
         de la configuration (net.check)."""
         asked = args.get("url")
         url = target(asked)
+        provenance.check(url, call)
         offset = args.get("offset")
         offset = offset if isinstance(offset, int) \
             and not isinstance(offset, bool) else 0

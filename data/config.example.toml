@@ -206,6 +206,13 @@ allow_private = false
 # Seule parade à la fuite de la conversation par une URL.
 # allowed_domains = ["github.com", "docs.python.org", "wikipedia.org"]
 # blocked_domains = ["pastebin.com"]
+# Provenance des URL lues à la demande du modèle (web_fetch, web_grep, ocr,
+# transcribe) : "site" (défaut) = seulement un site déjà apparu dans la
+# conversation (messages, prompt système, résultats d'outils réussis, une
+# recherche comprise) ; une adresse inventée sur un site jamais vu est
+# refusée. Là où le proxy voit la conversation (pas /v1/tools ni /mcp).
+# "off" = pas de contrôle. Voir docs/outils.md.
+provenance = "site"
 # URL refusées, quel que soit leur domaine : expressions régulières sur l'URL
 # entière (insensibles à la casse), avec un message rendu au modèle. Vérifiées
 # à chaque redirection, pour tout outil qui télécharge (web_fetch, web_grep,

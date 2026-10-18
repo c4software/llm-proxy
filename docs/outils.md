@@ -153,6 +153,7 @@ Ce qui ne vient **pas** du modèle, qui ne peut donc pas s'en affranchir.
 | `model` | Le modèle préfixé ; vide pour l'appel direct |
 | `client` | Condensé de la clé (`tools.owner`), jamais la clé ; vide pour un proxy ouvert. **Stable** entre démarrages (secret dans `data/client.secret`) : `memory` y attache sa mémoire persistante |
 | `session` | Identifiant de la **conversation**, pour garder un état entre appels (le bac de `code_execution`). Seule `/v1/chat/completions` en fournit un : tiré à chaque requête, retrouvé avec l'échange caché que la mémoire reconnaît (`[chat].memory`), valable tant que le client renvoie ses réponses inchangées. `""` ailleurs : un outil à état doit marcher sans (un état par appel). Ne sort jamais du proxy |
+| `hosts` | Les **sites** déjà apparus dans la conversation (`tools/provenance.py`), pour un outil qui lit une URL du modèle : il appelle `provenance.check(url, call)` avant tout téléchargement. `None` quand la route ne voit pas de conversation (`/v1/tools`, `/mcp`) : pas de contrôle |
 
 ### Ce que `run` peut faire, et ce qui lui arrive
 
@@ -523,6 +524,41 @@ proxy_temp_file/…`), en parallèle d'appels utiles, et reçoit toujours un
 403. Son message (« URL morte, ne pas réessayer ») arrête ses réessais ;
 d'après ceux qui l'ont mesuré, une consigne dans le prompt n'y fait rien
 ([qwen-block-proxy-artifacts](https://github.com/yope/qwen-block-proxy-artifacts)).
+
+#### La provenance des URL (`[tools.net].provenance`)
+
+`web_fetch`, `web_grep`, `ocr` et `transcribe` n'ouvrent une URL choisie
+par le modèle que si son **site** est déjà apparu dans la conversation.
+C'est la règle du `web_fetch` d'Anthropic, qui exige l'URL exacte, élargie
+au site.
+
+- **Ce qui rend un site connu** :
+  - un message de l'utilisateur, le prompt système (donc aussi le résumé
+    d'un `/compact`), le texte d'une réponse précédente ;
+  - le résultat **réussi** d'un outil, une recherche web comprise ;
+  - une URL comme un domaine écrit nu (« regarde frerestoque.fr »).
+- **Ce qui ne le rend pas connu** : les arguments d'un appel d'outil (ce
+  que le modèle demande n'est pas une source), et un résultat en échec.
+  Sinon une URL inventée qui a échoué deviendrait connue par son message
+  d'erreur.
+- **Pendant une réponse**, chaque résultat réussi ajoute ses sites : une
+  recherche rend lisibles ses résultats au tour suivant, et une page lue
+  rend lisibles ses liens. Le modèle peut donc naviguer seul : chercher,
+  ouvrir, suivre les liens.
+- **Le site**, c'est le domaine enregistrable, approché : les deux derniers
+  niveaux, ou trois sous un suffixe comme `co.uk` ou `gouv.fr`. Une URL
+  construite sur un site rencontré passe (recherche interne, page voisine).
+  Un hôte sorti de la mémoire du modèle est refusé, avec une consigne :
+  chercher la page, ou demander l'adresse.
+- **Où elle s'applique** : là où le proxy voit la conversation, c'est-à-dire
+  les trois surfaces et le chat de la page. Pas sur `/v1/tools` ni `/mcp`,
+  où l'appel arrive sans elle (`Call.hosts` vaut `None`).
+- `provenance = "off"` la coupe.
+
+Elle limite deux choses : les URL qu'un modèle invente de mémoire (l'hôte
+routify de Qwen, plus haut), et la fuite de la conversation vers un domaine
+qu'elle n'a jamais cité. Une page piégée qui cite un domaine le rend
+connu : `blocked_domains` et `blocked_urls` restent utiles.
 
 #### Piste non retenue : le rendu des pages en JavaScript
 

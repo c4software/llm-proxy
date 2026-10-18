@@ -21,7 +21,7 @@ import asyncio
 import bisect
 
 from ..core import config
-from . import web_fetch
+from . import provenance, web_fetch
 from .contract import Call, Responses, Result, Source, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.web_grep.enabled", False)
@@ -166,6 +166,7 @@ class WebGrep(Tool):
 
         asked = args.get("url")
         url = web_fetch.target(asked)
+        provenance.check(url, call)
         source = args.get("pattern")
         if not isinstance(source, str) or not source.strip():
             raise ToolError("invalid_input", "`pattern` is required.")

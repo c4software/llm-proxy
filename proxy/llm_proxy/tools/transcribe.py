@@ -55,7 +55,7 @@ from ..core import config
 from ..core.settings import is_exempt, log
 from ..storage import stats
 from ..upstream import albert, backends
-from . import net, webcache
+from . import net, provenance, webcache
 from .contract import Call, Result, Source, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.transcribe.enabled", False)
@@ -551,6 +551,7 @@ class Transcribe(Tool):
         url = asked.strip()
         if url.startswith("www."):
             url = "https://" + url
+        provenance.check(url, call)
         language = args.get("language")
         if language is None or language == "":
             language = LANGUAGE

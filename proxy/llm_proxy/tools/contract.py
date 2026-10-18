@@ -129,12 +129,18 @@ class Call:
                  à l'autre : un outil peut y attacher ce qu'il garde.
     `session`  : l'identifiant de la CONVERSATION, de quoi retrouver un
                  état d'un appel au suivant (le bac de code_execution).
-                 «» = la surface n'en a pas : un état par appel."""
+                 «» = la surface n'en a pas : un état par appel.
+    `hosts`    : les sites connus de la conversation (provenance.py),
+                 None hors conversation."""
     settings: Mapping = field(default_factory=dict)
     endpoint: str = ""
     model: str = ""
     client: str = ""
     session: str = ""
+    # Les SITES déjà apparus dans la conversation (tools/provenance.py) :
+    # un outil qui lit une URL du modèle n'ouvre que ceux-là. None = la
+    # route ne voit pas de conversation (/v1/tools, /mcp) : pas de contrôle.
+    hosts: frozenset | None = None
 
 
 # ── liaisons aux protocoles ─────────────────────────────────────────────

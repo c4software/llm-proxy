@@ -8,10 +8,12 @@ gardent le flux du client ouvert.
 """
 
 import asyncio
+from urllib.parse import urlsplit
 
 from fastapi import Request, Response
 
 from .. import tools
+from ..tools import provenance
 from ..access.auth import request_owner
 from ..core.httputil import parse_json
 from ..core.settings import log
@@ -49,7 +51,7 @@ def _error_message(response: Response) -> str:
 
 def hosted_stream(call: Call, request: Request, payload: dict,
                   images: bool, hosted, robinet, upstream,
-                  prompt_estimate: int):
+                  prompt_estimate: int, messages: list | None = None):
     """La boucle des outils hébergés pour une réponse Responses.
 
     Chaque tour suivant est RECONSTRUIT par responses_api.to_chat depuis
@@ -75,7 +77,8 @@ def hosted_stream(call: Call, request: Request, payload: dict,
                        # ping_interval = 0 : pas de ping (sans ce garde
                        # l'attente aurait un délai nul et pingerait en boucle).
                        ping=b": ping\n\n" if robinet.sse
-                       and anthropic_api.PING_INTERVAL > 0 else None)
+                       and anthropic_api.PING_INTERVAL > 0 else None,
+                       messages=messages)
 
 
 async def _next_upstream(quiet: Call, request: Request, chat_payload: dict,
@@ -158,7 +161,8 @@ def _tell_budget_spent(chat_payload: dict) -> None:
 async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                       prompt_estimate: int, rebuild,
                       limit: int | dict | None = None,
-                      options: dict | None = None, ping: bytes | None = None):
+                      options: dict | None = None, ping: bytes | None = None,
+                      messages: list | None = None):
     """Une réponse avec outils hébergés, pour les trois surfaces : relaie le tour upstream ouvert,
     exécute les appels que le robinet a mis de côté (`pending`), en rend
     le compte au client, puis relance le backend — jusqu'à un tour sans
@@ -178,7 +182,10 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
         dict : une limite PAR FONCTION (le `max_uses` de chaque outil
         serveur Anthropic), chacune comptée à part ;
       * `ping` : l'événement à émettre pendant les attentes (exécution
-        d'un outil, quota d'un tour suivant), ou None.
+        d'un outil, quota d'un tour suivant), ou None ;
+      * `messages` : la conversation du premier tour (chat/completions),
+        d'où viennent les sites connus des outils qui lisent une URL
+        (tools/provenance.py) ; chaque résultat réussi y ajoute les siens.
 
     Un tour qui mêle appels hébergés et appels du client s'arrête après
     les premiers : la main revient au client, qui rejouera le tout.
@@ -200,6 +207,9 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
     ran = 0                           # tous les appels exécutés
     spent: dict[str, int] = {}        # appels exécutés, par fonction
     client = request_owner(request)
+    # Les sites connus de la conversation (provenance), puis de ce que les
+    # outils de cette réponse rendent : une recherche ouvre ses résultats.
+    known = provenance.hosts_in_messages(messages) if messages is not None else None
     # L'attente en cours (exécution d'un outil, ou porte de quota + envoi
     # du tour suivant) : une tâche, pour pouvoir émettre des pings pendant
     # qu'elle dure, et l'annuler si le client raccroche.
@@ -245,10 +255,14 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                     client=client,
                     # La conversation, pour un outil à état : seul le
                     # robinet de chat/completions en connaît une.
-                    session=getattr(robinet, "session", "")))
+                    session=getattr(robinet, "session", ""),
+                    hosts=frozenset(known) if known is not None else None))
                 while not await _settled(task, ping):
                     yield ping
                 result, task = task.result(), None
+                if known is not None and result.error is None:
+                    known |= provenance.hosts_in_text(result.text)
+                    known |= {provenance.site(urlsplit(s.url).hostname or "") for s in result.sources}
                 ran += 1
                 used += not own
                 spent[name] = spent.get(name, 0) + 1

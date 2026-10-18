@@ -194,6 +194,7 @@ def hosted_tools(result=SEARCHED, memory=None):
 
             async def run(self, args, call):
                 runs.append((self.name, args, dict(call.settings)))
+                hosted.calls.append(call)
                 return hosted.result
 
         return Fake()
@@ -201,7 +202,7 @@ def hosted_tools(result=SEARCHED, memory=None):
     hosted = tools.Hosted(
         tools=[fake(web_search.TOOL), fake(web_fetch.TOOL)],
         memory=tools.Memory(8, 60) if memory is None else memory)
-    hosted.runs, hosted.result = runs, result
+    hosted.runs, hosted.result, hosted.calls = runs, result, []
     return hosted
 
 

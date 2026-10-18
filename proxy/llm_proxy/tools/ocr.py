@@ -44,7 +44,7 @@ from ..core.settings import log
 from ..storage import stats
 from ..upstream import albert
 from ..upstream.backends import Backend, route_backend
-from . import net, webcache
+from . import net, provenance, webcache
 from .contract import Call, Result, Source, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.ocr.enabled", False)
@@ -554,6 +554,7 @@ class Ocr(Tool):
         url = asked.strip()
         if url.startswith("www."):
             url = "https://" + url
+        provenance.check(url, call)
         wanted = parse_pages(args.get("pages"))
         # Avant tout téléchargement : sans modèle de vision, rien à lire.
         engine()
