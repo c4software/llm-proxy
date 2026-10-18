@@ -100,6 +100,7 @@ export function faults(tool) {
   }
   // Une carte qui ne s'affiche que si la permission manque (notify) a aussi un run.
   if (!card && !overrides(tool, "run")) out.push(`${where} : ni run, ni carte`);
+  if (overrides(tool, "keptView") !== overrides(tool, "keptAct")) out.push(`${where} : keptView et keptAct vont ensemble`);
   if (!["card", "sheet"].includes(tool.placement)) out.push(`${where} : placement inconnu`);
   if (tool.placement === "sheet" && !tool.component) out.push(`${where} : une feuille sans component`);
   for (const r of tool.required) if (!(r in tool.params)) out.push(`${where} : « ${r} » requis mais pas dans params`);
@@ -177,7 +178,12 @@ export async function run(name, json, ctx) {
   if (args === null) return { result: failure("arguments illisibles (JSON attendu).") };
   try {
     const got = await t.run(args, ctx);
-    return typeof got === "string" ? { result: got } : got;
+    if (typeof got === "string") return { result: got };
+    // Une carte durable : gardée sous la réponse, dans le message.
+    if (got.keep && ctx.live) {
+      (ctx.live.kept || (ctx.live.kept = [])).push({ id: "kept_" + crypto.randomUUID(), name, ...got.keep });
+    }
+    return got;
   } catch (e) {
     return { result: failure(e.message) };
   }
@@ -211,6 +217,10 @@ export function abandon(w) {
   release(w);
   return of(w) ? of(w).abandoned(w) : "Non exécuté.";
 }
+/** Une carte durable (Kept). @param {any} k */
+export const keptView = (k) => TOOLS.get(k.name).keptView(k);
+/** @param {any} k @param {string} action @param {Ctx} ctx */
+export const keptAct = (k, action, ctx) => TOOLS.get(k.name).keptAct(k, action, ctx);
 /** La ligne d'une puce d'appel. @param {string} name @param {any} args */
 export const summary = (name, args) => TOOLS.get(name)?.summary(args || {}) || "";
 

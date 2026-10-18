@@ -104,8 +104,10 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
  */
 
 /** Le résultat d'un `run` : le texte pour le modèle, ou ce texte et ses
- * effets — une image jointe (data URL), un artifact à ouvrir.
- * @typedef {string | {result: string, image?: string, name?: string, artifact?: string}} RunResult */
+ * effets — une image jointe (data URL), un artifact à ouvrir, une carte
+ * DURABLE à laisser sous la réponse (`keep` : son état, voir Kept).
+ * @typedef {string | {result: string, image?: string, name?: string, artifact?: string,
+ *   keep?: object}} RunResult */
 
 /** Une carte répondue : son résultat, et peut-être une image.
  * @typedef {{result: string, image?: string, name?: string}} Answer */
@@ -129,6 +131,12 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
  * arguments ; le reste vient de `prepare`.
  * @typedef {{id: string, name: ToolName, args: any, result?: string, busy?: boolean,
  *   [k: string]: any}} Card */
+
+/** Une carte DURABLE, laissée sous la réponse par un `run` (`keep`) et
+ * gardée dans le message (m.kept) : elle survit à un rechargement, et ses
+ * boutons se rejouent à volonté (partager à nouveau). `id` : le sien ;
+ * `name` : l'outil ; le reste vient de `keep`.
+ * @typedef {{id: string, name: ToolName, [k: string]: any}} Kept */
 
 /** Un fichier produit sous la réponse, dont le contenu est relu au clic.
  * @typedef {{name: string, type: string, size: number, source: {tool: ToolName, ref: string}}} SourcedFile */
@@ -220,6 +228,16 @@ export class PageTool {
   /** Dans le fil, pour une carte de la feuille du bas : la ligne qui la rouvre.
    * @param {Card} w @returns {string} */
   pending(w) { return "Une carte attend votre réponse"; }
+
+  /** Ce que montre une carte durable (Kept), dans le gabarit commun.
+   * @param {Kept} k @returns {CardView} */
+  keptView(k) { throw new Error(`${this.name} : pas de carte durable`); }
+
+  /** Un bouton d'une carte durable → une note montrée sur la carte (« Partagé. »),
+   * ou null. Rien ne part au modèle : la réponse est finie.
+   * @param {Kept} k @param {string} action @param {Ctx} ctx
+   * @returns {string | null | Promise<string | null>} */
+  keptAct(k, action, ctx) { throw new Error(`${this.name} : pas de carte durable`); }
 
   /** La ligne que la puce de l'appel montre.
    * @param {any} args @returns {string} */

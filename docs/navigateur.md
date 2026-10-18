@@ -107,11 +107,18 @@ entier** avant le clic.
 
 ### Partage — `share`
 
-![Carte « Le modèle propose de partager » : la recette des crêpes et un lien, boutons Partager… et Refuser](navigateur-partage.png)
+![share laisse sous la réponse une carte durable : la recette des crêpes et un lien, boutons Partager… et Copier](navigateur-partage.png)
 
-Un texte, et éventuellement une adresse, envoyé vers une autre
-application (messagerie, mail, notes) par le partage du système. Pas
-disponible sous Linux.
+Un texte, et éventuellement une adresse, à envoyer vers une autre
+application (messagerie, mail, notes) par le partage du système. L'appel
+n'attend pas : il laisse sous la réponse une **carte durable**, que
+l'utilisateur partage quand il veut, et autant de fois qu'il veut.
+
+- La carte reste dans la conversation et revient après un rechargement.
+- Sur un appareil sans partage (Linux, ou la conversation rouverte
+  ailleurs), elle propose seulement *Copier*.
+- Le modèle ne sait pas si l'utilisateur a partagé : la réponse est déjà
+  finie.
 
 ### Capture d'écran — `capture_screen`
 
@@ -337,7 +344,7 @@ class GetLocation extends PageTool {
 |---|---|---|
 | `super({name, description, params, required})` | ce que le modèle lit : le nom (de `TOOL`), la description, les paramètres | — |
 | `placement`, `component` (dans `super`) | une carte dans le fil ou dans la feuille du bas ; un composant Vue à la place du gabarit commun | dans le fil, gabarit commun |
-| `run(args, ctx)` | l'exécution, aussitôt : un texte, ou `{result, image?, artifact?}` | — |
+| `run(args, ctx)` | l'exécution, aussitôt : un texte, ou `{result, image?, artifact?, keep?}` | — |
 | `waits(args, ctx)` | attend-il l'utilisateur ? | non |
 | `prepare(args, ctx)` | l'état de la carte, ou `{error}` | `{}` |
 | `view(w)` | ce que la carte montre : titre, détail, boutons, aperçu, flux vidéo, citation | — |
@@ -345,6 +352,7 @@ class GetLocation extends PageTool {
 | `release(w)` | la carte est fermée : couper la caméra, l'écran | rien |
 | `abandoned(w)` | le résultat d'une carte laissée sans réponse | « L'utilisateur n'a pas répondu… » |
 | `notice(w)`, `pending(w)` | le texte de la notification ; la ligne qui rouvre la feuille | le titre de la carte |
+| `keptView(k)`, `keptAct(k, action, ctx)` | une carte **durable**, laissée sous la réponse par un `run` qui rend `{result, keep}` : ce qu'elle montre, et ses boutons, rejouables à volonté (rien ne part plus au modèle) | aucune |
 | `summary(args)` | la ligne de la puce de l'appel dans le fil | vide |
 | `fileContent(ref)` | le contenu, relu au clic, d'un fichier produit avec `source: {tool, ref}` | aucun |
 | `forget(convId)` | la conversation est supprimée : effacer ce que l'outil garde pour elle | rien |

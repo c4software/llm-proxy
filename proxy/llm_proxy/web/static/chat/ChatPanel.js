@@ -771,6 +771,20 @@ export const ChatPanel = {
       settle(m, out.result);
     }
     const cardView = (w) => tools.view(w);
+    // Les cartes DURABLES (m.kept) : laissées sous la réponse par un outil,
+    // leurs boutons se rejouent à volonté ; la note d'un clic (« Partagé. »)
+    // ne dure que le temps de la page.
+    const keptView = (k) => tools.keptView(k);
+    const keptNotes = reactive({});
+    async function keptAct(m, k, action) {
+      if (keptNotes[k.id] === "…") return;
+      keptNotes[k.id] = "…";
+      try {
+        keptNotes[k.id] = (await tools.keptAct(k, action, toolCtx(current.value, m))) || "";
+      } catch (e) {
+        keptNotes[k.id] = e.message;
+      }
+    }
     const cardComponent = (w) => tools.component(w);
     const cardPlacement = (w) => tools.placement(w);
     const cardPending = (w) => tools.pending(w);
@@ -1076,7 +1090,7 @@ export const ChatPanel = {
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
-             sheet, sheetOpen, cardAct, cardView, cardComponent, cardPlacement, cardPending, folderCtx,
+             sheet, sheetOpen, cardAct, cardView, keptView, keptAct, keptNotes, cardComponent, cardPlacement, cardPending, folderCtx,
              download, downloadOut, extOf,
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
@@ -1270,6 +1284,20 @@ export const ChatPanel = {
                 </template>
               </div>
             </template>
+            <div class="tool-card device-card kept-card" v-for="k in (m.kept || [])" :key="k.id">
+              <template v-for="v in [keptView(k)]" :key="k.id">
+                <p class="write-head"><b>{{ v.title }}</b></p>
+                <p class="dim" v-if="v.detail">{{ v.detail }}</p>
+                <code class="device-url" v-if="v.code">{{ v.code }}</code>
+                <pre class="device-quote" v-if="v.quote">{{ v.quote }}</pre>
+                <div class="card-actions">
+                  <button v-for="a in v.actions" :key="a.id" type="button" :class="['btn', { ghost: !a.primary }]"
+                          :disabled="keptNotes[k.id] === '…'" :title="a.title || ''"
+                          @click="keptAct(m, k, a.id)">{{ a.label }}</button>
+                  <span class="dim" v-if="keptNotes[k.id] && keptNotes[k.id] !== '…'">{{ keptNotes[k.id] }}</span>
+                </div>
+              </template>
+            </div>
             <div class="out-files" v-if="m.files && m.files.length">
               <button type="button" class="chip file" v-for="f in m.files" :key="f.name" :data-ext="extOf(f.name)"
                       @click="downloadOut(f)" title="Télécharger">{{ f.name }}
