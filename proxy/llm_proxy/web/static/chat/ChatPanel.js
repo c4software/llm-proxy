@@ -156,29 +156,6 @@ export const ChatPanel = {
     onUnmounted(() => { if (voice.state.id.startsWith("msg:")) voice.stop(); });
 
     // Prévenir de la fin d'une réponse (notify.js), réglage du navigateur.
-    // WebMCP : les outils `agent` de la page (les bacs de code, le contexte)
-    // exposés aux agents du navigateur, si l'utilisateur le permet — ce
-    // navigateur seulement, coupé par défaut. Expérimental (Chrome).
-    const webmcpOn = VueUse.useLocalStorage("llm-proxy-chat-webmcp", false);
-    // L'API : `navigator.modelContext` (la proposition WebMCP, Chrome), ou
-    // `document.modelContext` (ce que VueUse cherche). Retirer un outil :
-    // par le signal d'annulation, et par unregisterTool si l'API l'a.
-    const modelContext = navigator.modelContext || document.modelContext;
-    const agentDoc = modelContext && typeof modelContext.registerTool === "function" ? { modelContext: {
-      registerTool(tool, opts = {}) {
-        modelContext.registerTool(tool, opts);
-        if (opts.signal && typeof modelContext.unregisterTool === "function") {
-          opts.signal.addEventListener("abort", () => {
-            try { modelContext.unregisterTool(tool.name); } catch { /* déjà retiré */ }
-          });
-        }
-      } } } : document;
-    const webmcp = tools.agentTools().map((t) => VueUse.useWebMCP({
-      document: agentDoc,
-      name: t.name, description: t.description, inputSchema: t.spec.function.parameters,
-      enabled: webmcpOn, execute: (args) => tools.runForAgent(t.name, args) }));
-    const webmcpSupported = webmcp.length > 0 && webmcp[0].isSupported.value;
-    const webmcpNames = tools.agentTools().map((t) => t.name).join(", ");
     const notifyOn = ref(notify.enabled());
     async function toggleNotify(e) { notifyOn.value = await notify.setEnabled(e.target.checked); }
     function toggleMemory(open = !memoryOpen.value) {
@@ -1083,7 +1060,7 @@ export const ChatPanel = {
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
              toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
-             notifyOn, toggleNotify, notifySupported: notify.supported(), webmcpOn, webmcpSupported, webmcpNames,
+             notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, voiceName, voiceSupported: voice.supported, playing, listen,
              sheet, sheetOpen, cardAct, cardView, keptView, keptAct, keptNotes, cardComponent, cardPlacement, cardPending, folderCtx,
              download, downloadOut, extOf,
@@ -1173,11 +1150,6 @@ export const ChatPanel = {
               <select v-model.number="voicePrefs.rate">
                 <option v-for="r in [0.8, 1, 1.2, 1.5, 2]" :key="r" :value="r">× {{ r }}</option></select></label>
           </div>
-        </div>
-        <div class="field" v-if="webmcpSupported">
-          <span>Agents du navigateur</span>
-          <label class="check" :title="'Outils exposés : ' + webmcpNames"><input type="checkbox" v-model="webmcpOn">
-            exposer les bacs de code de la page aux agents du navigateur (WebMCP), hors conversation</label>
         </div>
         <div class="field" v-if="notifySupported">
           <span>Notifications</span>

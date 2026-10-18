@@ -91,7 +91,6 @@ class RunJavascript extends PageTool {
   constructor() {
     super({
       name: TOOL.RUN_JAVASCRIPT,
-      agent: true,
       description: "Exécute du JavaScript dans un bac isolé du navigateur (un Worker : aucun réseau, "
         + "aucun accès à la page ni au DOM), pour calculer exactement, transformer des données, "
         + "produire un fichier ou un graphique. Le code est le corps d'une fonction async : `return` "

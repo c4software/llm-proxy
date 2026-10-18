@@ -30,7 +30,6 @@ class DeviceContext extends PageTool {
   constructor() {
     super({
       name: TOOL.DEVICE_CONTEXT,
-      agent: true,
       description: "Donne la date et l'heure locales de l'utilisateur, son fuseau horaire et ses "
         + "langues, et ce que son navigateur dit de l'appareil (en ligne, connexion, batterie, "
         + "thème, taille d'écran). À utiliser avant de parler d'« aujourd'hui », de « demain » "

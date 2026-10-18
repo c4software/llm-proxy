@@ -345,24 +345,6 @@ Sans eux, `run_php`, `run_sql` et `check_typescript` répondent que le
 runtime manque. `run_javascript` fonctionne toujours, mais sans
 `chart()` ni TypeScript.
 
-## Les agents du navigateur (WebMCP)
-
-[WebMCP](https://github.com/webmachinelearning/webmcp) permet à une page
-d'offrir ses outils aux **agents qui pilotent le navigateur** (une
-extension, l'assistant du navigateur). La page peut y exposer les
-outils marqués `agent` : `device_context` et les bacs de code
-(`run_javascript`, `check_typescript`, `run_php`, `run_sql`).
-
-- Coupé par défaut : la case *Agents du navigateur* des **Réglages**
-  du chat l'active, dans ce navigateur seulement. La case n'apparaît
-  que si le navigateur a l'API (`document.modelContext`, expérimentale,
-  Chrome).
-- Un agent appelle ces outils **hors de toute conversation** : sans
-  dossier ouvert, sans pièce jointe, sans appareil ; `run_sql` a une
-  base à lui, en mémoire. Seul le texte du résultat lui revient.
-- L'enregistrement passe par `useWebMCP` (VueUse) : décocher la case
-  retire les outils.
-
 ## Écrire un outil de la page
 
 Tous les outils que la page exécute suivent la même **interface** :
@@ -409,7 +391,6 @@ class GetLocation extends PageTool {
 |---|---|---|
 | `super({name, description, params, required})` | ce que le modèle lit : le nom (de `TOOL`), la description, les paramètres | — |
 | `placement`, `component` (dans `super`) | une carte dans le fil ou dans la feuille du bas ; un composant Vue à la place du gabarit commun | dans le fil, gabarit commun |
-| `agent` (dans `super`) | exposé aux [agents du navigateur](#les-agents-du-navigateur-webmcp) : un outil qui s'exécute aussitôt, sans appareil, dossier ni conversation | non |
 | `run(args, ctx)` | l'exécution, aussitôt : un texte, ou `{result, image?, artifact?, keep?}` | — |
 | `waits(args, ctx)` | attend-il l'utilisateur ? | non |
 | `prepare(args, ctx)` | l'état de la carte, ou `{error}` | `{}` |

@@ -78,7 +78,6 @@ export class CheckTypescript extends PageTool {
   constructor() {
     super({
       name: TOOL.CHECK_TYPESCRIPT,
-      agent: true,
       description: "Vérifie les types de fichiers TypeScript du dossier ouvert (ou de pièces jointes) "
         + "avec le compilateur TypeScript 6, dans un bac isolé du navigateur, sans rien exécuter. "
         + "Le tsconfig.json à la racine du dossier est appliqué (sinon : strict, ES2022, modules "

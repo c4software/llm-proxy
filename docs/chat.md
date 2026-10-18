@@ -259,9 +259,7 @@ section *Navigateur* du menu **Outils**.
 Ce qui touche à l'appareil passe toujours par une carte que
 l'utilisateur accepte ou refuse. Ce qui reste utile après la réponse
 (un lien, un texte à partager ou à recopier, un rappel) laisse une
-**carte durable** sous la réponse, rejouable à volonté. Les bacs de code
-peuvent aussi être offerts aux agents du navigateur (WebMCP), sur
-réglage.
+**carte durable** sous la réponse, rejouable à volonté.
 
 Chaque outil, avec un exemple et sa capture :
 [Les outils du navigateur](navigateur.md).

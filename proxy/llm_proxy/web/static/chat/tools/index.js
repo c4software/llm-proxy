@@ -105,7 +105,6 @@ export function faults(tool) {
   if (!card && !overrides(tool, "run")) out.push(`${where} : ni run, ni carte`);
   if (overrides(tool, "keptView") !== overrides(tool, "keptAct")) out.push(`${where} : keptView et keptAct vont ensemble`);
   if (!["card", "sheet"].includes(tool.placement)) out.push(`${where} : placement inconnu`);
-  if (tool.agent && (card || !overrides(tool, "run"))) out.push(`${where} : un outil d'agent s'exécute aussitôt (run, sans carte)`);
   if (tool.placement === "sheet" && !tool.component) out.push(`${where} : une feuille sans component`);
   for (const r of tool.required) if (!(r in tool.params)) out.push(`${where} : « ${r} » requis mais pas dans params`);
   return out;
@@ -233,24 +232,6 @@ export function abandon(w) {
   release(w);
   return of(w) ? of(w).abandoned(w) : "Non exécuté.";
 }
-// ── les agents du navigateur (WebMCP) ───────────────────────────────────
-// Un outil `agent` appelé par un agent du navigateur, hors de toute
-// conversation : ni dossier, ni message, ni appareil ; une base SQL à lui
-// (incognito : en mémoire). Seul le texte du résultat lui revient.
-const AGENT_CTX = Object.freeze({ conv: Object.freeze({ id: "webmcp", incognito: true, messages: [] }),
-                                  live: null, ws: null, vision: false, download: () => {} });
-
-/** Les outils exposés aux agents, de familles possibles ici. */
-export const agentTools = () => FAMILIES.filter((f) => f.available()).flatMap((f) => f.tools)
-  .filter((t) => t.agent);
-
-/** Un appel d'agent → le texte du résultat (une erreur commence par « Error: »).
- * @param {string} name @param {any} args */
-export async function runForAgent(name, args) {
-  const got = await run(name, JSON.stringify(args || {}), { ...AGENT_CTX });
-  return got.result;
-}
-
 /** Une carte durable (Kept). @param {any} k */
 export const keptView = (k) => TOOLS.get(k.name).keptView(k);
 /** @param {any} k @param {string} action @param {Ctx} ctx */
