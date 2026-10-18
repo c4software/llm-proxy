@@ -377,3 +377,16 @@ def pdf_bytes(objs: list[bytes]) -> bytes:
     out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
         len(objs) + 1, xref)
     return bytes(out)
+
+
+def everywhere(monkeypatch, module, name: str, value) -> None:
+    """monkeypatch.setattr d'un réglage dans un module ET, si c'est un
+    paquet découpé en parties (`from .common import ENABLED`), dans chacune
+    de ses parties qui le détient : chacune en a sa propre liaison."""
+    import pkgutil
+    import sys
+    monkeypatch.setattr(module, name, value)
+    for info in pkgutil.iter_modules(getattr(module, "__path__", []) or []):
+        sub = sys.modules.get(f"{module.__name__}.{info.name}")
+        if sub is not None and hasattr(sub, name):
+            monkeypatch.setattr(sub, name, value)

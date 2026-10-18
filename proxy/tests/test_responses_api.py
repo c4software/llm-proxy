@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from fakes import everywhere
 from fakes import (ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
                    SEARCH_TURN, SEARCHED, FakeUpstream, chat_doc, chunk, feed,
                    hosted_tools, search_then_answer, sse, sse_events, stream,
@@ -364,7 +365,7 @@ def test_stream_reasoning_then_text(monkeypatch):
                       "summary": [{"type": "summary_text", "text": "Hum."}]}
     assert out[1]["content"][0]["text"] == "Paris"
     # [responses].reasoning_as_summary = false : le raisonnement est jeté.
-    monkeypatch.setattr(R, "REASONING_AS_SUMMARY", False)
+    everywhere(monkeypatch, R, "REASONING_AS_SUMMARY", False)
     _, ev = run(*docs)
     assert [o["type"] for o in ev[-1]["response"]["output"]] == ["message"]
 
