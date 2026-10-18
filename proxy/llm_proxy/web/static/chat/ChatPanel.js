@@ -160,7 +160,21 @@ export const ChatPanel = {
     // exposés aux agents du navigateur, si l'utilisateur le permet — ce
     // navigateur seulement, coupé par défaut. Expérimental (Chrome).
     const webmcpOn = VueUse.useLocalStorage("llm-proxy-chat-webmcp", false);
+    // L'API : `navigator.modelContext` (la proposition WebMCP, Chrome), ou
+    // `document.modelContext` (ce que VueUse cherche). Retirer un outil :
+    // par le signal d'annulation, et par unregisterTool si l'API l'a.
+    const modelContext = navigator.modelContext || document.modelContext;
+    const agentDoc = modelContext && typeof modelContext.registerTool === "function" ? { modelContext: {
+      registerTool(tool, opts = {}) {
+        modelContext.registerTool(tool, opts);
+        if (opts.signal && typeof modelContext.unregisterTool === "function") {
+          opts.signal.addEventListener("abort", () => {
+            try { modelContext.unregisterTool(tool.name); } catch { /* déjà retiré */ }
+          });
+        }
+      } } } : document;
     const webmcp = tools.agentTools().map((t) => VueUse.useWebMCP({
+      document: agentDoc,
       name: t.name, description: t.description, inputSchema: t.spec.function.parameters,
       enabled: webmcpOn, execute: (args) => tools.runForAgent(t.name, args) }));
     const webmcpSupported = webmcp.length > 0 && webmcp[0].isSupported.value;
