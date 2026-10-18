@@ -6,10 +6,11 @@
 // partage manque (un autre appareil), la carte copie le texte.
 import { TOOL, FAMILY, PageTool, defineFamily, failure } from "../contract.js";
 import { webUrl } from "./links.js";
+import { clipboard, sharer } from "./vueuse.js";
 
 /** @typedef {import("../contract.js").Kept} Kept */
 
-const canShare = () => !!navigator.share;
+const canShare = () => sharer.isSupported.value;
 /** @param {Kept} k */
 const full = (k) => k.text + (k.url ? "\n" + k.url : "");
 
@@ -54,11 +55,11 @@ class Share extends PageTool {
   /** @override @param {Kept} k @param {string} action */
   async keptAct(k, action) {
     if (action === "copy") {
-      await navigator.clipboard.writeText(full(k));
+      await clipboard.copy(full(k));
       return "Copié.";
     }
     try {
-      await navigator.share({ title: k.title || undefined, text: k.text, url: k.url || undefined });
+      await sharer.share({ title: k.title || undefined, text: k.text, url: k.url || undefined });
       return "Partagé.";
     } catch (e) {
       if (e.name === "AbortError") return null;

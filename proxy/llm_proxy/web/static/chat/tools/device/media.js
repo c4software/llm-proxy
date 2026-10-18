@@ -8,46 +8,60 @@
   Les flux vivent ici, pas dans la carte : ils ne survivent pas à un
   rechargement, et la carte revient alors au début.
 */
-const { ref } = Vue;
 const MAX_SIDE = 1920;               // pixels du plus grand côté d'une image envoyée
 const QUALITY = 0.9;                 // JPEG
 
-const streams = new Map();           // id de la carte → MediaStream
+// id de la carte → {scope, media} : la caméra de la carte (useUserMedia),
+// dans sa portée. Réactive : la carte se redessine quand le flux change.
+const cams = Vue.shallowReactive(new Map());
 const scans = new Map();             // id de la carte → minuterie de lecture
-const tick = ref(0);                 // un flux a changé : la carte se redessine
 
+/** @param {string} what */
 export const hasMedia = (what) => !!(navigator.mediaDevices && navigator.mediaDevices[what]);
 
-// La carte a-t-elle son flux ? Lu dans view : une dépendance de Vue.
-export function live(w) {
-  tick.value;
-  return streams.has(w.id);
-}
-export const stream = (w) => streams.get(w.id);
+/** La carte a-t-elle son flux ? (lu dans view : une dépendance de Vue) @param {any} w */
+export const live = (w) => !!(cams.get(w.id) && cams.get(w.id).media.stream.value);
+/** @param {any} w @returns {MediaStream | undefined} */
+export const stream = (w) => (cams.get(w.id) ? cams.get(w.id).media.stream.value : undefined);
 
-// La carte est répondue ou abandonnée : ses flux et sa lecture s'arrêtent.
+/** La carte est répondue ou abandonnée : son flux et sa lecture s'arrêtent. @param {any} w */
 export function stop(w) {
   clearInterval(scans.get(w.id));
   scans.delete(w.id);
-  const s = streams.get(w.id);
-  if (s) s.getTracks().forEach((t) => t.stop());
-  if (streams.delete(w.id)) tick.value++;
+  const cam = cams.get(w.id);
+  if (!cam) return;
+  cam.media.stop();
+  cam.scope.stop();
+  cams.delete(w.id);
 }
 
-// La caméra arrière, attachée à la carte.
+/** La caméra arrière, attachée à la carte → son flux. @param {any} w */
 export async function camera(w) {
   stop(w);
-  const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-  streams.set(w.id, s);
-  tick.value++;
-  return s;
+  const scope = Vue.effectScope(true);
+  const media = scope.run(() => VueUse.useUserMedia({
+    constraints: { video: { facingMode: "environment" }, audio: false } }));
+  cams.set(w.id, { scope, media });
+  try {
+    return await media.start();
+  } catch (e) {
+    stop(w);
+    throw e;
+  }
 }
 
 // Une image prise une fois à l'écran (le sélecteur du navigateur : un
-// onglet, une fenêtre ou l'écran) → un canevas ; le flux est coupé.
+// onglet, une fenêtre ou l'écran ; useDisplayMedia) → un canevas ; le
+// flux est coupé.
 export async function screenshot() {
-  const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-  try { return await frame(s); } finally { s.getTracks().forEach((t) => t.stop()); }
+  const scope = Vue.effectScope(true);
+  const media = scope.run(() => VueUse.useDisplayMedia({ video: true, audio: false }));
+  try {
+    return await frame(await media.start());
+  } finally {
+    media.stop();
+    scope.stop();
+  }
 }
 
 // Une lecture répétée du flux de la carte, coupée par stop(w).

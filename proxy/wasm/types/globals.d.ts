@@ -3,6 +3,8 @@
 
 // Vue 3, chargé par <script> (vue.global.prod.js), sans types.
 declare const Vue: any;
+// VueUse 15 (vueuse.iife.min.js, après Vue), sans types non plus.
+declare const VueUse: any;
 
 interface Window {
   EyeDropper?: any;

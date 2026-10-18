@@ -168,6 +168,15 @@ export function parseArgs(json) {
 /** @param {string} name @param {any} args @param {Ctx} [ctx] */
 export const waits = (name, args, ctx) => !!TOOLS.get(name)?.waits(args || {}, ctx);
 
+/** Une carte durable (`keep` d'un résultat) : gardée sous la réponse, dans
+ * le message (m.kept).
+ * @param {string} name @param {any} got @param {Ctx} ctx */
+function keep(name, got, ctx) {
+  if (got && got.keep && ctx.live) {
+    (ctx.live.kept || (ctx.live.kept = [])).push({ id: "kept_" + crypto.randomUUID(), name, ...got.keep });
+  }
+}
+
 /** Un outil qui s'exécute aussitôt → {result, image?, artifact?}. Une
  * exception est une erreur pour le modèle.
  * @param {string} name @param {string} json @param {Ctx} ctx */
@@ -179,10 +188,7 @@ export async function run(name, json, ctx) {
   try {
     const got = await t.run(args, ctx);
     if (typeof got === "string") return { result: got };
-    // Une carte durable : gardée sous la réponse, dans le message.
-    if (got.keep && ctx.live) {
-      (ctx.live.kept || (ctx.live.kept = [])).push({ id: "kept_" + crypto.randomUUID(), name, ...got.keep });
-    }
+    keep(name, got, ctx);
     return got;
   } catch (e) {
     return { result: failure(e.message) };
@@ -208,8 +214,14 @@ export const placement = (w) => of(w).placement;
 export const notice = (w) => of(w).notice(w);
 /** @param {Card} w */
 export const pending = (w) => of(w).pending(w);
-/** @param {Card} w @param {string} action @param {Ctx} ctx @param {any} [payload] */
-export const act = (w, action, ctx, payload) => of(w).act(w, action, ctx, payload);
+/** Une action de la carte → sa réponse, ou null ; une carte durable qu'elle
+ * laisse rejoint le message.
+ * @param {Card} w @param {string} action @param {Ctx} ctx @param {any} [payload] */
+export async function act(w, action, ctx, payload) {
+  const out = await of(w).act(w, action, ctx, payload);
+  keep(w.name, out, ctx);
+  return out;
+}
 /** Une carte répondue : ce qu'elle tient est relâché. @param {Card} w */
 export const release = (w) => { if (w && of(w)) of(w).release(w); };
 /** Une carte abandonnée : relâchée, et le résultat pour le modèle. @param {Card} w */

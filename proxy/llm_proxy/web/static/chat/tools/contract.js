@@ -109,8 +109,9 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
  * @typedef {string | {result: string, image?: string, name?: string, artifact?: string,
  *   keep?: object}} RunResult */
 
-/** Une carte répondue : son résultat, et peut-être une image.
- * @typedef {{result: string, image?: string, name?: string}} Answer */
+/** Une carte répondue : son résultat, et peut-être une image, ou une carte
+ * durable à laisser sous la réponse (`keep`, comme pour run).
+ * @typedef {{result: string, image?: string, name?: string, keep?: object}} Answer */
 
 /** @typedef {{id: string, label: string, primary?: boolean, title?: string}} Action */
 
@@ -123,6 +124,7 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
  * @property {MediaStream} [video]    un flux montré en direct (la caméra)
  * @property {string} [quote]         un texte cité
  * @property {string} [code]          une adresse, en entier
+ * @property {string} [swatch]        une couleur CSS, montrée en pastille
  * @property {string} [note]
  */
 

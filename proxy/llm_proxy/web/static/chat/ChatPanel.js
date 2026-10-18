@@ -1272,6 +1272,7 @@ export const ChatPanel = {
                   <p class="write-head"><b>{{ v.title }}</b></p>
                   <p class="dim" v-if="v.detail">{{ v.detail }}</p>
                   <code class="device-url" v-if="v.code">{{ v.code }}</code>
+                  <span class="device-swatch" v-if="v.swatch" :style="{ background: v.swatch }"></span>
                   <pre class="device-quote" v-if="v.quote">{{ v.quote }}</pre>
                   <video class="device-media" v-if="v.video" :srcObject.prop="v.video" autoplay muted playsinline></video>
                   <img class="device-media" v-if="v.preview" :src="v.preview" alt="Aperçu de l'image à envoyer">
@@ -1289,6 +1290,7 @@ export const ChatPanel = {
                 <p class="write-head"><b>{{ v.title }}</b></p>
                 <p class="dim" v-if="v.detail">{{ v.detail }}</p>
                 <code class="device-url" v-if="v.code">{{ v.code }}</code>
+                <span class="device-swatch" v-if="v.swatch" :style="{ background: v.swatch }"></span>
                 <pre class="device-quote" v-if="v.quote">{{ v.quote }}</pre>
                 <div class="card-actions">
                   <button v-for="a in v.actions" :key="a.id" type="button" :class="['btn', { ghost: !a.primary }]"

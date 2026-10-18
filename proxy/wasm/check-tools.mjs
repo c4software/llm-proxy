@@ -9,7 +9,8 @@
 const noop = () => {};
 globalThis.window = globalThis;
 globalThis.document = { addEventListener: noop, hidden: false, createElement: () => ({}) };
-globalThis.Vue = new Proxy({}, { get: () => (v) => ({ value: v }) });
+globalThis.Vue = new Proxy({}, { get: () => (v) => ({ value: v, run: (f) => f() }) });
+globalThis.VueUse = new Proxy({}, { get: () => () => new Proxy({}, { get: () => ({ value: false }) }) });
 if (!globalThis.navigator) globalThis.navigator = {};
 globalThis.location = { href: "http://localhost/ui" };
 

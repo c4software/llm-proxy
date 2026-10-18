@@ -1,9 +1,13 @@
 // @ts-check
-// Presse-papiers : écrire aussitôt ; lire seulement sur un clic de la
-// carte (il peut contenir n'importe quoi).
+// Presse-papiers : écrire aussitôt — le texte copié reste en CARTE
+// DURABLE sous la réponse, à recopier à volonté ; lire seulement sur un
+// clic de la carte (il peut contenir n'importe quoi).
 import { TOOL, FAMILY, PageTool, defineFamily, refused, REFUSE, REASON, clip, reasonOf, failure } from "../contract.js";
 
+import { clipboard } from "./vueuse.js";
+
 /** @typedef {import("../contract.js").Card} Card */
+/** @typedef {import("../contract.js").Kept} Kept */
 
 const MAX_READ = 20_000;
 
@@ -25,12 +29,27 @@ class ClipboardWrite extends PageTool {
   async run(args) {
     const text = String(args.text ?? "");
     if (!text) return failure("`text` attendu.");
+    const keep = { text };
     try {
       await navigator.clipboard.writeText(text);
-      return `Copié dans le presse-papiers (${text.length} caractères).`;
     } catch (e) {
-      return failure("copie refusée par le navigateur (la page doit avoir le focus) : " + e.message);
+      // La page n'a pas le focus : la carte permet de copier d'un clic.
+      return { result: failure("copie refusée par le navigateur (la page doit avoir le focus) : "
+        + e.message + " Le texte est en carte sous la réponse : l'utilisateur peut le copier d'un clic."), keep };
     }
+    return { result: `Copié dans le presse-papiers (${text.length} caractères) ; le texte reste en carte `
+      + "sous la réponse, à recopier.", keep };
+  }
+
+  /** @override @param {Kept} k */
+  keptView(k) {
+    return { title: "Texte à copier", quote: k.text, actions: [{ id: "copy", label: "Copier", primary: true }] };
+  }
+
+  /** @override @param {Kept} k */
+  async keptAct(k) {
+    await clipboard.copy(k.text);
+    return "Copié.";
   }
 }
 

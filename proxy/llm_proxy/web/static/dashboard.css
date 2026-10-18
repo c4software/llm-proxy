@@ -1054,6 +1054,7 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .device-card > .dim { margin: 0; }
 .device-url { display: block; overflow-wrap: anywhere; font-size: 12.5px; }
+.device-swatch { display: block; width: 56px; height: 32px; border-radius: 6px; border: 1px solid var(--line); }
 .device-quote {
   margin: 0; max-height: 160px; overflow: auto; white-space: pre-wrap; font-size: 12.5px;
   padding: 8px 10px; border-radius: 8px; background: var(--track);
