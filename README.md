@@ -22,7 +22,7 @@ et un tableau de bord.
 Le tableau de bord a son **chat**. Le modèle y sollicite aussi le
 navigateur de l'utilisateur, toujours avec son accord : position,
 presse-papiers, caméra, capture d'écran, agenda… Il fait tourner du
-**JavaScript, du PHP et du SQL** dans un bac isolé, sans réseau, sur
+**JavaScript, du TypeScript, du PHP et du SQL** dans un bac isolé, sans réseau, sur
 les fichiers d'un dossier ouvert, qui ne quittent pas l'appareil : seul
 le résultat des requêtes revient au modèle.
 
@@ -55,7 +55,7 @@ tableau de bord est sur `http://localhost:8000/ui`.
 | Clés, comptes OIDC, ce qui se sert sans clé | [Sécurité](docs/securite.md) |
 | `/ui` : statistiques, partage équitable, comptes, configuration | [Tableau de bord](docs/tableau-de-bord.md) |
 | Le chat de la page et ses outils (questions, dossier, artifacts) | [Le chat](docs/chat.md) |
-| Position, caméra, presse-papiers… et JavaScript, PHP, SQL dans le navigateur | [Les outils du navigateur](docs/navigateur.md) |
+| Position, caméra, presse-papiers… et JavaScript, TypeScript, PHP, SQL dans le navigateur | [Les outils du navigateur](docs/navigateur.md) |
 | L'Usage API d'OpenAI servie par le proxy | [Statistiques](docs/statistiques.md) |
 | `/v1/messages` : traduction, `model_map`, `[anthropic]` | [API Anthropic Messages](docs/api-anthropic.md) |
 | `/v1/responses` : traduction, outils, `[responses]` | [API OpenAI Responses](docs/api-responses.md) |

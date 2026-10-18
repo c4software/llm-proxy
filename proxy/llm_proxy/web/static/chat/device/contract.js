@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Le CONTRAT d'un outil du navigateur : ce qu'un outil doit offrir, ce
   qu'il reçoit, ce qu'il rend. Le registre (index.js) et le chat ne
@@ -29,7 +30,7 @@
 
 // Les noms des outils, liste FERMÉE : celui de la fonction présentée au
 // modèle. Un nom ne change pas (l'historique des conversations le garde).
-export const TOOL = Object.freeze({
+export const TOOL = Object.freeze(/** @type {const} */ ({
   DEVICE_CONTEXT: "device_context",
   GET_LOCATION: "get_location",
   NOTIFY: "notify",
@@ -44,13 +45,14 @@ export const TOOL = Object.freeze({
   PICK_COLOR: "pick_color",
   KEEP_SCREEN_ON: "keep_screen_on",
   RUN_JAVASCRIPT: "run_javascript",
+  CHECK_TYPESCRIPT: "check_typescript",
   RUN_PHP: "run_php",
   RUN_SQL: "run_sql",
-});
+}));
 
 // Les clés des familles, liste FERMÉE : ce qu'une conversation active
 // (gardé avec elle — une clé ne change pas non plus).
-export const FAMILY = Object.freeze({
+export const FAMILY = Object.freeze(/** @type {const} */ ({
   CONTEXT: "context",
   LOCATION: "location",
   NOTIFY: "notify",
@@ -66,11 +68,79 @@ export const FAMILY = Object.freeze({
   JAVASCRIPT: "compute",
   PHP: "php",
   SQL: "sql",
-});
+}));
 
+// ── les types du contrat (vérifiés par proxy/wasm : npm run check) ──────
+
+/** @typedef {typeof TOOL[keyof typeof TOOL]} ToolName */
+/** @typedef {typeof FAMILY[keyof typeof FAMILY]} FamilyKey */
+
+/**
+ * Ce que le tour donne à un outil qui s'exécute.
+ * @typedef {object} Ctx
+ * @property {any} [live]       le message en cours (ses fichiers, ses images)
+ * @property {any} [conv]       la conversation
+ * @property {any} [ws]         le dossier ouvert, ou null
+ * @property {boolean} [vision] le modèle de la conversation lit-il les images ?
+ */
+
+/** Le résultat d'un `run` : le texte, ou le texte et une image (data URL).
+ * @typedef {string | {result: string, image?: string}} RunResult */
+
+/** Une carte répondue : son résultat, et peut-être une image.
+ * @typedef {{result: string, image?: string, name?: string}} Answer */
+
+/** @typedef {{id: string, label: string, primary?: boolean, title?: string}} Action */
+
+/** Ce qu'une carte montre.
+ * @typedef {object} CardView
+ * @property {string} title
+ * @property {string} [detail]
+ * @property {Action[]} actions
+ * @property {string} [preview]   une image en aperçu (data URL)
+ * @property {boolean} [video]    le flux de la caméra
+ * @property {string} [quote]     un texte cité
+ * @property {string} [code]      une adresse, en entier
+ * @property {string} [note]
+ */
+
+/** Ce qu'un module écrit pour définir un outil.
+ * @typedef {object} ToolDef
+ * @property {ToolName} name
+ * @property {string} description
+ * @property {Record<string, object>} [params]
+ * @property {string[]} [required]
+ * @property {boolean | ((args: any) => boolean)} [waits]
+ * @property {(args: any) => string} [summary]
+ * @property {(args: any, ctx: Ctx) => RunResult | Promise<RunResult>} [run]
+ * @property {(args: any) => object} [prepare]
+ * @property {(w: any) => CardView} [view]
+ * @property {(w: any, action: string) => Answer | null | Promise<Answer | null>} [act]
+ * @property {(w: any) => void} [release]
+ */
+
+/** Un outil défini : tout est là, défauts compris.
+ * @typedef {Readonly<Required<Omit<ToolDef, "waits" | "params" | "required">>
+ *   & {waits: (args: any) => boolean, spec: object}>} Tool */
+
+/** Ce qu'un module écrit pour définir une famille.
+ * @typedef {object} FamilyDef
+ * @property {FamilyKey} key
+ * @property {string} label
+ * @property {string} hint
+ * @property {boolean} [on]
+ * @property {() => boolean} [available]
+ * @property {Tool[]} tools
+ */
+
+/** @typedef {Readonly<Required<FamilyDef>>} Family */
+
+/** @type {Set<string>} */
 const NAMES = new Set(Object.values(TOOL));
+/** @type {Set<string>} */
 const KEYS = new Set(Object.values(FAMILY));
 
+/** @param {string} what @returns {() => never} */
 const unsupported = (what) => () => { throw new Error(`${what} : non pris en charge par cet outil`); };
 
 /*
@@ -83,6 +153,7 @@ const unsupported = (what) => () => { throw new Error(`${what} : non pris en cha
     waits       true, ou (args) → booléen : attend-il l'utilisateur ?
     summary     (args) → ce que la puce de l'appel en montre, une ligne
 */
+/** @param {ToolDef} def @returns {Tool} */
 export function defineTool(def) {
   if (!NAMES.has(def.name)) throw new Error(`outil hors de TOOL : « ${def.name} »`);
   const waits = typeof def.waits === "function" ? def.waits : () => !!def.waits;
@@ -111,6 +182,7 @@ export function defineTool(def) {
     available   () → booléen : ce navigateur sait-il la faire ? (défaut : oui)
     tools       ses outils (defineTool)
 */
+/** @param {FamilyDef} def @returns {Family} */
 export function defineFamily(def) {
   if (!KEYS.has(def.key)) throw new Error(`famille hors de FAMILY : « ${def.key} »`);
   return Object.freeze({ on: false, available: () => true, ...def });

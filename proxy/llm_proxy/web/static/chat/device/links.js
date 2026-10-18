@@ -1,3 +1,4 @@
+// @ts-check
 // Liens : ouvrir une adresse dans un nouvel onglet, sur un clic de la
 // carte, où l'adresse se lit en entier.
 import { TOOL, FAMILY, defineTool, defineFamily, refused, REFUSE, failure } from "./contract.js";

@@ -33,3 +33,4 @@ docker-compose.override.yml
 # (npm ci && npm run build), dans l'image par proxy/Dockerfile.
 proxy/wasm/node_modules/
 proxy/llm_proxy/web/static/vendor/
+proxy/wasm/ts-libs.json

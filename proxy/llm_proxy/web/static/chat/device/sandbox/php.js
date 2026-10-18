@@ -1,3 +1,4 @@
+// @ts-check
 // PHP : un script PHP 8.3 exécuté dans le bac (bac.js), en WASM — le
 // runtime (≈ 18 Mo) n'est téléchargé qu'au premier appel. Les fichiers de
 // `files` sont posés sous /data, le dossier courant ; ce que le script

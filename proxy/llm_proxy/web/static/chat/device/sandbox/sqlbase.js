@@ -1,3 +1,4 @@
+// @ts-check
 /*
   La BASE SQLite d'une conversation (run_sql) : ses octets, gardés dans
   CE navigateur (IndexedDB), jamais envoyés au proxy. Une conversation

@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Les outils que la PAGE exécute (le proxy les rend en `tool_calls`, comme
   à tout client) — leur registre :

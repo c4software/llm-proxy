@@ -1,3 +1,4 @@
+// @ts-check
 // Agenda : un événement en fichier .ics sous la réponse, qui s'ouvre dans
 // l'agenda de l'utilisateur (Google, Outlook, Apple…) — un rendez-vous
 // qui survit à la page, contrairement à un rappel.

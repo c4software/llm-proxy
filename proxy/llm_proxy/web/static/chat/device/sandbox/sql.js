@@ -1,3 +1,4 @@
+// @ts-check
 /*
   SQL : un script SQLite exécuté dans le bac (bac.js), en WASM (sql.js),
   sur la BASE DE LA CONVERSATION (sqlbase.js) — gardée d'un appel à

@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Les FICHIERS des bacs, côté page.
 

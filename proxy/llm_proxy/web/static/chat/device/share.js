@@ -1,3 +1,4 @@
+// @ts-check
 // Partage : un texte vers une autre application (le partage du système),
 // sur un clic de la carte.
 import { TOOL, FAMILY, defineTool, defineFamily, refused, REFUSE, failure } from "./contract.js";

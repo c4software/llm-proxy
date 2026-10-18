@@ -17,7 +17,7 @@ llm-proxy/
 │               config.example.toml, le modèle
 ├── docs/       la documentation et ses captures
 ├── proxy/      le proxy : Dockerfile, requirements*.txt, main.py, llm_proxy/, tests/,
-│               wasm/ (les runtimes WASM des bacs du navigateur)
+│               wasm/ (l'outillage Node de la page : runtimes des bacs, vérification des types)
 ├── services/   les services tiers de la pile
 │   ├── executor/   l'exécuteur de code : Dockerfile, executor/, sandbox/, tests/
 │   └── searxng/    settings.yml, monté dans l'image officielle
@@ -27,9 +27,10 @@ llm-proxy/
 Commandes :
 
 - `proxy/` : `pytest`, `uvicorn main:app` ;
-- `proxy/wasm/` : `npm ci && npm run build`, qui écrit les runtimes PHP et
-  SQLite dans `web/static/vendor/` (non versionné ; l'image le fait
-  elle-même) ;
+- `proxy/wasm/` : `npm ci && npm run build`, qui écrit les runtimes des
+  bacs dans `web/static/vendor/` (non versionné ; l'image le fait
+  elle-même), et `npm run check`, qui vérifie les types du code de la
+  page (fichiers en `// @ts-check`, aussi lancé par pytest) ;
 - `services/executor/` : `pytest` ;
 - `bench/`, qui a son propre compose : `docker compose run --rm <client>`.
 
@@ -147,7 +148,7 @@ Ces chemins sont sous `proxy/llm_proxy/`.
 | `web/templates/index.html` | Squelette de la page |
 | `web/static/` | Modules ES par domaine : `app.js` (session, vues, menu), `stats/`, `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème), plus `dashboard.css` et `vue.global.prod.js` |
 | `web/static/chat/` | `ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js`, `pagetools.js` ; outils de la page (`ask.js`, `workspace.js`, `outputs.js`, `device/`, voir ci-dessous) ; `models/`, `diff.js`, `ArtifactPanel.js`, `voice.js`, `notify.js` |
-| `web/static/chat/device/` | Les outils du navigateur : `contract.js` (le contrat d'un outil, les clés `TOOL` et `FAMILY`), `index.js` (le registre), un module par famille, `media.js` (flux caméra et écran), `sandbox/` (`bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits ; `javascript.js`, `php.js`, `sql.js` et `sqlbase.js`, la base de la conversation) |
-| `web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js) |
+| `web/static/chat/device/` | Les outils du navigateur : `contract.js` (le contrat d'un outil, les clés `TOOL` et `FAMILY`), `index.js` (le registre), un module par famille, `media.js` (flux caméra et écran), `sandbox/` (`bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits ; `javascript.js`, `typescript.js`, `php.js`, `sql.js` et `sqlbase.js`, la base de la conversation) |
+| `web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js), `sucrase.js`, `typescript.js` (le compilateur TypeScript 6 et ses `lib.*.d.ts`) |
 
 Ces chemins sont sous `proxy/llm_proxy/`.

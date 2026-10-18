@@ -3,8 +3,8 @@
 Dans le [chat](chat.md) de la page, le modèle peut solliciter
 l'**appareil** de l'utilisateur : son heure, sa position, son
 presse-papiers, sa caméra, son écran. Il peut aussi faire tourner du
-**code** (JavaScript, PHP, SQL) dans un bac isolé du navigateur, sur des
-fichiers qui ne quittent pas l'appareil.
+**code** (JavaScript, TypeScript, PHP, SQL) dans un bac isolé du
+navigateur, sur des fichiers qui ne quittent pas l'appareil.
 
 Ces outils ne passent pas par le proxy. Il les rend au navigateur en
 `tool_calls`, comme à tout client : la page les exécute et renvoie leur
@@ -16,7 +16,7 @@ outils ; les résultats affichés sont ceux qu'ils ont vraiment rendus.
 
 ## Activer les outils
 
-![Le menu Outils, section Navigateur : quinze familles cochables (Date et heure, Position, Notifications, Presse-papiers, Agenda, Liens, Partage, Capture d'écran, Caméra, QR et codes-barres, Pipette, Écran allumé, JavaScript, PHP, SQL), chacune avec une ligne d'explication](navigateur-outils.png)
+![Le menu Outils, section Navigateur : quinze familles cochables (Date et heure, Position, Notifications, Presse-papiers, Agenda, Liens, Partage, Capture d'écran, Caméra, QR et codes-barres, Pipette, Écran allumé, JavaScript et TypeScript, PHP, SQL), chacune avec une ligne d'explication](navigateur-outils.png)
 
 Les outils sont rangés par **famille**, dans la section *Navigateur* du
 menu **Outils**. On les coche par conversation, et une conversation
@@ -155,7 +155,8 @@ la page revient au premier plan.
 
 ## Le code dans le navigateur
 
-Trois outils exécutent du code : **JavaScript**, **PHP** et **SQL**.
+Quatre outils exécutent ou vérifient du code : **JavaScript** (et
+TypeScript), la **vérification de types TypeScript**, **PHP** et **SQL**.
 
 ### Le bac
 
@@ -165,15 +166,16 @@ Trois outils exécutent du code : **JavaScript**, **PHP** et **SQL**.
 - Une politique de sécurité coupe **tout réseau** : `fetch`, ou
   `file_get_contents` sur une URL en PHP, échouent.
 - Une boucle sans fin ne fige pas la page : le bac est supprimé au délai
-  dépassé (15 s pour JavaScript, 30 s pour PHP, 60 s pour SQL).
-- PHP 8.3 (≈ 18 Mo), SQLite (≈ 700 Ko) et Chart.js (≈ 200 Ko) sont
-  servis par le proxy sous `/ui/static/vendor/`. Ils ne sont téléchargés
+  dépassé (15 s pour JavaScript, 30 s pour PHP, 60 s pour SQL et pour
+  la vérification TypeScript).
+- PHP 8.3 (≈ 18 Mo), SQLite (≈ 700 Ko), Chart.js et sucrase (≈ 200 Ko
+  chacun) et le compilateur TypeScript (≈ 7 Mo) sont servis par le proxy sous `/ui/static/vendor/`. Ils ne sont téléchargés
   qu'au premier appel, puis revalidés par le navigateur sans être
   retéléchargés.
 
 ### Fichiers fournis, fichiers produits
 
-Les trois outils prennent un paramètre `files` : des chemins du
+Ces outils prennent un paramètre `files` : des chemins du
 **dossier ouvert** (*Joindre → Dossier…*) ou des noms de **pièces
 jointes** texte du fil. La page lit ces fichiers et les passe au bac :
 ils ne partent pas au modèle, qui ne reçoit que ce que son code
@@ -233,6 +235,34 @@ et la sortie de `console.log` est rendue aussi. Le code dispose de :
 
 Le graphique de la section SQL ci-dessus est un appel à `chart()`.
 
+Avec `language: "typescript"`, le code est du **TypeScript** : sucrase
+en retire les types avant l'exécution, sans les vérifier (c'est le rôle
+de `check_typescript`, ci-dessous).
+
+### TypeScript — `check_typescript`
+
+![check_typescript vérifie le sous-dossier src du dossier ouvert avec son tsconfig.json : deux erreurs dans src/panier.ts (une variable inutilisée, une chaîne au lieu d'un nombre), que le modèle explique](navigateur-typescript.png)
+
+Le compilateur TypeScript 6 vérifie les types de fichiers du dossier
+ouvert, sans rien exécuter.
+
+- `files` désigne ce qui est vérifié : des fichiers, ou des
+  sous-dossiers (tout ce qu'ils contiennent) ; `.` désigne tout le
+  dossier.
+- Les `.ts`, `.tsx`, `.mts` et `.cts` du dossier sont tous chargés, pour
+  résoudre les imports relatifs ; seuls ceux de `files` sont vérifiés.
+- Le `tsconfig.json` à la racine du dossier s'applique, commentaires
+  compris. Sans lui : `strict`, ES2022, modules ESNext.
+- Il n'y a pas de `node_modules` : un import de paquet vaut `any`.
+- `code` et `path` vérifient un texte **à la place** d'un fichier : le
+  modèle contrôle une modification avant de la proposer avec
+  `folder_write`.
+- Le résultat liste les erreurs au format
+  `fichier(ligne,colonne): error TSxxxx: message`, 100 au plus.
+
+Le compilateur est le dernier écrit en JavaScript (TypeScript 6.0) : la
+version 7 est réécrite en Go et ne tourne pas dans le navigateur.
+
 ### PHP — `run_php`
 
 ![run_php charge lib/tva.php du dossier ouvert avec require, lit le CSV des ventes, affiche un tableau HT, TVA, TTC par produit et produit ttc-par-produit.csv sous la réponse](navigateur-php.png)
@@ -250,15 +280,16 @@ Chaque appel repart de zéro.
 
 ### Installer les runtimes
 
-L'image Docker construit PHP, SQLite et Chart.js (étape `wasm` de
-`proxy/Dockerfile`). Hors Docker, il faut les construire une fois :
+L'image Docker construit les runtimes (PHP, SQLite, Chart.js, sucrase,
+TypeScript) dans l'étape `wasm` de `proxy/Dockerfile`. Hors Docker, il faut les construire une fois :
 
 ```bash
 cd proxy/wasm && npm ci && npm run build   # → proxy/llm_proxy/web/static/vendor/
 ```
 
-Sans eux, `run_php` et `run_sql` répondent que le runtime manque.
-`run_javascript` fonctionne toujours, mais sans `chart()`.
+Sans eux, `run_php`, `run_sql` et `check_typescript` répondent que le
+runtime manque. `run_javascript` fonctionne toujours, mais sans
+`chart()` ni TypeScript.
 
 ## Écrire un outil du navigateur
 
@@ -277,3 +308,13 @@ de celui des [outils hébergés](outils.md) :
 
 Un module par famille, inscrit dans `chat/device/index.js` : le registre
 ne connaît d'un outil que son contrat.
+
+Le contrat est **typé** en JSDoc (`ToolDef`, `Tool`, `Ctx`, `CardView`…),
+et les modules de `device/` commencent par `// @ts-check`. TypeScript
+les vérifie sans build : un nom d'outil hors de `TOOL`, une clé mal
+orthographiée (`sumary`) ou une carte qui rend `{resultat}` au lieu de
+`{result}` sont des erreurs.
+
+```bash
+cd proxy/wasm && npm ci && npm run check   # aussi lancé par pytest (ignoré sans Node)
+```

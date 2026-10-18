@@ -1,3 +1,4 @@
+// @ts-check
 // Capture d'écran : un onglet, une fenêtre ou l'écran, montré en aperçu
 // avant d'être envoyé (Envoyer, Reprendre, Refuser).
 import { TOOL, FAMILY, defineTool, defineFamily, refused, REFUSE, REASON, reasonOf } from "./contract.js";

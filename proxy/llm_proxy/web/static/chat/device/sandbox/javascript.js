@@ -1,7 +1,10 @@
+// @ts-check
 /*
   JavaScript : le code du modèle, corps d'une fonction async, exécuté dans
   le bac (bac.js) ; rend la valeur de son `return`, sa console, et les
-  fichiers qu'il produit (files.js). Le code dispose de :
+  fichiers qu'il produit (files.js). `language: "typescript"` : ses types
+  sont d'abord retirés (sucrase), sans être vérifiés — check_typescript
+  (typescript.js) les vérifie. Le code dispose de :
 
     files                 {chemin: Uint8Array} des fichiers fournis
     readText(chemin)      l'un d'eux, en texte (UTF-8)
@@ -15,12 +18,13 @@
 import { TOOL, FAMILY, defineTool, defineFamily, clip, failure, oneLine } from "../contract.js";
 import { exec } from "./bac.js";
 import { FILES_PARAM, paths, inputs, deliver } from "./files.js";
+import { checkTypescript } from "./typescript.js";
 
 const TIMEOUT = 15_000;
 const MAX_OUT = 20_000;
 
 // Exécutée dans le Worker du bac : elle ne voit que ses arguments.
-async function driver({ code, files }, { mod, fmt }) {
+async function driver({ code, files, typescript }, { mods, fmt }) {
   const byName = Object.fromEntries(files.map((f) => [f.name, f.bytes]));
   function readBytes(path) {
     const p = String(path).replace(/^\.?\/+/, "");
@@ -51,10 +55,11 @@ async function driver({ code, files }, { mod, fmt }) {
     return p;
   }
 
+  let registered = false;
   async function chart(config, { width = 800, height = 500, name = "graphique.png" } = {}) {
-    if (!mod) throw new Error("Chart.js indisponible");
-    const { Chart, registerables } = mod;
-    if (!chart.ready) { Chart.register(...registerables); chart.ready = true; }
+    if (!mods.chart) throw new Error("Chart.js indisponible");
+    const { Chart, registerables } = mods.chart;
+    if (!registered) { Chart.register(...registerables); registered = true; }
     const canvas = new OffscreenCanvas(width, height);
     // Un fond blanc : un PNG transparent se lit mal sur un thème sombre.
     const background = { id: "fond", beforeDraw(c) {
@@ -66,8 +71,17 @@ async function driver({ code, files }, { mod, fmt }) {
     return name;
   }
 
-  const run = new Function("files", "readText", "readBytes", "output", "chart",
-    "return (async () => {\n" + code + "\n})()");
+  let body = code;
+  if (typescript) {
+    // Le corps dans une fonction, le temps de retirer les types : un
+    // `return` ou un `await` au premier niveau n'est pas un module valide.
+    const wrapped = mods.sucrase.transform("async function __corps() {\n" + code + "\n}",
+      { transforms: ["typescript"], disableESTransforms: true }).code;
+    body = wrapped + "\nreturn __corps();";
+  } else {
+    body = "return (async () => {\n" + code + "\n})()";
+  }
+  const run = new Function("files", "readText", "readBytes", "output", "chart", body);
   const value = await run(byName, readText, readBytes, output, chart);
   await Promise.all(pending);
   return { value: value === undefined ? undefined : fmt(value), produced };
@@ -83,9 +97,12 @@ const runJavascript = defineTool({
     + "qui restent sur l'appareil) ; output(nom, données) produit un fichier sous la réponse (texte, "
     + "Uint8Array, Blob, OffscreenCanvas en PNG) ; chart(config, {width, height, name}) dessine un "
     + "graphique Chart.js 4 en PNG (config : {type, data, options}). Une image produite est "
-    + "montrée à l'utilisateur et jointe au résultat si le modèle lit les images. 15 s au plus.",
+    + "montrée à l'utilisateur et jointe au résultat si le modèle lit les images. "
+    + "`language: \"typescript\"` accepte du TypeScript (types retirés, non vérifiés : "
+    + "check_typescript les vérifie). 15 s au plus.",
   params: {
     code: { type: "string", description: "Le corps de la fonction (avec `return`)." },
+    language: { type: "string", enum: ["javascript", "typescript"], description: "Le langage du code (défaut : javascript)." },
     ...FILES_PARAM,
   },
   required: ["code"],
@@ -95,8 +112,9 @@ const runJavascript = defineTool({
     if (!code.trim()) return failure("`code` attendu.");
     let files;
     try { files = await inputs(ctx, paths(args)); } catch (e) { return failure(e.message + "."); }
-    const runtime = /\bchart\s*\(/.test(code) ? "chart" : null;
-    const r = await exec({ driver, input: { code, files }, runtime, timeout: TIMEOUT });
+    const typescript = args.language === "typescript";
+    const runtime = [...(/\bchart\s*\(/.test(code) ? ["chart"] : []), ...(typescript ? ["sucrase"] : [])];
+    const r = await exec({ driver, input: { code, files, typescript }, runtime, timeout: TIMEOUT });
     const out = [];
     let image = "";
     if (r.ok) {
@@ -114,6 +132,7 @@ const runJavascript = defineTool({
 });
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.JAVASCRIPT, label: "JavaScript", hint: "du code dans un bac isolé, sans réseau : fichiers, graphiques",
-  tools: [runJavascript],
+  key: FAMILY.JAVASCRIPT, label: "JavaScript, TypeScript",
+  hint: "du code dans un bac isolé, sans réseau : fichiers, graphiques ; vérifier les types",
+  tools: [runJavascript, checkTypescript],
 })];

@@ -1,3 +1,4 @@
+// @ts-check
 // Écran allumé : l'écran ne se met pas en veille (une recette, un
 // pas-à-pas), tant que la page est visible ; repris à son retour.
 import { TOOL, FAMILY, defineTool, defineFamily, failure } from "./contract.js";

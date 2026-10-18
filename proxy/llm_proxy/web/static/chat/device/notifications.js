@@ -1,3 +1,4 @@
+// @ts-check
 // Notifications : tout de suite, ou un rappel dans N minutes (tant que la
 // page reste ouverte). Pas encore permises : une carte propose de les
 // autoriser — le navigateur n'en demande la permission que sur un clic.

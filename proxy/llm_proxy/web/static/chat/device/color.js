@@ -1,3 +1,4 @@
+// @ts-check
 // Pipette : une couleur prise n'importe où à l'écran, sur un clic de la
 // carte (l'API EyeDropper ne s'ouvre que sur un geste).
 import { TOOL, FAMILY, defineTool, defineFamily, refused, REFUSE, reasonOf, failure } from "./contract.js";

@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Les outils du NAVIGATEUR : ce que le modèle peut demander à l'appareil.
   Le registre : il ne connaît d'un outil que son contrat (contract.js).
@@ -15,9 +16,10 @@
       codes.js            Caméra, Codes       take_photo, scan_code     — leurs flux : media.js
     color.js              Pipette             pick_color              carte
     wake.js               Écran allumé        keep_screen_on
-    sandbox/              JavaScript, PHP,    run_javascript,         bac isolé, sans réseau
-                          SQL                 run_php, run_sql          (bac.js) ; PHP et SQLite
-                                                                        en WASM, à la demande
+    sandbox/              JavaScript,         run_javascript,         bac isolé, sans réseau
+                          TypeScript, PHP,    check_typescript,         (bac.js) ; PHP, SQLite
+                          SQL                 run_php, run_sql          et TypeScript chargés
+                                                                        à la demande
 
   Une image rendue par une carte (capture, photo) part au modèle jointe
   au résultat de l'outil.

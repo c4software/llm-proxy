@@ -1,3 +1,4 @@
+// @ts-check
 // Presse-papiers : écrire aussitôt ; lire seulement sur un clic de la
 // carte (il peut contenir n'importe quoi).
 import { TOOL, FAMILY, defineTool, defineFamily, refused, REFUSE, clip, reasonOf, failure } from "./contract.js";

@@ -1,3 +1,4 @@
+// @ts-check
 // Position : lue seulement sur un clic de la carte — une permission du
 // navigateur déjà accordée n'y suffit pas. Approximative : arrondie au
 // centième de degré (≈ 1 km).

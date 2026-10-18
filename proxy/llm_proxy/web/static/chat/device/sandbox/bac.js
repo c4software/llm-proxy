@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Le BAC commun des outils de code (JavaScript, PHP, SQL) : le code du
   modèle tourne dans un Worker, créé dans un cadre `sandbox` sans origine
@@ -11,11 +12,12 @@
   droit de le faire —, gardé en mémoire, puis passé au bac à chaque appel.
 
   exec({driver, input, runtime, timeout}) → {ok, value, error, logs}
-    driver    une fonction async (input, {mod, wasm}) → valeur, exécutée
-              dans le Worker : passée en TEXTE, elle ne voit rien de ce
-              module ; `mod` est le module du runtime, `wasm` son binaire
+    driver    une fonction async (input, {mod, wasm, mods}) → valeur,
+              exécutée dans le Worker : passée en TEXTE, elle ne voit rien
+              de ce module ; `mod` est le module du (premier) runtime,
+              `wasm` son binaire, `mods` chaque module par son nom
     input     ce qu'elle reçoit (clonable)
-    runtime   le nom d'un runtime de RUNTIMES, ou rien
+    runtime   le nom d'un runtime de RUNTIMES, une liste de noms, ou rien
     logs      ce que le code a écrit sur la console
 */
 
@@ -29,15 +31,15 @@ const fmt = (v) => { if (typeof v === "string") return v;
   try { return JSON.stringify(v, null, 2) ?? String(v); } catch { return String(v); } };
 const logs = [];
 for (const k of ["log", "info", "warn", "error", "debug"]) console[k] = (...a) => logs.push(a.map(fmt).join(" "));
-self.onmessage = async ({ data: { driver, input, runtime } }) => {
+self.onmessage = async ({ data: { driver, input, runtimes } }) => {
   try {
-    let mod = null;
-    if (runtime) {
-      const url = URL.createObjectURL(new Blob([runtime.js], { type: "text/javascript" }));
-      mod = await import(url);
+    const mods = {};
+    for (const r of runtimes) {
+      mods[r.name] = await import(URL.createObjectURL(new Blob([r.js], { type: "text/javascript" })));
     }
+    const first = runtimes[0];
     const drive = (0, eval)("(" + driver + ")");
-    const value = await drive(input, { mod, wasm: runtime && runtime.wasm, fmt });
+    const value = await drive(input, { mod: first ? mods[first.name] : null, wasm: first && first.wasm, mods, fmt });
     postMessage({ ok: true, value, logs });
   } catch (err) {
     // Une Error simple : son message seul (« Error: » est ajouté par l'outil).
@@ -56,14 +58,14 @@ onmessage = (e) => {
   const worker = new Worker(URL.createObjectURL(new Blob([SOURCE], { type: "text/javascript" })));
   worker.onmessage = (m) => parent.postMessage(m.data, "*");
   worker.onerror = (err) => { err.preventDefault(); parent.postMessage({ ok: false, error: String(err.message || "erreur du bac"), logs: [] }, "*"); };
-  const runtime = e.data.runtime;
-  worker.postMessage(e.data, runtime && runtime.wasm ? [runtime.wasm] : []);
+  worker.postMessage(e.data, e.data.runtimes.map((r) => r.wasm).filter(Boolean));
 };
 parent.postMessage({ ready: true }, "*");
 <\/script>`;
 
 // Les runtimes de vendor/ : a-t-il un binaire WASM ?
-const RUNTIMES = { php: { wasm: true }, sql: { wasm: true }, chart: { wasm: false } };
+const RUNTIMES = { php: { wasm: true }, sql: { wasm: true }, chart: { wasm: false },
+                   sucrase: { wasm: false }, typescript: { wasm: false } };
 
 // nom → promesse de {js, wasm} ; un échec est oublié (réessayé au suivant).
 const runtimes = new Map();
@@ -85,12 +87,13 @@ function load(name) {
 }
 
 export async function exec({ driver, input, runtime, timeout }) {
-  let rt = null;
-  if (runtime) {
+  const names = !runtime ? [] : Array.isArray(runtime) ? runtime : [runtime];
+  const rts = [];
+  for (const name of names) {
     try {
-      rt = await load(runtime);
+      rts.push({ name, ...(await load(name)) });
     } catch (e) {
-      return { ok: false, logs: [], error: `runtime « ${runtime} » absent de ce serveur (${e.message}) : `
+      return { ok: false, logs: [], error: `runtime « ${name} » absent de ce serveur (${e.message}) : `
         + "il est construit par proxy/wasm (npm ci && npm run build), ce que fait l'image Docker." };
     }
   }
@@ -110,8 +113,9 @@ export async function exec({ driver, input, runtime, timeout }) {
       const d = e.data || {};
       if (!d.ready) { finish({ logs: [], ...d }); return; }
       // Une copie du binaire : celle du cache reste à la page.
-      const msg = { driver: String(driver), input, runtime: rt && { js: rt.js, wasm: rt.wasm && rt.wasm.slice(0) } };
-      frame.contentWindow.postMessage(msg, "*", msg.runtime && msg.runtime.wasm ? [msg.runtime.wasm] : []);
+      const sent = rts.map((r) => ({ name: r.name, js: r.js, wasm: r.wasm && r.wasm.slice(0) }));
+      const msg = { driver: String(driver), input, runtimes: sent };
+      frame.contentWindow.postMessage(msg, "*", sent.map((r) => r.wasm).filter(Boolean));
     }
     window.addEventListener("message", onMessage);
     timer = setTimeout(() => finish({ ok: false, logs: [], error: `arrêté après ${timeout / 1000} s.` }), timeout);

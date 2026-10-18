@@ -1,3 +1,4 @@
+// @ts-check
 // Date et heure : la date et l'heure locales, le fuseau, les langues.
 import { TOOL, FAMILY, defineTool, defineFamily } from "./contract.js";
 

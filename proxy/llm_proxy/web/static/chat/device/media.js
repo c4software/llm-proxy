@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Ce que partagent Capture d'écran, Caméra et Codes : les FLUX (caméra,
   écran) et les images qu'on en tire. Une image est prise sur la carte,

@@ -1,3 +1,4 @@
+// @ts-check
 // Caméra : une photo, montrée en aperçu avant d'être envoyée.
 import { TOOL, FAMILY, defineTool, defineFamily, refused, REFUSE, REASON, reasonOf } from "./contract.js";
 import { hasMedia, live, stream, stop, camera, frame, jpeg, imageName, denied } from "./media.js";

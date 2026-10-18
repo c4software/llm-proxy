@@ -1,3 +1,4 @@
+// @ts-check
 // QR et codes-barres : lus à la caméra ou sur une capture d'écran
 // (BarcodeDetector) ; seul le texte lu part au modèle, pas d'image.
 import { TOOL, FAMILY, defineTool, defineFamily, refused, REFUSE, REASON, reasonOf } from "./contract.js";

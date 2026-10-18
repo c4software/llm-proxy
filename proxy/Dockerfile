@@ -8,7 +8,7 @@ FROM node:24-slim AS wasm
 WORKDIR /wasm
 COPY proxy/wasm/package.json proxy/wasm/package-lock.json ./
 RUN npm ci --no-audit --no-fund
-COPY proxy/wasm/build.mjs proxy/wasm/php.js proxy/wasm/sql.js proxy/wasm/chart.js ./
+COPY proxy/wasm/build.mjs proxy/wasm/php.js proxy/wasm/sql.js proxy/wasm/chart.js proxy/wasm/sucrase.js proxy/wasm/typescript.js ./
 RUN node build.mjs /vendor
 
 FROM python:3.13-slim

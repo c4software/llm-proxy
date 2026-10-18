@@ -244,7 +244,7 @@ clic.
 Le modèle peut aussi solliciter l'**appareil** : heure, position,
 notifications, presse-papiers, agenda, liens, partage, capture d'écran,
 caméra, codes, pipette, écran allumé. Il peut aussi faire tourner du
-**JavaScript**, du **PHP** ou du **SQL** dans un bac isolé, sur les
+**JavaScript**, du **TypeScript**, du **PHP** ou du **SQL** dans un bac isolé, sur les
 fichiers du dossier ouvert. Ces outils se cochent par famille, dans la
 section *Navigateur* du menu **Outils**. Ce qui touche à l'appareil
 passe toujours par une carte que l'utilisateur accepte ou refuse.
