@@ -179,8 +179,9 @@ réponse.
 |---|---|---|
 | `ask_user` | 1 à 4 questions à choix (unique ou multiple), avec « Autre » libre | oui |
 | `show_artifact` | page HTML, Markdown, SVG, Mermaid ou code dans le panneau latéral ; même `id` = nouvelle version | non |
-| `edit_artifact` | remplace des passages exacts (uniques, ou `replace_all`) de la dernière version, tous ou aucun → nouvelle version | non |
-| `read_artifact` | relit la dernière version d'un artifact | non |
+| `edit_artifact` | remplace des passages exacts (uniques, ou `replace_all`) de la dernière version — ou, avec `regex`, une expression régulière (groupes `$1` dans le remplacement) ; tous ou aucun → nouvelle version | non |
+| `read_artifact` | relit la dernière version d'un artifact, entière ou par tranche de lignes numérotées (`start_line`, `end_line`) | non |
+| `grep_artifact` | cherche un texte (ou une expression régulière) dans la dernière version : les lignes trouvées, numérotées, avec leur contexte | non |
 | `inspect_artifact`, `run_in_artifact` | console, erreurs, page, capture ; un script dans la page affichée (débogage actif par défaut) | non |
 | `request_artifact_debug` | propose de rétablir le débogage d'un artifact coupé par l'utilisateur | oui : *Activer le débogage* ou *Non merci* |
 | `save_file` | un fichier texte (CSV, script…) à télécharger sous la réponse | non |
@@ -249,8 +250,10 @@ lire un état), la capturer en image. C'est **actif par défaut** :
 **L'historique ne rejoue pas les anciens contenus.** Au message suivant,
 le modèle ne reçoit plus le texte complet d'un `show_artifact` ou d'un
 `read_artifact` passé, mais une mention (« N caractères, non rejoué ») :
-il travaille sur la version actuelle, qu'il relit avec `read_artifact`
-avant de la retoucher avec `edit_artifact`. Une consigne lui donne les
+il travaille sur la version actuelle : il y retrouve le passage avec
+`grep_artifact`, en lit les lignes avec `read_artifact` (`start_line`,
+`end_line`), puis le retouche avec `edit_artifact` — sans relire tout
+l'artifact. Une consigne lui donne les
 artifacts de la conversation, leur version et leur taille. L'historique
 d'une conversation à gros artifacts s'en trouve divisé par deux, et le
 modèle ne réécrit plus tout faute de savoir quelle version est la bonne.

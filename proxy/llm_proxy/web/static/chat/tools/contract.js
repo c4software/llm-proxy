@@ -35,6 +35,7 @@ export const TOOL = Object.freeze(/** @type {const} */ ({
   SHOW_ARTIFACT: "show_artifact",
   EDIT_ARTIFACT: "edit_artifact",
   READ_ARTIFACT: "read_artifact",
+  GREP_ARTIFACT: "grep_artifact",
   REQUEST_ARTIFACT_DEBUG: "request_artifact_debug",
   INSPECT_ARTIFACT: "inspect_artifact",
   RUN_IN_ARTIFACT: "run_in_artifact",

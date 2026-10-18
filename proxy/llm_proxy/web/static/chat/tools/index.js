@@ -8,7 +8,8 @@
     page/ask.js           Questions           ask_user                feuille du bas
     page/save.js          Fichiers            save_file               un fichier sous la réponse
     page/artifacts.js     Artifacts           show_artifact,          le panneau latéral
-                                              edit_artifact, read_artifact
+                                              edit_artifact, read_artifact,
+                                              grep_artifact
                           Déboguer            inspect_artifact,       la page affichée (actif
                                               run_in_artifact         par défaut) ; coupé :
                                               request_artifact_debug  une carte pour le rétablir

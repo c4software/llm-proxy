@@ -8,7 +8,14 @@
                    la dernière version, qui en font une nouvelle — sans
                    réécrire (ni re-streamer) tout l'artifact
     read_artifact  la dernière version, telle qu'elle est (après des
-                   retouches, le modèle ne l'a plus en entier sous les yeux)
+                   retouches, le modèle ne l'a plus en entier sous les yeux),
+                   ou une tranche de lignes numérotées
+    grep_artifact  chercher dans la dernière version : les lignes trouvées,
+                   numérotées, avec leur contexte — retrouver un passage
+                   sans tout relire
+
+  Le chemin d'une retouche : grep_artifact (où ?), read_artifact sur la
+  tranche (le texte exact), edit_artifact (le remplacer).
 
   Et pour DÉBOGUER la page affichée — celle que l'utilisateur voit, dans
   le panneau (chat/artifact-bridge.js). Actif par défaut ; l'utilisateur
@@ -76,38 +83,117 @@ function editArtifact(conv, args) {
   const edits = Array.isArray(args.edits) ? args.edits : [];
   if (!edits.length) return { result: "Error: `edits` attendu, au moins une retouche." };
   let content = last.content;
+  let passages = 0;                      // passages remplacés, toutes retouches
   for (const [k, e] of edits.entries()) {
     const from = String((e && e.old_string) ?? "");
     const to = String((e && e.new_string) ?? "");
     const where = edits.length > 1 ? `retouche ${k + 1} : ` : "";
     if (!from) return { result: `Error: ${where}\`old_string\` est vide.` };
+    if (e.regex) {
+      // Une expression régulière (JavaScript) ; `new_string` peut citer
+      // ses groupes ($1, $<nom>). Unique, sauf replace_all.
+      let re;
+      try { re = new RegExp(from, "g" + (e.ignore_case ? "i" : "") + "m"); } catch (err) {
+        return { result: `Error: ${where}expression invalide : ${err.message}. Rien n'a été modifié.` };
+      }
+      const hits = [...content.matchAll(re)].length;
+      if (!hits) {
+        return { result: `Error: ${where}l'expression ne trouve rien dans la version ${art.versions.length} `
+          + "(grep_artifact pour vérifier). Rien n'a été modifié." };
+      }
+      if (hits > 1 && !e.replace_all) {
+        return { result: `Error: ${where}l'expression trouve ${hits} passages ; la préciser, ou \`replace_all\`. `
+          + "Rien n'a été modifié." };
+      }
+      content = content.replace(re, to);
+      passages += e.replace_all ? hits : 1;
+      continue;
+    }
     const count = content.split(from).length - 1;
     if (!count) {
       return { result: `Error: ${where}passage introuvable dans la version ${art.versions.length}. `
-        + "Le texte doit être EXACT (espaces, retours à la ligne) ; read_artifact pour le relire. "
-        + "Rien n'a été modifié." };
+        + "Le texte doit être EXACT (espaces, retours à la ligne) ; grep_artifact pour le retrouver, "
+        + "read_artifact sur ses lignes pour le relire. Rien n'a été modifié." };
     }
     if (count > 1 && !e.replace_all) {
       return { result: `Error: ${where}passage présent ${count} fois ; l'allonger pour qu'il soit `
         + "unique, ou `replace_all`. Rien n'a été modifié." };
     }
     content = e.replace_all ? content.split(from).join(to) : content.replace(from, () => to);
+    passages += e.replace_all ? count : 1;
   }
   if (content.length > MAX_ARTIFACT) return { result: `Error: artifact trop long (${MAX_ARTIFACT} caractères au plus).` };
   if (args.title) art.title = String(args.title).trim().slice(0, 120);
   art.versions.push({ ...last, content, at: Date.now() });
   const n = art.versions.length;
-  return { id: art.id, result: `Artifact « ${art.id} » retouché (${edits.length} remplacement`
-    + `${edits.length > 1 ? "s" : ""}) : version ${n}, affichée dans le panneau.` };
+  const plural = (k, w) => `${k} ${w}${k > 1 ? "s" : ""}`;
+  return { id: art.id, result: `Artifact « ${art.id} » retouché (${plural(edits.length, "retouche")}, `
+    + `${plural(passages, "passage")} remplacé${passages > 1 ? "s" : ""}) : version ${n}, affichée dans le panneau.` };
 }
 
-// read_artifact : la dernière version.
+const MAX_LINE = 300;           // caractères d'une ligne rendue par grep
+const MAX_HITS = 60;            // lignes trouvées par grep, au plus
+const MAX_SLICE = 400;          // lignes d'une tranche de read
+
+/** Une ligne numérotée : `   42→ texte` (le numéro ne fait pas partie du texte).
+ * @param {number} n @param {string} line @param {string} [mark] */
+const numbered = (n, line, mark = "→") => `${String(n).padStart(5)}${mark} ${line}`;
+
+// read_artifact : la dernière version, entière (telle quelle), ou une
+// tranche de lignes numérotées.
 function readArtifact(conv, args) {
   const art = findArtifact(conv, args.id);
   if (!art) return failure(`artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).`);
   const last = art.versions[art.versions.length - 1];
-  return `Artifact « ${art.id} », version ${art.versions.length} (${last.type}, `
-    + `${last.content.length} caractères) :\n${last.content}`;
+  const head = `Artifact « ${art.id} », version ${art.versions.length} (${last.type}, `
+    + `${last.content.length} caractères`;
+  if (args.start_line === undefined && args.end_line === undefined) return `${head}) :\n${last.content}`;
+  const lines = last.content.split("\n");
+  const start = Math.max(1, Math.floor(Number(args.start_line) || 1));
+  if (start > lines.length) return failure(`l'artifact n'a que ${lines.length} lignes.`);
+  const end = Math.min(lines.length, Math.floor(Number(args.end_line) || start + 80), start + MAX_SLICE - 1);
+  const body = lines.slice(start - 1, end).map((l, k) => numbered(start + k, l));
+  return `${head}, ${lines.length} lignes) — lignes ${start} à ${end} (le numéro et « → » ne font pas `
+    + `partie du texte, pour old_string) :\n${body.join("\n")}`;
+}
+
+// grep_artifact : les lignes trouvées, numérotées, avec leur contexte
+// (« → » : trouvée ; « · » : contexte ; « … » : saut).
+function grepArtifact(conv, args) {
+  const art = findArtifact(conv, args.id);
+  if (!art) return failure(`artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).`);
+  const pattern = String(args.pattern || "");
+  if (!pattern) return failure("`pattern` attendu.");
+  const flags = args.ignore_case === false ? "" : "i";
+  let re;
+  try {
+    re = new RegExp(args.regex ? pattern : pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags);
+  } catch (e) { return failure(`expression invalide : ${e.message}`); }
+  const last = art.versions[art.versions.length - 1];
+  const lines = last.content.split("\n");
+  const ctx = Math.max(0, Math.min(10, Math.floor(Number(args.context ?? 2))));
+  const hits = [];
+  lines.forEach((l, i) => { if (re.test(l)) hits.push(i); });
+  if (!hits.length) {
+    return `Aucune ligne de « ${art.id} » (version ${art.versions.length}, ${lines.length} lignes) ne contient « ${pattern} ».`;
+  }
+  const shown = hits.slice(0, MAX_HITS);
+  const keep = new Map();                    // ligne → trouvée ?
+  for (const h of shown) {
+    for (let i = Math.max(0, h - ctx); i <= Math.min(lines.length - 1, h + ctx); i++) keep.set(i, keep.get(i) || i === h);
+  }
+  const out = [];
+  let prev = -2;
+  for (const i of [...keep.keys()].sort((a, b) => a - b)) {
+    if (prev >= 0 && i > prev + 1) out.push("    …");
+    const l = lines[i].length > MAX_LINE ? lines[i].slice(0, MAX_LINE) + " …" : lines[i];
+    out.push(numbered(i + 1, l, keep.get(i) ? "→" : "·"));
+    prev = i;
+  }
+  return `« ${art.id} », version ${art.versions.length} (${lines.length} lignes) : ${hits.length} ligne`
+    + `${hits.length > 1 ? "s" : ""} trouvée${hits.length > 1 ? "s" : ""}`
+    + (hits.length > shown.length ? ` (les ${shown.length} premières)` : "")
+    + ` (le numéro et la marque ne font pas partie du texte) :\n${out.join("\n")}`;
 }
 
 
@@ -160,9 +246,11 @@ class EditArtifact extends PageTool {
       name: TOOL.EDIT_ARTIFACT,
       description: "Retouche un artifact déjà affiché SANS le réécrire : chaque `old_string`, "
         + "un passage exact et unique de sa dernière version (espaces et retours à la ligne "
-        + "compris, assez long pour être unique), est remplacé par `new_string`. À préférer à "
+        + "compris, assez long pour être unique), est remplacé par `new_string` — ou, avec "
+        + "`regex`, une expression régulière (un changement répétitif : `replace_all`). À préférer à "
         + "show_artifact pour toute modification qui ne change pas l'essentiel. Toutes les "
-        + "retouches s'appliquent, ou aucune ; en cas de doute sur le texte exact, read_artifact.",
+        + "retouches s'appliquent, ou aucune. Pour trouver le passage : grep_artifact, puis "
+        + "read_artifact sur ses lignes.",
       params: {
         id: { type: "string", description: "L'identifiant de l'artifact." },
         edits: { type: "array", minItems: 1, items: {
@@ -170,6 +258,8 @@ class EditArtifact extends PageTool {
             old_string: { type: "string", description: "Le passage exact à remplacer." },
             new_string: { type: "string", description: "Ce qui le remplace (vide : le supprimer)." },
             replace_all: { type: "boolean", description: "Remplacer toutes ses occurrences (sinon il doit être unique)." },
+            regex: { type: "boolean", description: "`old_string` est une expression régulière (JavaScript, multiligne) ; `new_string` peut citer ses groupes ($1). Pour un changement répétitif ; sinon, le texte exact." },
+            ignore_case: { type: "boolean", description: "Avec `regex` : sans tenir compte de la casse." },
           } } },
         title: { type: "string", description: "Un nouveau titre (facultatif)." },
       },
@@ -194,9 +284,15 @@ class ReadArtifact extends PageTool {
   constructor() {
     super({
       name: TOOL.READ_ARTIFACT,
-      description: "Rend la dernière version d'un artifact, telle quelle — avant de le retoucher "
-        + "quand son texte exact n'est plus sûr (après plusieurs retouches).",
-      params: { id: { type: "string", description: "L'identifiant de l'artifact." } },
+      description: "Rend la dernière version d'un artifact : entière, telle quelle, ou une tranche "
+        + "de lignes numérotées (`start_line`, `end_line`) — à préférer pour un gros artifact, après "
+        + "grep_artifact qui dit où chercher. Avant de le retoucher quand son texte exact n'est plus "
+        + "sûr.",
+      params: {
+        id: { type: "string", description: "L'identifiant de l'artifact." },
+        start_line: { type: "integer", description: "Première ligne (à partir de 1) ; absente avec end_line : l'artifact entier." },
+        end_line: { type: "integer", description: `Dernière ligne, incluse (défaut : 80 lignes ; ${MAX_SLICE} au plus).` },
+      },
       required: ["id"],
     });
   }
@@ -205,13 +301,47 @@ class ReadArtifact extends PageTool {
   run(args, ctx) { return readArtifact(ctx.conv, args); }
 
   /** @override @param {any} a */
-  summary(a) { return a.id || ""; }
+  summary(a) { return [a.id, a.start_line ? `lignes ${a.start_line}–${a.end_line || "…"}` : ""].filter(Boolean).join(" · "); }
 
   /** @override @param {{arguments: string, result: string}} call */
   historic(call) {
     const head = call.result.split("\n")[0];
     return { arguments: call.arguments, result: call.result.startsWith("Artifact « ")
       ? head + "\n" + stale(call.result.length - head.length - 1) : call.result };
+  }
+}
+
+class GrepArtifact extends PageTool {
+  constructor() {
+    super({
+      name: TOOL.GREP_ARTIFACT,
+      description: "Cherche dans la dernière version d'un artifact, sans le relire en entier : rend "
+        + "les lignes qui contiennent `pattern` (texte, ou expression régulière avec `regex`), "
+        + "numérotées, avec `context` lignes autour. Pour retrouver un passage avant de le lire "
+        + "(read_artifact sur ses lignes) puis de le retoucher (edit_artifact).",
+      params: {
+        id: { type: "string", description: "L'identifiant de l'artifact." },
+        pattern: { type: "string", description: "Le texte cherché (ou une expression régulière si `regex`)." },
+        regex: { type: "boolean", description: "`pattern` est une expression régulière (JavaScript)." },
+        ignore_case: { type: "boolean", description: "Sans tenir compte de la casse (défaut : oui)." },
+        context: { type: "integer", description: "Lignes de contexte avant et après (défaut 2, 10 au plus)." },
+      },
+      required: ["id", "pattern"],
+    });
+  }
+
+  /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
+  run(args, ctx) { return grepArtifact(ctx.conv, args); }
+
+  /** @override @param {any} a */
+  summary(a) { return [a.id, a.pattern].filter(Boolean).join(" · "); }
+
+  // Une recherche passée : ses numéros de ligne ont pu changer depuis.
+  /** @override @param {{arguments: string, result: string}} call */
+  historic(call) {
+    const head = call.result.split("\n")[0];
+    return { arguments: call.arguments, result: call.result.includes("\n")
+      ? head + "\n[lignes d'une version passée, non rejouées : relancer grep_artifact sur la version actuelle]" : call.result };
   }
 }
 
@@ -387,11 +517,12 @@ export const FAMILIES = [defineFamily({
       const v = a.versions[a.versions.length - 1];
       return `« ${a.id} » (${v.type}, version ${a.versions.length}, ${v.content.length} caractères)`;
     }).join(", ");
-    return `Artifacts de la conversation : ${list}. Pour en modifier un, relire sa version actuelle `
-      + "avec read_artifact si son texte exact n'est pas dans ce tour, puis edit_artifact (passages "
-      + "exacts) ; show_artifact seulement pour un nouvel artifact, ou une refonte que l'utilisateur demande.";
+    return `Artifacts de la conversation : ${list}. Pour en modifier un : grep_artifact pour trouver `
+      + "le passage, read_artifact sur ses lignes (start_line, end_line) pour en avoir le texte exact, "
+      + "puis edit_artifact ; ne pas le relire en entier sans besoin. show_artifact seulement pour un "
+      + "nouvel artifact, ou une refonte que l'utilisateur demande.";
   },
-  tools: [new ShowArtifact(), new EditArtifact(), new ReadArtifact()],
+  tools: [new ShowArtifact(), new EditArtifact(), new ReadArtifact(), new GrepArtifact()],
 }), defineFamily({
   key: FAMILY.ARTIFACT_DEBUG_OFFER, label: "Proposer le débogage", hint: "une carte pour le rétablir", fixed: true,
   enabled: (ctx) => artifactsOf(ctx.conv).some((a) => !debugOn(a)),
