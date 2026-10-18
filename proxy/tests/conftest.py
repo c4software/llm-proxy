@@ -71,7 +71,8 @@ def proxy(monkeypatch):
     monkeypatch.setitem(backends.BACKENDS, "essai",
                         Backend("essai", {"url": "http://backend.invalid"}))
     monkeypatch.setattr(auth, "PROXY_API_KEYS", [])
-    monkeypatch.setattr(anthropic_api, "ENABLED", True)
+    from fakes import everywhere
+    everywhere(monkeypatch, anthropic_api, "ENABLED", True)
     from fakes import everywhere
     everywhere(monkeypatch, responses_api, "ENABLED", True)
     monkeypatch.setattr(tools, "Hosted", lambda: env.hosted)

@@ -1043,7 +1043,7 @@ def test_app_loop_client_gone_closes_everything(proxy, monkeypatch):
             raise
 
     proxy.hosted.by_name["web_search"].run = endless
-    monkeypatch.setattr(anthropic_api, "PING_INTERVAL", 0.01)
+    everywhere(monkeypatch, anthropic_api, "PING_INTERVAL", 0.01)
     request = codex_request(model="essai/qwen")
 
     async def hang_up(marker: bytes):

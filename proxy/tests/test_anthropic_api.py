@@ -13,6 +13,7 @@ import types
 import httpx2
 import pytest
 
+from fakes import everywhere
 from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
                    SEARCH_TURN, SEARCHED, FakeUpstream, chat_doc, chunk,
                    failed, feed, hosted_tools, search_then_answer, sse, stream,
@@ -42,7 +43,7 @@ def test_resolve_model_uses_map_then_default():
 
 
 def test_resolve_model_without_default(monkeypatch):
-    monkeypatch.setattr(A, "MODEL_MAP", {"claude-opus-5": "albert/x"})
+    everywhere(monkeypatch, A, "MODEL_MAP", {"claude-opus-5": "albert/x"})
     assert A.resolve_model("claude-opus-5", BACKENDS) == "albert/x"
     assert A.resolve_model("whatever", BACKENDS) is None
     assert A.resolve_model("", BACKENDS) is None
@@ -270,7 +271,7 @@ def test_from_openai_reasoning_becomes_thinking(monkeypatch):
     msg = A.from_openai(doc, "m")
     assert msg["content"][0] == {"type": "thinking", "thinking": "hmm", "signature": ""}
     assert msg["content"][1] == {"type": "text", "text": "ok"}
-    monkeypatch.setattr(A, "REASONING_AS_THINKING", False)
+    everywhere(monkeypatch, A, "REASONING_AS_THINKING", False)
     assert A.from_openai(doc, "m")["content"] == [{"type": "text", "text": "ok"}]
 
 
@@ -1387,7 +1388,7 @@ def test_app_pings_while_the_search_runs(proxy, monkeypatch):
         return SEARCHED
 
     proxy.hosted.by_name["web_search"].run = slow
-    monkeypatch.setattr(anthropic_api, "PING_INTERVAL", 0.02)
+    everywhere(monkeypatch, anthropic_api, "PING_INTERVAL", 0.02)
     searching(proxy)
     kinds = [e for e, _ in events(post(proxy).content)]
     assert "ping" in kinds and kinds[-1] == "message_stop"
