@@ -1299,3 +1299,51 @@ a.btn { display: inline-block; text-decoration: none; }
 .voice-pick label { display: inline-flex; align-items: center; gap: 6px; }
 .voice-pick select { font: inherit; color: var(--ink); background: var(--bg);
   border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 260px; }
+
+/* ── Chat : contexte (jauge, résumé /compact ; chat/compact.js) ── */
+.ctx-gauge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; font-size: 12.5px;
+  font-variant-numeric: tabular-nums; color: var(--muted); }
+.ctx-gauge .ring { width: 17px; height: 17px; transform: rotate(-90deg); fill: none; stroke-width: 3; }
+.ctx-gauge .track { stroke: var(--track); }
+.ctx-gauge .fill { stroke: var(--muted); stroke-linecap: round; transition: stroke-dasharray .3s; }
+.ctx-gauge.warn .fill { stroke: #d39b2a; }
+.ctx-gauge.full { color: var(--accent); }
+.ctx-gauge.full .fill { stroke: var(--accent); }
+.ctx-menu .menu { min-width: 300px; }
+.ctx-menu .menu-head { margin: 2px 10px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ctx-menu .menu-note { margin: 2px 10px 6px; font-size: 13px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.ctx-menu .menu-note .dim { font-size: 11.5px; }
+.ctx-menu .menu button {
+  display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 8px; border: 0;
+  background: none; cursor: pointer; font: inherit; font-size: 13.5px; color: var(--ink); text-align: left;
+}
+.ctx-menu .menu button:hover:not(:disabled) { background: var(--accent-soft); }
+.ctx-menu .menu button:disabled { opacity: .5; cursor: default; }
+.ctx-menu .menu input { margin: 3px 0 0; accent-color: var(--accent); flex: none; }
+
+/* Le résumé, dans le fil ; ce qu'il remplace, estompé. */
+.msg.summary { margin: 14px 0; }
+.compact-mark { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
+.compact-mark::before, .compact-mark::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
+.compact-label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.compact-label .ico { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.msg.summary .typing { display: flex; justify-content: center; }
+.compact-body { margin: 6px auto 0; max-width: 720px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; }
+.compact-body > summary { cursor: pointer; padding: 7px 0; font-size: 13px; color: var(--muted); }
+.compact-body .md { padding-bottom: 8px; font-size: 14px; }
+.msg.summary .msg-meta { justify-content: center; }
+.msg.compacted { opacity: .55; transition: opacity .2s; }
+.msg.compacted:hover, .msg.compacted:focus-within { opacity: 1; }
+
+/* Les commandes de la zone de saisie (« / »). */
+.command-hints { display: flex; flex-direction: column; margin-bottom: 6px; }
+.command-hints button {
+  display: flex; align-items: baseline; gap: 8px; padding: 7px 10px; border: 1px solid var(--line);
+  border-radius: 9px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13px;
+  text-align: left; cursor: pointer;
+}
+.command-hints button:hover { border-color: var(--accent); }
+.command-hints small { flex: 1; color: var(--muted); }
+.command-hints kbd { font-size: 11px; color: var(--muted); }
+.compact-body .md :is(h1, h2, h3, h4) { font: 600 14px/1.4 inherit; font-family: inherit; margin: 10px 0 3px; }
+.compact-body .md :is(p, ul, ol) { margin: 3px 0; }

@@ -131,6 +131,43 @@ l'en-tête ouvre le panneau des fichiers mémoire de la clé, à lire,
 corriger ou effacer. Il se relit après chaque appel à l'outil `memory`,
 affiché lisiblement (« `create /memories/…` »).
 
+## Contexte et résumé
+
+La barre de saisie montre une **jauge** du contexte. Elle compare ce que
+la conversation occupe chez le modèle à la fenêtre de contexte annoncée
+par le catalogue.
+
+- Elle part de la dernière mesure du modèle : `prompt_tokens` et
+  `completion_tokens` de son dernier tour.
+- Ce qui a suivi cette mesure est estimé (préfixe « ≈ »).
+- Elle vire à l'orange à 60 %, puis à la couleur d'accent au seuil du
+  résumé automatique.
+
+**`/compact [consigne]`** résume la conversation. On peut aussi passer par
+*Résumer maintenant* dans le menu de la jauge. Taper `/` propose la
+commande, et Tab la complète.
+
+- Le modèle de la conversation écrit le résumé, sans outils ni réflexion.
+- Le résumé devient un message du fil, plié.
+- Les messages qui le précèdent restent affichés, mais estompés : ils ne
+  partent plus au modèle. Le résumé part à leur place, à la suite du
+  prompt système.
+- *Annuler le résumé* rend tout l'historique au modèle.
+- Le résumé est gardé avec la conversation.
+
+Le **résumé automatique** est actif par défaut, et le menu de la jauge le
+coupe ; ce choix est gardé par navigateur.
+
+- Il se déclenche avant l'envoi d'un message, quand le contexte dépasse
+  80 % de la fenêtre.
+- Il résume ce qui précède ce message, puis envoie le message.
+- Il ne se déclenche jamais pour un modèle dont la fenêtre est inconnue.
+
+Une réponse refusée par le backend pour un contexte trop long propose
+*Résumer la conversation et réessayer*. Si même la demande de résumé
+déborde, elle est refaite sur un historique **allégé** : chaque message
+est coupé en son milieu et les images sont retirées. Le résumé l'indique.
+
 ## Outils
 
 Le menu **Outils** de la zone de saisie a une case par outil, cochée par

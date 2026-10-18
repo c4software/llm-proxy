@@ -35,6 +35,14 @@
   /ui/images/generations — ou /ui/images/edits si une image est jointe.
   Une requête par image, à la taille choisie ([tools.image_generation]
   .sizes) ; l'image rendue devient une pièce jointe de la réponse.
+
+  CONTEXTE (chat/compact.js) : la jauge de la barre dit ce que la
+  conversation occupe chez le modèle (sa dernière mesure, `usage`, sur
+  la fenêtre du catalogue, `context`). /compact [consigne] la RÉSUME : un
+  message `summary` remplace, chez le modèle, tout ce qui le précède (qui
+  reste affiché). Automatique, au choix, avant un message quand le
+  contexte dépasse AUTO_AT ; « Résumer et réessayer » sur une réponse
+  refusée pour un contexte trop long.
 */
 import { ChatStore } from "./store.js";
 import { inline, dataUrl, ownImage } from "./history.js";
@@ -53,6 +61,7 @@ import { download } from "../lib/files.js";
 import * as voice from "./voice.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
+import * as Compact from "./compact.js";
 
 export const ChatPanel = {
   components: { ArtifactPanel },
@@ -370,6 +379,7 @@ export const ChatPanel = {
     function onDocClick(e) {
       if (attachOpen.value && !e.target.closest(".attach-menu:not(.tools-menu)")) attachOpen.value = false;
       if (toolsOpen.value && !e.target.closest(".tools-menu")) toolsOpen.value = false;
+      if (ctxOpen.value && !e.target.closest(".ctx-menu")) ctxOpen.value = false;
     }
     VueUse.useEventListener(document, "click", onDocClick);
     function onPaste(e) {
@@ -401,11 +411,16 @@ export const ChatPanel = {
 
     // `guidance` : les consignes des outils actifs (tools.guidance), à la
     // suite du prompt système de la conversation.
+    // Après un RÉSUMÉ (compact.js) : lui, au prompt système, et ce qui le
+    // suit — pas ce qui le précède.
     function apiMessages(conv, upto, guidance = "") {
       const out = [];
-      const system = [conv.system.trim(), guidance].filter(Boolean).join("\n\n");
+      const from = Compact.start(conv, upto);
+      const summary = from ? Compact.preamble(conv.messages[from - 1]) : "";
+      const system = [conv.system.trim(), summary, guidance].filter(Boolean).join("\n\n");
       if (system) out.push({ role: "system", content: system });
-      for (const m of conv.messages.slice(0, upto)) {
+      for (const m of conv.messages.slice(from, upto)) {
+        if (m.role === "summary") continue;
         if (m.role === "user") out.push({ role: "user", content: apiContent(m) });
         // Une réponse en erreur ou vide n'est pas renvoyée : le modèle ne
         // l'a jamais écrite.
@@ -427,6 +442,14 @@ export const ChatPanel = {
     function send() {
       const c = current.value;
       if (!canSend.value) return;
+      // /compact [consigne] : résumer, rien n'est envoyé comme message.
+      const cmd = draft.value.trim().match(/^\/compact(?:\s+([\s\S]*))?$/i);
+      if (cmd && !pending.value.length) {
+        if (streaming.value) { status.value = "Le résumé attendra la fin de la réponse : /compact ensuite."; return; }
+        draft.value = "";
+        compact(c, (cmd[1] || "").trim());
+        return;
+      }
       const item = { id: uid(), content: draft.value.trim(), attachments: pending.value };
       draft.value = "";
       pending.value = [];
@@ -441,7 +464,10 @@ export const ChatPanel = {
       ask(c, item);
     }
 
-    function ask(c, item) {
+    async function ask(c, item) {
+      // Le contexte presque plein : résumer d'abord ce qui précède le
+      // message (affiché tout de suite), puis l'envoyer.
+      const near = autoCompact.value && contextNear(c);
       c.messages.push({ id: item.id, role: "user", content: item.content,
                         attachments: item.attachments });
       if (c.messages.length === 1) {
@@ -449,6 +475,10 @@ export const ChatPanel = {
         c.title = first.replace(/\s+/g, " ").slice(0, 60) + (first.length > 60 ? "…" : "");
       }
       pinned = true;
+      if (near && !(await compact(c, "", true, c.messages.length - 1))) {
+        if (!streaming.value) respond(c);
+        return;
+      }
       respond(c);
     }
 
@@ -825,6 +855,142 @@ export const ChatPanel = {
       }
     }
 
+    // ── contexte : la jauge, le résumé (compact.js) ─────────────────────
+    const autoCompact = VueUse.useLocalStorage("llm-proxy-auto-compact", true);
+    const ctxOpen = ref(false);
+    const contextMax = (conv) => { const e = conv && modelEntry(conv.model); return (e && e.context) || 0; };
+    const context = computed(() => {
+      const c = current.value;
+      if (!c || !c.messages.length || imageMode.value) return null;
+      return Compact.occupancy(c, contextMax(c));
+    });
+    // Le premier message encore envoyé au modèle : ceux d'avant sont résumés.
+    const sentFrom = computed(() => (current.value ? Compact.start(current.value, current.value.messages.length) : 0));
+    const contextNear = (conv) => {
+      const o = Compact.occupancy(conv, contextMax(conv));
+      return !!o.max && o.ratio >= Compact.AUTO_AT && conv.messages.slice(Compact.start(conv, conv.messages.length))
+        .some((m) => m.role === "assistant");
+    };
+    const contextTitle = computed(() => {
+      const o = context.value;
+      if (!o) return "";
+      const what = (o.measured ? "" : "≈ ") + num(o.tokens) + " tokens"
+        + (o.max ? ` sur ${num(o.max)} (${Math.round(o.ratio * 100)} %)` : " (fenêtre du modèle inconnue)");
+      return `Contexte : ${what} — /compact pour résumer la conversation`;
+    });
+    // Un contexte refusé par le backend (trop long) : de quoi le dire.
+    const tooLong = (m) => /context.{0,40}(length|window|size|limit)|contexte|too long|too many tokens|maximum.*(length|tokens)|exceeds?.*(context|tokens)/i.test(m.error || "");
+
+    // Résumer la conversation jusqu'à `upto` (exclu) : un message
+    // `summary` y est inséré, rempli par le modèle de la conversation, sans
+    // outils. Rend true s'il a réussi ; sinon il disparaît, l'erreur dite.
+    async function compact(conv, focus = "", auto = false, upto = conv.messages.length) {
+      if (streaming.value) return false;
+      const from = Compact.start(conv, upto);
+      const covered = conv.messages.slice(from, upto).filter((m) => m.role !== "summary").length;
+      if (!conv.messages.slice(from, upto).some((m) => m.role === "assistant")) {
+        status.value = "Rien à résumer depuis le dernier résumé.";
+        return false;
+      }
+      const before = Compact.occupancy({ ...conv, messages: conv.messages.slice(0, upto) }, contextMax(conv)).tokens;
+      conv.messages.splice(upto, 0, { id: uid(), role: "summary", content: "", reasoning: "", tools: [],
+        sources: [], model: conv.model, usage: null, error: "", started: Date.now(), duration: 0,
+        running: true, auto, focus, covered, before });
+      const s = conv.messages[upto];
+      streaming.value = true;
+      status.value = auto ? "Contexte presque plein : résumé de la conversation…" : "Résumé de la conversation…";
+      const ctrl = controller = new AbortController();
+      try {
+        const msgs = await inline(apiMessages(conv, upto));
+        const entry = modelEntry(conv.model);
+        const once = async (list) => {
+          if (entry && entry.answer) {
+            await entry.answer(list, s, ctrl.signal, (t) => { status.value = t; });
+            return;
+          }
+          const body = { model: conv.model, stream: true, stream_options: { include_usage: true }, messages: list };
+          // Un résumé n'a pas besoin de réflexion (un modèle hybride s'en passe).
+          if (modelCaps(entry).reasoning) body.chat_template_kwargs = { enable_thinking: false };
+          const r = await fetch(API, {
+            method: "POST", signal: ctrl.signal,
+            headers: { "content-type": "application/json", accept: "text/event-stream",
+                       ...(conv.incognito ? { "x-incognito": "1" } : {}) },
+            body: JSON.stringify(body),
+          });
+          if (r.status === 401) { emit("unauthorized"); throw new Error("session expirée"); }
+          if (!r.ok) {
+            let j = null;
+            try { j = await r.json(); } catch { /* corps illisible */ }
+            throw new Error((j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`);
+          }
+          if ((r.headers.get("content-type") || "").includes("event-stream")) await readStream(r.body, s);
+          else { const j = await r.json(); s.content = (((j.choices || [])[0] || {}).message || {}).content || ""; s.usage = j.usage || null; }
+        };
+        try {
+          await once(Compact.request(msgs, focus));
+        } catch (e) {
+          // Le contexte déborde déjà : l'échange allégé, une fois.
+          if (e.name === "AbortError" || !tooLong({ error: e.message })) throw e;
+          s.light = true;
+          status.value = "Contexte trop long pour le résumer tel quel : résumé d'une version allégée…";
+          await once(Compact.request(Compact.lighten(msgs), focus));
+        }
+        s.content = (s.content || "").trim();
+        if (!s.error && !s.content) s.error = "le modèle n'a rien rendu";
+      } catch (e) {
+        s.error = e.name === "AbortError" ? "arrêté" : e.message;
+      } finally {
+        s.running = false;
+        s.reasoning = "";
+        s.duration = (Date.now() - s.started) / 1000;
+        streaming.value = false;
+        controller = null;
+        conv.updated = Date.now();
+      }
+      if (s.error) {
+        conv.messages.splice(conv.messages.indexOf(s), 1);
+        status.value = "Résumé impossible : " + s.error + (auto ? " — l'historique part en entier." : ".");
+        return false;
+      }
+      status.value = "";
+      return true;
+    }
+    function compactNow() {
+      ctxOpen.value = false;
+      const c = current.value;
+      if (c && !streaming.value) compact(c);
+    }
+    // « Annuler le résumé » : l'historique repart en entier.
+    function uncompact(i) {
+      const c = current.value;
+      if (!c || streaming.value || !c.messages[i] || c.messages[i].role !== "summary") return;
+      c.messages.splice(i, 1);
+    }
+    // Une réponse refusée (contexte trop long) : résumer ce qui précède la
+    // question, puis la reposer.
+    async function retryCompacted() {
+      const c = current.value;
+      if (!c || streaming.value) return;
+      const last = c.messages[c.messages.length - 1];
+      if (last && last.role === "assistant") c.messages.pop();
+      const q = c.messages.length - 1;
+      if (q < 0 || c.messages[q].role !== "user") return;
+      if (await compact(c, "", true, q)) respond(c);
+    }
+
+    // Les commandes de la zone de saisie : « / » les propose.
+    const COMMANDS = [{ name: "/compact", args: "[consigne]",
+                        hint: "résumer la conversation pour libérer du contexte (les messages restent affichés)" }];
+    const commandHints = computed(() => {
+      const d = draft.value;
+      if (!d.startsWith("/") || /\s/.test(d) || imageMode.value) return [];
+      return COMMANDS.filter((c) => c.name.startsWith(d.toLowerCase()));
+    });
+    function useCommand(c) {
+      draft.value = c.name + " ";
+      nextTick(() => { if (input.value) input.value.focus(); });
+    }
+
     // Un modèle d'images : le dernier message (avec son contexte) → une ou
     // plusieurs images, pièces jointes de la réponse. Une image jointe au
     // message est RETOUCHÉE (/ui/images/edits). Les images partent une à
@@ -899,6 +1065,11 @@ export const ChatPanel = {
     }
 
     function onKey(e) {
+      if (e.key === "Tab" && commandHints.value.length && draft.value !== commandHints.value[0].name + " ") {
+        e.preventDefault();
+        useCommand(commandHints.value[0]);
+        return;
+      }
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         send();
@@ -1105,7 +1276,9 @@ export const ChatPanel = {
              download, downloadOut, extOf,
              dropZone, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
-             host };
+             host, context, contextTitle, sentFrom, autoCompact, ctxOpen, compactNow, uncompact,
+             retryCompacted, tooLong, commandHints, useCommand, kTokens: Compact.kTokens, estimate: Compact.estimate,
+             AUTO_AT: Compact.AUTO_AT };
   },
   template: `
   <div class="panel chat-off" v-if="!chat.enabled">
@@ -1212,8 +1385,32 @@ export const ChatPanel = {
           <div class="big">{{ imageMode ? "Quelle image ?" : current.incognito ? "Une question, sans trace ?" : "Une question ?" }}</div>
           <div v-if="!current.model">Choisir un modèle</div>
         </div>
-        <article v-for="(m, i) in current.messages" :key="m.id" class="msg" :class="m.role">
-          <template v-if="m.role === 'user'">
+        <article v-for="(m, i) in current.messages" :key="m.id" class="msg"
+                 :class="[m.role, { compacted: i < sentFrom && m.role !== 'summary' }]">
+          <template v-if="m.role === 'summary'">
+            <div class="compact-mark" role="separator">
+              <span class="compact-label">
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
+                {{ m.running ? "Résumé de la conversation…" : m.auto ? "Résumé automatique" : "Conversation résumée" }}
+                <span class="dim" v-if="!m.running">· {{ m.covered }} message{{ m.covered > 1 ? "s" : "" }}
+                  · ≈ {{ kTokens(m.before) }} → {{ kTokens(estimate(m.content)) }} tokens<template v-if="m.light">
+                  · d'un historique allégé</template></span>
+              </span>
+            </div>
+            <div class="typing" v-if="m.running"><i></i><i></i><i></i></div>
+            <details class="compact-body" v-else>
+              <summary>Voir le résumé<span class="dim" v-if="m.focus"> · consigne : {{ m.focus }}</span></summary>
+              <div class="md" v-html="html(m)"></div>
+            </details>
+            <div class="msg-meta" v-if="!m.running">
+              <span>{{ m.model }}</span>
+              <span v-if="m.duration">{{ m.duration.toFixed(1) }} s</span>
+              <span>les messages au-dessus ne sont plus envoyés au modèle</span>
+              <button type="button" class="link" :disabled="streaming" @click="uncompact(i)"
+                      title="Retirer ce résumé : tout l'historique repart au modèle">Annuler le résumé</button>
+            </div>
+          </template>
+          <template v-else-if="m.role === 'user'">
             <div class="bubble">
               <div class="attachments" v-if="m.attachments && m.attachments.length">
                 <template v-for="a in m.attachments" :key="a.name">
@@ -1321,7 +1518,9 @@ export const ChatPanel = {
                  && (m.image ? (m.attachments || []).length < (current.imageCount || 1) : !m.content)">
               <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ (current.imageCount || 1) > 1
                 ? " " + ((m.attachments || []).length + 1) + " / " + current.imageCount : "" }}…</span></div>
-            <p class="msg-error" v-if="m.error">{{ m.error }}</p>
+            <p class="msg-error" v-if="m.error">{{ m.error }}
+              <button type="button" class="link" v-if="tooLong(m) && i === current.messages.length - 1 && !streaming"
+                      @click="retryCompacted">Résumer la conversation et réessayer</button></p>
             <div class="sources" v-if="m.sources.length">
               <a v-for="s in m.sources" :key="s.url" :href="s.url" target="_blank"
                  rel="noopener noreferrer" :title="s.url">{{ s.title || host(s.url) }}
@@ -1395,6 +1594,12 @@ export const ChatPanel = {
             {{ a.name }} <span class="dim">{{ size(a.size) }}</span>
             <button type="button" class="icon" title="Retirer" @click="pending.splice(k, 1)">×</button>
           </span>
+        </div>
+        <div class="command-hints" v-if="commandHints.length" role="listbox">
+          <button type="button" v-for="c in commandHints" :key="c.name" role="option"
+                  @mousedown.prevent="useCommand(c)">
+            <code>{{ c.name }}</code> <span class="dim">{{ c.args }}</span> <small>{{ c.hint }}</small>
+            <kbd>Tab</kbd></button>
         </div>
         <textarea ref="input" v-model="draft" rows="1" @keydown="onKey" @paste="onPaste"
                   :placeholder="narrow ? (streaming ? 'Réponse en cours… (mise en file)' : imageMode ? 'Décrire l’image…' : 'Écrire un message…')
@@ -1472,6 +1677,29 @@ export const ChatPanel = {
               <option value="high">élevée</option>
             </select>
           </label>
+          <div class="attach-menu ctx-menu" v-if="context && context.tokens">
+            <button type="button" class="btn ghost ctx-gauge" aria-haspopup="menu" :aria-expanded="String(ctxOpen)"
+                    :class="{ warn: context.max && context.ratio >= 0.6, full: context.max && context.ratio >= AUTO_AT }"
+                    @click="ctxOpen = !ctxOpen" :title="contextTitle">
+              <svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" class="track"/>
+                <circle cx="10" cy="10" r="8" class="fill" v-if="context.max"
+                        :stroke-dasharray="(Math.min(1, context.ratio) * 50.27).toFixed(2) + ' 50.27'"/></svg>
+              <span class="lbl">{{ context.max ? Math.round(context.ratio * 100) + " %" : kTokens(context.tokens) }}</span></button>
+            <div class="menu" role="menu" v-show="ctxOpen">
+              <p class="menu-head">Contexte</p>
+              <p class="menu-note">{{ context.measured ? "" : "≈ " }}{{ num(context.tokens) }} tokens{{ context.max
+                ? " sur " + num(context.max) + " (" + Math.round(context.ratio * 100) + " %)" : "" }}<br>
+                <span class="dim">{{ context.measured ? "mesuré par le modèle à sa dernière réponse"
+                  : "estimé : la dernière mesure, plus ce qui a suivi" }}</span></p>
+              <button type="button" role="menuitem" :disabled="streaming" @click="compactNow">
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
+                <span>Résumer maintenant<small>/compact [consigne] — les messages restent affichés, le résumé part à leur place</small></span></button>
+              <label role="menuitemcheckbox" :aria-checked="String(autoCompact)">
+                <input type="checkbox" v-model="autoCompact">
+                <span>Résumé automatique<small>{{ context.max ? "avant le message suivant, au-delà de " + Math.round(AUTO_AT * 100) + " % du contexte"
+                  : "fenêtre de ce modèle inconnue : jamais automatique" }}</small></span></label>
+            </div>
+          </div>
           <span class="status" :class="{ warn: (blind || unsent) && !status }">{{ status
             || (unsent ? "seule la première image est envoyée (à retoucher)"
             : blind ? "ce modèle ne lit peut-être pas les images" : "") }}</span>
