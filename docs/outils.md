@@ -525,6 +525,15 @@ proxy_temp_file/…`), en parallèle d'appels utiles, et reçoit toujours un
 d'après ceux qui l'ont mesuré, une consigne dans le prompt n'y fait rien
 ([qwen-block-proxy-artifacts](https://github.com/yope/qwen-block-proxy-artifacts)).
 
+#### L'User-Agent (`[tools.net].user_agent`)
+
+Tout ce que le proxy télécharge pour un outil (`web_fetch`, `web_grep`,
+`ocr`, `transcribe`, les fichiers de `code_execution` et
+d'`image_generation`) part avec l'User-Agent de l'outil :
+`llm-proxy <outil> (+https://github.com/c4software/llm-proxy)`.
+`[tools.net].user_agent`, s'il est renseigné, les remplace tous. Il est
+appliqué dans `net.download`, à chaque redirection.
+
 #### La provenance des URL (`[tools.net].provenance`)
 
 `web_fetch`, `web_grep`, `ocr` et `transcribe` n'ouvrent une URL choisie

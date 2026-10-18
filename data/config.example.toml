@@ -213,6 +213,10 @@ allow_private = false
 # refusée. Là où le proxy voit la conversation (pas /v1/tools ni /mcp).
 # "off" = pas de contrôle. Voir docs/outils.md.
 provenance = "site"
+# User-Agent de tout ce que le proxy télécharge pour un outil (web_fetch,
+# web_grep, ocr, transcribe, fichiers de code_execution et image_generation).
+# Vide (défaut) : celui de chaque outil, « llm-proxy <outil> (+URL du projet) ».
+# user_agent = ""
 # URL refusées, quel que soit leur domaine : expressions régulières sur l'URL
 # entière (insensibles à la casse), avec un message rendu au modèle. Vérifiées
 # à chaque redirection, pour tout outil qui télécharge (web_fetch, web_grep,

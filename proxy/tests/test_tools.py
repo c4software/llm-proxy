@@ -1749,3 +1749,21 @@ def test_blocked_urls_refusees_avec_leur_message(monkeypatch):
     assert "blocked address" in exc.value.message
     net.check("https://cdn.aliyuncs.com/image.png")          # le reste d'aliyuncs passe
     net.check("https://exemple.fr/public")
+
+
+def test_user_agent_de_la_configuration(monkeypatch):
+    """[tools.net].user_agent remplace celui de l'outil ; vide, celui de
+    l'outil part."""
+    from llm_proxy.tools import net
+    seen = []
+
+    def handler(request):
+        seen.append(request.headers["user-agent"])
+        return httpx2.Response(200, text="ok", headers={"content-type": "text/plain"})
+
+    fake_dns(monkeypatch, {"exemple.fr": ["93.184.216.34"]})
+    for configured, expected in (("", "outil/1"), ("Mon agent/2", "Mon agent/2")):
+        monkeypatch.setattr(net, "USER_AGENT", configured)
+        go(net.download("https://exemple.fr/", timeout=5, limit=1000, user_agent="outil/1",
+                        transport=httpx2.MockTransport(handler)))
+        assert seen[-1] == expected

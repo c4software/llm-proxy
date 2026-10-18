@@ -60,6 +60,10 @@ ALLOW_PRIVATE = _setting("allow_private", config.flag)
 ALLOWED_DOMAINS = _setting("allowed_domains", config.strings)
 BLOCKED_DOMAINS = _setting("blocked_domains", config.strings)
 MAX_REDIRECTS = 5
+# L'User-Agent de TOUT ce que le proxy télécharge pour un outil ; vide =
+# celui de chaque outil (« llm-proxy web_fetch (+…) »). Fixé par celui qui
+# déploie.
+USER_AGENT = _setting("user_agent", config.text).strip()
 
 
 def _blocked_urls() -> list[tuple[re.Pattern, str]]:
@@ -280,6 +284,7 @@ async def download(url: str, settings=None, *, timeout: float, limit,
     erreur de transport, trop de redirections, HTTP ≥ 400),
     `too_many_requests` (HTTP 429)."""
     bound = limit if callable(limit) else lambda r, body: limit
+    user_agent = USER_AGENT or user_agent
     try:
         for _ in range(MAX_REDIRECTS + 1):
             check(url, settings)
