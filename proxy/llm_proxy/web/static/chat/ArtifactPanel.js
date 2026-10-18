@@ -7,11 +7,11 @@
   ou se télécharge ; « Large » élargit le panneau. « Réseau » l'ouvre à
   internet, pour CET artifact (`art.network`, gardé avec lui), après un
   avertissement : un artifact écrit par le modèle peut alors envoyer ce
-  qu'il contient à n'importe quel site. « Débogage » (`art.debug`, coupé
+  qu'il contient à n'importe quel site. « Débogage » (`art.debug`, actif
   par défaut) permet au modèle de tester cet artifact (artifact-bridge.js) ;
-  le modèle le propose par une carte (request_artifact_debug).
+  coupé, le modèle peut proposer de le rétablir (request_artifact_debug).
 */
-import { artifactDoc, artifactFile } from "./artifacts.js";
+import { artifactDoc, artifactFile, debugOn } from "./artifacts.js";
 import { useCopy, download } from "../lib/files.js";
 import * as bridge from "./artifact-bridge.js";
 
@@ -36,7 +36,7 @@ export const ArtifactPanel = {
       return v[versionIndex.value < 0 ? v.length - 1 : versionIndex.value];
     });
     const doc = computed(() => (version.value
-      ? artifactDoc(version.value, { network: !!art.value.network, debug: !!art.value.debug }) : ""));
+      ? artifactDoc(version.value, { network: !!art.value.network, debug: debugOn(art.value) }) : ""));
     // Le réseau : coupé d'un clic, ouvert après l'avertissement.
     const asking = ref(false);
     watch(() => art.value && art.value.id, () => { asking.value = false; });
@@ -57,7 +57,7 @@ export const ArtifactPanel = {
     });
     // Seulement si le débogage est actif : sinon le document n'a pas de pont.
     function onFrameLoad() {
-      if (frame.value && art.value && art.value.debug) bridge.register(art.value.id, shownVersion.value, frame.value);
+      if (frame.value && art.value && debugOn(art.value)) bridge.register(art.value.id, shownVersion.value, frame.value);
     }
     // Un autre document (version, réseau, débogage) : l'ancien n'est plus
     // à interroger, le nouveau s'inscrira à son chargement.
@@ -65,17 +65,60 @@ export const ArtifactPanel = {
     onUnmounted(() => { if (frame.value) bridge.unregister(frame.value); });
     const inspecting = computed(() => !!art.value && bridge.busy.value === art.value.id);
     const wide = ref(false);
+    // La LARGEUR du panneau, tirée par sa poignée (bord gauche) : gardée
+    // dans ce navigateur ; 0 = celle par défaut. « Large » la remplace tant
+    // qu'il est actif ; un double-clic sur la poignée revient au défaut.
+    const MIN = 320;
+    const width = VueUse.useLocalStorage("llm-proxy-artifact-width", 0);
+    const dragging = ref(false);
+    function clampWidth(w) {
+      const host = panel.value && panel.value.parentElement;
+      const max = host ? host.getBoundingClientRect().width - 320 : window.innerWidth - 320;
+      return Math.round(Math.max(MIN, Math.min(w, Math.max(MIN, max))));
+    }
+    function startResize(e) {
+      if (e.button !== 0 || !panel.value) return;
+      e.preventDefault();
+      const handle = e.currentTarget;
+      handle.setPointerCapture(e.pointerId);
+      const right = panel.value.getBoundingClientRect().right;
+      dragging.value = true;
+      wide.value = false;
+      const move = (ev) => { width.value = clampWidth(right - ev.clientX); };
+      const stop = () => {
+        dragging.value = false;
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", stop);
+        handle.removeEventListener("pointercancel", stop);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", stop);
+      handle.addEventListener("pointercancel", stop);
+    }
+    function keyResize(e) {
+      const step = e.shiftKey ? 96 : 32;
+      const now = width.value || (panel.value ? panel.value.getBoundingClientRect().width : 480);
+      if (e.key === "ArrowLeft") { e.preventDefault(); wide.value = false; width.value = clampWidth(now + step); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); wide.value = false; width.value = clampWidth(now - step); }
+      else if (e.key === "Home") { e.preventDefault(); width.value = 0; }
+    }
+    const sized = computed(() => !!width.value && !wide.value && !full.value);
+    const panelStyle = computed(() => (sized.value ? { width: width.value + "px" } : {}));
     // Plein écran : le panneau entier, son en-tête compris (de quoi en sortir).
     const panel = ref(null);
     const { isSupported: canFull, isFullscreen: full, toggle: toggleFull } = VueUse.useFullscreen(panel);
     const showSource = ref(false);
     const file = computed(() => (art.value && version.value ? artifactFile(art.value, version.value) : null));
-    return { art, version, versionIndex, doc, frame, onFrameLoad, inspecting, wide, panel, canFull, full, toggleFull, showSource, file, copied, copy, download,
+    return { art, version, versionIndex, doc, frame, debugOn, onFrameLoad, inspecting, wide, width, dragging, sized, panelStyle,
+             startResize, keyResize, resetWidth: () => { width.value = 0; }, panel, canFull, full, toggleFull, showSource, file, copied, copy, download,
              asking, toggleNetwork, allowNetwork,
              pick: (id) => emit("select", id), close: () => emit("close") };
   },
   template: `
-  <section class="artifact-side" :class="{ wide }" v-if="art" ref="panel">
+  <section class="artifact-side" :class="{ wide, sized, dragging }" v-if="art" ref="panel" :style="panelStyle">
+    <div class="artifact-resize" role="separator" aria-orientation="vertical" tabindex="0"
+         aria-label="Largeur du panneau" title="Tirer pour redimensionner ; double-clic : largeur par défaut"
+         :aria-valuenow="width || undefined" @pointerdown="startResize" @dblclick="resetWidth" @keydown="keyResize"></div>
     <header class="artifact-head">
       <select v-if="artifacts.length > 1" class="art-pick" :value="art.id" @change="pick($event.target.value)"
               aria-label="Artifact affiché" :title="art.title">
@@ -102,8 +145,8 @@ export const ArtifactPanel = {
                 :title="art.network ? 'Réseau ouvert à cet artifact : couper' : 'Réseau bloqué : l’ouvrir à cet artifact (cartes, API…)'"
                 aria-label="Réseau">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></button>
-        <button type="button" class="btn ghost art-btn net dbg" :aria-pressed="String(!!art.debug)" @click="art.debug = !art.debug"
-                :title="art.debug ? 'Débogage actif : le modèle peut lire la console de cet artifact, y exécuter du code, le capturer — couper (recharge l’artifact)' : 'Débogage coupé : le permettre au modèle pour cet artifact (console, code, capture)'"
+        <button type="button" class="btn ghost art-btn net dbg" :aria-pressed="String(debugOn(art))" @click="art.debug = !debugOn(art)"
+                :title="debugOn(art) ? 'Débogage actif : le modèle peut lire la console de cet artifact, y exécuter du code, le capturer — couper (recharge l’artifact)' : 'Débogage coupé : le permettre au modèle pour cet artifact (console, code, capture)'"
                 aria-label="Débogage">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6a4 4 0 0 1 8 0M7 9h10v5a5 5 0 0 1-10 0V9zM12 9v10M4 12h3M17 12h3M5 18l2.5-1.5M19 18l-2.5-1.5M5 7l2.5 2M19 7l-2.5 2"/></svg></button>
         <button type="button" class="btn ghost art-btn" :aria-pressed="String(wide)" @click="wide = !wide"

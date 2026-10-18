@@ -31,8 +31,12 @@ const BASE_CSS = `<style>:root{color-scheme:light}body{margin:0;padding:20px;bac
   pre{white-space:pre-wrap}table{border-collapse:collapse}td,th{border:1px solid #8884;padding:4px 8px}
   img,svg{max-width:100%}</style>`;
 
+/** Le DÉBOGAGE d'un artifact : actif, sauf si l'utilisateur l'a coupé
+ * (`art.debug === false`, bouton Débogage du panneau). @param {any} art */
+export const debugOn = (art) => !!art && art.debug !== false;
+
 // Le PONT de l'artifact (artifact-bridge.js), en tête de son document —
-// seulement si l'utilisateur a activé son DÉBOGAGE (`art.debug`) : dès le
+// seulement si son DÉBOGAGE est actif (debugOn, par défaut) : dès le
 // chargement, il garde la console et les erreurs ; il répond aux demandes
 // de la page qui l'a rendu (et d'elle seule) — inspecter la page, y
 // exécuter un script avec ses aides (click, type, wait, text), la
