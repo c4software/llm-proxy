@@ -8,8 +8,13 @@
   survit à un rechargement. Écrire un nouveau message au lieu de répondre
   clôt la question, sans réponse.
 
+  Plusieurs questions : un onglet par question, puis un RÉCAPITULATIF
+  (chaque question et sa réponse, en une ligne : un clic y revient) ; le
+  bouton principal fait « Suivant » dès que la question a sa réponse,
+  « Envoyer les réponses » sur le récapitulatif.
+
   Le clavier, dans la feuille : 1…9 choisit, ←/→ change d'onglet, Entrée
-  envoie, Échap réduit.
+  fait le bouton principal (Suivant, Envoyer), Échap réduit.
 */
 import { TOOL, FAMILY, PageTool, defineFamily, failure } from "../contract.js";
 
@@ -29,6 +34,14 @@ function option(o) {
 const answered = (q) => q.picked.length > 0 || (q.other || "").trim() !== "";
 
 // La feuille : les onglets, la question montrée, ses options.
+// La réponse d'une question, en une ligne (le récapitulatif).
+/** @param {any} q */
+const answerOf = (q) => [...q.picked, ...((q.other || "").trim() ? [`« ${q.other.trim()} »`] : [])].join(", ");
+
+// La feuille : un onglet par question et, s'il y en a plusieurs, un
+// RÉCAPITULATIF en dernier. Le bouton principal fait « Suivant » dès que
+// la question a sa réponse (un choix unique y passe tout seul), puis
+// « Envoyer les réponses » sur le récapitulatif.
 const AskSheet = {
   props: ["w", "busy", "ctx"],
   emits: ["act", "minimize"],
@@ -36,7 +49,10 @@ const AskSheet = {
     const tab = ref(0);
     const root = ref(null);
     const qs = computed(() => props.w.questions);
-    const q = computed(() => qs.value[Math.min(tab.value, qs.value.length - 1)] || null);
+    const multi = computed(() => qs.value.length > 1);
+    const tabs = computed(() => qs.value.length + (multi.value ? 1 : 0));
+    const recap = computed(() => multi.value && tab.value === qs.value.length);
+    const q = computed(() => (recap.value ? null : qs.value[Math.min(tab.value, qs.value.length - 1)] || null));
     const ready = computed(() => qs.value.every(answered));
     const count = computed(() => qs.value.filter(answered).length);
     function focus(selector) {
@@ -46,17 +62,17 @@ const AskSheet = {
       });
     }
     function show(k) {
-      tab.value = (k + qs.value.length) % qs.value.length;
-      focus(".ask-opt");
+      tab.value = (k + tabs.value) % tabs.value;
+      focus(recap.value ? ".sheet-submit" : ".ask-opt");
     }
-    // Une réponse donnée (choix unique) : la question suivante sans
-    // réponse, sinon le bouton d'envoi.
+    // La suite : la question suivante sans réponse, sinon le récapitulatif
+    // (ou, pour une question seule, le bouton d'envoi).
     function advance() {
-      for (let d = 1; d <= qs.value.length; d++) {
-        const k = (tab.value + d) % qs.value.length;
+      if (!multi.value) { focus(".sheet-submit"); return; }
+      for (let k = tab.value + 1; k < qs.value.length; k++) {
         if (!answered(qs.value[k])) { show(k); return; }
       }
-      focus(".sheet-submit");
+      show(qs.value.length);
     }
     function pick(x, label) {
       if (props.busy) return;
@@ -77,15 +93,24 @@ const AskSheet = {
       focus(".ask-other");
     }
     const send = () => emit("act", "answer");
+    // Le bouton principal : Suivant (une question répondue), ou Envoyer.
+    const primary = computed(() => {
+      if (!multi.value) return { label: "Envoyer la réponse", disabled: !ready.value, next: false };
+      if (recap.value) return { label: "Envoyer les réponses", disabled: !ready.value, next: false };
+      return { label: "Suivant", disabled: !q.value || !answered(q.value), next: true };
+    });
+    function onPrimary() {
+      if (props.busy || primary.value.disabled) return;
+      if (primary.value.next) show(tab.value + 1);
+      else send();
+    }
     function onKey(e) {
       if (e.key === "Escape") { emit("minimize"); return; }
-      const x = q.value;
-      if (!x || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       const typing = e.target.tagName === "INPUT";
-      if (e.key === "Enter" && typing) {
+      if (e.key === "Enter" && (typing || recap.value || e.target === root.value)) {
         e.preventDefault();
-        if (ready.value) send();
-        else if (!x.multiple && answered(x)) advance();
+        onPrimary();
         return;
       }
       if (typing) return;
@@ -94,7 +119,8 @@ const AskSheet = {
         show(tab.value + (e.key === "ArrowRight" ? 1 : -1));
         return;
       }
-      if (/^[1-9]$/.test(e.key)) {
+      const x = q.value;
+      if (x && /^[1-9]$/.test(e.key)) {
         const n = Number(e.key) - 1, opts = x.options.map(option);
         if (n < opts.length) { e.preventDefault(); pick(x, opts[n].label); }
         else if (n === opts.length) { e.preventDefault(); pickOther(x); }
@@ -103,23 +129,38 @@ const AskSheet = {
     // Une nouvelle question : le premier onglet, la première option.
     watch(() => props.w.id, () => { tab.value = 0; focus(".ask-opt"); });
     onMounted(() => focus(".ask-opt"));
-    return { root, tab, qs, q, ready, count, show, pick, pickOther, send, onKey, answered, option };
+    return { root, tab, qs, multi, recap, q, ready, count, show, pick, pickOther, primary, onPrimary,
+             onKey, answered, option, answerOf };
   },
   template: `
-    <div class="sheet-inner" ref="root" @keydown="onKey">
+    <div class="sheet-inner" ref="root" tabindex="-1" @keydown="onKey">
       <header class="sheet-head">
         <div class="sheet-tabs" role="tablist">
           <button type="button" role="tab" v-for="(x, k) in qs" :key="k"
-                  :aria-selected="String(x === q)" :class="{ done: answered(x) }"
+                  :aria-selected="String(tab === k)" :class="{ done: answered(x) }"
                   @click="show(k)" :title="x.question">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" v-if="answered(x)"><path d="M5 12l5 5 9-10"/></svg>
             {{ x.header || "Question " + (k + 1) }}</button>
+          <button type="button" role="tab" v-if="multi" :aria-selected="String(recap)" :class="{ done: ready }"
+                  @click="show(qs.length)" title="Toutes les réponses, avant de les envoyer">Récapitulatif</button>
         </div>
         <button type="button" class="sheet-x" @click="$emit('minimize')"
                 title="Réduire pour relire le fil ou écrire autre chose (Échap)" aria-label="Réduire">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
       </header>
-      <div class="sheet-body" role="tabpanel" v-if="q">
+      <div class="sheet-body" role="tabpanel" v-if="recap">
+        <ul class="ask-recap">
+          <li v-for="(x, k) in qs" :key="k">
+            <button type="button" class="ask-recap-row" :class="{ missing: !answered(x) }" @click="show(k)"
+                    :title="x.question + ' — cliquer pour changer'">
+              <b>{{ x.header || "Question " + (k + 1) }}</b>
+              <span class="ask-recap-answer">{{ answered(x) ? answerOf(x) : "sans réponse — choisir" }}</span>
+              <span class="ask-recap-q dim">{{ x.question }}</span>
+            </button>
+          </li>
+        </ul>
+      </div>
+      <div class="sheet-body" role="tabpanel" v-else-if="q">
         <p class="ask-text">{{ q.question }}<span class="dim" v-if="q.multiple"> · plusieurs choix</span></p>
         <div class="ask-list" :role="q.multiple ? 'group' : 'radiogroup'">
           <button type="button" class="ask-opt" v-for="(o, n) in q.options.map(option)" :key="o.label"
@@ -141,8 +182,8 @@ const AskSheet = {
         </div>
       </div>
       <footer class="sheet-foot">
-        <button type="button" class="btn sheet-submit" :disabled="busy || !ready" @click="send">Envoyer les réponses
-          <span class="count" v-if="qs.length > 1">{{ count }}/{{ qs.length }}</span></button>
+        <button type="button" class="btn sheet-submit" :disabled="busy || primary.disabled" @click="onPrimary">{{ primary.label }}
+          <span class="count" v-if="multi">{{ count }}/{{ qs.length }}</span></button>
         <button type="button" class="btn ghost" :disabled="busy" @click="$emit('act', 'skip')">Passer</button>
       </footer>
     </div>`,

@@ -198,13 +198,22 @@ Tous ces outils suivent la même interface de code (`chat/tools/`) : voir
 
 `ask_user` sert quand une décision revient à l'utilisateur. La feuille
 couvre la zone de saisie : un onglet par question, les options avec leur
-description, *Autre* en dernier, *Envoyer les réponses* ou *Passer*.
+description, *Autre* en dernier.
+
+- Plusieurs questions : le bouton principal fait **Suivant** dès que la
+  question a sa réponse (un choix unique passe tout seul à la suivante).
+  Un dernier onglet, **Récapitulatif**, montre chaque question et sa
+  réponse sur une ligne ; un clic sur une ligne y revient pour la changer,
+  une question sans réponse y est signalée. On envoie de là (*Envoyer les
+  réponses*).
+- Une question seule : *Envoyer la réponse*, sans récapitulatif.
+- *Passer* répond sans rien choisir.
 
 | Touche | Action |
 |---|---|
 | `1`…`9` | choisir (un choix unique passe à la question suivante) |
 | `←` / `→` | changer d'onglet |
-| Entrée | envoyer |
+| Entrée | le bouton principal : *Suivant*, ou envoyer depuis le récapitulatif |
 | Échap | replier la feuille, pour relire le fil ou écrire autre chose |
 
 #### Dossier ouvert
