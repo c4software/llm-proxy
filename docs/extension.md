@@ -29,6 +29,8 @@ client (chat, Codex, pi, omp…) ──► proxy ──(WebSocket, clé du compt
    et choisir le dossier.
 3. Dans les options de l'extension, saisir l'adresse du proxy et une de vos
    clés (tableau de bord, section *Clés*). L'état passe à *connectée*.
+   L'adresse doit être en `https://` (`http://` seulement pour
+   `localhost`) : la clé et les ordres ne passent jamais en clair.
 4. Côté proxy : `[tools.browser] enabled = true`. Pour le chat de la page,
    il faut aussi `[chat] hosted_tools = true`.
 
@@ -50,6 +52,30 @@ minimum. Il n'existe pas d'extensions sur Chrome Android ni sur iOS.
     déranger.
   - Si un clic mène l'onglet sur un autre site, l'action suivante demande
     l'accord de ce site.
+- **Pour une session que vous avez confirmée.** Chaque appel arrive avec
+  ce que le proxy sait de son auteur. À la première action d'une session,
+  une fenêtre *Un client veut piloter ce navigateur* le montre :
+  - le logiciel client, reconnu à son User-Agent (Codex, omp, pi, Claude
+    Code, un navigateur…), avec le User-Agent brut ;
+  - le nom de la clé, ou « chat de la page du proxy » ;
+  - la route (API Chat Completions, Responses, Anthropic, serveur MCP,
+    appel direct) ;
+  - le modèle.
+
+  Vous répondez *Autoriser cette session* ou *Refuser* ; sans réponse au
+  bout d'une minute, c'est un refus. L'accord tombe après 30 minutes sans
+  action, ou à la fermeture du navigateur ; il se révoque dans le menu de
+  l'extension (*Sessions autorisées*). Un refus vaut 10 minutes pour cette
+  session.
+
+  Une **session**, c'est la clé de l'appel avec sa conversation, quand la
+  route en a une (le chat, les surfaces). Sans conversation (`/mcp`,
+  `/v1/tools`), c'est la clé avec le logiciel client. Le proxy en fait un
+  condensé : un autre client du même compte, qui n'a pas cette clé, ne
+  peut pas reprendre une session déjà confirmée. **Une clé volée se
+  remarque donc** : son premier usage vous demande une confirmation que
+  vous n'attendiez pas. Refusez-la, puis révoquez la clé dans le tableau
+  de bord.
 - **Tant que vous ne l'arrêtez pas.** Un bandeau *Piloté par l'IA*, avec un
   bouton **Arrêter**, s'affiche dans chaque onglet de l'IA ; le menu de
   l'extension a le même bouton, et *Reprendre*. Arrêtée, l'extension
@@ -131,7 +157,9 @@ ne voit pas l'image : il lit la page avec `read`.
 
 ## Le lien
 
-L'extension garde une WebSocket ouverte vers `/v1/browser/link`. Le
+L'extension garde une WebSocket ouverte vers `/v1/browser/link`. Chaque
+appel y porte `who` (session, nom de la clé, logiciel client, route,
+modèle), ce qui permet la confirmation par session. Le
 protocole est décrit dans
 [`browser_link.py`](../proxy/llm_proxy/browser_link.py).
 

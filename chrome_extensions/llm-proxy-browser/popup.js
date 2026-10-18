@@ -25,6 +25,13 @@ async function show() {
   $("tabs").replaceChildren(...(list.length ? list.map((t) => item(t.title || t.url, "Voir",
     () => { chrome.tabs.update(t.id, { active: true }); chrome.windows.update(t.windowId, { focused: true }); }))
     : [item("aucun", "", null)]));
+  const { sessions } = await chrome.storage.session.get("sessions");
+  const IDLE = 30 * 60_000;
+  const live = Object.entries(sessions || {}).filter(([, v]) => Date.now() - v.last < IDLE);
+  $("sessions").replaceChildren(...(live.length ? live.map(([id, v]) => item(
+    `${v.who.key || "?"} · ${v.who.model || v.who.endpoint || ""} — encore ${Math.ceil((IDLE - (Date.now() - v.last)) / 60_000)} min`,
+    "Révoquer", () => chrome.runtime.sendMessage({ type: "revoke", session: id })))
+    : [item("aucune", "", null)]));
   const hosts = Object.keys(allowed || {}).sort();
   $("sites").replaceChildren(...(hosts.length ? hosts.map((h) => item(h, "Retirer", async () => {
     const { allowed: a } = await chrome.storage.local.get("allowed");

@@ -19,7 +19,10 @@ Un navigateur ne sait pas poser d'en-tête sur une WebSocket : la clé
 voyage donc dans le premier message, jamais dans l'URL.
 
   proxy → extension  {"type": "welcome", "protocol": 1}
-                     {"type": "call", "id": …, "op": …, "args": {…}}
+                     {"type": "call", "id": …, "op": …, "args": {…},
+                      "who": {"session", "key", "agent", "endpoint",
+                              "model", "conversation"}} — qui appelle :
+                     l'extension fait CONFIRMER chaque session
                      {"type": "pong"}
   extension → proxy  {"type": "result", "id": …, "ok": true, "text": …,
                       "url"?, "title"?, "image"? (data URL)}
@@ -72,15 +75,17 @@ class Link:
         self.since = time.time()
         self.pending: dict[str, asyncio.Future] = {}
 
-    async def call(self, op: str, args: dict, timeout: float) -> dict:
-        """Un appel à l'extension → son message `result`. Lève
-        LinkClosed (lien perdu) ou asyncio.TimeoutError."""
+    async def call(self, op: str, args: dict, timeout: float,
+                   who: dict | None = None) -> dict:
+        """Un appel à l'extension → son message `result`. `who` : qui
+        appelle (tools/browser.py) — l'extension fait confirmer chaque
+        SESSION. Lève LinkClosed (lien perdu) ou asyncio.TimeoutError."""
         cid = secrets.token_hex(8)
         fut = asyncio.get_running_loop().create_future()
         self.pending[cid] = fut
         try:
             await self.ws.send_text(json.dumps(
-                {"type": "call", "id": cid, "op": op, "args": args},
+                {"type": "call", "id": cid, "op": op, "args": args, "who": who or {}},
                 ensure_ascii=False))
             return await asyncio.wait_for(fut, timeout)
         except (WebSocketDisconnect, RuntimeError) as exc:

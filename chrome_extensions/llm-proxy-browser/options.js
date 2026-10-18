@@ -15,6 +15,16 @@ chrome.storage.local.get("settings").then(({ settings }) => {
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const url = $("url").value.trim().replace(/\/+$/, "");
+  // HTTPS, sauf sur cette machine : la clé et les ordres ne passent pas en clair.
+  let u = null;
+  try { u = new URL(url); } catch { /* invalide */ }
+  const local = u && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+  if (!u || !(u.protocol === "https:" || (u.protocol === "http:" && local))) {
+    $("error").textContent = "Adresse en https:// attendue (http:// seulement pour localhost) : la clé et les ordres ne doivent pas passer en clair.";
+    $("error").hidden = false;
+    return;
+  }
+  $("error").hidden = true;
   await chrome.storage.local.set({ settings: { url, key: $("key").value.trim() } });
   chrome.runtime.sendMessage({ type: "reconnect" });
 });

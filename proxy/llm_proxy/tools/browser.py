@@ -27,12 +27,22 @@ qui ignorent les événements d'un script ; Chrome affiche alors son bandeau
 
 Le lien est celui du CLIENT de l'appel (call.client) : un client n'agit que
 dans le navigateur connecté avec une de ses clés.
+
+QUI APPELLE (`who`, joint à chaque appel) : l'extension fait CONFIRMER
+chaque session par l'utilisateur, en lui montrant le nom de la clé, le
+logiciel client (User-Agent), la route, le modèle. La SESSION est un
+condensé de la clé de l'appel (stats.CLIENT, son api_key_id) et de la
+conversation (call.session), ou à défaut du logiciel client : un autre
+client du même compte, qui n'a pas cette clé, ne peut pas se faire passer
+pour une session déjà confirmée.
 """
 
+import asyncio
 import base64
+import hashlib
 import re
 
-from .. import config
+from .. import accounts, config, stats
 from .contract import Artifact, Call, Result, Tool, ToolError, ToolName, ERRORS
 
 ENABLED = config.flag("tools.browser.enabled", False)
@@ -44,6 +54,28 @@ ACTIONS = ("tabs", "open", "navigate", "back", "read", "click", "type",
 TIMEOUT = float(config.get("tools.browser.timeout", 90))
 MAX_CALLS = int(config.get("tools.browser.max_calls", 60))
 DATA_URL = re.compile(r"^data:(image/(?:jpeg|png));base64,(.+)$", re.S)
+
+
+def _key_label(api_key_id: str, call: Call) -> str:
+    """Le nom de la clé de l'appel, tel que l'utilisateur le connaît."""
+    if call.endpoint.startswith("/ui"):
+        return "chat de la page du proxy"
+    try:
+        name = accounts.key_name(api_key_id)
+    except Exception:           # pas de base de comptes
+        name = ""
+    return f"clé « {name} »" if name else (f"clé {api_key_id[:6]}…" if api_key_id else "proxy ouvert")
+
+
+async def _who(call: Call) -> dict:
+    from .. import auth
+    api_key_id = stats.CLIENT.get() or ""
+    agent = auth.AGENT.get() or ""
+    basis = call.session or ("agent:" + agent)
+    session = hashlib.blake2b(f"{api_key_id}\0{basis}".encode(), digest_size=12).hexdigest()
+    return {"session": session, "key": await asyncio.to_thread(_key_label, api_key_id, call),
+            "agent": agent, "endpoint": call.endpoint, "model": call.model,
+            "conversation": bool(call.session)}
 
 
 class BrowserTool(Tool):
@@ -62,7 +94,8 @@ class BrowserTool(Tool):
             "things on websites on their behalf. You work in tabs of your own "
             "(a dedicated window). The first time you act on a website, the user "
             "is asked to allow it: this may take a while; if they refuse, do not "
-            "retry that site, tell them. Typical loop: open a URL (the page comes "
+            "retry that site, tell them. The user also confirms each session of "
+            "yours once (first action, then again after 30 idle minutes). Typical loop: open a URL (the page comes "
             "back as text, each link, button and field tagged with a ref like "
             "[12]), act on refs (click, type, select, key, scroll), read again "
             "when the page changed. Refs are only valid for the latest read of "
@@ -139,7 +172,7 @@ class BrowserTool(Tool):
                 "browser extension (download it from the proxy's chat page, "
                 "Tools menu), connected with one of their proxy keys."))
         try:
-            reply = await link.call(action, args, TIMEOUT)
+            reply = await link.call(action, args, TIMEOUT, await _who(call))
         except browser_link.LinkClosed:
             raise ToolError("unavailable", "the browser disconnected during the action.")
         except TimeoutError:

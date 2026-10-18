@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "llm-proxy — navigateur piloté",
   "short_name": "llm-proxy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Laisse les modèles de votre proxy llm-proxy agir dans ce navigateur, dans une fenêtre à eux, sur les sites que vous autorisez.",
   "minimum_chrome_version": "116",
   "background": { "service_worker": "background.js", "type": "module" },

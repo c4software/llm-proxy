@@ -54,6 +54,10 @@ def test_presentation_et_relais_d_un_appel(client):
         call = json.loads(ws.receive_text())
         assert call["type"] == "call" and call["op"] == "open"
         assert call["args"] == {"action": "open", "url": "https://exemple.fr"}
+        # Qui appelle : de quoi faire confirmer la session par l'utilisateur.
+        who = call["who"]
+        assert who["endpoint"] == "/v1/tools" and who["key"].startswith("clé ")
+        assert who["agent"] == "testclient" and len(who["session"]) == 24
         ws.send_text(json.dumps({"type": "result", "id": call["id"], "ok": True,
                                  "text": "[tab 7] Exemple\n[1] lien « Accueil »",
                                  "url": "https://exemple.fr/", "title": "Exemple"}))
@@ -169,3 +173,25 @@ def test_extension_en_zip(client):
     assert "llm-proxy-browser/manifest.json" in names
     manifest = json.loads(zipfile.ZipFile(io.BytesIO(r.content)).read("llm-proxy-browser/manifest.json"))
     assert manifest["manifest_version"] == 3
+
+
+def test_session_propre_a_la_cle_et_au_client(client):
+    """La session d'un appel sans conversation : la clé et le logiciel
+    client. Une autre clé du même compte, ou un autre logiciel, en est une
+    autre ; la même clé, avec le même logiciel, la même."""
+    with client.websocket_connect(browser_link.PATH) as ws:
+        hello(ws)
+        seen = []
+        for key, agent in (("sk-a", "codex/1"), ("sk-a", "codex/1"), ("sk-a", "omp/2")):
+            out = {}
+            def go():
+                out["r"] = client.post("/v1/tools/browser", json={"action": "tabs"},
+                                       headers={**bearer(key), "user-agent": agent}).json()
+            t = threading.Thread(target=go)
+            t.start()
+            call = json.loads(ws.receive_text())
+            seen.append((call["who"]["session"], call["who"]["agent"]))
+            ws.send_text(json.dumps({"type": "result", "id": call["id"], "ok": True, "text": "-"}))
+            t.join(5)
+        assert seen[0] == seen[1] and seen[0][0] != seen[2][0]
+        assert seen[2][1] == "omp/2"

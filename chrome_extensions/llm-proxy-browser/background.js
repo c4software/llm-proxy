@@ -16,17 +16,24 @@
     - sur un site (un nom d'hôte) que l'utilisateur a AUTORISÉ : la première
       action sur un site ouvre une fenêtre de demande (consent.html), une
       minute au plus ; l'accord est gardé, et se retire dans le popup ;
+    - pour une SESSION que l'utilisateur a CONFIRMÉE : chaque appel porte
+      `who` (le proxy dit qui appelle : nom de la clé, logiciel client,
+      route, modèle, et un identifiant de session qu'un autre client ne
+      peut pas reprendre) ; la première action d'une session ouvre une
+      fenêtre de confirmation ; l'accord tombe après 30 min sans action,
+      ou à la fermeture du navigateur ; il se révoque dans le popup ;
     - tant que l'utilisateur ne l'a pas ARRÊTÉE (bouton du bandeau de ses
       onglets, ou du popup).
 
   Stockage : `chrome.storage.local` — settings {url, key}, allowed {hôte:
   date}, stopped ; `chrome.storage.session` (oublié à la fermeture du
-  navigateur) — window, tabs, last, status.
+  navigateur) — window, tabs, last, status, sessions {id: {last, who}}.
 */
 const VERSION = chrome.runtime.getManifest().version;
 const PING_MS = 20_000;
 const CONSENT_MS = 60_000;
 const LOAD_MS = 15_000;
+const SESSION_IDLE_MS = 30 * 60_000;
 
 // ── état ─────────────────────────────────────────────────────────────────
 const local = (k) => chrome.storage.local.get(k).then((o) => o[k]);
@@ -50,6 +57,14 @@ let pinger = null;
 let retry = 1000;
 let retryTimer = null;
 
+// HTTPS, sauf sur cette machine.
+function secure(base) {
+  try {
+    const u = new URL(base);
+    return u.protocol === "https:" || (u.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname));
+  } catch { return false; }
+}
+
 function wsUrl(base) {
   const u = new URL(base);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
@@ -63,6 +78,7 @@ async function connect() {
   clearTimeout(retryTimer);
   const s = (await local("settings")) || {};
   if (!s.url) { await setStatus("unset", "adresse du proxy à régler (Options)"); return; }
+  if (!secure(s.url)) { await setStatus("unset", "adresse en https:// attendue (Options)"); return; }
   const st = (await session("status")) || {};
   if (["denied", "replaced"].includes(st.state) && st.url === s.url && st.key === s.key) return;
   let sock;
@@ -103,7 +119,7 @@ async function onMessage(sock, data) {
     await setStatus("on");
   } else if (msg.type === "call") {
     let reply;
-    try { reply = await handle(msg.op, msg.args || {}); } catch (e) { reply = fail("failed", e.message || String(e)); }
+    try { reply = await handle(msg.op, msg.args || {}, msg.who || {}); } catch (e) { reply = fail("failed", e.message || String(e)); }
     if (sock.readyState === 1) sock.send(JSON.stringify({ type: "result", id: msg.id, ...reply }));
   }
 }
@@ -190,20 +206,24 @@ async function consent(url) {
   if (refused.has(host) && Date.now() - refused.get(host) < 10 * 60_000) {
     throw Object.assign(new Error(`the user refused access to ${host}; do not retry, ask them`), { code: "not_allowed" });
   }
-  if (!asking.has(host)) asking.set(host, ask(host).finally(() => asking.delete(host)));
+  if (!asking.has(host)) asking.set(host, ask({ kind: "site", host }).finally(() => asking.delete(host)));
   const yes = await asking.get(host);
-  if (!yes) {
+  if (yes) {
+    const a = (await local("allowed")) || {};
+    await chrome.storage.local.set({ allowed: { ...a, [host]: Date.now() } });
+  } else {
     refused.set(host, Date.now());
     throw Object.assign(new Error(`the user did not allow ${host}; do not retry, ask them`), { code: "not_allowed" });
   }
 }
 
-async function ask(host) {
+// Une fenêtre de demande (consent.html) : un site, ou une session.
+async function ask(params) {
   const id = crypto.randomUUID();
   const s = (await local("settings")) || {};
-  const w = await chrome.windows.create({
-    url: `consent.html?host=${encodeURIComponent(host)}&id=${id}&proxy=${encodeURIComponent(s.url || "")}`,
-    type: "popup", width: 480, height: 340, focused: true });
+  const q = new URLSearchParams({ ...params, id, proxy: s.url || "" });
+  const w = await chrome.windows.create({ url: "consent.html?" + q, type: "popup",
+    width: 500, height: params.kind === "session" ? 470 : 340, focused: true });
   return new Promise((resolve) => {
     const done = (v) => {
       clearTimeout(timer);
@@ -214,16 +234,42 @@ async function ask(host) {
     };
     const timer = setTimeout(() => done(false), CONSENT_MS);
     function onMsg(m) {
-      if (m && m.type === "consent" && m.id === id) {
-        if (m.allow) {
-          local("allowed").then((a) => chrome.storage.local.set({ allowed: { ...(a || {}), [host]: Date.now() } })).then(() => done(true));
-        } else done(false);
-      }
+      if (m && m.type === "consent" && m.id === id) done(!!m.allow);
     }
     function onClosed(winId) { if (winId === w.id) done(false); }
     chrome.runtime.onMessage.addListener(onMsg);
     chrome.windows.onRemoved.addListener(onClosed);
   });
+}
+
+// ── les sessions confirmées ──────────────────────────────────────────────
+const askingSession = new Map();     // session → promesse de réponse
+const refusedSession = new Map();    // session → date du refus
+
+async function confirmSession(who) {
+  const id = String(who.session || "inconnue");
+  const sessions = (await session("sessions")) || {};
+  const known = sessions[id];
+  if (known && Date.now() - known.last < SESSION_IDLE_MS) {
+    sessions[id] = { ...known, last: Date.now() };
+    await setSession({ sessions });
+    return;
+  }
+  if (refusedSession.has(id) && Date.now() - refusedSession.get(id) < 10 * 60_000) {
+    throw Object.assign(new Error("the user did not allow this session to control the browser; do not retry, tell them"), { code: "not_allowed" });
+  }
+  if (!askingSession.has(id)) {
+    askingSession.set(id, ask({ kind: "session", key: who.key || "", agent: who.agent || "",
+      endpoint: who.endpoint || "", model: who.model || "", conversation: who.conversation ? "1" : "" })
+      .finally(() => askingSession.delete(id)));
+  }
+  if (!(await askingSession.get(id))) {
+    refusedSession.set(id, Date.now());
+    throw Object.assign(new Error("the user did not allow this session to control the browser; do not retry, tell them"), { code: "not_allowed" });
+  }
+  const now = (await session("sessions")) || {};
+  now[id] = { last: Date.now(), since: Date.now(), who };
+  await setSession({ sessions: now });
 }
 
 // ── dans la page ─────────────────────────────────────────────────────────
@@ -276,11 +322,12 @@ async function cdp(tabId, fn) {
 const ENTER = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
 
 // ── les actions ──────────────────────────────────────────────────────────
-async function handle(op, args) {
+async function handle(op, args, who) {
   if (await local("stopped")) {
     return fail("not_allowed", "the user paused browser control in the extension; ask them to resume it");
   }
   try {
+    await confirmSession(who);
     return await act(op, args);
   } catch (e) {
     return fail(e.code || "failed", e.message || String(e));
@@ -395,6 +442,8 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       func: () => globalThis.__llmProxyAgent && globalThis.__llmProxyAgent("banner", { on: false }) }).catch(() => {})));
   } else if (m.type === "resume") {
     chrome.storage.local.set({ stopped: false });
+  } else if (m.type === "revoke") {
+    session("sessions").then((all) => { const s = all || {}; delete s[m.session]; return setSession({ sessions: s }); });
   } else if (m.type === "reconnect") {
     reconnect();
   } else if (m.type === "share") {
