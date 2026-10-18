@@ -49,7 +49,8 @@ def test_requete_envoyee_a_browserless():
     r = go(render.render("https://appli.exemple.fr/", transport=browserless(seen=seen)))
     assert r.url == "https://appli.exemple.fr/" and r.title == "Appli" and "Rendu par JS" in r.html
     req = seen[0]
-    assert req.url.path == "/function" and req.url.params["token"] == "jeton"
+    assert req.url.path == "/function" and req.headers["authorization"] == "Bearer jeton"
+    assert "token" not in req.url.params                 # jamais dans l'URL (journaux)
     body = json.loads(req.content)
     assert "setRequestInterception" in body["code"]
     ctx = body["context"]

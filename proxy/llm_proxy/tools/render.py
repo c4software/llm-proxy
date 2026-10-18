@@ -157,8 +157,9 @@ async def render(url: str, settings=None, *, screenshot: bool = False,
     try:
         async with httpx2.AsyncClient(timeout=TIMEOUT + 15, transport=transport,
                                      trust_env=False) as c:
-            r = await c.post(f"{URL}/function", params={"token": TOKEN} if TOKEN else None,
-                             json=body)
+            # Le jeton en en-tête, jamais dans l'URL : les URL se journalisent.
+            r = await c.post(f"{URL}/function", json=body,
+                             headers={"Authorization": f"Bearer {TOKEN}"} if TOKEN else None)
     except httpx2.HTTPError as exc:
         raise ToolError("unavailable", f"the page renderer is unreachable ({type(exc).__name__}).")
     if r.status_code == 429:
