@@ -12,7 +12,7 @@
                                   résultat pour le modèle s'il lit les
                                   images (la première seulement)
 */
-import { saveFile } from "../../outputs.js";
+import { saveFile } from "../page/save.js";
 
 const MAX_FILE = 100e6;              // octets d'un fichier lu
 const MAX_FILES = 20;

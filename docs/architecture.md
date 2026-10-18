@@ -30,7 +30,8 @@ Commandes :
 - `proxy/wasm/` : `npm ci && npm run build`, qui écrit les runtimes des
   bacs dans `web/static/vendor/` (non versionné ; l'image le fait
   elle-même), et `npm run check`, qui vérifie les types du code de la
-  page (fichiers en `// @ts-check`, aussi lancé par pytest) ;
+  page (fichiers en `// @ts-check`) et le registre de ses outils (aussi
+  lancé par pytest) ;
 - `services/executor/` : `pytest` ;
 - `bench/`, qui a son propre compose : `docker compose run --rm <client>`.
 
@@ -147,8 +148,8 @@ Ces chemins sont sous `proxy/llm_proxy/`.
 | `conversations.py`, `conversation_routes.py` | Historique du chat (`data/conversations.db`) : conversations et images par compte, `/ui/conversations`, `/ui/assets` |
 | `web/templates/index.html` | Squelette de la page |
 | `web/static/` | Modules ES par domaine : `app.js` (session, vues, menu), `stats/`, `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème), plus `dashboard.css` et `vue.global.prod.js` |
-| `web/static/chat/` | `ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js`, `pagetools.js` ; outils de la page (`ask.js`, `workspace.js`, `outputs.js`, `device/`, voir ci-dessous) ; `models/`, `diff.js`, `ArtifactPanel.js`, `voice.js`, `notify.js` |
-| `web/static/chat/device/` | Les outils du navigateur : `contract.js` (le contrat d'un outil, les clés `TOOL` et `FAMILY`), `index.js` (le registre), un module par famille, `media.js` (flux caméra et écran), `sandbox/` (`bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits ; `javascript.js`, `typescript.js`, `php.js`, `sql.js` et `sqlbase.js`, la base de la conversation) |
+| `web/static/chat/` | `ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact), `models/`, `diff.js`, `ArtifactPanel.js`, `voice.js`, `notify.js` |
+| `web/static/chat/tools/` | Les outils que la page exécute : `contract.js` (les listes `TOOL` et `FAMILY`, l'interface `PageTool`), `index.js` (le registre, qui vérifie chaque outil au chargement), `page/` (questions, fichiers, artifacts, dossier), `device/` (l'appareil, `media.js` pour les flux), `sandbox/` (`bac.js`, le bac commun ; `files.js` ; `javascript.js`, `typescript.js`, `php.js`, `sql.js`, `sqlbase.js`). Voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page) |
 | `web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js), `sucrase.js`, `typescript.js` (le compilateur TypeScript 6 et ses `lib.*.d.ts`) |
 
 Ces chemins sont sous `proxy/llm_proxy/`.

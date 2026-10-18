@@ -12,6 +12,10 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "strict": false,
+    // Une méthode réécrite d'un outil porte @override, qui doit nommer une
+    // méthode de PageTool (tools/contract.js) : une faute de frappe est
+    // une erreur.
+    "noImplicitOverride": true,
     "skipLibCheck": true,
     "types": []
   },

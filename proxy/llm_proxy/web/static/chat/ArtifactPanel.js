@@ -9,7 +9,7 @@
   avertissement : un artifact écrit par le modèle peut alors envoyer ce
   qu'il contient à n'importe quel site.
 */
-import { artifactDoc, artifactFile } from "./outputs.js";
+import { artifactDoc, artifactFile } from "./artifacts.js";
 import { useCopy, download } from "../lib/files.js";
 
 const { ref, computed, watch } = Vue;

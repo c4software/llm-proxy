@@ -291,30 +291,106 @@ Sans eux, `run_php`, `run_sql` et `check_typescript` répondent que le
 runtime manque. `run_javascript` fonctionne toujours, mais sans
 `chart()` ni TypeScript.
 
-## Écrire un outil du navigateur
+## Écrire un outil de la page
 
-Chaque outil suit le contrat de `chat/device/contract.js`, sur le modèle
-de celui des [outils hébergés](outils.md) :
+Tous les outils que la page exécute suivent la même **interface** :
+ceux du navigateur, et aussi la question à choix (`ask_user`),
+`save_file`, les artifacts et le dossier ouvert. Ils sont rangés dans
+`chat/tools/` :
 
-- un nom pris dans `TOOL` et une famille prise dans `FAMILY`, deux
-  listes fermées (une clé ne change pas : l'historique des
-  conversations la garde) ;
-- `defineTool({...})` pour l'outil : sa description et ses paramètres
-  (ce que le modèle lit), un `summary` (la ligne de sa puce dans le
-  fil), et soit `run(args, ctx)` pour un outil qui s'exécute aussitôt,
-  soit `waits`, `prepare`, `view` et `act` pour un outil à carte ;
-- `defineFamily({...})` pour la famille : son libellé dans le menu, et
-  `available()` si le navigateur peut ne pas la proposer.
+| Dossier | Contenu |
+|---|---|
+| `tools/contract.js` | le contrat : les listes `TOOL` et `FAMILY`, les types, l'interface `PageTool`, `defineFamily` |
+| `tools/index.js` | le registre : l'inscription des modules, leur vérification, ce que le chat appelle |
+| `tools/page/` | questions (`ask.js`), fichiers (`save.js`), artifacts, dossier ouvert (`folder.js`) |
+| `tools/device/` | l'appareil, un module par famille ; `media.js`, les flux caméra et écran |
+| `tools/sandbox/` | les bacs de code ; `bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits |
 
-Un module par famille, inscrit dans `chat/device/index.js` : le registre
-ne connaît d'un outil que son contrat.
+Le chat (`ChatPanel.js`) ne nomme aucun outil : il passe toujours par
+le registre.
 
-Le contrat est **typé** en JSDoc (`ToolDef`, `Tool`, `Ctx`, `CardView`…),
-et les modules de `device/` commencent par `// @ts-check`. TypeScript
-les vérifie sans build : un nom d'outil hors de `TOOL`, une clé mal
-orthographiée (`sumary`) ou une carte qui rend `{resultat}` au lieu de
-`{result}` sont des erreurs.
+### L'interface `PageTool`
+
+Un outil est une **classe** qui hérite de `PageTool`. Son constructeur
+passe ce qu'il déclare ; ses méthodes réécrivent celles de l'interface,
+chacune marquée `@override` :
+
+```js
+class GetLocation extends PageTool {
+  constructor() {
+    super({
+      name: TOOL.GET_LOCATION,               // de la liste fermée TOOL
+      description: "Demande à l'utilisateur sa position…",
+      params: { reason: { type: "string", description: "Pourquoi…" } },
+      required: ["reason"],
+    });
+  }
+  /** @override */ waits() { return true; }                   // une carte
+  /** @override */ prepare(args) { return reasonOf(args); }   // l'état de la carte
+  /** @override */ view(w) { return { title: "…", actions: […] }; }
+  /** @override */ act(w, action, ctx) { return { result: "…" }; }
+  /** @override */ summary(a) { return a.reason; }            // la puce de l'appel
+}
+```
+
+| Membre | Rôle | Défaut |
+|---|---|---|
+| `super({name, description, params, required})` | ce que le modèle lit : le nom (de `TOOL`), la description, les paramètres | — |
+| `placement`, `component` (dans `super`) | une carte dans le fil ou dans la feuille du bas ; un composant Vue à la place du gabarit commun | dans le fil, gabarit commun |
+| `run(args, ctx)` | l'exécution, aussitôt : un texte, ou `{result, image?, artifact?}` | — |
+| `waits(args, ctx)` | attend-il l'utilisateur ? | non |
+| `prepare(args, ctx)` | l'état de la carte, ou `{error}` | `{}` |
+| `view(w)` | ce que la carte montre : titre, détail, boutons, aperçu, flux vidéo, citation | — |
+| `act(w, action, ctx, payload)` | un bouton : `{result, image?}` quand la carte est répondue, `null` si elle attend encore ; une erreur levée s'affiche | — |
+| `release(w)` | la carte est fermée : couper la caméra, l'écran | rien |
+| `abandoned(w)` | le résultat d'une carte laissée sans réponse | « L'utilisateur n'a pas répondu… » |
+| `notice(w)`, `pending(w)` | le texte de la notification ; la ligne qui rouvre la feuille | le titre de la carte |
+| `summary(args)` | la ligne de la puce de l'appel dans le fil | vide |
+| `fileContent(ref)` | le contenu, relu au clic, d'un fichier produit avec `source: {tool, ref}` | aucun |
+| `forget(convId)` | la conversation est supprimée : effacer ce que l'outil garde pour elle | rien |
+
+`ctx` donne au tour la conversation, le message, le dossier ouvert,
+`vision` (le modèle lit-il les images ?) et `download`.
+
+### La famille
+
+`defineFamily({...})` regroupe les outils d'un module :
+
+| Clé | Rôle |
+|---|---|
+| `key` | sa clé, de la liste fermée `FAMILY` |
+| `label`, `hint` | ce qu'affiche le menu Outils |
+| `on` | cochée d'office dans une conversation neuve |
+| `fixed` | toujours active, hors du menu (questions, fichiers, artifacts, dossier) |
+| `available()` | ce navigateur sait-il la faire ? |
+| `enabled(ctx)` | active pour ce tour ? (le dossier : s'il est ouvert) |
+| `guidance(ctx)` | une consigne ajoutée au **prompt système** quand la famille est active |
+| `tools` | ses outils (`new GetLocation()`…) |
+
+Le module exporte `FAMILIES`, et s'inscrit **une fois** dans la liste
+`MODULES` de `tools/index.js`.
+
+### Les garde-fous
+
+Trois vérifications empêchent les dérives :
+
+- **Le registre**, au chargement de la page, refuse :
+  - un outil qui n'hérite pas de `PageTool` ;
+  - un membre que l'interface ne déclare pas : `sumary()` au lieu de
+    `summary()`, ou une aide rangée dans la classe au lieu d'une
+    fonction du module ;
+  - un mode incohérent : une carte sans `act`, un outil sans `run` ni
+    carte, un paramètre requis absent de `params` ;
+  - un nom de `TOOL` ou une clé de `FAMILY` sans implémentation, ou
+    implémenté deux fois.
+- **TypeScript** vérifie les modules, tous en `// @ts-check`. Un
+  `@override` sur une méthode que `PageTool` n'a pas, une clé inconnue
+  dans `super({...})` ou une carte qui rend `{resultat}` au lieu de
+  `{result}` sont des erreurs.
+- **`npm run check`** lance les deux hors du navigateur : TypeScript,
+  puis le registre chargé par Node (`proxy/wasm/check-tools.mjs`).
+  pytest le lance aussi ; le test est ignoré sans Node.
 
 ```bash
-cd proxy/wasm && npm ci && npm run check   # aussi lancé par pytest (ignoré sans Node)
+cd proxy/wasm && npm ci && npm run check
 ```

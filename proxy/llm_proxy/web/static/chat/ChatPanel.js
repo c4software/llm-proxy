@@ -45,11 +45,8 @@ import { partialString } from "../lib/partialjson.js";
 import { availableBrowserModels, browserModel, modelCaps } from "./browser.js";
 import { catalog, catalogState, refreshCatalog } from "../lib/catalog.js";
 import * as workspace from "./workspace.js";
-import * as pagetools from "./pagetools.js";
-import * as askTool from "./ask.js";
 import * as notify from "./notify.js";
-import * as device from "./device/index.js";
-import { lineDiff, counts as diffCounts } from "./diff.js";
+import * as tools from "./tools/index.js";
 import { ArtifactPanel } from "./ArtifactPanel.js";
 import { download } from "../lib/files.js";
 import * as voice from "./voice.js";
@@ -91,17 +88,17 @@ export const ChatPanel = {
       return available.value.has("web_search") ? ["web_search"] : [];
     }
 
-    // Les familles d'outils du navigateur (device/) : celles que ce
+    // Les familles d'outils du menu (tools/) : celles que ce
     // navigateur sait faire, cochées par conversation ; une conversation
     // neuve reprend le dernier choix fait dans ce navigateur.
     const DEVICE_PREFS = "llm-proxy-chat-device";
-    const deviceFamilies = device.usableFamilies();
+    const deviceFamilies = tools.menuFamilies();
     function defaultDevice() {
       try {
         const v = JSON.parse(localStorage.getItem(DEVICE_PREFS) || "null");
         if (Array.isArray(v)) return v;
       } catch { /* sans stockage */ }
-      return device.defaultFamilies();
+      return tools.defaultFamilies();
     }
 
     // ── état ────────────────────────────────────────────────────────────
@@ -425,9 +422,12 @@ export const ChatPanel = {
       ];
     }
 
-    function apiMessages(conv, upto) {
+    // `guidance` : les consignes des outils actifs (tools.guidance), à la
+    // suite du prompt système de la conversation.
+    function apiMessages(conv, upto, guidance = "") {
       const out = [];
-      if (conv.system.trim()) out.push({ role: "system", content: conv.system });
+      const system = [conv.system.trim(), guidance].filter(Boolean).join("\n\n");
+      if (system) out.push({ role: "system", content: system });
       for (const m of conv.messages.slice(0, upto)) {
         if (m.role === "user") out.push({ role: "user", content: apiContent(m) });
         // Une réponse en erreur ou vide n'est pas renvoyée : le modèle ne
@@ -435,7 +435,7 @@ export const ChatPanel = {
         else if ((m.steps || []).length) {
           // Une réponse qui a lu le dossier : ses appels et leurs résultats,
           // puis son dernier texte — le modèle retrouve ce qu'il a lu.
-          out.push(...workspace.stepMessages(m.steps));
+          out.push(...tools.stepMessages(m.steps));
           if (m.final) out.push({ role: "assistant", content: m.final });
         }
         else if (m.content) out.push({ role: "assistant", content: m.content });
@@ -493,9 +493,8 @@ export const ChatPanel = {
 
     // ── une réponse ─────────────────────────────────────────────────────
     // Un tour par requête : tant que le modèle appelle des outils de la
-    // PAGE (pagetools.js), elle les exécute et le relance avec leurs
-    // résultats. Un outil qui attend l'utilisateur (question, écriture)
-    // MET EN PAUSE : la boucle s'arrête, l'état reste dans le message
+    // PAGE (tools/), elle les exécute et le relance avec leurs
+    // résultats. Un outil qui attend l'utilisateur (une carte) MET EN PAUSE : la boucle s'arrête, l'état reste dans le message
     // (`step` : le tour en cours, `waiting` : la carte), et la réponse de
     // l'utilisateur la relance (respond(conv, message)) — même après un
     // rechargement.
@@ -546,11 +545,14 @@ export const ChatPanel = {
       const can = modelCaps(modelEntry(conv.model));
       const hosted = can.hostedTools ? conv.tools.filter((t) => available.value.has(t)
         && !(conv.incognito && t === "memory")) : [];
-      // Les outils de la page, ceux du dossier s'il est ouvert.
-      const ws = can.folder ? folders.get(conv.id) || null : null;
-      body.tools = [...hosted.map((type) => ({ type })), ...pagetools.toolsFor(ws, conv.device || defaultDevice())
+      // Les outils de la page (tools/) : ceux des familles actives — le
+      // dossier s'il est ouvert —, et leurs consignes au prompt système.
+      const ctx = toolCtx(conv, live);
+      if (!can.folder) ctx.ws = null;
+      const families = conv.device || defaultDevice();
+      body.tools = [...hosted.map((type) => ({ type })), ...tools.specs(ctx, families)
         .filter((t) => !can.pageTools || can.pageTools.includes(t.function.name))];
-      const ctx = { conv, live, ws, vision: !!(modelEntry(conv.model) || {}).vision };
+      const guidance = tools.guidance(ctx, families);
       let paused = false;
       try {
         for (;;) {
@@ -561,7 +563,7 @@ export const ChatPanel = {
               break;
             }
             const start = live.content.length;
-            body.messages = await inline([...apiMessages(conv, upto), ...workspace.stepMessages(live.steps)]);
+            body.messages = await inline([...apiMessages(conv, upto, guidance), ...tools.stepMessages(live.steps)]);
             const calls = [];
             const r = await fetch(API, {
               method: "POST", signal: controller.signal,
@@ -585,7 +587,7 @@ export const ChatPanel = {
             }
             await readStream(r.body, live, { calls, onCall: (slot) => writing(live, slot),
                                              onMemory: () => { memoryStamp.value++; } });
-            const asked = calls.filter((c) => c && pagetools.isPageTool(c.name))
+            const asked = calls.filter((c) => c && tools.isTool(c.name))
               .map((c) => ({ id: c.id || "call_" + uid(), name: c.name, arguments: c.arguments }));
             if (!asked.length || live.error) {
               if (live.steps) live.final = live.content.slice(start);
@@ -606,7 +608,8 @@ export const ChatPanel = {
             let image = "";
             // (Une carte déjà montrée reste la réponse, même si l'attente
             // ne serait plus nécessaire : une permission donnée depuis.)
-            if (pagetools.waitsForUser(c.name) || (live.waiting && live.waiting.id === c.id)) {
+            if ((live.waiting && live.waiting.id === c.id)
+                || tools.waits(c.name, tools.parseArgs(c.arguments), ctx)) {
               if (live.waiting && live.waiting.id === c.id) {
                 // La carte de cet appel : répondue (reprise), ou encore en attente.
                 if (live.waiting.result === undefined) { paused = true; return; }
@@ -614,20 +617,18 @@ export const ChatPanel = {
                 image = live.waiting.image || "";
                 live.waiting = null;
               } else {
-                const card = await pagetools.prepare(ctx, c);
+                const card = await tools.prepare(c.name, c.arguments, ctx);
                 if (card.error) result = card.error;
                 else {
-                  live.waiting = { id: c.id, name: c.name, ...card };
+                  live.waiting = { id: c.id, ...card };
                   chip.status = "waiting";
                   paused = true;
-                  notify.notify(c.name === "ask_user" ? "Une question vous attend"
-                    : card.kind === "device" ? device.view(live.waiting).title
-                    : "Une écriture attend votre accord", conv.title);
+                  notify.notify(tools.notice(live.waiting), conv.title);
                   return;
                 }
               }
             } else {
-              const got = await pagetools.run(ctx, c);
+              const got = await tools.run(c.name, c.arguments, ctx);
               result = got.result;
               image = got.image || "";
               if (got.artifact) openArtifact(got.artifact);
@@ -662,14 +663,14 @@ export const ChatPanel = {
             return false;
           }
           const start = live.content.length;
-          const msgs = await inline([...apiMessages(conv, upto), ...workspace.stepMessages(live.steps)]);
+          const msgs = await inline([...apiMessages(conv, upto), ...tools.stepMessages(live.steps)]);
           const args = await answer(msgs, live, ctrl.signal, (s) => { status.value = s; });
           if (!args) {
             if (live.steps) live.final = live.content.slice(start);
             return false;
           }
           live.step = { content: live.content.slice(start), calls: [],
-                        queue: [{ id: "call_" + uid(), name: "ask_user", arguments: JSON.stringify(args) }] };
+                        queue: [{ id: "call_" + uid(), name: tools.TOOL.ASK_USER, arguments: JSON.stringify(args) }] };
         }
         const c = live.step.queue[0];
         let chip = live.tools.find((t) => t.id === c.id);
@@ -683,12 +684,12 @@ export const ChatPanel = {
           result = live.waiting.result;
           live.waiting = null;
         } else {
-          const card = askTool.prepare(JSON.parse(c.arguments));
+          const card = await tools.prepare(c.name, c.arguments, toolCtx(conv, live));
           if (card.error) result = card.error;
           else {
-            live.waiting = { id: c.id, name: c.name, ...card };
+            live.waiting = { id: c.id, ...card };
             chip.status = "waiting";
-            notify.notify("Une question vous attend", conv.title);
+            notify.notify(tools.notice(live.waiting), conv.title);
             return true;
           }
         }
@@ -706,7 +707,7 @@ export const ChatPanel = {
     // minutes) : sa puce paraît dès son nom, « écriture… », et compte ce
     // qui s'écrit — mise à jour quatre fois par seconde au plus.
     function writing(live, slot) {
-      if (!slot.name || !pagetools.isPageTool(slot.name)) return;
+      if (!slot.name || !tools.isTool(slot.name)) return;
       if (!slot.id) slot.id = "call_" + uid();
       let chip = live.tools.find((t) => t.id === slot.id);
       if (!chip) {
@@ -725,173 +726,84 @@ export const ChatPanel = {
       }
     }
 
-    // ── les cartes : question, écriture ─────────────────────────────────
-    // La réponse de l'utilisateur devient le résultat de l'outil, et la
-    // réponse du modèle reprend.
+    // ── les cartes ─────────────────────────────────────────────────────
+    // Un outil qui attend l'utilisateur montre une CARTE (m.waiting) : le
+    // gabarit commun (tools.view), ou le composant de l'outil — dans le
+    // fil, ou dans la feuille du bas. Sa réponse devient le résultat de
+    // l'outil, et la réponse du modèle reprend.
+
+    // Ce que les outils reçoivent du tour : la conversation, le message,
+    // le dossier ouvert, ce que le modèle sait lire, un téléchargement.
+    function toolCtx(conv, live) {
+      return { conv, live, ws: folders.get(conv.id) || null,
+               vision: !!(modelEntry(conv.model) || {}).vision, download };
+    }
     function settle(m, result) {
       const c = current.value;
       if (!c || streaming.value || !m.waiting) return;
       m.waiting.result = result;
       respond(c, m);
     }
-    const askReady = (w) => w.questions.every(askTool.answered);
-    const answerAsk = (m) => settle(m, askTool.result(m.waiting));
-    // La question en attente de la conversation (sa dernière réponse), dans
-    // la feuille du bas : ouverte à chaque nouvelle question.
-    const asking = computed(() => {
-      const ms = (current.value && current.value.messages) || [];
-      const m = ms[ms.length - 1];
-      return m && m.waiting && m.waiting.kind === "ask" ? m : null;
-    });
-    // La feuille : ouverte ou réduite, et la question montrée (un onglet
-    // par question). Le clavier : 1…9 choisit, ←/→ change d'onglet,
-    // Entrée envoie, Échap réduit.
-    const sheetOpen = ref(true);
-    const sheetBody = ref(null);
-    const askTab = ref(0);
-    const askQ = computed(() => {
-      const qs = asking.value ? asking.value.waiting.questions : [];
-      return qs[Math.min(askTab.value, qs.length - 1)] || null;
-    });
-    const askOptions = (q) => q.options.map(askTool.option);
-    const askAnswered = askTool.answered;
-    const askCount = (w) => w.questions.filter(askTool.answered).length;
-    function focusSheet(selector) {
-      nextTick(() => {
-        const el = sheetBody.value && sheetBody.value.closest(".ask-sheet").querySelector(selector);
-        if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ block: "nearest" }); }
-      });
-    }
-    function showTab(k) {
-      const n = asking.value ? asking.value.waiting.questions.length : 0;
-      askTab.value = (k + n) % n;
-      focusSheet(".ask-opt");
-    }
-    // Une réponse donnée (choix unique) : la question suivante sans
-    // réponse, sinon le bouton d'envoi.
-    function advance() {
-      const qs = asking.value.waiting.questions;
-      for (let d = 1; d <= qs.length; d++) {
-        const k = (askTab.value + d) % qs.length;
-        if (!askTool.answered(qs[k])) { showTab(k); return; }
-      }
-      focusSheet(".sheet-submit");
-    }
-    function pick(q, label) {
-      if (streaming.value) return;
-      if (q.multiple) {
-        q.picked = q.picked.includes(label) ? q.picked.filter((o) => o !== label) : [...q.picked, label];
-        return;
-      }
-      q.picked = [label];
-      q.otherOn = false;
-      q.other = "";
-      advance();
-    }
-    function pickOther(q) {
-      if (streaming.value) return;
-      if (q.multiple && (q.otherOn || q.other)) { q.otherOn = false; q.other = ""; return; }
-      if (!q.multiple) q.picked = [];
-      q.otherOn = true;
-      focusSheet(".ask-other");
-    }
-    function onSheetKey(e) {
-      if (e.key === "Escape") { sheetOpen.value = false; return; }
-      const q = askQ.value;
-      if (!q || !sheetOpen.value || e.ctrlKey || e.metaKey || e.altKey) return;
-      const typing = e.target.tagName === "INPUT";
-      if (e.key === "Enter" && typing) {
-        e.preventDefault();
-        if (askReady(asking.value.waiting)) answerAsk(asking.value);
-        else if (!q.multiple && askTool.answered(q)) advance();
-        return;
-      }
-      if (typing) return;
-      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-        e.preventDefault();
-        showTab(askTab.value + (e.key === "ArrowRight" ? 1 : -1));
-        return;
-      }
-      if (/^[1-9]$/.test(e.key)) {
-        const n = Number(e.key) - 1, opts = askOptions(q);
-        if (n < opts.length) { e.preventDefault(); pick(q, opts[n].label); }
-        else if (n === opts.length) { e.preventDefault(); pickOther(q); }
-      }
-    }
-    watch(() => asking.value && asking.value.waiting.id, (id) => {
-      if (!id) return;
-      sheetOpen.value = true;
-      askTab.value = 0;
-      focusSheet(".ask-opt");
-    });
-    const skipAsk = (m) => settle(m, "L'utilisateur a passé la question sans répondre.");
-    async function applyWrite(m) {
-      const ws = folders.get(current.value.id);
-      if (!ws) { status.value = "Rouvrir le dossier pour appliquer l'écriture."; return; }
+    // Une action de la carte (un bouton) : l'API de l'appareil part de ce
+    // clic (le geste que le navigateur exige). Répondue, elle rend un
+    // résultat, et peut-être une image (capture, photo) : jointe à la
+    // réponse, et envoyée au modèle avec le résultat. Une erreur levée
+    // s'affiche ; la carte reste.
+    async function cardAct(m, action, payload) {
       const w = m.waiting;
-      try {
-        const where = await workspace.apply(ws, w.path, w.after, download);
-        const lines = w.after.split("\n").length;
-        settle(m, `Appliqué par l'utilisateur : « ${w.path} » ${w.created ? "créé" : "modifié"}, ${where} (${lines} ligne${lines > 1 ? "s" : ""}).`
-          + (w.comment ? ` Son commentaire : « ${w.comment} »` : ""));
-      } catch (e) {
-        status.value = `${w.path} : ${e.message}`;
-      }
-    }
-    // Une carte d'un outil du navigateur (device/) : chaque bouton est une
-    // action du module — l'API de l'appareil part de ce clic (le geste
-    // que le navigateur exige). Répondue, elle rend un résultat, et
-    // peut-être une image (capture, photo) : jointe à la réponse, et
-    // envoyée au modèle avec le résultat.
-    async function deviceAct(m, action) {
-      const w = m.waiting;
-      if (!w || w.busy) return;
-      const pending = device.act(w, action);
-      w.busy = true;
+      if (!w || w.busy || streaming.value) return;
+      const c = current.value;
       let out = null;
+      w.busy = true;
       try {
-        out = await pending;
+        out = await tools.act(w, action, toolCtx(c, m), payload);
       } catch (e) {
-        out = { result: "Error: " + e.message };
+        status.value = e.message;
       } finally {
         w.busy = false;
       }
       if (!out || m.waiting !== w) return;
+      tools.release(w);
       if (out.image) {
         (m.attachments || (m.attachments = [])).push({ kind: "image", name: out.name || "image.jpg", data: out.image });
         w.image = out.image;
       }
       settle(m, out.result);
     }
-    const deviceView = (w) => device.view(w);
+    const cardView = (w) => tools.view(w);
+    const cardComponent = (w) => tools.component(w);
+    const cardPlacement = (w) => tools.placement(w);
+    const cardPending = (w) => tools.pending(w);
+    const folderCtx = () => (folderTick.value, current.value ? toolCtx(current.value, null) : {});
+    // La carte de la feuille du bas (la dernière réponse), et la feuille
+    // ouverte ou réduite : rouverte à chaque nouvelle carte.
+    const sheet = computed(() => {
+      const ms = (current.value && current.value.messages) || [];
+      const m = ms[ms.length - 1];
+      return m && m.waiting && tools.placement(m.waiting) === "sheet" ? m : null;
+    });
+    const sheetOpen = ref(true);
+    watch(() => sheet.value && sheet.value.waiting.id, (id) => { if (id) sheetOpen.value = true; });
     // Le badge d'un fichier : son extension, en capitales (« TXT » sans).
     const extOf = (name) => ((String(name).match(/\.([a-z0-9]{1,6})$/i) || [])[1] || "txt").toUpperCase();
-    // Un fichier sous la réponse : son texte, ou la base SQL de la
-    // conversation (run_sql), telle qu'elle est au moment du clic.
+    // Un fichier sous la réponse : son texte, ou ce que l'outil qui l'a
+    // produit en relit au moment du clic (la base SQL de la conversation).
     async function downloadOut(f) {
-      if (!f.base) { download({ name: f.name, content: f.content }, f.type); return; }
-      const bytes = await device.sqlBase(f.base);
-      if (bytes) download({ name: f.name, content: bytes }, f.type);
-      else status.value = "Base introuvable dans ce navigateur (supprimée, ou créée sur un autre).";
-    }
-    const attachVideo = (el, w) => device.attachVideo(el, w);
-    const refuseWrite = (m) => settle(m, `Refusé par l'utilisateur : « ${m.waiting.path} » n'a pas été modifié.`
-      + (m.waiting.comment ? ` Son commentaire : « ${m.waiting.comment} »` : ""));
-    // Le diff d'une carte d'écriture, calculé une fois.
-    const diffs = new WeakMap();
-    function writeDiff(w) {
-      const raw = toRaw(w);
-      if (!diffs.has(raw)) diffs.set(raw, lineDiff(raw.before, raw.after));
-      return diffs.get(raw);
+      const content = await tools.fileContent(f);
+      if (content === null || content === undefined) {
+        status.value = `${f.name} : introuvable dans ce navigateur (supprimé, ou créé sur un autre).`;
+        return;
+      }
+      download({ name: f.name, content }, f.type);
     }
     // Un nouveau message pendant qu'une carte attend : elle est close sans
     // réponse, et le tour en cours avec elle (ses autres appels aussi).
     function abandonWaiting(c) {
       const m = c.messages[c.messages.length - 1];
       if (!m || !m.waiting || !m.step) return;
-      device.release(m.waiting);
+      const waited = tools.abandon(m.waiting);
       for (const q of m.step.queue) {
-        const result = q.id === m.waiting.id ? askTool.NO_ANSWER : "Non exécuté : l'utilisateur est passé à autre chose.";
+        const result = q.id === m.waiting.id ? waited : "Non exécuté : l'utilisateur est passé à autre chose.";
         m.step.calls.push({ ...q, result });
         const chip = m.tools.find((t) => t.id === q.id);
         if (chip) Object.assign(chip, { status: "error", preview: result, chars: result.length });
@@ -1118,18 +1030,8 @@ export const ChatPanel = {
       if (t.status === "writing") return t.label || "";
       let a = {};
       try { a = JSON.parse(t.arguments || "{}"); } catch { return t.arguments; }
-      // Les outils de la page : ce qui les distingue, lisible.
-      if (t.name === "ask_user" && Array.isArray(a.questions)) {
-        return a.questions.map((q) => (q && q.question) || "").filter(Boolean).join(" · ").slice(0, 140);
-      }
-      if (t.name === "show_artifact") return [a.title, a.type].filter(Boolean).join(" · ");
-      if (t.name === "edit_artifact") {
-        const n = Array.isArray(a.edits) ? a.edits.length : 0;
-        return [a.id, n ? n + " retouche" + (n > 1 ? "s" : "") : ""].filter(Boolean).join(" · ");
-      }
-      if (t.name === "read_artifact") return a.id || "";
-      if (t.name === "save_file") return a.name || "";
-      if (device.isTool(t.name)) return device.summary(t.name, a);
+      // Les outils de la page : ce qui les distingue, lisible (leur `summary`).
+      if (tools.isTool(t.name)) return tools.summary(t.name, a);
       // La mémoire : la commande et le fichier, pas le texte écrit.
       if (t.name === "memory" && a.command) {
         return [a.command, a.path || a.old_path, a.new_path ? "→ " + a.new_path : ""]
@@ -1174,8 +1076,7 @@ export const ChatPanel = {
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
-             askReady, answerAsk, asking, sheetOpen, sheetBody, askTab, askQ, askOptions,
-             askAnswered, askCount, showTab, pick, pickOther, onSheetKey, skipAsk, applyWrite, refuseWrite, deviceAct, deviceView, attachVideo, writeDiff, diffCounts,
+             sheet, sheetOpen, cardAct, cardView, cardComponent, cardPlacement, cardPending, folderCtx,
              download, downloadOut, extOf,
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
@@ -1343,45 +1244,32 @@ export const ChatPanel = {
             <details class="gen-prompt" v-if="m.image && m.prompt && m.prompt.includes('\\n')">
               <summary>prompt envoyé (avec le contexte)</summary><pre>{{ m.prompt }}</pre></details>
             <div class="md" v-html="html(m)"></div>
-            <!-- Ce qui attend l'utilisateur : une question (ask_user, dans la
-                 feuille du bas), sa position ou une écriture dans le dossier
-                 (cartes) ; sa réponse relance le modèle. -->
-            <button type="button" class="ask-pending" v-if="m.waiting && m.waiting.kind === 'ask'"
-                    @click="sheetOpen = true">{{ m.waiting.questions.length > 1
-                      ? m.waiting.questions.length + " questions attendent" : "Une question attend" }} votre réponse</button>
-            <div class="tool-card device-card" v-if="m.waiting && m.waiting.kind === 'device'">
-              <template v-for="v in [deviceView(m.waiting)]" :key="m.waiting.id">
-                <p class="write-head"><b>{{ v.title }}</b></p>
-                <p class="dim" v-if="v.detail">{{ v.detail }}</p>
-                <code class="device-url" v-if="v.code">{{ v.code }}</code>
-                <pre class="device-quote" v-if="v.quote">{{ v.quote }}</pre>
-                <video class="device-media" v-if="v.video" :ref="(el) => attachVideo(el, m.waiting)"
-                       autoplay muted playsinline></video>
-                <img class="device-media" v-if="v.preview" :src="v.preview" alt="Aperçu de l'image à envoyer">
-                <div class="card-actions">
-                  <button v-for="a in v.actions" :key="a.id" type="button" :class="['btn', { ghost: !a.primary }]"
-                          :disabled="streaming || m.waiting.busy" :title="a.title || ''"
-                          @click="deviceAct(m, a.id)">{{ a.label }}</button>
-                  <span class="dim" v-if="v.note">{{ v.note }}</span>
-                </div>
-              </template>
-            </div>
-            <div class="tool-card write-card" v-if="m.waiting && m.waiting.kind === 'write'">
-              <p class="write-head"><b>{{ m.waiting.created ? "Créer" : "Modifier" }}</b>
-                <code>{{ m.waiting.path }}</code>
-                <span class="dim">+{{ diffCounts(writeDiff(m.waiting)).added }}
-                  −{{ diffCounts(writeDiff(m.waiting)).removed }}</span></p>
-              <pre class="diff"><span v-for="(d, k) in writeDiff(m.waiting)" :key="k" :class="'d' + (d.type === '+' ? 'add' : d.type === '-' ? 'del' : d.type === '…' ? 'gap' : 'ctx')">{{ d.type === "…" ? "⋯" : d.type + " " + d.text }}
-</span></pre>
-              <input class="ask-other" v-model="m.waiting.comment" :disabled="streaming"
-                     placeholder="Commentaire pour le modèle (facultatif)">
-              <div class="card-actions">
-                <button type="button" class="btn" :disabled="streaming || !folderReady" @click="applyWrite(m)"
-                        :title="folderReady ? '' : 'Rouvrir le dossier pour appliquer'">Appliquer</button>
-                <button type="button" class="btn ghost" :disabled="streaming" @click="refuseWrite(m)">Refuser</button>
-                <span class="dim" v-if="!folderReady">dossier à rouvrir pour appliquer</span>
+            <!-- Ce qui attend l'utilisateur : la CARTE d'un outil (tools/) —
+                 son composant, ou le gabarit commun (view) ; une carte de la
+                 feuille du bas n'a ici qu'une ligne qui la rouvre. -->
+            <template v-if="m.waiting">
+              <button type="button" class="ask-pending" v-if="cardPlacement(m.waiting) === 'sheet'"
+                      @click="sheetOpen = true">{{ cardPending(m.waiting) }}</button>
+              <component v-else-if="cardComponent(m.waiting)" :is="cardComponent(m.waiting)" :key="m.waiting.id"
+                         :w="m.waiting" :busy="streaming || !!m.waiting.busy" :ctx="folderCtx()"
+                         @act="(action, payload) => cardAct(m, action, payload)"></component>
+              <div class="tool-card device-card" v-else>
+                <template v-for="v in [cardView(m.waiting)]" :key="m.waiting.id">
+                  <p class="write-head"><b>{{ v.title }}</b></p>
+                  <p class="dim" v-if="v.detail">{{ v.detail }}</p>
+                  <code class="device-url" v-if="v.code">{{ v.code }}</code>
+                  <pre class="device-quote" v-if="v.quote">{{ v.quote }}</pre>
+                  <video class="device-media" v-if="v.video" :srcObject.prop="v.video" autoplay muted playsinline></video>
+                  <img class="device-media" v-if="v.preview" :src="v.preview" alt="Aperçu de l'image à envoyer">
+                  <div class="card-actions">
+                    <button v-for="a in v.actions" :key="a.id" type="button" :class="['btn', { ghost: !a.primary }]"
+                            :disabled="streaming || m.waiting.busy" :title="a.title || ''"
+                            @click="cardAct(m, a.id)">{{ a.label }}</button>
+                    <span class="dim" v-if="v.note">{{ v.note }}</span>
+                  </div>
+                </template>
               </div>
-            </div>
+            </template>
             <div class="out-files" v-if="m.files && m.files.length">
               <button type="button" class="chip file" v-for="f in m.files" :key="f.name" :data-ext="extOf(f.name)"
                       @click="downloadOut(f)" title="Télécharger">{{ f.name }}
@@ -1419,57 +1307,18 @@ export const ChatPanel = {
         </article>
       </div>
 
-      <!-- ask_user : une feuille qui monte du bas du chat, par-dessus la
-           zone de saisie ; réduite, une barre la rouvre. -->
+      <!-- La feuille du bas : la carte d'un outil qui s'y affiche (ask_user),
+           par-dessus la zone de saisie ; réduite, une barre la rouvre. -->
       <transition name="sheet">
-      <section class="ask-sheet" v-if="asking" :class="{ min: !sheetOpen }" role="dialog"
-               aria-label="Le modèle vous pose une question" @keydown="onSheetKey">
-        <template v-if="sheetOpen">
-          <header class="sheet-head">
-            <div class="sheet-tabs" role="tablist">
-              <button type="button" role="tab" v-for="(q, k) in asking.waiting.questions" :key="k"
-                      :aria-selected="String(q === askQ)" :class="{ done: askAnswered(q) }"
-                      @click="showTab(k)" :title="q.question">
-                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" v-if="askAnswered(q)"><path d="M5 12l5 5 9-10"/></svg>
-                {{ q.header || "Question " + (k + 1) }}</button>
-            </div>
-            <button type="button" class="sheet-x" @click="sheetOpen = false"
-                    title="Réduire pour relire le fil ou écrire autre chose (Échap)" aria-label="Réduire">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
-          </header>
-          <div class="sheet-body" ref="sheetBody" role="tabpanel" v-if="askQ">
-            <p class="ask-text">{{ askQ.question }}<span class="dim" v-if="askQ.multiple"> · plusieurs choix</span></p>
-            <div class="ask-list" :role="askQ.multiple ? 'group' : 'radiogroup'">
-              <button type="button" class="ask-opt" v-for="(o, n) in askOptions(askQ)" :key="o.label"
-                      :role="askQ.multiple ? 'checkbox' : 'radio'" :aria-checked="String(askQ.picked.includes(o.label))"
-                      :class="{ box: askQ.multiple }" :disabled="streaming" @click="pick(askQ, o.label)">
-                <span class="mark" aria-hidden="true"></span>
-                <span class="opt-text"><b>{{ o.label }}</b><small v-if="o.description">{{ o.description }}</small></span>
-                <kbd v-if="n < 9">{{ n + 1 }}</kbd>
-              </button>
-              <button type="button" class="ask-opt" :role="askQ.multiple ? 'checkbox' : 'radio'"
-                      :aria-checked="String(!!(askQ.otherOn || askQ.other))" :class="{ box: askQ.multiple }"
-                      :disabled="streaming" @click="pickOther(askQ)">
-                <span class="mark" aria-hidden="true"></span>
-                <span class="opt-text"><b>Autre</b><small>une réponse libre</small></span>
-                <kbd v-if="askOptions(askQ).length < 9">{{ askOptions(askQ).length + 1 }}</kbd>
-              </button>
-              <input class="ask-other" v-if="askQ.otherOn || askQ.other" v-model="askQ.other"
-                     :disabled="streaming" placeholder="Votre réponse…">
-            </div>
-          </div>
-          <footer class="sheet-foot">
-            <button type="button" class="btn sheet-submit" :disabled="streaming || !askReady(asking.waiting)"
-                    @click="answerAsk(asking)">Envoyer les réponses
-              <span class="count" v-if="asking.waiting.questions.length > 1">{{ askCount(asking.waiting) }}/{{ asking.waiting.questions.length }}</span></button>
-            <button type="button" class="btn ghost" :disabled="streaming" @click="skipAsk(asking)">Passer</button>
-          </footer>
-        </template>
+      <section class="ask-sheet" v-if="sheet" :class="{ min: !sheetOpen }" role="dialog"
+               aria-label="Le modèle attend votre réponse">
+        <component v-if="sheetOpen" :is="cardComponent(sheet.waiting)" :key="sheet.waiting.id"
+                   :w="sheet.waiting" :busy="streaming || !!sheet.waiting.busy" :ctx="folderCtx()"
+                   @act="(action, payload) => cardAct(sheet, action, payload)"
+                   @minimize="sheetOpen = false"></component>
         <button type="button" class="sheet-grip" v-else @click="sheetOpen = true" aria-expanded="false">
-          <span class="sheet-title">{{ asking.waiting.questions.length > 1
-            ? asking.waiting.questions.length + " questions attendent" : "Une question attend" }} votre réponse</span>
-          <span class="dim">Ouvrir</span>
-        </button>
+          <span class="sheet-title">{{ cardPending(sheet.waiting) }}</span>
+          <span class="dim">Ouvrir</span></button>
       </section>
       </transition>
 

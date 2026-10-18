@@ -4,7 +4,7 @@
 // `files` sont posés sous /data, le dossier courant ; ce que le script
 // écrit sous /out est rendu sous la réponse (files.js). Rend la sortie,
 // les erreurs et le code de sortie.
-import { TOOL, FAMILY, defineTool, defineFamily, clip, failure, oneLine } from "../contract.js";
+import { TOOL, FAMILY, PageTool, defineFamily, clip, failure, oneLine } from "../contract.js";
 import { exec } from "./bac.js";
 import { FILES_PARAM, paths, inputs, deliver } from "./files.js";
 
@@ -16,21 +16,29 @@ async function driver({ code, files }, { mod, wasm }) {
   return mod.runPHP(code, wasm, files);
 }
 
-const runPhp = defineTool({
-  name: TOOL.RUN_PHP,
-  description: "Exécute un script PHP 8.3 (CLI, sans serveur web) dans un bac isolé du navigateur, "
-    + "sans réseau : pour tester une fonction, montrer ce qu'affiche du code PHP, calculer, "
-    + "transformer un fichier. Les fichiers de `files` (dossier ouvert ou pièces jointes, qui "
-    + "restent sur l'appareil) sont copiés sous /data, le dossier courant, avec leurs chemins "
-    + "(include et file_get_contents les trouvent) ; ce que le script écrit sous /out (texte, "
-    + "ou image png/jpeg, GD est là) est rendu sous la réponse. Rend la sortie (echo, print_r, var_dump), les "
-    + "erreurs et le code de sortie. Chaque appel part de zéro. 30 s au plus.",
-  params: {
-    code: { type: "string", description: "Le script, `<?php` au début (ajouté s'il manque)." },
-    ...FILES_PARAM,
-  },
-  required: ["code"],
-  summary: (a) => oneLine([...(a.files || []), String(a.code || "").replace(/^\s*<\?php/, "")].filter(Boolean).join(" · ")),
+class RunPhp extends PageTool {
+  constructor() {
+    super({
+      name: TOOL.RUN_PHP,
+      description: "Exécute un script PHP 8.3 (CLI, sans serveur web) dans un bac isolé du navigateur, "
+        + "sans réseau : pour tester une fonction, montrer ce qu'affiche du code PHP, calculer, "
+        + "transformer un fichier. Les fichiers de `files` (dossier ouvert ou pièces jointes, qui "
+        + "restent sur l'appareil) sont copiés sous /data, le dossier courant, avec leurs chemins "
+        + "(include et file_get_contents les trouvent) ; ce que le script écrit sous /out (texte, "
+        + "ou image png/jpeg, GD est là) est rendu sous la réponse. Rend la sortie (echo, print_r, var_dump), les "
+        + "erreurs et le code de sortie. Chaque appel part de zéro. 30 s au plus.",
+      params: {
+        code: { type: "string", description: "Le script, `<?php` au début (ajouté s'il manque)." },
+        ...FILES_PARAM,
+      },
+      required: ["code"],
+    });
+  }
+
+  /** @override @param {any} a */
+  summary(a) { return oneLine([...(a.files || []), String(a.code || "").replace(/^\s*<\?php/, "")].filter(Boolean).join(" · ")); }
+
+  /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
   async run(args, ctx) {
     let code = String(args.code || "");
     if (!code.trim()) return failure("`code` attendu.");
@@ -47,11 +55,11 @@ const runPhp = defineTool({
     out.push(...got.lines);
     const result = clip(out.join("\n"), MAX_OUT);
     return got.image ? { result, image: got.image } : result;
-  },
-});
+  }
+}
 
 export const FAMILIES = [defineFamily({
   key: FAMILY.PHP, label: "PHP", hint: "PHP 8.3 en WASM, dans un bac isolé (≈ 18 Mo au premier appel)",
   available: () => typeof WebAssembly === "object",
-  tools: [runPhp],
+  tools: [new RunPhp()],
 })];

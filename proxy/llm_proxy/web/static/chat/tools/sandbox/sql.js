@@ -18,7 +18,7 @@
   l'en-tête (minuscules, sans accents, « _ ») ; elle remplace celle du
   même nom.
 */
-import { TOOL, FAMILY, defineTool, defineFamily, clip, failure, oneLine } from "../contract.js";
+import { TOOL, FAMILY, PageTool, defineFamily, clip, failure, oneLine } from "../contract.js";
 import { exec } from "./bac.js";
 import * as sqlbase from "./sqlbase.js";
 import { FILES_PARAM, paths as pathsOf, inputs } from "./files.js";
@@ -204,23 +204,37 @@ async function driver({ sql, maxRows, base, files }, { mod, wasm }) {
   return { text: out.join("\n\n"), statements: n, tables, base: bytes };
 }
 
-const runSql = defineTool({
-  name: TOOL.RUN_SQL,
-  description: "Exécute un script SQL (dialecte SQLite 3) dans un bac isolé du navigateur, sur la "
-    + "base de la conversation : ses tables restent d'un appel à l'autre (`reset` repart d'une base "
-    + "vide). `files` importe d'abord des fichiers en tables, depuis le dossier ouvert ou les pièces "
-    + "jointes : CSV/TSV (en-tête, séparateur et types devinés), JSON (tableau d'objets), JSONL, "
-    + "ou une base .sqlite/.db — leurs données restent sur l'appareil, seuls les résultats des "
-    + "requêtes reviennent. Une table importée porte le nom du fichier, ses colonnes ceux de "
-    + "l'en-tête (minuscules, sans accents, « _ ») ; l'import rend son schéma. Revoir les tables : SELECT name, sql FROM sqlite_schema. Rend "
-    + `chaque résultat en tableau (${MAX_ROWS} lignes au plus) : agréger en SQL plutôt que tout lire.`,
-  params: {
-    sql: { type: "string", description: "Le script : une ou plusieurs instructions séparées par `;` (vide : seulement importer)." },
-    files: { ...FILES_PARAM.files, description: "Fichiers à importer avant le script : chemins dans le dossier ouvert, ou noms de pièces jointes." },
-    reset: { type: "boolean", description: "Vider la base de la conversation avant (défaut : non)." },
-    download: { type: "boolean", description: "Proposer à l'utilisateur de télécharger la base (.sqlite) sous la réponse." },
-  },
-  summary: (a) => oneLine([...(a.files || []), a.sql].filter(Boolean).join(" · ")),
+class RunSql extends PageTool {
+  constructor() {
+    super({
+      name: TOOL.RUN_SQL,
+      description: "Exécute un script SQL (dialecte SQLite 3) dans un bac isolé du navigateur, sur la "
+        + "base de la conversation : ses tables restent d'un appel à l'autre (`reset` repart d'une base "
+        + "vide). `files` importe d'abord des fichiers en tables, depuis le dossier ouvert ou les pièces "
+        + "jointes : CSV/TSV (en-tête, séparateur et types devinés), JSON (tableau d'objets), JSONL, "
+        + "ou une base .sqlite/.db — leurs données restent sur l'appareil, seuls les résultats des "
+        + "requêtes reviennent. Une table importée porte le nom du fichier, ses colonnes ceux de "
+        + "l'en-tête (minuscules, sans accents, « _ ») ; l'import rend son schéma. Revoir les tables : SELECT name, sql FROM sqlite_schema. Rend "
+        + `chaque résultat en tableau (${MAX_ROWS} lignes au plus) : agréger en SQL plutôt que tout lire.`,
+      params: {
+        sql: { type: "string", description: "Le script : une ou plusieurs instructions séparées par `;` (vide : seulement importer)." },
+        files: { ...FILES_PARAM.files, description: "Fichiers à importer avant le script : chemins dans le dossier ouvert, ou noms de pièces jointes." },
+        reset: { type: "boolean", description: "Vider la base de la conversation avant (défaut : non)." },
+        download: { type: "boolean", description: "Proposer à l'utilisateur de télécharger la base (.sqlite) sous la réponse." },
+      },
+    });
+  }
+
+  /** @override @param {string} convId */
+  forget(convId) { return sqlbase.drop(convId); }
+
+  /** @override @param {string} ref */
+  async fileContent(ref) { return sqlbase.load(ref); }
+
+  /** @override @param {any} a */
+  summary(a) { return oneLine([...(a.files || []), a.sql].filter(Boolean).join(" · ")); }
+
+  /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
   async run(args, ctx) {
     const sql = String(args.sql || "");
     const paths = pathsOf(args);
@@ -241,16 +255,22 @@ const runSql = defineTool({
         + (kept ? "" : " (en mémoire seulement : perdue au rechargement)") + ".");
       if (args.download && ctx.live) {
         const name = "conversation.sqlite";
-        (ctx.live.files || (ctx.live.files = [])).push({ name, type: "application/vnd.sqlite3", size: after.length, base: id });
+        // Relu au clic (fileContent) : la base telle qu'elle est alors.
+        (ctx.live.files || (ctx.live.files = [])).push({ name, type: "application/vnd.sqlite3", size: after.length,
+                                                        source: { tool: TOOL.RUN_SQL, ref: id } });
         out.push(`Base proposée au téléchargement sous la réponse (${name}).`);
       }
     }
     return clip(out.join("\n\n"), MAX_OUT);
-  },
-});
+  }
+}
 
 export const FAMILIES = [defineFamily({
   key: FAMILY.SQL, label: "SQL", hint: "SQLite en WASM : une base par conversation, import de CSV, JSON, .sqlite",
   available: () => typeof WebAssembly === "object",
-  tools: [runSql],
+  guidance: () => "Pour analyser des données de l'utilisateur (CSV, JSON, base SQLite, dans le "
+    + "dossier ouvert ou en pièce jointe), préférer run_sql avec `files` à leur lecture : les "
+    + "données restent sur l'appareil, seuls les résultats des requêtes reviennent. Les tables "
+    + "de la conversation restent d'un message à l'autre.",
+  tools: [new RunSql()],
 })];

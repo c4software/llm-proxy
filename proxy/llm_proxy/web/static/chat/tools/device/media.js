@@ -34,14 +34,6 @@ export function stop(w) {
   if (streams.delete(w.id)) tick.value++;
 }
 
-// L'élément <video> de la carte reçoit son flux (ref de fonction de Vue).
-export function attachVideo(el, w) {
-  if (el && streams.has(w.id) && el.srcObject !== streams.get(w.id)) {
-    el.srcObject = streams.get(w.id);
-    el.play().catch(() => {});
-  }
-}
-
 // La caméra arrière, attachée à la carte.
 export async function camera(w) {
   stop(w);

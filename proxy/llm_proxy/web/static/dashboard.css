@@ -1135,6 +1135,8 @@ a.btn { display: inline-block; text-decoration: none; }
   border-radius: 14px 14px 0 0; box-shadow: 0 -10px 36px rgb(0 0 0 / .18);
 }
 .ask-sheet.min { position: static; box-shadow: none; border-radius: 12px 12px 0 0; }
+/* Le composant de la carte (tools/) : ses enfants restent ceux de la feuille. */
+.sheet-inner { display: contents; }
 .sheet-head {
   display: flex; align-items: center; gap: 8px; padding: 10px 12px 0 16px;
   border-bottom: 1px solid var(--line);

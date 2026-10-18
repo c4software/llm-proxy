@@ -1,31 +1,22 @@
 /*
   Le DOSSIER ouvert dans une conversation du chat (Joindre → Dossier…) :
-  il reste dans le navigateur — rien n'est envoyé d'avance. Le modèle
-  reçoit trois outils, que la PAGE exécute elle-même quand il les appelle
-  (le proxy lui rend ces appels en `tool_calls`, comme à tout client) :
+  il reste dans le navigateur — rien n'est envoyé d'avance. Ses outils
+  (folder_list, folder_read, folder_search ; folder_write et folder_edit,
+  qui attendent l'accord de l'utilisateur) sont dans tools/page/folder.js ;
+  ce module en est le modèle : ouvrir, lire, chercher, écrire.
 
-    folder_list    le contenu d'un sous-dossier (ou tout, récursif)
-    folder_read    un fichier texte, par tranches de lignes numérotées
-    folder_search  une chaîne ou une expression dans les fichiers texte
+  Écrire : quand le navigateur le permet (Chrome, Edge : dossier ouvert
+  par showDirectoryPicker, accès en écriture demandé à la première
+  écriture), sinon le fichier modifié est téléchargé. Dans les deux cas,
+  le dossier en mémoire prend la nouvelle version.
 
-  Le modèle ne lit donc que ce dont il a besoin : un dépôt de mille
-  fichiers ne coûte que ce qu'il en ouvre.
-
-  ÉCRIRE : folder_write (créer ou remplacer un fichier) et folder_edit
-  (remplacer un passage exact) ne s'appliquent qu'après votre accord — la
-  page montre le diff, « Appliquer » ou « Refuser », et la réponse attend.
-  Appliqué : écrit dans le dossier quand le navigateur le permet (Chrome,
-  Edge : dossier ouvert par showDirectoryPicker, accès en écriture demandé
-  à la première écriture), sinon le fichier modifié est téléchargé. Dans
-  les deux cas, le modèle relit ensuite la nouvelle version.
-  
   Ignorés à l'ouverture : .git, node_modules, environnements Python et
   caches. Un dossier n'est gardé qu'en mémoire : après un rechargement, la
   conversation dit son nom et demande de le rouvrir (le navigateur ne rend
   pas l'accès tout seul).
 
   Chaque résultat est un TEXTE pour le modèle ; une erreur commence par
-  « Error: », comme ceux des outils du proxy.
+  « Error: ».
 */
 
 const IGNORED = new Set([".git", "node_modules", "__pycache__", ".venv", "venv", ".tox",
@@ -36,66 +27,9 @@ const MAX_READ_CHARS = 60000;  // caractères d'une lecture
 const MAX_MATCHES = 200;       // résultats d'une recherche
 const MAX_SEARCH_FILE = 2e6;   // un fichier plus gros n'est pas fouillé
 
-// Les déclarations, à la forme chat/completions.
-export const TOOLS = [
-  { type: "function", function: {
-    name: "folder_list",
-    description: "Liste le contenu du dossier ouvert par l'utilisateur dans le chat. "
-      + "Sans `path` : sa racine. Les sous-dossiers finissent par « / », avec leur nombre "
-      + "de fichiers ; les fichiers ont leur taille. `recursive` : tous les fichiers sous `path`.",
-    parameters: { type: "object", properties: {
-      path: { type: "string", description: "Sous-dossier relatif à la racine ; vide = la racine." },
-      recursive: { type: "boolean", description: "Lister tous les fichiers sous `path`." },
-    } } } },
-  { type: "function", function: {
-    name: "folder_read",
-    description: "Lit un fichier texte du dossier ouvert, lignes numérotées. Un long fichier "
-      + "se lit par tranches : `start_line` et `end_line` (incluses, à partir de 1).",
-    parameters: { type: "object", required: ["path"], properties: {
-      path: { type: "string", description: "Chemin du fichier, relatif à la racine du dossier." },
-      start_line: { type: "integer", description: "Première ligne (défaut : 1)." },
-      end_line: { type: "integer", description: "Dernière ligne (défaut : jusqu'à la limite d'une lecture)." },
-    } } } },
-  { type: "function", function: {
-    name: "folder_search",
-    description: "Cherche un texte dans les fichiers texte du dossier ouvert ; rend "
-      + "« chemin:ligne: texte » pour chaque ligne trouvée.",
-    parameters: { type: "object", required: ["pattern"], properties: {
-      pattern: { type: "string", description: "Le texte cherché (ou une expression régulière si `regex`)." },
-      path: { type: "string", description: "Ne chercher que sous ce sous-dossier." },
-      regex: { type: "boolean", description: "`pattern` est une expression régulière (JavaScript)." },
-      ignore_case: { type: "boolean", description: "Sans tenir compte de la casse (défaut : oui)." },
-    } } } },
-];
-// Écrire : soumis à l'accord de l'utilisateur (prepareWrite, apply).
-export const WRITE_TOOLS = [
-  { type: "function", function: {
-    name: "folder_write",
-    description: "Crée ou remplace entièrement un fichier texte du dossier ouvert. "
-      + "L'utilisateur voit le diff et accepte ou refuse ; le résultat le dit. Pour une "
-      + "modification localisée, préférer folder_edit.",
-    parameters: { type: "object", required: ["path", "content"], properties: {
-      path: { type: "string", description: "Chemin relatif à la racine du dossier." },
-      content: { type: "string", description: "Le contenu complet du fichier." },
-    } } } },
-  { type: "function", function: {
-    name: "folder_edit",
-    description: "Remplace un passage EXACT d'un fichier du dossier ouvert (lire le fichier "
-      + "d'abord). `old_text` doit y être une seule fois, sauf `replace_all`. L'utilisateur "
-      + "voit le diff et accepte ou refuse.",
-    parameters: { type: "object", required: ["path", "old_text", "new_text"], properties: {
-      path: { type: "string" },
-      old_text: { type: "string", description: "Le passage actuel, à l'identique (espaces compris)." },
-      new_text: { type: "string", description: "Ce qui le remplace." },
-      replace_all: { type: "boolean", description: "Remplacer toutes les occurrences." },
-    } } } },
-];
-export const TOOL_NAMES = new Set(TOOLS.map((t) => t.function.name));
-export const WRITE_NAMES = new Set(WRITE_TOOLS.map((t) => t.function.name));
-
 // Les arguments d'une écriture → ce que la carte montre (avant, après),
 // ou {error} : rien à demander à l'utilisateur.
-export async function prepareWrite(ws, name, args) {
+export async function prepareWrite(ws, create, args) {
   const path = clean(args.path);
   if (!path || path.split("/").some((p) => p === ".." || p === "")) {
     return { error: "Error: `path` invalide (relatif à la racine, sans « .. »)." };
@@ -106,7 +40,7 @@ export async function prepareWrite(ws, name, args) {
   const before = ws.files.has(path) ? await text(ws, path) : null;
   if (ws.files.has(path) && before === null) return { error: `Error: « ${path} » est un fichier binaire.` };
   let after;
-  if (name === "folder_write") {
+  if (create) {
     after = String(args.content ?? "");
   } else {
     if (before === null) return { error: `Error: aucun fichier « ${path} » à modifier (folder_write pour le créer).` };
@@ -121,7 +55,7 @@ export async function prepareWrite(ws, name, args) {
       : before.replace(old, () => String(args.new_text ?? ""));
   }
   if (before === after) return { error: `Error: rien ne change dans « ${path} ».` };
-  return { kind: "write", path, before, after, created: before === null };
+  return { path, before, after, created: before === null };
 }
 
 // L'écriture acceptée : sur le disque si le dossier le permet, sinon
@@ -197,7 +131,7 @@ async function text(ws, path) {
   return value;
 }
 
-function list(ws, args) {
+export function list(ws, args) {
   const dir = clean(args.path);
   const paths = [...ws.files.keys()].filter((p) => under(p, dir) && p !== dir).sort();
   if (!paths.length) {
@@ -223,7 +157,7 @@ function list(ws, args) {
     ? [`… ${lines.length - MAX_LIST} de plus (préciser \`path\`)`] : [])].join("\n");
 }
 
-async function read(ws, args) {
+export async function read(ws, args) {
   const path = clean(args.path);
   if (!ws.files.has(path)) {
     return `Error: aucun fichier « ${path} » dans « ${ws.name} » (folder_list pour voir ce qui existe).`;
@@ -247,7 +181,7 @@ async function read(ws, args) {
   return `${path} — lignes ${start} à ${end} sur ${all.length}${more}\n${out.join("\n")}`;
 }
 
-async function search(ws, args) {
+export async function search(ws, args) {
   if (!args.pattern) return "Error: `pattern` est requis.";
   const dir = clean(args.path);
   const flags = args.ignore_case === false ? "" : "i";
@@ -272,40 +206,4 @@ async function search(ws, args) {
   if (!found.length) return `Aucun résultat pour « ${args.pattern} » (${scanned} fichier(s) texte parcouru(s)).`;
   const shown = found.slice(0, MAX_MATCHES);
   return shown.join("\n") + (found.length > MAX_MATCHES ? "\n… d'autres résultats : préciser la recherche." : "");
-}
-
-// Un appel du modèle → son résultat, toujours un texte.
-export async function run(ws, name, argsJson) {
-  let args = {};
-  try { args = argsJson ? JSON.parse(argsJson) : {}; } catch {
-    return "Error: arguments illisibles (JSON attendu).";
-  }
-  try {
-    if (name === "folder_list") return list(ws, args);
-    if (name === "folder_read") return await read(ws, args);
-    if (name === "folder_search") return await search(ws, args);
-  } catch (e) { return `Error: ${e.message}`; }
-  return `Error: outil inconnu « ${name} ».`;
-}
-
-// Ce qu'une réponse a fait avec le dossier, pour l'historique renvoyé au
-// modèle : chaque étape, un message assistant à `tool_calls` puis un
-// message `tool` par appel.
-export function stepMessages(steps) {
-  const out = [];
-  for (const step of steps || []) {
-    out.push({ role: "assistant", content: step.content || null,
-      tool_calls: step.calls.map((c) => ({ id: c.id, type: "function",
-        function: { name: c.name, arguments: c.arguments || "{}" } })) });
-    for (const c of step.calls) out.push({ role: "tool", tool_call_id: c.id, content: c.result });
-    // Une image rendue par un outil (capture, photo) : un message de
-    // l'utilisateur après les résultats — tous les backends le lisent.
-    const images = step.calls.filter((c) => c.image);
-    if (images.length) {
-      out.push({ role: "user", content: [
-        { type: "text", text: "Image(s) rendue(s) par " + images.map((c) => c.name).join(", ") + " :" },
-        ...images.map((c) => ({ type: "image_url", image_url: { url: c.image } }))] });
-    }
-  }
-  return out;
 }

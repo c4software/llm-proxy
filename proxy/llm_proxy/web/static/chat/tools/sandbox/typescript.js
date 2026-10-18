@@ -12,7 +12,7 @@
   module de paquet vaut `any`. `code` vérifie un texte À LA PLACE d'un
   fichier (`path`) — une modification avant de l'écrire.
 */
-import { TOOL, defineTool, clip, failure, oneLine } from "../contract.js";
+import { TOOL, PageTool, clip, failure, oneLine } from "../contract.js";
 import { exec } from "./bac.js";
 import { paths as pathsOf, inputs } from "./files.js";
 
@@ -63,22 +63,30 @@ async function project(ctx, wanted, override) {
   return { files, roots: [...roots], tsconfig };
 }
 
-export const checkTypescript = defineTool({
-  name: TOOL.CHECK_TYPESCRIPT,
-  description: "Vérifie les types de fichiers TypeScript du dossier ouvert (ou de pièces jointes) "
-    + "avec le compilateur TypeScript 6, dans un bac isolé du navigateur, sans rien exécuter. "
-    + "Le tsconfig.json à la racine du dossier est appliqué (sinon : strict, ES2022, modules "
-    + "ESNext) ; les imports relatifs sont résolus dans le dossier ; les paquets (pas de "
-    + "node_modules) valent `any`. Rend les erreurs « fichier(ligne,colonne): error TSxxxx: "
-    + "message » (100 au plus). `code` + `path` : vérifier une version modifiée d'un fichier "
-    + "avant de l'écrire. 60 s au plus (le premier appel charge le compilateur).",
-  params: {
-    files: { type: "array", items: { type: "string" },
-             description: "Fichiers ou sous-dossiers à vérifier (« . » : tout le dossier)." },
-    code: { type: "string", description: "Un texte TypeScript à vérifier à la place du fichier `path` (facultatif)." },
-    path: { type: "string", description: "Le chemin de ce texte dans le projet (défaut : extrait.ts)." },
-  },
-  summary: (a) => oneLine([...(a.files || []), a.path, a.code].filter(Boolean).join(" · ")),
+export class CheckTypescript extends PageTool {
+  constructor() {
+    super({
+      name: TOOL.CHECK_TYPESCRIPT,
+      description: "Vérifie les types de fichiers TypeScript du dossier ouvert (ou de pièces jointes) "
+        + "avec le compilateur TypeScript 6, dans un bac isolé du navigateur, sans rien exécuter. "
+        + "Le tsconfig.json à la racine du dossier est appliqué (sinon : strict, ES2022, modules "
+        + "ESNext) ; les imports relatifs sont résolus dans le dossier ; les paquets (pas de "
+        + "node_modules) valent `any`. Rend les erreurs « fichier(ligne,colonne): error TSxxxx: "
+        + "message » (100 au plus). `code` + `path` : vérifier une version modifiée d'un fichier "
+        + "avant de l'écrire. 60 s au plus (le premier appel charge le compilateur).",
+      params: {
+        files: { type: "array", items: { type: "string" },
+                 description: "Fichiers ou sous-dossiers à vérifier (« . » : tout le dossier)." },
+        code: { type: "string", description: "Un texte TypeScript à vérifier à la place du fichier `path` (facultatif)." },
+        path: { type: "string", description: "Le chemin de ce texte dans le projet (défaut : extrait.ts)." },
+      },
+    });
+  }
+
+  /** @override @param {any} a */
+  summary(a) { return oneLine([...(a.files || []), a.path, a.code].filter(Boolean).join(" · ")); }
+
+  /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
   async run(args, ctx) {
     const wanted = pathsOf(args).map((p) => (p === "." ? "" : clean(p)));
     const override = typeof args.code === "string" && args.code.trim()
@@ -99,5 +107,5 @@ export const checkTypescript = defineTool({
         + (total > diagnostics.length ? ` (${diagnostics.length} premiers)` : "") + " :" : "Aucune erreur de type.",
       ...lines];
     return clip(out.join("\n"), MAX_OUT);
-  },
-});
+  }
+}

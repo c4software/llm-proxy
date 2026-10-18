@@ -1,6 +1,6 @@
 import { when } from "../lib/format.js";
 import * as history from "./history.js";
-import { drop as dropSqlBase } from "./device/sandbox/sqlbase.js";
+import { forget as forgetTools } from "./tools/index.js";
 
 // Les CONVERSATIONS : un magasin partagé, lu par le chat (ChatPanel) ET par
 // le menu latéral de la page (app.js), qui en affiche la liste. Gardées
@@ -134,7 +134,7 @@ export const ChatStore = (() => {
     if (state.confirming !== id) { state.confirming = id; return; }
     const gone = state.convs.find((c) => c.id === id);
     state.convs = state.convs.filter((c) => c.id !== id);
-    dropSqlBase(id);                 // sa base SQL (run_sql), dans ce navigateur
+    forgetTools(id);                 // ce que les outils gardaient pour elle (la base SQL…)
     if (gone && !gone.incognito && saved.has(id)) {
       saved.delete(id);
       // Après un enregistrement en cours, qui la recréerait.

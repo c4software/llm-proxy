@@ -5,7 +5,7 @@
   "description": "L'outillage Node de la page : les runtimes des bacs du navigateur (PHP, SQLite, Chart.js, sucrase, TypeScript), servis sous web/static/vendor/, et la vérification des types de son code",
   "scripts": {
     "build": "node build.mjs",
-    "check": "tsc -p tsconfig.json"
+    "check": "tsc -p tsconfig.json && node check-tools.mjs"
   },
   "dependencies": {
     "@php-wasm/universal": "3.1.58",

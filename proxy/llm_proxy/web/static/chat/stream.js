@@ -3,7 +3,7 @@
   readStream lit les événements `data:` un à un ; take les applique au
   message en cours — texte, raisonnement, appels d'outils hébergés
   (`x_hosted_tool`, propre au chat de la page), sources citées, usage —
-  et les appels que la PAGE doit exécuter (`tool_calls` : chat/pagetools.js),
+  et les appels que la PAGE doit exécuter (`tool_calls` : chat/tools/),
   rassemblés morceau par morceau dans `hooks.calls` (index → {id, name,
   arguments}) ; `hooks.onCall(slot)` à chaque morceau — un artifact peut
   mettre des minutes à s'écrire.

@@ -183,6 +183,9 @@ réponse.
 | `folder_list`, `folder_read`, `folder_search` | parcourir, lire (tranches numérotées), chercher dans le dossier ouvert | non |
 | `folder_write`, `folder_edit` | créer ou remplacer un fichier, remplacer un passage exact | oui : diff, *Appliquer* ou *Refuser* |
 
+Tous ces outils suivent la même interface de code (`chat/tools/`) : voir
+[Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page).
+
 #### Questions
 
 ![La feuille ask_user en bas du chat : un onglet par question (Budget, Hébergement, Activités), des cases à cocher avec leur description, Envoyer les réponses (3/3) ou Passer](chat-question.png)
