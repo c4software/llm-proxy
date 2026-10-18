@@ -1,23 +1,20 @@
 // @ts-check
 // Lecture à voix haute : le navigateur lit un texte (synthèse vocale,
-// useSpeechSynthesis) — un pas-à-pas mains libres, une réponse à écouter.
+// chat/voice.js : la voix et le débit choisis dans les réglages du chat,
+// lu phrase par phrase) — un pas-à-pas mains libres, un résumé à écouter.
 // L'appel lit tout de suite (l'utilisateur vient d'écrire : la page a eu
 // son geste) et laisse une CARTE DURABLE, pour relire ou arrêter.
 import { TOOL, FAMILY, PageTool, defineFamily, failure } from "../contract.js";
-import { speech, speechText, speechLang } from "./vueuse.js";
+import * as voice from "../../voice.js";
 
 /** @typedef {import("../contract.js").Kept} Kept */
 
 const MAX_TEXT = 4000;
-// La carte dont le texte est en cours de lecture.
-const reading = Vue.ref("");
 
-/** @param {string} id @param {string} text @param {string} lang */
-function say(id, text, lang) {
-  speechText.value = text;
-  speechLang.value = lang;
-  reading.value = id;
-  speech.speak();
+/** @param {string} ref @param {string} text @param {string} lang */
+function say(ref, text, lang) {
+  const prefs = voice.loadPrefs();
+  voice.speak("tool:" + ref, text, { voice: prefs.voice, rate: prefs.rate, lang });
 }
 
 class Speak extends PageTool {
@@ -51,7 +48,7 @@ class Speak extends PageTool {
 
   /** @override @param {Kept} k */
   keptView(k) {
-    const playing = speech.isPlaying.value && reading.value === k.ref;
+    const playing = voice.state.id === "tool:" + k.ref;
     return { title: playing ? "Lecture en cours…" : "Lu à voix haute", quote: k.text,
              actions: playing ? [{ id: "stop", label: "Arrêter" }]
                : [{ id: "say", label: "Relire", primary: true }] };
@@ -59,7 +56,7 @@ class Speak extends PageTool {
 
   /** @override @param {Kept} k @param {string} action */
   keptAct(k, action) {
-    if (action === "stop") speech.stop();
+    if (action === "stop") voice.stop();
     else say(k.ref, k.text, k.lang);
     return null;
   }
@@ -67,6 +64,6 @@ class Speak extends PageTool {
 
 export const FAMILIES = [defineFamily({
   key: FAMILY.SPEAK, label: "Lecture à voix haute", hint: "le navigateur lit un texte (synthèse vocale)",
-  available: () => speech.isSupported.value,
+  available: () => voice.supported,
   tools: [new Speak()],
 })];

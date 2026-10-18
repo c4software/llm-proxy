@@ -118,10 +118,13 @@ modèle ne passe. Seuls `http(s)`, `mailto` et les chemins du proxy
 montre une seule phrase complète, renouvelée au plus toutes les 1,8 s
 pendant le flux. Tokens et durée s'affichent sous la réponse.
 
-**Voix** : *Écouter*, sous une réponse, lit le texte (sans code ni
-Markdown, 3 000 caractères au plus) par `POST /ui/audio/speech`. Le
-modèle de lecture et la voix (`GET /ui/audio/voices`) se choisissent dans
-*Réglages*. Par défaut, un modèle à voix toutes faites (`customvoice`).
+**Voix** : *Écouter*, sous une réponse, la lit avec la **synthèse
+vocale du navigateur** : tout de suite, sans passer par un modèle (sans
+code ni Markdown, 20 000 caractères au plus). Le texte est lu phrase par
+phrase, ce qui évite les coupures de certaines voix en ligne ; *Arrêter
+la lecture* l'interrompt. La voix (celles du navigateur, la langue de la
+page d'abord) et le débit se choisissent dans *Réglages* ; l'outil
+`speak` les reprend.
 
 **Mémoire** (si `[tools.memory]` est actif) : le bouton *Mémoire* de
 l'en-tête ouvre le panneau des fichiers mémoire de la clé, à lire,

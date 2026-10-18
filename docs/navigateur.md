@@ -203,8 +203,9 @@ Le navigateur lit un texte avec sa synthèse vocale : une étape d'un
 pas-à-pas mains libres, un résumé à écouter. La lecture part aussitôt
 (l'utilisateur vient d'écrire, la page a eu son geste) ; la carte
 durable permet de **relire**, ou d'**arrêter** pendant la lecture. La
-langue suit celle du navigateur, ou celle que donne le modèle
-(`lang`).
+voix et le débit sont ceux choisis dans les *Réglages* du chat (ceux
+d'*Écouter*), si la voix parle la langue du texte ; sinon une voix de
+cette langue (`lang`, celle du navigateur par défaut).
 
 ## Le code dans le navigateur
 

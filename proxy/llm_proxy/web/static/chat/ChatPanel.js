@@ -133,45 +133,27 @@ export const ChatPanel = {
       if (open) memoryOpen.value = false;
     }
     // ── voix (voice.js) : écouter ───────────────────────────────
-    const voicePrefs = reactive({ tts: "", voice: "", ...voice.loadPrefs() });
-    const voiceList = reactive({ tts: [], voices: [] });
+    // La synthèse vocale du navigateur : tout de suite, sans modèle. Le
+    // choix (voix, débit) reste dans ce navigateur.
+    const voicePrefs = reactive(voice.loadPrefs());
     watch(voicePrefs, (p) => voice.savePrefs({ ...p }), { deep: true });
-    // La lecture, par défaut : un modèle à voix toutes faites — pas le
-    // clonage (« base », il lui faut un enregistrement de référence) ni la
-    // conception de voix (« design », il lui faut une description).
-    const ttsDefault = computed(() => voiceList.tts.find((m) => /custom/i.test(m))
-      || voiceList.tts.find((m) => !/base|design|clone/i.test(m)) || voiceList.tts[0] || "");
-    const ttsModel = computed(() => (voiceList.tts.includes(voicePrefs.tts) && voicePrefs.tts)
-      || ttsDefault.value);
-    async function loadVoices() {
-      try { Object.assign(voiceList, await voice.voiceModels()); } catch { /* pas de voix */ }
-    }
-    watch(ttsModel, async (m) => {
-      voiceList.voices = [];
-      if (!m) return;
-      try { voiceList.voices = await voice.voicesOf(m); } catch { /* aucune voix listée */ }
-      if (!voiceList.voices.includes(voicePrefs.voice)) voicePrefs.voice = voiceList.voices[0] || "";
+    const voiceList = voice.voices;
+    const voiceName = computed(() => {
+      const v = voiceList.value.find((x) => x.uri === voicePrefs.voice);
+      return v ? v.name : "voix du navigateur";
     });
-    const playing = reactive({ id: "", loading: false });
-    let audio = null;
-    async function listen(m) {
-      if (audio) { audio.pause(); audio = null; }
-      if (playing.id === m.id) { playing.id = ""; return; }
-      playing.id = m.id;
-      playing.loading = true;
+    // Le message en cours de lecture (voice.state : une seule à la fois).
+    const playing = computed(() => ({ id: voice.state.id.startsWith("msg:") ? voice.state.id.slice(4) : "" }));
+    function listen(m) {
+      if (playing.value.id === m.id) { voice.stop(); return; }
       try {
-        const url = await voice.speech(voice.speakable(m.final || m.content), ttsModel.value,
-                                       voicePrefs.voice, current.value && current.value.incognito);
-        if (playing.id !== m.id) return;
-        audio = new Audio(url);
-        audio.onended = () => { if (playing.id === m.id) playing.id = ""; URL.revokeObjectURL(url); };
-        await audio.play();
+        voice.speak("msg:" + m.id, voice.speakable(m.final || m.content),
+                    { voice: voicePrefs.voice, rate: voicePrefs.rate });
       } catch (e) {
         status.value = "Écoute : " + e.message;
-        playing.id = "";
-      } finally { playing.loading = false; }
+      }
     }
-    onUnmounted(() => { if (audio) audio.pause(); });
+    onUnmounted(() => { if (voice.state.id.startsWith("msg:")) voice.stop(); });
 
     // Prévenir de la fin d'une réponse (notify.js), réglage du navigateur.
     // WebMCP : les outils `agent` de la page (les bacs de code, le contexte)
@@ -1064,7 +1046,6 @@ export const ChatPanel = {
     onMounted(async () => {
       await S.open(props.session.client);
       if (!S.state.convs.length) S.newConv();
-      loadVoices();
       await loadModels();
       for (const c of S.state.convs) {
         if (!c.model) c.model = defaultModel();
@@ -1089,7 +1070,7 @@ export const ChatPanel = {
              toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              notifyOn, toggleNotify, notifySupported: notify.supported(), webmcpOn, webmcpSupported, webmcpNames,
-             voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
+             voicePrefs, voiceList, voiceName, voiceSupported: voice.supported, playing, listen,
              sheet, sheetOpen, cardAct, cardView, keptView, keptAct, keptNotes, cardComponent, cardPlacement, cardPending, folderCtx,
              download, downloadOut, extOf,
              dropZone, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
@@ -1168,15 +1149,15 @@ export const ChatPanel = {
           <label class="check"><input type="checkbox" v-model="current.showReasoning">
             montrer le raisonnement du modèle</label>
         </div>
-        <div class="field" v-if="voiceList.tts.length">
+        <div class="field" v-if="voiceSupported">
           <span>Voix</span>
           <div class="voice-pick">
-            <label v-if="voiceList.tts.length">lecture
-              <select v-model="voicePrefs.tts"><option value="">{{ ttsDefault }} (défaut)</option>
-                <option v-for="m in voiceList.tts" :key="m" :value="m">{{ m }}</option></select></label>
-            <label v-if="voiceList.voices.length">voix
-              <select v-model="voicePrefs.voice">
-                <option v-for="v in voiceList.voices" :key="v" :value="v">{{ v }}</option></select></label>
+            <label>lecture
+              <select v-model="voicePrefs.voice"><option value="">voix du navigateur (défaut)</option>
+                <option v-for="v in voiceList" :key="v.uri" :value="v.uri">{{ v.name }} — {{ v.lang }}{{ v.local ? "" : " (en ligne)" }}</option></select></label>
+            <label>débit
+              <select v-model.number="voicePrefs.rate">
+                <option v-for="r in [0.8, 1, 1.2, 1.5, 2]" :key="r" :value="r">× {{ r }}</option></select></label>
           </div>
         </div>
         <div class="field" v-if="webmcpSupported">
@@ -1323,9 +1304,9 @@ export const ChatPanel = {
               <span v-if="m.usage">{{ num(m.usage.prompt_tokens) }} → {{ num(m.usage.completion_tokens) }} tokens</span>
               <span v-if="m.duration">{{ m.duration.toFixed(1) }} s</span>
               <button type="button" class="link" v-if="m.content" @click="copyText(m.content, $event.target)">Copier</button>
-              <button type="button" class="link" v-if="m.content && ttsModel" @click="listen(m)"
-                      :title="'Lire à voix haute (' + ttsModel + ')'">{{ playing.id === m.id
-                        ? (playing.loading ? "Synthèse…" : "Arrêter la lecture") : "Écouter" }}</button>
+              <button type="button" class="link" v-if="m.content && voiceSupported" @click="listen(m)"
+                      :title="'Lire à voix haute (' + voiceName + ')'">{{ playing.id === m.id
+                        ? "Arrêter la lecture" : "Écouter" }}</button>
               <!-- Une image : ses actions ici ; plusieurs : dans l'image agrandie. -->
               <template v-if="m.image && m.attachments.length === 1 && m.attachments[0].data">
                 <a class="link" :href="m.attachments[0].data" :download="m.attachments[0].name">Télécharger</a>

@@ -24,8 +24,3 @@ export const prefersDark = once(() => VueUse.usePreferredDark());
 export const reducedMotion = once(() => VueUse.usePreferredReducedMotion());
 export const windowSize = once(() => VueUse.useWindowSize());
 
-// La synthèse vocale (speak) : le texte et la langue lus, à changer avant
-// de parler.
-export const speechText = Vue.ref("");
-export const speechLang = Vue.ref(navigator.language || "fr-FR");
-export const speech = once(() => VueUse.useSpeechSynthesis(speechText, { lang: speechLang }));
