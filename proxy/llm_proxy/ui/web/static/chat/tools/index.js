@@ -137,22 +137,36 @@ export function faults(tool) {
 
 // ── les familles ────────────────────────────────────────────────────────
 
+// Les outils refusés à tous par le proxy ([ui].page_tools_disabled, reçus
+// par /ui/session) : ni au menu, ni présentés, ni exécutés. Le proxy les
+// retire aussi lui-même de la requête (ui/page_tools.py).
+let OFF = { families: new Set(), tools: new Set() };
+/** @param {{families?: string[], tools?: string[]} | null | undefined} d */
+export function setDisabled(d) {
+  OFF = { families: new Set((d && d.families) || []), tools: new Set((d && d.tools) || []) };
+}
+/** @param {string} name */
+export const isDisabled = (name) => OFF.tools.has(name);
+/** @param {Family} f */
+const offFamily = (f) => OFF.families.has(f.key);
+
 // Celles du menu que ce navigateur sait faire.
-export const menuFamilies = () => FAMILIES.filter((f) => !f.fixed && f.available());
+export const menuFamilies = () => FAMILIES.filter((f) => !f.fixed && !offFamily(f) && f.available());
 // Cochées d'office dans une conversation neuve.
-export const defaultFamilies = () => FAMILIES.filter((f) => !f.fixed && f.on).map((f) => f.key);
+export const defaultFamilies = () => FAMILIES.filter((f) => !f.fixed && !offFamily(f) && f.on).map((f) => f.key);
 
 /** Les familles actives pour ce tour : toujours actives ou cochées,
  * possibles ici, et `enabled` pour ce contexte.
  * @param {Ctx} ctx @param {string[]} keys */
 function active(ctx, keys) {
   const on = new Set(keys || []);
-  return FAMILIES.filter((f) => (f.fixed || on.has(f.key)) && f.available() && f.enabled(ctx));
+  return FAMILIES.filter((f) => (f.fixed || on.has(f.key)) && !offFamily(f) && f.available() && f.enabled(ctx));
 }
 
 /** Les déclarations des outils actifs (la forme chat/completions).
  * @param {Ctx} ctx @param {string[]} keys */
-export const specs = (ctx, keys) => active(ctx, keys).flatMap((f) => f.tools.map((t) => t.spec));
+export const specs = (ctx, keys) => active(ctx, keys)
+  .flatMap((f) => f.tools.filter((t) => !OFF.tools.has(t.name)).map((t) => t.spec));
 
 /** Les consignes des familles actives, pour le prompt système.
  * @param {Ctx} ctx @param {string[]} keys */
@@ -175,7 +189,7 @@ export function parseArgs(json) {
 }
 
 /** @param {string} name @param {any} args @param {Ctx} [ctx] */
-export const waits = (name, args, ctx) => !!TOOLS.get(name)?.waits(args || {}, ctx);
+export const waits = (name, args, ctx) => !OFF.tools.has(name) && !!TOOLS.get(name)?.waits(args || {}, ctx);
 
 /** Une carte durable (`keep` d'un résultat) : gardée sous la réponse, dans
  * le message (m.kept).
@@ -194,6 +208,7 @@ function keep(name, got, ctx) {
 export async function run(name, json, ctx) {
   const t = TOOLS.get(name);
   if (!t) return { result: failure(`outil inconnu « ${name} ».`) };
+  if (OFF.tools.has(name)) return { result: failure(`l'outil « ${name} » est désactivé sur ce proxy.`) };
   const args = parseArgs(json);
   if (args === null) return { result: failure("arguments illisibles (JSON attendu).") };
   try {

@@ -153,7 +153,7 @@ def test_chat_is_closed_unless_enabled(ui, monkeypatch):
     assert ui.client.get("/ui/session").json()["chat"] == {
         "enabled": False, "model": None, "hosted_tools": False, "tools": [], "always": [],
         "image_sizes": ["512x512", "768x768", "1024x1024"],
-        "image_size": "512x512"}
+        "image_size": "512x512", "page_tools_disabled": {"families": [], "tools": []}}
     assert not ui.sent
 
 

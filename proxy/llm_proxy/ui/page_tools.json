@@ -1,0 +1,168 @@
+{
+  "families": {
+    "ask": {
+      "label": "Questions",
+      "fixed": true,
+      "tools": [
+        "ask_user"
+      ]
+    },
+    "save": {
+      "label": "Fichiers",
+      "fixed": true,
+      "tools": [
+        "save_file"
+      ]
+    },
+    "artifacts": {
+      "label": "Artifacts",
+      "fixed": true,
+      "tools": [
+        "show_artifact",
+        "edit_artifact",
+        "read_artifact",
+        "grep_artifact"
+      ]
+    },
+    "artifact_debug_offer": {
+      "label": "Proposer le débogage",
+      "fixed": true,
+      "tools": [
+        "request_artifact_debug"
+      ]
+    },
+    "artifact_debug": {
+      "label": "Déboguer un artifact",
+      "fixed": true,
+      "tools": [
+        "inspect_artifact",
+        "run_in_artifact"
+      ]
+    },
+    "folder": {
+      "label": "Dossier ouvert",
+      "fixed": true,
+      "tools": [
+        "folder_list",
+        "folder_read",
+        "folder_search",
+        "folder_write",
+        "folder_edit"
+      ]
+    },
+    "context": {
+      "label": "Date et heure",
+      "fixed": false,
+      "tools": [
+        "device_context"
+      ]
+    },
+    "location": {
+      "label": "Position",
+      "fixed": false,
+      "tools": [
+        "get_location"
+      ]
+    },
+    "notify": {
+      "label": "Notifications",
+      "fixed": false,
+      "tools": [
+        "notify"
+      ]
+    },
+    "clipboard": {
+      "label": "Presse-papiers",
+      "fixed": false,
+      "tools": [
+        "clipboard_write",
+        "clipboard_read"
+      ]
+    },
+    "calendar": {
+      "label": "Agenda",
+      "fixed": false,
+      "tools": [
+        "add_to_calendar"
+      ]
+    },
+    "links": {
+      "label": "Liens",
+      "fixed": false,
+      "tools": [
+        "open_link"
+      ]
+    },
+    "share": {
+      "label": "Partage",
+      "fixed": false,
+      "tools": [
+        "share"
+      ]
+    },
+    "screen": {
+      "label": "Capture d'écran",
+      "fixed": false,
+      "tools": [
+        "capture_screen"
+      ]
+    },
+    "camera": {
+      "label": "Caméra",
+      "fixed": false,
+      "tools": [
+        "take_photo"
+      ]
+    },
+    "codes": {
+      "label": "QR et codes-barres",
+      "fixed": false,
+      "tools": [
+        "scan_code"
+      ]
+    },
+    "color": {
+      "label": "Pipette",
+      "fixed": false,
+      "tools": [
+        "pick_color"
+      ]
+    },
+    "wake": {
+      "label": "Écran allumé",
+      "fixed": false,
+      "tools": [
+        "keep_screen_on"
+      ]
+    },
+    "speak": {
+      "label": "Lecture à voix haute",
+      "fixed": false,
+      "tools": [
+        "speak"
+      ]
+    },
+    "compute": {
+      "label": "JavaScript, TypeScript",
+      "fixed": false,
+      "tools": [
+        "run_javascript",
+        "check_typescript"
+      ]
+    },
+    "php": {
+      "label": "PHP",
+      "fixed": false,
+      "tools": [
+        "run_php"
+      ]
+    },
+    "sql": {
+      "label": "SQL",
+      "fixed": false,
+      "tools": [
+        "run_sql"
+      ]
+    }
+  }
+}

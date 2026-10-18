@@ -23,6 +23,7 @@ from ...upstream.relaying import Call, forward, gate
 from ..usage_api import usage_page
 
 from .accounts import ui_login_mode
+from .. import page_tools
 from .page import UI_CHAT, UI_CHAT_MODEL, router
 
 
@@ -68,6 +69,8 @@ async def ui_session(request: Request):
             "always": always_shown() if chat_tools else [],
             "image_sizes": list(tools.image_generation.SIZES),
             "image_size": tools.image_generation.SIZE,
+            # Les outils de la page refusés à tous ([ui].page_tools_disabled).
+            "page_tools_disabled": page_tools.disabled(),
         },
         "memory": tools.memory.ENABLED,
         # None : proxy ouvert, personne n'est compté.

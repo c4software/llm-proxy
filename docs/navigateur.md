@@ -32,6 +32,29 @@ neuve reprend le dernier choix fait dans ce navigateur.
 - Un modèle qui tourne dans le navigateur (Gemini Nano) ne reçoit pas
   ces outils.
 
+**Refuser des outils à tous les comptes** : `[ui].page_tools_disabled`,
+dans `config.toml`, liste des familles (`camera`, `screen`, `sql`…) ou des
+outils (`run_php`) :
+
+```toml
+[ui]
+page_tools_disabled = ["camera", "screen", "run_php"]
+```
+
+- La page reçoit cette liste par `/ui/session`. Ces familles disparaissent
+  du menu, et ces outils ne sont plus présentés au modèle. Un appel qui
+  viendrait quand même reçoit « outil désactivé sur ce proxy ».
+- Le proxy retire **lui-même** ces outils de toute requête du chat de la
+  page : une page modifiée ne peut pas les réactiver. Les autres routes
+  (`/v1/chat/completions` d'un client) ne sont pas touchées : ces outils
+  n'appartiennent qu'à la page.
+- Une famille dont tous les outils sont refusés l'est aussi.
+- Le proxy connaît familles et outils par **`ui/page_tools.json`**, tiré du
+  registre de la page par `proxy/wasm/check-tools.mjs`. Ce manifeste n'est
+  jamais écrit à la main : périmé, la vérification échoue, et pytest avec
+  elle (`node check-tools.mjs --write` le réécrit). Une entrée inconnue est
+  signalée au journal.
+
 Les API du navigateur passent par [VueUse](https://vueuse.org)
 (`static/vueuse.iife.min.js`, chargé avec Vue) : presse-papiers,
 partage, pipette, verrou d'écran, caméra et écran, synthèse vocale,

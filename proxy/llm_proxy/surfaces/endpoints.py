@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .. import tools
 from ..core import multipart
+from ..ui import page_tools
 from ..upstream import albert, relaying
 from . import anthropic_api, chat_api, responses_api
 from ..upstream.backends import (
@@ -64,6 +65,11 @@ async def chat(request: Request, page: bool = False):
         if len(kept) != len(payload["tools"]):
             payload["tools"] = kept
             raw = json.dumps(payload, ensure_ascii=False).encode()
+
+    # Le chat de la page : ses outils refusés à tous ([ui].page_tools_disabled)
+    # sont retirés ici, quoi que la page déclare.
+    if page and isinstance(payload, dict) and page_tools.strip(payload):
+        raw = json.dumps(payload, ensure_ascii=False).encode()
 
     # Le routage d'abord : l'injection de tool_choice dépend du backend
     # visé (chacun peut la désactiver ou choisir sa valeur).

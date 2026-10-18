@@ -102,7 +102,13 @@ export const ChatPanel = {
     // Les familles d'outils du menu (tools/) : celles que ce
     // navigateur sait faire, cochées par conversation ; une conversation
     // neuve reprend le dernier choix fait dans ce navigateur.
-    const deviceFamilies = tools.menuFamilies();
+    // Moins celles que le proxy refuse à tous ([ui].page_tools_disabled).
+    const offTick = ref(0);
+    watch(() => props.session.chat && props.session.chat.page_tools_disabled, (d) => {
+      tools.setDisabled(d);
+      offTick.value++;
+    }, { immediate: true, deep: true });
+    const deviceFamilies = computed(() => (offTick.value, tools.menuFamilies()));
     const devicePrefs = VueUse.useLocalStorage("llm-proxy-chat-device", null,
                                                { serializer: VueUse.StorageSerializers.object });
     const defaultDevice = () => (Array.isArray(devicePrefs.value) ? devicePrefs.value : tools.defaultFamilies());
@@ -301,7 +307,7 @@ export const ChatPanel = {
     // Le menu « Outils » : ceux du proxy (hébergés) et ceux du navigateur,
     // ce que le modèle sait utiliser (`caps`), cochés par conversation.
     const hostedShown = computed(() => (caps.value.hostedTools ? toolGroups.value : []));
-    const devicesShown = computed(() => (caps.value.pageTools ? [] : deviceFamilies));
+    const devicesShown = computed(() => (caps.value.pageTools ? [] : deviceFamilies.value));
     const hostedOn = (g) => !!current.value && current.value.tools.includes(g.type)
       && !(current.value.incognito && g.type === "memory");
     const activeTools = computed(() => [

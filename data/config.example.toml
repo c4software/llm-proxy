@@ -443,6 +443,13 @@ chat = false
 chat_model = ""
 # Historique des conversations du compte (jamais les incognito).
 conversations_database = "conversations.db"
+# Outils de la PAGE (exécutés par le navigateur) refusés à TOUS les comptes :
+# des familles (« camera », « screen », « location », « clipboard », « sql »,
+# « php », « compute »…) ou des outils (« run_php »). Ni au menu Outils, ni
+# présentés au modèle ; le proxy les retire aussi de toute requête du chat
+# de la page. Liste des familles et de leurs outils : ui/page_tools.json
+# (tiré du registre de la page). Voir docs/navigateur.md.
+# page_tools_disabled = ["camera", "screen"]
 # Bornes (octets) : une conversation, une image, l'historique d'un compte.
 conversation_max_bytes = 20000000
 asset_max_bytes = 20000000
