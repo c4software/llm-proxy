@@ -20,6 +20,7 @@ class RunPhp extends PageTool {
   constructor() {
     super({
       name: TOOL.RUN_PHP,
+      agent: true,
       description: "Exécute un script PHP 8.3 (CLI, sans serveur web) dans un bac isolé du navigateur, "
         + "sans réseau : pour tester une fonction, montrer ce qu'affiche du code PHP, calculer, "
         + "transformer un fichier. Les fichiers de `files` (dossier ouvert ou pièces jointes, qui "

@@ -54,6 +54,7 @@ export const TOOL = Object.freeze(/** @type {const} */ ({
   SCAN_CODE: "scan_code",
   PICK_COLOR: "pick_color",
   KEEP_SCREEN_ON: "keep_screen_on",
+  SPEAK: "speak",
   // Les bacs de code (sandbox/)
   RUN_JAVASCRIPT: "run_javascript",
   CHECK_TYPESCRIPT: "check_typescript",
@@ -82,6 +83,7 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
   CODES: "codes",
   COLOR: "color",
   WAKE: "wake",
+  SPEAK: "speak",
   JAVASCRIPT: "compute",
   PHP: "php",
   SQL: "sql",
@@ -154,6 +156,9 @@ const NO_ANSWER = "L'utilisateur n'a pas répondu : il a écrit un nouveau messa
  * @property {Record<string, object>} [params]  ses paramètres : {nom: schéma JSON}, leurs `description` comprises
  * @property {string[]} [required]     ceux qui sont obligatoires
  * @property {"card" | "sheet"} [placement]  où sa carte s'affiche : dans le fil, ou dans la feuille du bas
+ * @property {boolean} [agent]        exposé aux agents du navigateur (WebMCP), si l'utilisateur le
+ *                                     permet : un outil qui s'exécute aussitôt, sans appareil ni
+ *                                     dossier ni conversation (un bac de code)
  * @property {object} [component]      un composant Vue de carte, à la place du gabarit commun (view) ;
  *                                     il reçoit `w` (la carte), `busy` et `ctx`, il émet
  *                                     `act(action, payload)`, et `minimize` dans la feuille
@@ -188,6 +193,8 @@ export class PageTool {
     this.placement = spec.placement || "card";
     /** @type {object | null} */
     this.component = spec.component || null;
+    /** @type {boolean} */
+    this.agent = !!spec.agent;
   }
 
   /** Attend-il l'utilisateur ? (une carte)
@@ -266,7 +273,7 @@ export class PageTool {
 // Les membres de l'interface : un outil n'en a pas d'autres.
 export const MEMBERS = Object.freeze(new Set([
   ...Object.getOwnPropertyNames(PageTool.prototype),
-  "name", "description", "params", "required", "placement", "component",
+  "name", "description", "params", "required", "placement", "component", "agent",
 ]));
 
 /*

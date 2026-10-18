@@ -63,6 +63,7 @@ export const ChatPanel = {
     // Tours d'outils de la page au plus, par réponse.
     const MAX_ROUNDS = 25;
     const LAST_MODEL = "llm-proxy-chat-model";
+    const lastModel = VueUse.useLocalStorage(LAST_MODEL, "");
     const MEMORY_OPEN = "llm-proxy-chat-memory";
     // Noms lisibles des types d'outils ; un type inconnu garde le sien.
     const TOOL_LABELS = {
@@ -91,15 +92,10 @@ export const ChatPanel = {
     // Les familles d'outils du menu (tools/) : celles que ce
     // navigateur sait faire, cochées par conversation ; une conversation
     // neuve reprend le dernier choix fait dans ce navigateur.
-    const DEVICE_PREFS = "llm-proxy-chat-device";
     const deviceFamilies = tools.menuFamilies();
-    function defaultDevice() {
-      try {
-        const v = JSON.parse(localStorage.getItem(DEVICE_PREFS) || "null");
-        if (Array.isArray(v)) return v;
-      } catch { /* sans stockage */ }
-      return tools.defaultFamilies();
-    }
+    const devicePrefs = VueUse.useLocalStorage("llm-proxy-chat-device", null,
+                                               { serializer: VueUse.StorageSerializers.object });
+    const defaultDevice = () => (Array.isArray(devicePrefs.value) ? devicePrefs.value : tools.defaultFamilies());
 
     // ── état ────────────────────────────────────────────────────────────
     // Les conversations : le magasin partagé avec le menu latéral.
@@ -113,12 +109,15 @@ export const ChatPanel = {
     const status = ref("");
     const settingsOpen = ref(false);
     const storageWarning = computed(() => S.state.storageWarning);
-    const dragging = ref(false);
+    // Des fichiers glissés sur le chat (useDropZone : entrées et sorties
+    // des éléments enfants comptées).
+    const dropZone = ref(null);
+    const { isOverDropZone: dragging } = VueUse.useDropZone(dropZone, {
+      onDrop: (files) => { if (files && files.length) addFiles(files); } });
     // Panneau mémoire : ouvert ou non (préférence de ce navigateur), et
     // un compteur qui le fait se relire après un appel de l'outil.
-    const memoryOpen = ref((() => {
-      try { return localStorage.getItem(MEMORY_OPEN) === "1"; } catch { return false; }
-    })());
+    const memoryOpen = VueUse.useLocalStorage(MEMORY_OPEN, false,
+                                              { serializer: { read: (v) => v === "1", write: (v) => (v ? "1" : "0") } });
     const memoryStamp = ref(0);
     // Les artifacts de la conversation (show_artifact) : leur panneau, à la
     // place de celui de la mémoire — un seul panneau à la fois.
@@ -175,18 +174,24 @@ export const ChatPanel = {
     onUnmounted(() => { if (audio) audio.pause(); });
 
     // Prévenir de la fin d'une réponse (notify.js), réglage du navigateur.
+    // WebMCP : les outils `agent` de la page (les bacs de code, le contexte)
+    // exposés aux agents du navigateur, si l'utilisateur le permet — ce
+    // navigateur seulement, coupé par défaut. Expérimental (Chrome).
+    const webmcpOn = VueUse.useLocalStorage("llm-proxy-chat-webmcp", false);
+    const webmcp = tools.agentTools().map((t) => VueUse.useWebMCP({
+      name: t.name, description: t.description, inputSchema: t.spec.function.parameters,
+      enabled: webmcpOn, execute: (args) => tools.runForAgent(t.name, args) }));
+    const webmcpSupported = webmcp.length > 0 && webmcp[0].isSupported.value;
+    const webmcpNames = tools.agentTools().map((t) => t.name).join(", ");
     const notifyOn = ref(notify.enabled());
     async function toggleNotify(e) { notifyOn.value = await notify.setEnabled(e.target.checked); }
     function toggleMemory(open = !memoryOpen.value) {
       memoryOpen.value = open;
       if (open) artifactsOpen.value = false;
-      try { localStorage.setItem(MEMORY_OPEN, open ? "1" : "0"); } catch { /* sans stockage */ }
     }
     const thread = ref(null);
     // Écran étroit : textes courts (la zone de saisie, sur mobile).
-    const narrowQuery = window.matchMedia ? window.matchMedia("(max-width: 760px)") : null;
-    const narrow = ref(!!(narrowQuery && narrowQuery.matches));
-    if (narrowQuery) narrowQuery.addEventListener("change", (e) => { narrow.value = e.matches; });
+    const narrow = VueUse.useMediaQuery("(max-width: 760px)");
     const input = ref(null);
     let controller = null;
     let pinned = true;                // le fil suit la fin de la réponse
@@ -253,7 +258,7 @@ export const ChatPanel = {
     function defaultModel() {
       const preset = chat.value.model;
       if (preset && modelIds.value.includes(preset)) return preset;
-      const last = localStorage.getItem(LAST_MODEL);
+      const last = lastModel.value;
       if (last && modelIds.value.includes(last)) return last;
       const first = models.value.find((m) => !m.image && m.byDefault !== false);
       return (first && first.id) || last || "";
@@ -287,7 +292,7 @@ export const ChatPanel = {
     }
 
     watch(() => current.value && current.value.model, (m) => {
-      if (m && !isImage(m)) localStorage.setItem(LAST_MODEL, m);
+      if (m && !isImage(m)) lastModel.value = m;
     });
 
     // Incognito : la conversation vide change de genre ; sinon, une neuve
@@ -305,7 +310,7 @@ export const ChatPanel = {
       if (!c) return;
       const on = deviceOn.value;
       c.device = on.includes(key) ? on.filter((k) => k !== key) : [...on, key];
-      try { localStorage.setItem(DEVICE_PREFS, JSON.stringify(c.device)); } catch { /* sans stockage */ }
+      devicePrefs.value = c.device;
     }
     // Le menu « Outils » : ceux du proxy (hébergés) et ceux du navigateur,
     // ce que le modèle sait utiliser (`caps`), cochés par conversation.
@@ -389,12 +394,7 @@ export const ChatPanel = {
       if (attachOpen.value && !e.target.closest(".attach-menu:not(.tools-menu)")) attachOpen.value = false;
       if (toolsOpen.value && !e.target.closest(".tools-menu")) toolsOpen.value = false;
     }
-    document.addEventListener("click", onDocClick);
-    onUnmounted(() => document.removeEventListener("click", onDocClick));
-    function onDrop(e) {
-      dragging.value = false;
-      if (e.dataTransfer && e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]);
-    }
+    VueUse.useEventListener(document, "click", onDocClick);
     function onPaste(e) {
       const files = [...(e.clipboardData ? e.clipboardData.files : [])];
       if (files.length) { e.preventDefault(); addFiles(files); }
@@ -896,8 +896,7 @@ export const ChatPanel = {
       zoom.value = null;
       nextTick(() => { if (input.value) input.value.focus(); });
     }
-    function onZoomKey(e) { if (e.key === "Escape" && zoom.value) zoom.value = null; }
-    window.addEventListener("keydown", onZoomKey);
+    VueUse.onKeyStroke("Escape", () => { if (zoom.value) zoom.value = null; });
 
     function stop() { if (controller) controller.abort(); }
 
@@ -958,9 +957,10 @@ export const ChatPanel = {
 
     // Copier : le bouton des blocs de code (rendus en v-html, donc par
     // délégation) et celui de chaque réponse.
+    const clipboard = VueUse.useClipboard({ legacy: true });
     async function copyText(text, button) {
       try {
-        await navigator.clipboard.writeText(text);
+        await clipboard.copy(text);
         if (button) {
           const was = button.textContent;
           button.textContent = "Copié";
@@ -1037,7 +1037,7 @@ export const ChatPanel = {
         if (text && (!s || s.text !== text)) shown[m.id] = { text, n: (s ? s.n : 0) + 1 };
       }, REASON_PACE);
     });
-    onUnmounted(() => { clearInterval(pace); window.removeEventListener("keydown", onZoomKey); });
+    onUnmounted(() => clearInterval(pace));
 
     // Ce que l'appel d'outil cherchait, en une ligne.
     function argSummary(t) {
@@ -1088,11 +1088,11 @@ export const ChatPanel = {
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
              toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
-             notifyOn, toggleNotify, notifySupported: notify.supported(),
+             notifyOn, toggleNotify, notifySupported: notify.supported(), webmcpOn, webmcpSupported, webmcpNames,
              voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
              sheet, sheetOpen, cardAct, cardView, keptView, keptAct, keptNotes, cardComponent, cardPlacement, cardPending, folderCtx,
              download, downloadOut, extOf,
-             onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
+             dropZone, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
              host };
   },
@@ -1108,9 +1108,7 @@ export const ChatPanel = {
   <div class="panel chat" v-else
        :class="{ 'with-memory': (memoryOpen && $props.session.memory) || (artifactsOpen && current && (current.artifacts || []).length),
                  'side-wide': artifactsOpen, incognito: current && current.incognito }">
-    <section class="chat-main" v-if="current"
-             @dragover.prevent="dragging = true" @dragleave.self="dragging = false"
-             @drop.prevent="onDrop">
+    <section class="chat-main" v-if="current" ref="dropZone">
       <header class="chat-head">
         <h2 :title="current.title">{{ current.title }}</h2>
         <label class="model-pick" title="Modèle">
@@ -1180,6 +1178,11 @@ export const ChatPanel = {
               <select v-model="voicePrefs.voice">
                 <option v-for="v in voiceList.voices" :key="v" :value="v">{{ v }}</option></select></label>
           </div>
+        </div>
+        <div class="field" v-if="webmcpSupported">
+          <span>Agents du navigateur</span>
+          <label class="check" :title="'Outils exposés : ' + webmcpNames"><input type="checkbox" v-model="webmcpOn">
+            exposer les bacs de code de la page aux agents du navigateur (WebMCP), hors conversation</label>
         </div>
         <div class="field" v-if="notifySupported">
           <span>Notifications</span>

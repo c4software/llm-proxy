@@ -22,7 +22,9 @@
     device/camera.js      Caméra              take_photo              carte (aperçu)
     device/codes.js       QR et codes-barres  scan_code               carte
     device/color.js       Pipette             pick_color              carte
-    device/wake.js        Écran allumé        keep_screen_on
+    device/wake.js        Écran allumé        keep_screen_on          carte durable (basculer)
+    device/speak.js       Lecture à voix      speak                   carte durable (relire)
+                          haute
     sandbox/javascript.js JavaScript,         run_javascript,         bac isolé, sans réseau
                           TypeScript          check_typescript          (sandbox/bac.js)
     sandbox/php.js        PHP                 run_php
@@ -51,6 +53,7 @@ import * as camera from "./device/camera.js";
 import * as codes from "./device/codes.js";
 import * as color from "./device/color.js";
 import * as wake from "./device/wake.js";
+import * as speak from "./device/speak.js";
 import * as javascript from "./sandbox/javascript.js";
 import * as php from "./sandbox/php.js";
 import * as sql from "./sandbox/sql.js";
@@ -63,7 +66,7 @@ export { TOOL, FAMILY } from "./contract.js";
 
 // L'ordre du menu Outils.
 const MODULES = [ask, save, artifacts, folder, context, location, notifications, clipboard,
-                 calendar, links, share, screen, camera, codes, color, wake, javascript, php, sql];
+                 calendar, links, share, screen, camera, codes, color, wake, speak, javascript, php, sql];
 
 /** @type {Family[]} */
 export const FAMILIES = MODULES.flatMap((m) => m.FAMILIES);
@@ -102,6 +105,7 @@ export function faults(tool) {
   if (!card && !overrides(tool, "run")) out.push(`${where} : ni run, ni carte`);
   if (overrides(tool, "keptView") !== overrides(tool, "keptAct")) out.push(`${where} : keptView et keptAct vont ensemble`);
   if (!["card", "sheet"].includes(tool.placement)) out.push(`${where} : placement inconnu`);
+  if (tool.agent && (card || !overrides(tool, "run"))) out.push(`${where} : un outil d'agent s'exécute aussitôt (run, sans carte)`);
   if (tool.placement === "sheet" && !tool.component) out.push(`${where} : une feuille sans component`);
   for (const r of tool.required) if (!(r in tool.params)) out.push(`${where} : « ${r} » requis mais pas dans params`);
   return out;
@@ -229,6 +233,24 @@ export function abandon(w) {
   release(w);
   return of(w) ? of(w).abandoned(w) : "Non exécuté.";
 }
+// ── les agents du navigateur (WebMCP) ───────────────────────────────────
+// Un outil `agent` appelé par un agent du navigateur, hors de toute
+// conversation : ni dossier, ni message, ni appareil ; une base SQL à lui
+// (incognito : en mémoire). Seul le texte du résultat lui revient.
+const AGENT_CTX = Object.freeze({ conv: Object.freeze({ id: "webmcp", incognito: true, messages: [] }),
+                                  live: null, ws: null, vision: false, download: () => {} });
+
+/** Les outils exposés aux agents, de familles possibles ici. */
+export const agentTools = () => FAMILIES.filter((f) => f.available()).flatMap((f) => f.tools)
+  .filter((t) => t.agent);
+
+/** Un appel d'agent → le texte du résultat (une erreur commence par « Error: »).
+ * @param {string} name @param {any} args */
+export async function runForAgent(name, args) {
+  const got = await run(name, JSON.stringify(args || {}), { ...AGENT_CTX });
+  return got.result;
+}
+
 /** Une carte durable (Kept). @param {any} k */
 export const keptView = (k) => TOOLS.get(k.name).keptView(k);
 /** @param {any} k @param {string} action @param {Ctx} ctx */

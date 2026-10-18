@@ -46,14 +46,17 @@ export const ArtifactPanel = {
       asking.value = false;
     }
     const wide = ref(false);
+    // Plein écran : le panneau entier, son en-tête compris (de quoi en sortir).
+    const panel = ref(null);
+    const { isSupported: canFull, isFullscreen: full, toggle: toggleFull } = VueUse.useFullscreen(panel);
     const showSource = ref(false);
     const file = computed(() => (art.value && version.value ? artifactFile(art.value, version.value) : null));
-    return { art, version, versionIndex, doc, wide, showSource, file, copied, copy, download,
+    return { art, version, versionIndex, doc, wide, panel, canFull, full, toggleFull, showSource, file, copied, copy, download,
              asking, toggleNetwork, allowNetwork,
              pick: (id) => emit("select", id), close: () => emit("close") };
   },
   template: `
-  <section class="artifact-side" :class="{ wide }" v-if="art">
+  <section class="artifact-side" :class="{ wide }" v-if="art" ref="panel">
     <header class="artifact-head">
       <select v-if="artifacts.length > 1" class="art-pick" :value="art.id" @change="pick($event.target.value)"
               aria-label="Artifact affiché" :title="art.title">
@@ -83,6 +86,9 @@ export const ArtifactPanel = {
         <button type="button" class="btn ghost art-btn" :aria-pressed="String(wide)" @click="wide = !wide"
                 :title="wide ? 'Réduire le panneau' : 'Élargir le panneau'" aria-label="Large">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        <button type="button" class="btn ghost art-btn" v-if="canFull" :aria-pressed="String(full)" @click="toggleFull()"
+                :title="full ? 'Quitter le plein écran (Échap)' : 'Plein écran'" aria-label="Plein écran">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path v-if="!full" d="M3 3h6M3 3v6M21 3h-6M21 3v6M3 21h6M3 21v-6M21 21h-6M21 21v-6"/><path v-else d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"/></svg></button>
         <button type="button" class="btn ghost art-btn" title="Fermer" aria-label="Fermer" @click="close">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </span>

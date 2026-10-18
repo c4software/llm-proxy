@@ -1066,6 +1066,8 @@ a.btn { display: inline-block; text-decoration: none; }
 
 /* ── Chat : panneau des artifacts (chat/ArtifactPanel.js) ── */
 .chat.with-memory.side-wide { grid-template-columns: minmax(0, 1fr) minmax(360px, 46%); }
+/* Plein écran (useFullscreen) : le panneau occupe l'écran, sur le fond de la page. */
+.artifact-side:fullscreen { background: var(--bg); width: 100vw; height: 100vh; max-width: none; }
 .artifact-side {
   display: flex; flex-direction: column; min-width: 0; min-height: 0;
   border-left: 1px solid var(--line); background: var(--panel);

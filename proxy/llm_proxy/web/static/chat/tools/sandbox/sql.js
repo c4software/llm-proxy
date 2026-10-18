@@ -208,6 +208,7 @@ class RunSql extends PageTool {
   constructor() {
     super({
       name: TOOL.RUN_SQL,
+      agent: true,
       description: "Exécute un script SQL (dialecte SQLite 3) dans un bac isolé du navigateur, sur la "
         + "base de la conversation : ses tables restent d'un appel à l'autre (`reset` repart d'une base "
         + "vide). `files` importe d'abord des fichiers en tables, depuis le dossier ouvert ou les pièces "
