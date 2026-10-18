@@ -246,6 +246,15 @@ lire un état), la capturer en image. C'est **actif par défaut** :
 - l'artifact reste isolé : le modèle n'atteint que sa page, ni la vôtre,
   ni votre session.
 
+**L'historique ne rejoue pas les anciens contenus.** Au message suivant,
+le modèle ne reçoit plus le texte complet d'un `show_artifact` ou d'un
+`read_artifact` passé, mais une mention (« N caractères, non rejoué ») :
+il travaille sur la version actuelle, qu'il relit avec `read_artifact`
+avant de la retoucher avec `edit_artifact`. Une consigne lui donne les
+artifacts de la conversation, leur version et leur taille. L'historique
+d'une conversation à gros artifacts s'en trouve divisé par deux, et le
+modèle ne réécrit plus tout faute de savoir quelle version est la bonne.
+
 Le modèle inspecte (`inspect_artifact` : console depuis le chargement,
 erreurs, page en texte, capture à la demande), reproduit
 (`run_in_artifact`, avec `click`, `type`, `key`, `wait`, `text`, `all`),

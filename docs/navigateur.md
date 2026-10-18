@@ -418,6 +418,7 @@ class GetLocation extends PageTool {
 | `keptView(k)`, `keptAct(k, action, ctx)` | une carte **durable**, laissée sous la réponse par un `run` qui rend `{result, keep}` (`keep` : une carte, ou une liste) : ce qu'elle montre, et ses boutons, rejouables à volonté (rien ne part plus au modèle) | aucune |
 | `keptComponent` (dans `super`) | un composant Vue de carte durable, à la place de `keptView` ; avec un `slot`, la carte se place **dans le texte** de la réponse (`![titre](chart:<slot>)`), sinon en tête | gabarit commun, sous la réponse |
 | `summary(args)` | la ligne de la puce de l'appel dans le fil | vide |
+| `historic(call)` | ce que l'historique rejoue au modèle d'un appel d'une réponse **passée** (`{arguments, result}`) : un outil y raccourcit ce qui est périmé — `show_artifact` et `read_artifact` n'y rejouent pas le contenu d'une ancienne version | tel quel |
 | `fileContent(ref)` | le contenu, relu au clic, d'un fichier produit avec `source: {tool, ref}` | aucun |
 | `forget(convId)` | la conversation est supprimée : effacer ce que l'outil garde pour elle | rien |
 

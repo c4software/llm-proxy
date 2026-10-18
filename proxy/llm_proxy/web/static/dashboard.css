@@ -352,6 +352,31 @@ html, .thread, .nav-chats ul, .memory-side { scrollbar-gutter: stable; }
   background: var(--panel); min-width: 0;
 }
 .sidenav .brand { margin: 0 0 6px 10px; }
+.nav-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.nav-top .brand { margin-bottom: 0; }
+.nav-collapse {
+  display: grid; place-items: center; padding: 5px; border: 0; border-radius: 7px;
+  background: none; color: var(--muted); cursor: pointer;
+}
+.nav-collapse:hover { background: var(--track); color: var(--ink); }
+.nav-collapse .ico { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; }
+/* Le menu COMPACT (app.js, navCompact) : un rail d'icônes, les libellés en
+   bulles (title) ; la liste des conversations et le pied attendent qu'on
+   le déplie. Grand écran seulement : sur mobile, le menu est un tiroir. */
+@media (min-width: 761px) {
+  .shell.has-nav.nav-compact { grid-template-columns: 64px minmax(0, 1fr); }
+  .nav-compact .sidenav { padding: 22px 8px 18px; align-items: center; gap: 14px; }
+  .nav-compact .nav-top { flex-direction: column; gap: 14px; }
+  .nav-compact .brand { margin: 0; }
+  .nav-compact :is(.brand-name, .nav-item > span, .nav-new > span, .nav-search, .nav-none, .nav-chats ul, .nav-foot) {
+    display: none;
+  }
+  .nav-compact :is(.nav-item, .nav-new) { justify-content: center; padding: 9px; width: 44px; }
+  .nav-compact .nav-chats { margin: 0; align-items: center; }
+  .nav-compact .nav-bottom { align-items: center; width: 100%; }
+}
+@media (max-width: 760px) { .nav-collapse { display: none; } }
 .nav-items { display: flex; flex-direction: column; gap: 2px; }
 .nav-item {
   display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 10px;

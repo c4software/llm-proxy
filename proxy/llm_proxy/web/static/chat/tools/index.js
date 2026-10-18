@@ -268,15 +268,20 @@ export async function fileContent(f) {
 /** Ce qu'une réponse a fait avec les outils, pour l'historique renvoyé au
  * modèle : chaque étape, un message assistant à `tool_calls` puis un
  * message `tool` par appel ; une image rendue par un outil suit, dans un
- * message de l'utilisateur (tous les backends le lisent).
- * @param {any[]} steps */
-export function stepMessages(steps) {
+ * message de l'utilisateur (tous les backends le lisent). `past` : une
+ * réponse passée — chaque outil y raccourcit ce qui est périmé (historic).
+ * @param {any[]} steps @param {{past?: boolean}} [opts] */
+export function stepMessages(steps, { past = false } = {}) {
   const out = [];
   for (const step of steps || []) {
+    const calls = step.calls.map((c) => {
+      const t = past ? TOOLS.get(c.name) : null;
+      return t ? { ...c, ...t.historic({ name: c.name, arguments: c.arguments || "{}", result: c.result || "" }) } : c;
+    });
     out.push({ role: "assistant", content: step.content || null,
-      tool_calls: step.calls.map((c) => ({ id: c.id, type: "function",
+      tool_calls: calls.map((c) => ({ id: c.id, type: "function",
         function: { name: c.name, arguments: c.arguments || "{}" } })) });
-    for (const c of step.calls) out.push({ role: "tool", tool_call_id: c.id, content: c.result });
+    for (const c of calls) out.push({ role: "tool", tool_call_id: c.id, content: c.result });
     const images = step.calls.filter((c) => c.image);
     if (images.length) {
       out.push({ role: "user", content: [

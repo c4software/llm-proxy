@@ -13,6 +13,10 @@ Un **menu latéral** (tiroir ☰ sous 760 px de large) donne en haut *Chat*
 et la liste des conversations, en bas *Statistiques*, *Configuration*,
 la clé connectée, *Se déconnecter* et le thème (auto, clair, sombre).
 Une réponse du chat continue pendant qu'on regarde les statistiques.
+Le bouton à côté du logo le passe en **mode compact** : un rail d'icônes
+(libellés en bulles), sans la liste des conversations ni le pied, à
+déplier pour y revenir. Le choix reste dans ce navigateur ; sur mobile,
+le menu reste un tiroir.
 
 La page est **installable** comme une application (manifeste
 `/ui/static/manifest.webmanifest`, service worker `/ui/sw.js`, servis

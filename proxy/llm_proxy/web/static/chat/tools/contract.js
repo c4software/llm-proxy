@@ -256,6 +256,14 @@ export class PageTool {
    * @returns {string | null | Promise<string | null>} */
   keptAct(k, action, ctx) { throw new Error(`${this.name} : pas de carte durable`); }
 
+  /** Ce que l'HISTORIQUE rejoue au modèle d'un appel d'une réponse
+   * PASSÉE ({arguments, result}, en texte) : par défaut, tel quel ; un
+   * outil y raccourcit ce qui est périmé (le contenu d'un artifact,
+   * remplacé depuis). Le tour en cours rejoue toujours tout.
+   * @param {{name: string, arguments: string, result: string}} call
+   * @returns {{arguments: string, result: string}} */
+  historic(call) { return { arguments: call.arguments, result: call.result }; }
+
   /** La ligne que la puce de l'appel montre.
    * @param {any} args @returns {string} */
   summary(args) { return ""; }

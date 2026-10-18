@@ -412,7 +412,7 @@ export const ChatPanel = {
         else if ((m.steps || []).length) {
           // Une réponse qui a lu le dossier : ses appels et leurs résultats,
           // puis son dernier texte — le modèle retrouve ce qu'il a lu.
-          out.push(...tools.stepMessages(m.steps));
+          out.push(...tools.stepMessages(m.steps, { past: true }));
           if (m.final) out.push({ role: "assistant", content: m.final });
         }
         else if (m.content) out.push({ role: "assistant", content: m.content });

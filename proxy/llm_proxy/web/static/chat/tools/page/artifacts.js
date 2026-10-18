@@ -33,6 +33,10 @@ import { debugOn } from "../../artifacts.js";
 const MAX_ARTIFACT = 5e5;      // caractères d'un artifact
 const TYPES = ["html", "markdown", "svg", "mermaid", "code"];
 
+// Ce que l'historique garde du contenu d'une version passée.
+/** @param {number} chars */
+const stale = (chars) => `[contenu d'une version passée (${chars} caractères), non rejoué : read_artifact rend la version actuelle]`;
+
 // L'identifiant d'un artifact : minuscules, sans accents, des tirets.
 const slug = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "artifact";
@@ -137,6 +141,17 @@ class ShowArtifact extends PageTool {
 
   /** @override @param {any} a */
   summary(a) { return [a.title, a.type].filter(Boolean).join(" · "); }
+
+  // Une réponse passée : son contenu n'est plus la version actuelle (des
+  // versions et des retouches ont pu suivre) — il n'est pas rejoué.
+  /** @override @param {{arguments: string, result: string}} call */
+  historic(call) {
+    let a;
+    try { a = JSON.parse(call.arguments); } catch { return call; }
+    if (typeof a.content !== "string") return call;
+    a.content = stale(a.content.length);
+    return { arguments: JSON.stringify(a), result: call.result };
+  }
 }
 
 class EditArtifact extends PageTool {
@@ -191,6 +206,13 @@ class ReadArtifact extends PageTool {
 
   /** @override @param {any} a */
   summary(a) { return a.id || ""; }
+
+  /** @override @param {{arguments: string, result: string}} call */
+  historic(call) {
+    const head = call.result.split("\n")[0];
+    return { arguments: call.arguments, result: call.result.startsWith("Artifact « ")
+      ? head + "\n" + stale(call.result.length - head.length - 1) : call.result };
+  }
 }
 
 // ── déboguer la page affichée ───────────────────────────────────────────
@@ -356,6 +378,19 @@ class RunInArtifact extends PageTool {
 
 export const FAMILIES = [defineFamily({
   key: FAMILY.ARTIFACTS, label: "Artifacts", hint: "le panneau latéral", fixed: true,
+  // Les artifacts de la conversation, et comment les modifier : l'historique
+  // ne rejoue pas leurs anciens contenus (historic).
+  guidance: (ctx) => {
+    const arts = artifactsOf(ctx.conv);
+    if (!arts.length) return "";
+    const list = arts.map((a) => {
+      const v = a.versions[a.versions.length - 1];
+      return `« ${a.id} » (${v.type}, version ${a.versions.length}, ${v.content.length} caractères)`;
+    }).join(", ");
+    return `Artifacts de la conversation : ${list}. Pour en modifier un, relire sa version actuelle `
+      + "avec read_artifact si son texte exact n'est pas dans ce tour, puis edit_artifact (passages "
+      + "exacts) ; show_artifact seulement pour un nouvel artifact, ou une refonte que l'utilisateur demande.";
+  },
   tools: [new ShowArtifact(), new EditArtifact(), new ReadArtifact()],
 }), defineFamily({
   key: FAMILY.ARTIFACT_DEBUG_OFFER, label: "Proposer le débogage", hint: "une carte pour le rétablir", fixed: true,

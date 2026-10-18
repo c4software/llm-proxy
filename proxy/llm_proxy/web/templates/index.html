@@ -33,15 +33,20 @@
 <!-- Vue compile le CONTENU de #app, pas ses propres attributs : la classe
      qui suit la vue est donc sur l'enveloppe intérieure. -->
 <div id="app" v-cloak>
-<div class="shell" :class="{ 'has-nav': session, 'nav-open': navOpen }">
+<div class="shell" :class="{ 'has-nav': session, 'nav-open': navOpen, 'nav-compact': navCompact }">
   <aside class="sidenav" v-if="session" aria-label="Navigation">
-    <div class="brand"><span class="dot"></span> llm-proxy</div>
+    <div class="nav-top">
+      <div class="brand"><span class="dot"></span><span class="brand-name">llm-proxy</span></div>
+      <button type="button" class="nav-collapse" @click="navCompact = !navCompact" :aria-pressed="String(navCompact)"
+              :title="navCompact ? 'Déplier le menu' : 'Menu compact : les icônes seules'" aria-label="Menu compact">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM9 4v16"/><path :d="navCompact ? 'M13 10l2 2-2 2' : 'M16 10l-2 2 2 2'"/></svg></button>
+    </div>
     <button type="button" class="nav-item" :aria-current="view === 'chat' ? 'page' : null"
-            @click="setView('chat')">
+            @click="setView('chat')" title="Chat">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>
       <span>Chat</span></button>
     <div class="nav-chats" v-if="session.chat && session.chat.enabled">
-      <button type="button" class="nav-new" :disabled="chatState.streaming" @click="newChat">
+      <button type="button" class="nav-new" :disabled="chatState.streaming" @click="newChat" title="Nouvelle conversation">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         <span>Nouvelle conversation</span></button>
       <input type="search" class="nav-search" v-model="chatState.query" v-if="chats.sorted.value.length > 1"
@@ -75,11 +80,11 @@
     </div>
     <div class="nav-bottom">
       <button type="button" class="nav-item" :aria-current="view === 'stats' ? 'page' : null"
-              @click="setView('stats')">
+              @click="setView('stats')" title="Statistiques">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
         <span>Statistiques</span></button>
       <button type="button" class="nav-item" :aria-current="view === 'config' ? 'page' : null"
-              @click="setView('config')">
+              @click="setView('config')" title="Configuration">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M16 4v4M10 10v4M18 16v4"/></svg>
         <span>Configuration</span></button>
       <button type="button" class="nav-item" @click="cycleTheme"

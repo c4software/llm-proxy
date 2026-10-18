@@ -39,6 +39,8 @@ createApp({
     };
     const view = ref(storedView());
     const navOpen = ref(false);      // le menu latéral, sur mobile
+    // Le menu latéral en rail d'icônes (grand écran), choix de ce navigateur.
+    const navCompact = VueUse.useLocalStorage("llm-proxy-nav-compact", false);
     function setView(id) {
       navOpen.value = false;
       if (id === view.value || !known(id)) return;
@@ -176,7 +178,7 @@ createApp({
       window.removeEventListener("keydown", onKey);
     });
 
-    return { views, view, setView, navOpen, chats, chatState, chatList, openChat,
+    return { views, view, setView, navOpen, navCompact, chats, chatState, chatList, openChat,
              newChat, session, needLogin, loginKey, loginError,
              loginBusy, login, logout, onUnauthorized, authMode, authLabel,
              inactive, loadSession, health, theme, themeLabel, cycleTheme };
