@@ -400,6 +400,19 @@ max_file_chars = 100000
 max_total_chars = 2000000
 
 
+# Le NAVIGATEUR de l'utilisateur, piloté par l'extension
+# chrome_extensions/llm-proxy-browser connectée au proxy (WebSocket
+# /v1/browser/link, une clé du compte) : ouvrir, lire, cliquer, saisir, dans
+# une fenêtre à l'IA, sur les sites que l'utilisateur autorise. Voir
+# docs/extension.md.
+[tools.browser]
+enabled = false
+# Délai (s) d'une action : une demande d'accord attend l'utilisateur une minute.
+timeout = 90
+# Actions par réponse, comptées à part de [tools].max_calls.
+max_calls = 60
+
+
 # ── Serveur MCP : POST /mcp ─────────────────────────────────────────────
 # Offre les outils hébergés actifs (ceux de GET /v1/tools) à tout client
 # MCP, avec la clé du proxy. Inverse de [tools.mcp]. Un client qui les

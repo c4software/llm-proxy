@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "llm-proxy — navigateur piloté",
+  "short_name": "llm-proxy",
+  "version": "0.1.0",
+  "description": "Laisse les modèles de votre proxy llm-proxy agir dans ce navigateur, dans une fenêtre à eux, sur les sites que vous autorisez.",
+  "minimum_chrome_version": "116",
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "llm-proxy : navigateur piloté" },
+  "options_page": "options.html",
+  "permissions": ["tabs", "scripting", "storage", "alarms", "debugger"],
+  "host_permissions": ["<all_urls>"],
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}

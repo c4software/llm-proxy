@@ -31,6 +31,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY proxy/main.py .
 COPY proxy/llm_proxy/ llm_proxy/
 COPY --from=wasm /vendor/ llm_proxy/web/static/vendor/
+# L'extension de navigateur (outil `browser`), servie en zip par /ui/browser/extension.zip.
+COPY chrome_extensions/ chrome_extensions/
 # Le modèle seul : data/ est un volume, où le proxy crée config.toml
 # s'il est absent.
 COPY data/config.example.toml data/

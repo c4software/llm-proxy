@@ -1,0 +1,25 @@
+/* Les pages de l'extension (popup, options, demande d'accord). */
+:root { --ink: #1d1c1a; --muted: #6b6760; --line: #e3ded6; --panel: #fffdf9; --accent: #d96b47; --ok: #2f9e44; --bad: #c92a2a; color-scheme: light dark; }
+@media (prefers-color-scheme: dark) { :root { --ink: #ecebe8; --muted: #a29e97; --line: #3a3833; --panel: #1f1e1c; } }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 16px; background: var(--panel); color: var(--ink); font: 14px/1.45 system-ui, sans-serif; }
+h1 { font-size: 16px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+h1 img { width: 20px; height: 20px; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 6px; }
+p { margin: 6px 0; }
+.dim { color: var(--muted); font-size: 12.5px; }
+label { display: block; margin: 10px 0 4px; font-weight: 600; font-size: 13px; }
+input[type=text], input[type=url], input[type=password] { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.state { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.state i { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.state.on i { background: var(--ok); } .state.denied i, .state.replaced i { background: var(--bad); }
+ul { list-style: none; margin: 0; padding: 0; }
+li { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+li button { padding: 2px 8px; font-size: 12px; }
+.host { font-size: 20px; font-weight: 700; margin: 10px 0; overflow-wrap: anywhere; }
+.warn { border-left: 3px solid var(--accent); padding-left: 10px; }
