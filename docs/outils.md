@@ -507,6 +507,64 @@ Ce qu'il faut tenir :
 `web_grep` est lié comme `web_fetch` côté Responses, mais pas à l'API
 Messages : Anthropic n'a pas d'outil serveur de recherche dans une page.
 
+#### Le rendu des pages en JavaScript (`render`)
+
+Certaines pages n'affichent leur contenu qu'après l'exécution de leur
+JavaScript : applications d'une seule page, résultats chargés par script.
+`web_fetch` les lit vides. Avec `render: true`, `web_fetch` et `web_grep`
+les font ouvrir par un vrai navigateur ([`tools/render.py`](../proxy/llm_proxy/tools/render.py)).
+C'est un Chromium headless servi par [browserless](https://docs.browserless.io),
+dans un conteneur à part. Le HTML rendu suit ensuite le même chemin qu'une
+page téléchargée : même conversion en texte, mêmes morceaux, et le même
+cache, sous une clé à part. `screenshot: true` (pour `web_fetch`) y ajoute
+une capture, rendue au client en fichier ; le modèle ne la voit pas.
+
+L'option n'est présentée au modèle que si `[tools.web_fetch].render_url`
+est réglé. Le prompt lui dit de ne s'en servir que pour une page revenue
+vide ou incomplète : un rendu prend quelques secondes.
+
+**Une requête par rendu.** Le proxy appelle `POST /function` de
+browserless avec une fonction Puppeteer. Elle ouvre la page dans un
+contexte neuf, sans cookie ni stockage gardés, attend que le réseau se
+calme (`networkidle2`, puis `render_settle_ms`), et rend le HTML, l'adresse
+finale, l'IP qui a servi la page et la capture éventuelle.
+
+**Le réseau : une atténuation, pas une garantie.** Le navigateur ne passe
+pas par `net.py`. Voici ce qui est fait :
+
+- **Avant le rendu** : l'URL demandée passe par les listes de domaines et
+  doit résoudre vers des adresses publiques, comme un téléchargement.
+- **Pendant le rendu** : dans le navigateur, chaque requête de la page
+  (sous-ressources, `fetch`, redirections, cadres) est refusée si son hôte
+  est :
+  - une IP privée, locale ou CGNAT écrite en clair ;
+  - `localhost` ;
+  - un nom sans point, c'est-à-dire un service Docker ou une IPv6 littérale ;
+  - un suffixe local (`.local`, `.lan`, `.internal`, `.home.arpa`…) ;
+  - un domaine de `[tools.net].blocked_domains` ;
+  - un domaine de **`RENDER_BLOCKED_HOSTS`**. C'est une variable
+    d'environnement du serveur, dans son `.env`, pour que les noms internes
+    ne figurent ni dans le dépôt ni dans la configuration.
+- **Après le rendu** : si la page a fini sur un hôte refusé, ou a été
+  servie par une IP privée, le rendu est jeté (`not_allowed`).
+- **Le réseau Docker** : browserless tourne sur un réseau à lui, avec le
+  proxy pour seul voisin. Il ne voit donc aucun autre service de la pile.
+
+Ce qui reste possible : un nom **public** qui résout vers une adresse
+interne, chargé en sous-ressource par une page piégée. Pour l'empêcher
+vraiment, il faudrait faire sortir le navigateur par un proxy filtrant
+(Squid, refusant les destinations privées) sur un réseau interne. C'est
+écarté pour l'instant, au profit de la simplicité.
+
+**Les erreurs** :
+
+| Code | Quand |
+|---|---|
+| `unavailable` | rendu non configuré, ou browserless injoignable ou en erreur |
+| `too_many_requests` | browserless occupé (`QUEUED` dépassé), ou la page a répondu 429 |
+| `not_allowed` | une adresse interne, avant ou après le rendu |
+| `not_accessible` | page vide, en erreur, ou HTTP ≥ 400 |
+
 ### `ocr` : lire le texte d'une image ou d'un PDF scanné
 
 `tools/ocr.py`, `[tools.ocr]`, désactivé par défaut. Le texte est lu par un

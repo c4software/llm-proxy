@@ -14,6 +14,12 @@ page — mêmes morceaux, même cache. Pas d'OCR : un scan n'a pas de texte.
 La lecture (load) et le texte d'une page (page_text) servent aussi à
 `web_grep`, qui cherche dans la page au lieu de la rendre : mêmes
 garde-fous, même cache.
+
+RENDU (`render: true`, si [tools.web_fetch].render_url est réglé) : la page
+est ouverte par un vrai navigateur (render.py, browserless), pour celles qui
+ne montrent leur contenu qu'après leur JavaScript ; son HTML rendu suit le
+même chemin. `screenshot: true` y ajoute une capture, rendue au client en
+fichier (le modèle ne la voit pas).
 """
 
 import asyncio
@@ -22,9 +28,9 @@ import logging
 import time
 
 from .. import config
-from . import net, webcache
-from .contract import (Anthropic, Call, Responses, Result, Source, Tool,
-                       ToolError, ToolName)
+from . import net, render as renderer, webcache
+from .contract import (Anthropic, Artifact, Call, Responses, Result, Source,
+                       Tool, ToolError, ToolName)
 from .html_text import html_to_text
 
 ENABLED = config.flag("tools.web_fetch.enabled", False)
@@ -200,7 +206,8 @@ class WebFetch(Tool):
             + (_SEARCH_HINT if _SEARCH in present else "")
             + (_OCR_HINT if _OCR in present else "")
             + "Long pages are truncated: "
-            "pass `offset` to continue from a given character position.")
+            "pass `offset` to continue from a given character position."
+            + (_RENDER_HINT if renderer.available() else ""))
 
     def parameters(self, present) -> dict:
         return {
@@ -211,6 +218,7 @@ class WebFetch(Tool):
                 "offset": {"type": "integer",
                            "description": "Character position to start from, "
                                           "to continue a truncated page."},
+                **(RENDER_PARAMS if renderer.available() else {}),
             },
             "required": ["url"],
         }
@@ -239,14 +247,25 @@ class WebFetch(Tool):
             and not isinstance(offset, bool) else 0
         max_chars = call.settings.get("max_chars")
 
-        def read(page) -> Result:
-            """Le morceau demandé, et sa source : l'URL telle que le modèle
-            l'a écrite — c'est elle qu'il citera dans sa réponse."""
-            out = render(*page, offset, max_chars)
-            return Result(out.text, sources=(Source(asked, asked),),
-                          meta=out.meta)
-
-        return read(await load(url, call.settings, transport))
+        rendered = args.get("render") is True
+        shot = rendered and args.get("screenshot") is True
+        if args.get("screenshot") is True and not rendered:
+            raise ToolError("invalid_input", "`screenshot` needs `render: true`.")
+        files = ()
+        if shot:
+            # Une capture : un rendu à part, non gardé en cache.
+            page, image = await load_rendered(url, call.settings, screenshot=True)
+            if image:
+                files = (Artifact("capture.jpg", "image/jpeg", image),)
+        else:
+            page = await load(url, call.settings, transport, rendered=rendered)
+        out = render(*page, offset, max_chars)
+        text = out.text
+        if files:
+            text += "\n\n[A screenshot of the rendered page (capture.jpg) was given to the user.]"
+        # La source : l'URL telle que le modèle l'a écrite — c'est elle
+        # qu'il citera dans sa réponse.
+        return Result(text, sources=(Source(asked, asked),), meta=out.meta, files=files)
 
 
 def target(asked) -> str:
@@ -257,11 +276,44 @@ def target(asked) -> str:
     return "https://" + url if url.startswith("www.") else url
 
 
-async def load(url: str, settings, transport=None) -> tuple:
+_RENDER_HINT = (" If a page comes back empty or incomplete because it needs "
+                "JavaScript (a single-page app, content loaded by scripts), "
+                "fetch it again with `render: true`: it is opened in a real "
+                "browser (slower, use it only then).")
+RENDER_PARAMS = {
+    "render": {"type": "boolean",
+               "description": "Open the page in a real browser and read it "
+                              "once its JavaScript has run. Only for pages "
+                              "that come back empty or incomplete."},
+    "screenshot": {"type": "boolean",
+                   "description": "With render: also give the user a "
+                                  "screenshot of the page (you do not see it)."},
+}
+
+
+async def load_rendered(url: str, settings, *, screenshot: bool = False) -> tuple:
+    """La page à `url`, RENDUE par un navigateur (render.py) → (page,
+    capture) : la page au format de load(), la capture en octets ou None.
+    Sans capture, la page est gardée en cache (clé à part de la page
+    téléchargée)."""
+    key = ("render", url.split("#", 1)[0])
+    net.check(url, settings)
+    if not screenshot and (hit := webcache.CACHE.get(key)) is not None:
+        return hit, None
+    r = await renderer.render(url, settings, screenshot=screenshot)
+    page = (r.url, "text/html; charset=utf-8", r.html.encode("utf-8"), "utf-8")
+    webcache.CACHE.put(key, page, len(page[2]))
+    return page, r.image
+
+
+async def load(url: str, settings, transport=None, rendered: bool = False) -> tuple:
     """La page à `url` (passée par target()) → (url lue, type, corps,
     encodage), depuis le cache web ou téléchargée sous les garde-fous ;
     le corps d'un PDF est déjà son TEXTE. Lève ToolError. `settings` :
-    les réglages du client (listes de domaines), voir run."""
+    les réglages du client (listes de domaines), voir run. `rendered` :
+    ouverte par un navigateur (load_rendered)."""
+    if rendered:
+        return (await load_rendered(url, settings))[0]
     # Le cache web : chaque morceau (`offset`) est rendu sans redemander la
     # page. Les listes de domaines passent AVANT ; le contrôle d'adresse a
     # été fait au téléchargement.
