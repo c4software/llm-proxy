@@ -864,6 +864,8 @@ export const ChatPanel = {
       settle(m, out.result);
     }
     const deviceView = (w) => device.view(w);
+    // Le badge d'un fichier : son extension, en capitales (« TXT » sans).
+    const extOf = (name) => ((String(name).match(/\.([a-z0-9]{1,6})$/i) || [])[1] || "txt").toUpperCase();
     // Un fichier sous la réponse : son texte, ou la base SQL de la
     // conversation (run_sql), telle qu'elle est au moment du clic.
     async function downloadOut(f) {
@@ -1174,7 +1176,7 @@ export const ChatPanel = {
              voicePrefs, voiceList, ttsModel, ttsDefault, playing, listen,
              askReady, answerAsk, asking, sheetOpen, sheetBody, askTab, askQ, askOptions,
              askAnswered, askCount, showTab, pick, pickOther, onSheetKey, skipAsk, applyWrite, refuseWrite, deviceAct, deviceView, attachVideo, writeDiff, diffCounts,
-             download, downloadOut,
+             download, downloadOut, extOf,
              onDrop, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
              host };
@@ -1292,7 +1294,7 @@ export const ChatPanel = {
               <div class="attachments" v-if="m.attachments && m.attachments.length">
                 <template v-for="a in m.attachments" :key="a.name">
                   <img v-if="a.kind === 'image' && a.data" :src="a.data" :alt="a.name">
-                  <span v-else class="chip file">{{ a.name }}<span class="dim" v-if="a.kind === 'image'">
+                  <span v-else class="chip file" :data-ext="extOf(a.name)">{{ a.name }}<span class="dim" v-if="a.kind === 'image'">
                     · image absente</span></span>
                 </template>
               </div>
@@ -1334,7 +1336,7 @@ export const ChatPanel = {
               <template v-for="a in m.attachments" :key="a.name">
                 <button v-if="a.data" type="button" class="gen-image" title="Agrandir"
                         @click="zoom = a"><img :src="a.data" :alt="a.name" @load="onImageLoad"></button>
-                <span v-else class="chip file">{{ a.name }}<span class="dim">
+                <span v-else class="chip file" :data-ext="extOf(a.name)">{{ a.name }}<span class="dim">
                   · image absente</span></span>
               </template>
             </div>
@@ -1381,7 +1383,7 @@ export const ChatPanel = {
               </div>
             </div>
             <div class="out-files" v-if="m.files && m.files.length">
-              <button type="button" class="chip file" v-for="f in m.files" :key="f.name"
+              <button type="button" class="chip file" v-for="f in m.files" :key="f.name" :data-ext="extOf(f.name)"
                       @click="downloadOut(f)" title="Télécharger">{{ f.name }}
                 <span class="dim">{{ size(f.size) }}</span></button>
             </div>

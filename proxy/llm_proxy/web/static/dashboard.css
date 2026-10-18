@@ -720,7 +720,7 @@ button.icon:disabled { opacity: .4; cursor: default; }
   font-size: 12.5px; background: var(--panel);
 }
 .chip.file::before {
-  content: "TXT"; font-size: 9.5px; letter-spacing: .06em; color: var(--muted);
+  content: attr(data-ext); font-size: 9.5px; letter-spacing: .06em; color: var(--muted);
   border: 1px solid var(--line); border-radius: 4px; padding: 1px 3px;
 }
 .msg.user .chip { padding-right: 8px; }
