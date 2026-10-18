@@ -30,7 +30,7 @@ def ui(proxy, monkeypatch):
     outils hébergés de chat/completions actifs ; `clients` note le client
     de chaque ligne de statistiques (stats.CLIENT au moment d'écrire)."""
     monkeypatch.setattr(auth, "PROXY_API_KEYS", [KEY, "sk-bob"])
-    monkeypatch.setattr(dashboard, "UI_CHAT", True)
+    everywhere(monkeypatch, dashboard, "UI_CHAT", True)
     hosted_chat(monkeypatch)
     proxy.clients = []
     everywhere(monkeypatch, stats, "record",
@@ -148,7 +148,7 @@ def test_writing_routes_want_a_json_body(ui):
 
 def test_chat_is_closed_unless_enabled(ui, monkeypatch):
     login(ui)
-    monkeypatch.setattr(dashboard, "UI_CHAT", False)
+    everywhere(monkeypatch, dashboard, "UI_CHAT", False)
     assert chat(ui).status_code == 404
     assert ui.client.get("/ui/session").json()["chat"] == {
         "enabled": False, "model": None, "hosted_tools": False, "tools": [], "always": [],
@@ -244,7 +244,7 @@ def test_chat_generates_an_image_with_an_image_model(ui, monkeypatch):
     assert ui.sent[-1] == {**body, "model": "flux"}
     assert ui.clients == [tools.owner(KEY)]
     assert ui.client.post("/ui/images/generations", content="{}").status_code == 415
-    monkeypatch.setattr(dashboard, "UI_CHAT", False)
+    everywhere(monkeypatch, dashboard, "UI_CHAT", False)
     assert ui.client.post("/ui/images/generations", json=body).status_code == 404
 
 
@@ -259,7 +259,7 @@ def test_chat_speaks_through_the_proxy(ui, monkeypatch):
     assert r.status_code == 200 and r.content == b"RIFF....WAVE"
     assert ui.sent[-1] == {**body, "model": "tts"}
     assert ui.client.post("/ui/audio/speech", content="{}").status_code == 415
-    monkeypatch.setattr(dashboard, "UI_CHAT", False)
+    everywhere(monkeypatch, dashboard, "UI_CHAT", False)
     assert ui.client.post("/ui/audio/speech", json=body).status_code == 404
     assert ui.client.get("/ui/audio/voices?model=essai/tts").status_code == 404
 

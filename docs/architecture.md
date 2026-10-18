@@ -96,6 +96,12 @@ Le code est dans `proxy/llm_proxy/`, rangé en paquets par domaine. Chacun
 a un `__init__.py` qui dit ce qu'il contient ; les chemins ci-dessous sont
 sous `proxy/llm_proxy/`.
 
+Les plus gros modules sont eux-mêmes des paquets, découpés en parties. Leur
+`__init__.py` réexporte ce que le reste du proxy en utilise : on écrit
+toujours `responses_api.to_chat`. Un test qui remplace un réglage d'un tel
+paquet passe par `fakes.everywhere()`, qui le remplace aussi dans chaque
+partie qui l'a importé.
+
 ### `core/` : le noyau
 
 | Fichier | Rôle |
@@ -128,9 +134,9 @@ sous `proxy/llm_proxy/`.
 | Fichier | Rôle |
 |---|---|
 | `surfaces/endpoints.py` | `/v1/chat/completions`, `/v1/messages` (et `count_tokens`), `/v1/responses` |
-| `surfaces/chat_api.py` | Outils hébergés sur `/v1/chat/completions` : une seule réponse pour plusieurs tours upstream |
-| `surfaces/responses_api.py` | Traduction Responses ↔ chat/completions, flux compris ; outils hébergés ; `namespace` aplatis |
-| `surfaces/anthropic_api.py` | Traduction Messages ↔ chat/completions, flux compris ; `model_map` ; outils serveur `web_search` et `web_fetch` |
+| `surfaces/chat_api/` | Outils hébergés sur `/v1/chat/completions` : une seule réponse pour plusieurs tours upstream. Paquet : `common`, `declare`, `memory` (échanges cachés), `stream` (le `Translator`) |
+| `surfaces/responses_api/` | Traduction Responses ↔ chat/completions, flux compris ; outils hébergés ; `namespace` aplatis. Paquet : `common`, `request`, `response`, `stream` (le `Translator`) |
+| `surfaces/anthropic_api/` | Traduction Messages ↔ chat/completions, flux compris ; `model_map` ; outils serveur `web_search` et `web_fetch`. Paquet : `common`, `request`, `response`, `stream` (le `Translator`) |
 | `surfaces/tool_loop.py` | La boucle des outils hébergés, commune aux trois surfaces |
 | `surfaces/relay_routes.py` | `GET /v1/audio/voices` et le catch-all (`forward_post_paths`, sinon `404`) |
 
@@ -151,7 +157,7 @@ sous `proxy/llm_proxy/`.
 | `tools/code_execution.py` | `code_execution` : client de l'exécuteur, texte et fichiers produits |
 | `tools/image_generation.py` | `image_generation` : génération ou retouche par un backend, image rendue en fichier |
 | `tools/memory.py` | `memory` : `view`, `create`, `str_replace`, `insert`, `delete`, `rename` |
-| `tools/mcp.py` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés |
+| `tools/mcp/` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés. Paquet : `protocol`, `tool` (`McpTool`), `server`, `registry` |
 | `tools/render.py` | Le rendu des pages en JavaScript par browserless (`render: true` de `web_fetch` et `web_grep`) |
 
 ### `exposure/` : les outils offerts tels quels
@@ -165,7 +171,7 @@ sous `proxy/llm_proxy/`.
 
 | Fichier | Rôle |
 |---|---|
-| `storage/stats.py` | Compteurs SQLite (par requête, par exécution d'outil), lecture de l'`usage` dans le flux |
+| `storage/stats/` | Compteurs SQLite (par requête, par exécution d'outil), lecture de l'`usage` dans le flux. Paquet : `collector` (`UsageCollector`), `db` (SQLite, file d'écriture), `usage` (Usage API) |
 | `storage/conversations.py` | Historique du chat de la page (`data/conversations.db`) : conversations et images par compte |
 | `storage/memories.py` | Magasin de la mémoire persistante (`data/memory.db`), par client, sous `/memories` |
 | `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
@@ -175,7 +181,7 @@ sous `proxy/llm_proxy/`.
 
 | Fichier | Rôle |
 |---|---|
-| `ui/dashboard.py` | Routes `/ui/*` : entrée, session, comptes et clés, chat, mémoire |
+| `ui/dashboard/` | Routes `/ui/*` : entrée, session, comptes et clés, chat, mémoire. Paquet : `page`, `accounts`, `chat`, `memory`, sur un routeur commun |
 | `ui/static_files.py` | Fichiers de la page sous un chemin versionné (`/ui/static/v/<empreinte>/…`, gardés un an) |
 | `ui/conversation_routes.py` | `/ui/conversations`, `/ui/assets` : l'historique du chat (`storage/conversations.py`) |
 | `ui/config_view.py` | La configuration effective pour la page (secrets masqués), le formulaire, la vérification d'un TOML modifié. N'écrit jamais |

@@ -6,6 +6,8 @@ import tomllib
 
 import pytest
 
+from fakes import everywhere
+
 from llm_proxy.core import config
 from llm_proxy.ui import dashboard
 from llm_proxy.ui import config_view as V
@@ -86,7 +88,7 @@ def test_the_page_needs_its_session(ui):
 
 def test_the_chat_model_is_preselected(conf, monkeypatch):
     assert conf.client.get("/ui/session").json()["chat"]["model"] is None
-    monkeypatch.setattr(dashboard, "UI_CHAT_MODEL", "essai/qwen")
+    everywhere(monkeypatch, dashboard, "UI_CHAT_MODEL", "essai/qwen")
     assert conf.client.get("/ui/session").json()["chat"]["model"] == "essai/qwen"
 
 
