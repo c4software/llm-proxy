@@ -17,7 +17,8 @@ llm-proxy/
 │               config.example.toml, le modèle
 ├── docs/       la documentation et ses captures
 ├── proxy/      le proxy : Dockerfile, requirements*.txt, main.py, llm_proxy/, tests/,
-│               wasm/ (l'outillage Node de la page : runtimes des bacs, vérification des types)
+│               wasm/ (l'outillage Node de la page : runtimes des bacs, vérification des types),
+│               linux/ (la VM Linux du navigateur : invité Alpine, pilote, état démarré)
 ├── services/   les services tiers de la pile
 │   ├── executor/   l'exécuteur de code : Dockerfile, executor/, sandbox/, tests/
 │   └── searxng/    settings.yml, monté dans l'image officielle
@@ -32,6 +33,8 @@ Commandes :
   elle-même), et `npm run check`, qui vérifie les types du code de la
   page (fichiers en `// @ts-check`) et le registre de ses outils (aussi
   lancé par pytest) ;
+- `proxy/linux/build.sh` : la VM Linux du navigateur, par Docker, dans
+  `vendor/linux/` (voir [La VM Linux](linux.md)) ;
 - `services/executor/` : `pytest` ;
 - `bench/`, qui a son propre compose : `docker compose run --rm <client>`.
 
@@ -188,6 +191,6 @@ partie qui l'a importé.
 | `ui/health.py` | `/healthz` et `/ui/health` : état détaillé du déploiement |
 | `ui/web/templates/index.html` | Squelette de la page |
 | `ui/web/static/` | Modules ES par domaine : `app.js` (session, vues, menu), `stats/`, `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème), plus `dashboard.css`, `vue.global.prod.js` et `vueuse.iife.min.js` (VueUse 15, ses modules `shared` et `core`) |
-| `ui/web/static/chat/` | `ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.js`, `voice.js`, `notify.js` |
-| `ui/web/static/chat/tools/` | Les outils que la page exécute : `contract.js` (les listes `TOOL` et `FAMILY`, l'interface `PageTool`), `index.js` (le registre, qui vérifie chaque outil au chargement), `page/` (questions, fichiers, artifacts, dossier), `device/` (l'appareil ; `vueuse.js`, les composables VueUse des outils ; `media.js`, les flux), `sandbox/` (`bac.js`, le bac commun ; `files.js` ; `javascript.js`, `typescript.js`, `php.js`, `sql.js`, `sqlbase.js`). Voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page) |
-| `ui/web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js), `html-to-image.js` (la capture d'un artifact), `sucrase.js`, `typescript.js` (le compilateur TypeScript 6 et ses `lib.*.d.ts`) |
+| `ui/web/static/chat/` | `ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.js`, `LinuxPanel.js` (le terminal de la VM Linux), `SidePanel.js` (leur panneau commun : largeur, Large, Réseau), `voice.js`, `notify.js` |
+| `ui/web/static/chat/tools/` | Les outils que la page exécute : `contract.js` (les listes `TOOL` et `FAMILY`, l'interface `PageTool`), `index.js` (le registre, qui vérifie chaque outil au chargement), `page/` (questions, fichiers, artifacts, dossier), `device/` (l'appareil ; `vueuse.js`, les composables VueUse des outils ; `media.js`, les flux), `sandbox/` (`bac.js`, le bac commun ; `files.js` ; `javascript.js`, `typescript.js`, `php.js`, `sql.js`, `postgres.js`, `sqlbase.js`, `tables.js` ; `linux.js` et `linuxvm.js`, la VM Linux) ; `text.js`, lire, chercher et retoucher un texte (artifacts et fichiers de la VM). Voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page) |
+| `ui/web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js), `html-to-image.js` (la capture d'un artifact), `sucrase.js`, `typescript.js` (le compilateur TypeScript 6 et ses `lib.*.d.ts`), `pglite.*` et `initdb.wasm` (PostgreSQL, PGlite), `xterm.*` (le terminal) ; `linux/`, la VM Linux, construite par `proxy/linux/build.sh` |

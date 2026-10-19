@@ -1,6 +1,8 @@
 // @ts-check
 /*
-  La BASE SQLite d'une conversation (run_sql) : ses octets, gardés dans
+  La BASE SQLite d'une conversation (run_sql), ou son dossier PostgreSQL
+  compressé (run_postgres, sous « pg:<id> »), ou le /work de sa VM Linux
+  (run_shell, sous « linux:<id> ») : ses octets, gardés dans
   CE navigateur (IndexedDB), jamais envoyés au proxy. Une conversation
   incognito, ou un navigateur sans IndexedDB, la garde en mémoire seulement
   (perdue au rechargement).

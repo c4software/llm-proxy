@@ -57,14 +57,16 @@ import * as notify from "./notify.js";
 import * as tools from "./tools/index.js";
 import * as artifactBridge from "./artifact-bridge.js";
 import { ArtifactPanel } from "./ArtifactPanel.js";
-import { download } from "../lib/files.js";
+import { LinuxPanel } from "./LinuxPanel.js";
+import { setOpener as setLinuxOpener } from "./tools/sandbox/linuxvm.js";
+import { download, useCopy } from "../lib/files.js";
 import * as voice from "./voice.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
 
 export const ChatPanel = {
-  components: { ArtifactPanel },
+  components: { ArtifactPanel, LinuxPanel },
   props: { session: { type: Object, required: true } },
   emits: ["unauthorized"],
   setup(props, { emit }) {
@@ -143,14 +145,33 @@ export const ChatPanel = {
       artifactId.value = id;
       artifactsOpen.value = true;
       memoryOpen.value = false;
+      linuxOpen.value = false;
     }
     // Le modèle teste un artifact (inspect_artifact, run_in_artifact) : le
     // panneau s'ouvre dessus s'il ne l'est pas.
     artifactBridge.setOpener(openArtifact);
     function toggleArtifacts(open = !artifactsOpen.value) {
       artifactsOpen.value = open;
-      if (open) memoryOpen.value = false;
+      if (open) { memoryOpen.value = false; linuxOpen.value = false; }
     }
+    // Le terminal de la VM Linux (LinuxPanel) : un panneau de plus, un
+    // seul à la fois. Toujours proposé (la famille Linux ne fait que donner
+    // run_shell au modèle), sauf dans un navigateur qui ne sait pas, ou si
+    // le proxy refuse la famille ([ui].page_tools_disabled).
+    const linuxOpen = ref(false);
+    const linuxOffered = computed(() => !!current.value
+      && tools.menuFamilies().some((f) => f.key === tools.FAMILY.LINUX));
+    function toggleLinux(open = !linuxOpen.value) {
+      linuxOpen.value = open;
+      if (open) { memoryOpen.value = false; artifactsOpen.value = false; }
+    }
+    // Le premier run_shell d'une conversation ouvre le terminal, si c'est
+    // celle qui est affichée.
+    setLinuxOpener((conv) => {
+      if (!current.value || current.value.id !== conv.id) return false;
+      toggleLinux(true);
+      return true;
+    });
     // ── voix (voice.js) : écouter ───────────────────────────────
     // La synthèse vocale du navigateur : tout de suite, sans modèle. Le
     // choix (voix, débit) reste dans ce navigateur.
@@ -179,7 +200,7 @@ export const ChatPanel = {
     async function toggleNotify(e) { notifyOn.value = await notify.setEnabled(e.target.checked); }
     function toggleMemory(open = !memoryOpen.value) {
       memoryOpen.value = open;
-      if (open) artifactsOpen.value = false;
+      if (open) { artifactsOpen.value = false; linuxOpen.value = false; }
     }
     const thread = ref(null);
     // Écran étroit : textes courts (la zone de saisie, sur mobile).
@@ -825,13 +846,31 @@ export const ChatPanel = {
     const extOf = (name) => ((String(name).match(/\.([a-z0-9]{1,6})$/i) || [])[1] || "txt").toUpperCase();
     // Un fichier sous la réponse : son texte, ou ce que l'outil qui l'a
     // produit en relit au moment du clic (la base SQL de la conversation).
-    async function downloadOut(f) {
+    // Un clic l'OUVRE en aperçu (Markdown rendu, autre texte tel quel),
+    // d'où il se copie ou se télécharge ; un binaire se télécharge.
+    const PREVIEW_MAX = 500_000;              // caractères montrés
+    const filePreview = ref(null);
+    const { copied: previewCopied, copy: copyPreview } = useCopy();
+    async function contentOut(f) {
       const content = await tools.fileContent(f);
       if (content === null || content === undefined) {
         status.value = `${f.name} : introuvable dans ce navigateur (supprimé, ou créé sur un autre).`;
-        return;
       }
-      download({ name: f.name, content }, f.type);
+      return content;
+    }
+    async function downloadOut(f) {
+      const content = await contentOut(f);
+      if (content !== null && content !== undefined) download({ name: f.name, content }, f.type);
+    }
+    async function openOut(f) {
+      const content = await contentOut(f);
+      if (content === null || content === undefined) return;
+      const binary = typeof content !== "string" && content.subarray(0, 8192).includes(0);
+      if (binary) { download({ name: f.name, content }, f.type); return; }
+      const text = typeof content === "string" ? content : new TextDecoder().decode(content);
+      const shown = text.length > PREVIEW_MAX ? text.slice(0, PREVIEW_MAX) : text;
+      const md = /\.(md|markdown)$/i.test(f.name);
+      filePreview.value = { f, name: f.name, text, shown, cut: text.length - shown.length, html: md ? Markdown.render(shown) : "" };
     }
     // Un nouveau message pendant qu'une carte attend : elle est close sans
     // réponse, et le tour en cours avec elle (ses autres appels aussi).
@@ -1060,6 +1099,7 @@ export const ChatPanel = {
     // feuille de questions, champ d'un menu).
     VueUse.onKeyStroke("Escape", (e) => {
       if (zoom.value) { zoom.value = null; return; }
+      if (filePreview.value) { filePreview.value = null; return; }
       if (e.defaultPrevented || !inputShown()) return;
       if (streaming.value) { e.preventDefault(); stop(); }
     });
@@ -1340,12 +1380,13 @@ export const ChatPanel = {
     });
 
     return { chat, toolGroups, available, current, currentId,
-             ownImage, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
+             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
              toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
+             linuxOpen, linuxOffered, toggleLinux,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, voiceName, voiceSupported: voice.supported, playing, listen,
              sheet, sheetOpen, cardAct, cardView, keptView, keptAct, keptNotes, body, keptComponent, keptBelow, cardComponent, cardPlacement, cardPending, folderCtx,
@@ -1366,8 +1407,9 @@ export const ChatPanel = {
     </div>
   </div>
   <div class="panel chat" v-else
-       :class="{ 'with-memory': (memoryOpen && $props.session.memory) || (artifactsOpen && current && (current.artifacts || []).length),
-                 'side-wide': artifactsOpen, incognito: current && current.incognito }">
+       :class="{ 'with-memory': (memoryOpen && $props.session.memory) || (artifactsOpen && current && (current.artifacts || []).length)
+                   || (linuxOpen && current),
+                 'side-wide': artifactsOpen || linuxOpen, incognito: current && current.incognito }">
     <section class="chat-main" v-if="current" ref="dropZone">
       <header class="chat-head">
         <h2 :title="current.title">{{ current.title }}</h2>
@@ -1395,6 +1437,11 @@ export const ChatPanel = {
                 title="Les artifacts de la conversation (pages, documents, schémas)">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 9h16M9 9v11"/></svg>
           <span class="lbl">Artifacts ({{ current.artifacts.length }})</span></button>
+        <button type="button" class="btn ghost ico-btn" v-if="linuxOffered"
+                :aria-pressed="String(linuxOpen)" @click="toggleLinux()"
+                title="Terminal : la VM Linux de la conversation, celle où le modèle exécute ses scripts">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3zM7 10l3 2-3 2M12 15h5"/></svg>
+          <span class="lbl">Terminal</span></button>
         <button type="button" class="btn ghost ico-btn" v-if="$props.session.memory"
                 :aria-pressed="String(memoryOpen)" @click="toggleMemory()"
                 title="Mémoire : ce que les modèles ont retenu">
@@ -1587,7 +1634,7 @@ export const ChatPanel = {
             </div>
             <div class="out-files" v-if="m.files && m.files.length">
               <button type="button" class="chip file" v-for="f in m.files" :key="f.name" :data-ext="extOf(f.name)"
-                      @click="downloadOut(f)" title="Télécharger">{{ f.name }}
+                      @click="openOut(f)" title="Ouvrir (aperçu, copier, télécharger)">{{ f.name }}
                 <span class="dim">{{ size(f.size) }}</span></button>
             </div>
             <div class="typing" v-if="streaming && i === current.messages.length - 1 && !m.error
@@ -1799,6 +1846,7 @@ export const ChatPanel = {
     <artifact-panel v-else-if="artifactsOpen && current && (current.artifacts || []).length"
                     :artifacts="current.artifacts" :selected="artifactId"
                     @select="artifactId = $event" @close="toggleArtifacts(false)"></artifact-panel>
+    <linux-panel v-else-if="linuxOpen && current" :conv="current" @close="toggleLinux(false)"></linux-panel>
     <teleport to="body">
     <div class="lightbox" v-if="zoom" @click.self="zoom = null" role="dialog" aria-label="Image agrandie">
       <img :src="zoom.data" :alt="zoom.name" @click="zoom = null">
@@ -1808,6 +1856,28 @@ export const ChatPanel = {
         <button type="button" class="btn ghost" v-if="ownImage(zoom.data)"
                 :disabled="streaming" @click="retouch(zoom)">Retoucher</button>
         <button type="button" class="btn" @click="zoom = null">Fermer</button>
+      </div>
+    </div>
+    <div class="lightbox file-preview" v-if="filePreview" @click.self="filePreview = null" role="dialog" :aria-label="filePreview.name">
+      <div class="file-preview-box">
+        <header class="artifact-head">
+          <h3 :title="filePreview.name">{{ filePreview.name }}</h3>
+          <span class="dim">{{ size(filePreview.f.size || filePreview.text.length) }}</span>
+          <span class="artifact-actions">
+            <button type="button" class="btn ghost art-btn" @click="copyPreview({ name: filePreview.name, content: filePreview.text })"
+                    :title="previewCopied === filePreview.name ? 'Copié' : 'Copier'" aria-label="Copier">
+              <svg v-if="previewCopied === filePreview.name" class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>
+              <svg v-else class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg></button>
+            <button type="button" class="btn ghost art-btn" @click="downloadOut(filePreview.f)"
+                    :title="'Télécharger ' + filePreview.name" aria-label="Télécharger">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>
+            <button type="button" class="btn ghost art-btn" title="Fermer (Échap)" aria-label="Fermer" @click="filePreview = null">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </span>
+        </header>
+        <div class="file-preview-body md" v-if="filePreview.html" v-html="filePreview.html"></div>
+        <pre class="file-preview-body artifact-source" v-else>{{ filePreview.shown }}</pre>
+        <p class="linux-note" v-if="filePreview.cut">Aperçu coupé : {{ filePreview.cut }} caractères de plus, dans le fichier téléchargé.</p>
       </div>
     </div>
     </teleport>

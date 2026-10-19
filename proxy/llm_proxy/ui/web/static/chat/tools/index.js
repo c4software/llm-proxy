@@ -33,6 +33,9 @@
                           TypeScript          check_typescript          (sandbox/bac.js)
     sandbox/php.js        PHP                 run_php
     sandbox/sql.js        SQL                 run_sql
+    sandbox/postgres.js   PostgreSQL          run_postgres
+    sandbox/linux.js      Linux               run_shell, shell_read,  la VM de linuxvm.js, partagée
+                                              _grep, _edit, _write    avec le panneau Terminal
 
   Au chargement, le registre VÉRIFIE tout : chaque outil hérite de
   PageTool, n'a que ses membres, a un mode cohérent ; chaque nom de TOOL
@@ -61,6 +64,8 @@ import * as speak from "./device/speak.js";
 import * as javascript from "./sandbox/javascript.js";
 import * as php from "./sandbox/php.js";
 import * as sql from "./sandbox/sql.js";
+import * as postgres from "./sandbox/postgres.js";
+import * as linux from "./sandbox/linux.js";
 
 export { TOOL, FAMILY } from "./contract.js";
 
@@ -70,7 +75,8 @@ export { TOOL, FAMILY } from "./contract.js";
 
 // L'ordre du menu Outils.
 const MODULES = [ask, save, artifacts, folder, context, location, notifications, clipboard,
-                 calendar, links, share, screen, camera, codes, color, wake, speak, javascript, php, sql];
+                 calendar, links, share, screen, camera, codes, color, wake, speak, javascript, php, sql,
+                 postgres, linux];
 
 /** @type {Family[]} */
 export const FAMILIES = MODULES.flatMap((m) => m.FAMILIES);

@@ -1,0 +1,23 @@
+#!/bin/sh
+# Le démarrage de la VM : systèmes de fichiers, nom, partage 9p avec la page.
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev 2>/dev/null
+mkdir -p /dev/pts /dev/shm
+mount -t devpts -o gid=5,mode=620 devpts /dev/pts
+mount -t tmpfs -o mode=1777 tmpfs /dev/shm
+# La racine (l'initramfs) est un tmpfs plafonné à 50 % de la mémoire, déjà
+# occupé par le système : de la place pour elle, /tmp et /work (des
+# plafonds, pas des réservations).
+mount -o remount,size=90% / 2>/dev/null
+mount -t tmpfs -o mode=1777,size=80% tmpfs /tmp
+mkdir -p /work /out && mount -t tmpfs -o mode=755,size=80% work /work
+hostname vm
+ip link set lo up 2>/dev/null
+# Le dossier partagé avec la page (v86 `filesystem: {}` → 9p sur virtio,
+# étiquette host9p) : les scripts du modèle, leur sortie, les fichiers.
+modprobe 9pnet_virtio 2>/dev/null && modprobe 9p 2>/dev/null
+mkdir -p /mnt/host
+mount -t 9p -o trans=virtio,version=9p2000.L,msize=512000 host9p /mnt/host && mkdir -p /mnt/host/.vm
+# L'horloge suit l'hôte au démarrage ; après une reprise, `init` la remet.
+hwclock -s 2>/dev/null

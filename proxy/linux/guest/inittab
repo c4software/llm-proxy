@@ -1,0 +1,8 @@
+# Init de busybox (pas d'OpenRC) : la VM démarre en moins de 4 s.
+::sysinit:/etc/rc.vm
+# ttyS0 : le terminal de l'utilisateur (panneau Terminal), bash root dans /work.
+ttyS0::respawn:/usr/local/bin/console-shell
+# ttyS1 : le canal du modèle (run_shell), invisible dans le terminal.
+::respawn:/usr/local/bin/vm-agent /dev/ttyS1
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/sync

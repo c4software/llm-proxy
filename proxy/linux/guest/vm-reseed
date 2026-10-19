@@ -1,0 +1,10 @@
+#!/usr/bin/python3 -I
+# vm-reseed <hex> : mêle l'aléa de l'hôte au générateur du noyau et force
+# son réensemencement. Sans lui, chaque VM reprise du même état tirerait
+# les mêmes nombres « aléatoires » (écrire dans /dev/urandom ne suffit pas).
+import fcntl, os, struct, sys
+data = bytes.fromhex(sys.argv[1])
+fd = os.open("/dev/urandom", os.O_WRONLY)
+RNDADDENTROPY, RNDRESEEDCRNG = 0x40085203, 0x5207
+fcntl.ioctl(fd, RNDADDENTROPY, struct.pack("ii", len(data) * 8, len(data)) + data)
+fcntl.ioctl(fd, RNDRESEEDCRNG)

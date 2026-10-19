@@ -1,0 +1,10 @@
+export PS1='\w# '
+export HISTCONTROL=ignorespace
+export LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1
+bind 'set enable-bracketed-paste off' 2>/dev/null
+# Des repères INVISIBLES pour la page (OSC 633, comme l'intégration shell
+# de VS Code ; xterm.js ne les affiche pas) : C quand une commande part,
+# D;<code> quand l'invite revient. Le modèle sait ainsi quand une commande
+# qu'il a tapée dans ce terminal est finie, et avec quel code (vm.mjs).
+PS0='\e]633;C\a'
+PROMPT_COMMAND='printf "\e]633;D;%s\a" "$?"'

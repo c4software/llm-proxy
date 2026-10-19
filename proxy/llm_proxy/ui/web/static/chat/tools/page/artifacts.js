@@ -34,6 +34,7 @@
   rendu isolé est dans chat/artifacts.js.
 */
 import { TOOL, FAMILY, PageTool, defineFamily, failure, clip } from "../contract.js";
+import * as text from "../text.js";
 import * as bridge from "../../artifact-bridge.js";
 import { debugOn } from "../../artifacts.js";
 
@@ -81,63 +82,19 @@ function editArtifact(conv, args) {
   if (!art) return { result: `Error: artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).` };
   const last = art.versions[art.versions.length - 1];
   const edits = Array.isArray(args.edits) ? args.edits : [];
-  if (!edits.length) return { result: "Error: `edits` attendu, au moins une retouche." };
-  let content = last.content;
-  let passages = 0;                      // passages remplacés, toutes retouches
-  for (const [k, e] of edits.entries()) {
-    const from = String((e && e.old_string) ?? "");
-    const to = String((e && e.new_string) ?? "");
-    const where = edits.length > 1 ? `retouche ${k + 1} : ` : "";
-    if (!from) return { result: `Error: ${where}\`old_string\` est vide.` };
-    if (e.regex) {
-      // Une expression régulière (JavaScript) ; `new_string` peut citer
-      // ses groupes ($1, $<nom>). Unique, sauf replace_all.
-      let re;
-      try { re = new RegExp(from, "g" + (e.ignore_case ? "i" : "") + "m"); } catch (err) {
-        return { result: `Error: ${where}expression invalide : ${err.message}. Rien n'a été modifié.` };
-      }
-      const hits = [...content.matchAll(re)].length;
-      if (!hits) {
-        return { result: `Error: ${where}l'expression ne trouve rien dans la version ${art.versions.length} `
-          + "(grep_artifact pour vérifier). Rien n'a été modifié." };
-      }
-      if (hits > 1 && !e.replace_all) {
-        return { result: `Error: ${where}l'expression trouve ${hits} passages ; la préciser, ou \`replace_all\`. `
-          + "Rien n'a été modifié." };
-      }
-      content = content.replace(re, to);
-      passages += e.replace_all ? hits : 1;
-      continue;
-    }
-    const count = content.split(from).length - 1;
-    if (!count) {
-      return { result: `Error: ${where}passage introuvable dans la version ${art.versions.length}. `
-        + "Le texte doit être EXACT (espaces, retours à la ligne) ; grep_artifact pour le retrouver, "
-        + "read_artifact sur ses lignes pour le relire. Rien n'a été modifié." };
-    }
-    if (count > 1 && !e.replace_all) {
-      return { result: `Error: ${where}passage présent ${count} fois ; l'allonger pour qu'il soit `
-        + "unique, ou `replace_all`. Rien n'a été modifié." };
-    }
-    content = e.replace_all ? content.split(from).join(to) : content.replace(from, () => to);
-    passages += e.replace_all ? count : 1;
-  }
+  const done = text.applyEdits(last.content, edits,
+    { grep: "grep_artifact", read: "read_artifact", at: `dans la version ${art.versions.length}` });
+  if ("error" in done) return { result: done.error };
+  const { content, passages } = done;
   if (content.length > MAX_ARTIFACT) return { result: `Error: artifact trop long (${MAX_ARTIFACT} caractères au plus).` };
   if (args.title) art.title = String(args.title).trim().slice(0, 120);
   art.versions.push({ ...last, content, at: Date.now() });
   const n = art.versions.length;
-  const plural = (k, w) => `${k} ${w}${k > 1 ? "s" : ""}`;
-  return { id: art.id, result: `Artifact « ${art.id} » retouché (${plural(edits.length, "retouche")}, `
-    + `${plural(passages, "passage")} remplacé${passages > 1 ? "s" : ""}) : version ${n}, affichée dans le panneau.` };
+  return { id: art.id, result: `Artifact « ${art.id} » retouché ${text.editCount(edits.length, passages)} : `
+    + `version ${n}, affichée dans le panneau.` };
 }
 
-const MAX_LINE = 300;           // caractères d'une ligne rendue par grep
-const MAX_HITS = 60;            // lignes trouvées par grep, au plus
-const MAX_SLICE = 400;          // lignes d'une tranche de read
-
-/** Une ligne numérotée : `   42→ texte` (le numéro ne fait pas partie du texte).
- * @param {number} n @param {string} line @param {string} [mark] */
-const numbered = (n, line, mark = "→") => `${String(n).padStart(5)}${mark} ${line}`;
+const MAX_SLICE = text.MAX_SLICE;
 
 // read_artifact : la dernière version, entière (telle quelle), ou une
 // tranche de lignes numérotées.
@@ -148,13 +105,10 @@ function readArtifact(conv, args) {
   const head = `Artifact « ${art.id} », version ${art.versions.length} (${last.type}, `
     + `${last.content.length} caractères`;
   if (args.start_line === undefined && args.end_line === undefined) return `${head}) :\n${last.content}`;
-  const lines = last.content.split("\n");
-  const start = Math.max(1, Math.floor(Number(args.start_line) || 1));
-  if (start > lines.length) return failure(`l'artifact n'a que ${lines.length} lignes.`);
-  const end = Math.min(lines.length, Math.floor(Number(args.end_line) || start + 80), start + MAX_SLICE - 1);
-  const body = lines.slice(start - 1, end).map((l, k) => numbered(start + k, l));
-  return `${head}, ${lines.length} lignes) — lignes ${start} à ${end} (le numéro et « → » ne font pas `
-    + `partie du texte, pour old_string) :\n${body.join("\n")}`;
+  const t = text.slice(last.content, args.start_line, args.end_line);
+  if ("error" in t) return failure(`l'artifact ${t.error}`);
+  return `${head}, ${t.total} lignes) — lignes ${t.start} à ${t.end} (le numéro et « → » ne font pas `
+    + `partie du texte, pour old_string) :\n${t.body}`;
 }
 
 // grep_artifact : les lignes trouvées, numérotées, avec leur contexte
@@ -162,40 +116,16 @@ function readArtifact(conv, args) {
 function grepArtifact(conv, args) {
   const art = findArtifact(conv, args.id);
   if (!art) return failure(`artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).`);
-  const pattern = String(args.pattern || "");
-  if (!pattern) return failure("`pattern` attendu.");
-  const flags = args.ignore_case === false ? "" : "i";
-  let re;
-  try {
-    re = new RegExp(args.regex ? pattern : pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags);
-  } catch (e) { return failure(`expression invalide : ${e.message}`); }
+  const p = text.pattern(args);
+  if ("error" in p) return failure(p.error);
   const last = art.versions[art.versions.length - 1];
-  const lines = last.content.split("\n");
-  const ctx = Math.max(0, Math.min(10, Math.floor(Number(args.context ?? 2))));
-  const hits = [];
-  lines.forEach((l, i) => { if (re.test(l)) hits.push(i); });
-  if (!hits.length) {
-    return `Aucune ligne de « ${art.id} » (version ${art.versions.length}, ${lines.length} lignes) ne contient « ${pattern} ».`;
+  const g = text.grep(last.content, p.re, text.contextOf(args));
+  if (!g.hits) {
+    return `Aucune ligne de « ${art.id} » (version ${art.versions.length}, ${g.total} lignes) ne contient « ${args.pattern} ».`;
   }
-  const shown = hits.slice(0, MAX_HITS);
-  const keep = new Map();                    // ligne → trouvée ?
-  for (const h of shown) {
-    for (let i = Math.max(0, h - ctx); i <= Math.min(lines.length - 1, h + ctx); i++) keep.set(i, keep.get(i) || i === h);
-  }
-  const out = [];
-  let prev = -2;
-  for (const i of [...keep.keys()].sort((a, b) => a - b)) {
-    if (prev >= 0 && i > prev + 1) out.push("    …");
-    const l = lines[i].length > MAX_LINE ? lines[i].slice(0, MAX_LINE) + " …" : lines[i];
-    out.push(numbered(i + 1, l, keep.get(i) ? "→" : "·"));
-    prev = i;
-  }
-  return `« ${art.id} », version ${art.versions.length} (${lines.length} lignes) : ${hits.length} ligne`
-    + `${hits.length > 1 ? "s" : ""} trouvée${hits.length > 1 ? "s" : ""}`
-    + (hits.length > shown.length ? ` (les ${shown.length} premières)` : "")
-    + ` (le numéro et la marque ne font pas partie du texte) :\n${out.join("\n")}`;
+  return `« ${art.id} », version ${art.versions.length} (${g.total} lignes) : ${text.found(g)}`
+    + ` (le numéro et la marque ne font pas partie du texte) :\n${g.lines.join("\n")}`;
 }
-
 
 class ShowArtifact extends PageTool {
   constructor() {

@@ -1,0 +1,34 @@
+#!/bin/bash
+# Le canal de la page (run_shell) : une requête par ligne sur le port série,
+# brut et sans écho. Les scripts et leurs sorties passent par le dossier 9p
+# /mnt/host/.vm (rapide) ; sur la ligne, seulement la requête et la fin.
+#   <id> <délai_s>        exécuter /mnt/host/.vm/<id>.sh (bash, dans /work,
+#                         sans entrée, sortie et erreurs dans <id>.log, tué
+#                         après le délai) → __END_<id>_<code>__
+#   done <id>             effacer /mnt/host/.vm/<id>.* → __DONE_<id>__
+#   ping                  → __PONG__
+#   init <epoch> <hex>    après une reprise d'état : l'horloge, et le
+#                         générateur aléatoire réensemencé → __INIT_OK__
+DEV=${1:-/dev/ttyS1}
+D=/mnt/host/.vm
+export HOME=/root USER=root LOGNAME=root SHELL=/bin/bash LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
+       PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+set -f
+[ -c "$DEV" ] || exec sleep 2147483647
+stty -F "$DEV" raw -echo -icrnl -onlcr 115200 2>/dev/null
+exec <"$DEV" >"$DEV" 2>/dev/null
+printf '\n__AGENT_READY__\n'
+while IFS= read -r line; do
+  line=${line%$'\r'}
+  set -- $line
+  case "$1" in
+    "") ;;
+    ping) printf '\n__PONG__\n' ;;
+    init) date -s "@$2" >/dev/null 2>&1; /usr/local/bin/vm-reseed "$3" 2>/dev/null; printf '\n__INIT_OK__\n' ;;
+    done) case "$2" in *[!a-z0-9]*|"") ;; *) rm -f "$D/$2".* ;; esac; printf '\n__DONE_%s__\n' "$2" ;;
+    *)
+      case "$1" in *[!a-z0-9]*) continue ;; esac
+      ( cd /work && exec timeout -s KILL "${2:-60}" bash "$D/$1.sh" ) </dev/null >"$D/$1.log" 2>&1
+      printf '\n__END_%s_%d__\n' "$1" "$?" ;;
+  esac
+done

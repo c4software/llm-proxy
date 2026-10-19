@@ -6,13 +6,15 @@
   revient après un rechargement). Chart.js est celui du bac
   (vendor/chart.js), chargé au premier graphique.
 */
+import { vendorUrl } from "./vendor.js";
+
 const { ref, onMounted, onUnmounted } = Vue;
 
 /** @type {Promise<any> | null} */
 let loading = null;
 function loadChart() {
   if (!loading) {
-    loading = import(new URL("/ui/static/vendor/chart.js", location.href).href).then((m) => {
+    loading = vendorUrl("chart.js").then((u) => import(u)).then((m) => {
       m.Chart.register(...m.registerables);
       return m.Chart;
     });

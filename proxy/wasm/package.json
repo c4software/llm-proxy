@@ -2,19 +2,23 @@
   "name": "llm-proxy-wasm",
   "private": true,
   "type": "module",
-  "description": "L'outillage Node de la page : les runtimes des bacs du navigateur (PHP, SQLite, Chart.js, sucrase, TypeScript), servis sous web/static/vendor/, et la vérification des types de son code",
+  "description": "L'outillage Node de la page : les runtimes des bacs du navigateur (PHP, SQLite, PostgreSQL, Chart.js, sucrase, TypeScript, xterm.js ; v86 pour la VM Linux de proxy/linux), servis sous web/static/vendor/, et la vérification des types de son code",
   "scripts": {
     "build": "node build.mjs",
     "check": "tsc -p tsconfig.json && node check-tools.mjs"
   },
   "dependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@php-wasm/universal": "3.1.58",
     "@php-wasm/web-8-3": "3.1.58",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "chart.js": "4.5.1",
     "html-to-image": "1.11.13",
     "sql.js": "1.15.0",
     "sucrase": "3.35.1",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "v86": "0.5.470"
   },
   "devDependencies": {
     "esbuild": "0.25.10"

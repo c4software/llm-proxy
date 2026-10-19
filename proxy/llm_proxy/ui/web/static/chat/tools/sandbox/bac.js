@@ -7,39 +7,43 @@
   réactive même si le code boucle ; le cadre, et le Worker avec lui, est
   supprimé à la fin, ou au délai dépassé.
 
-  Un runtime (vendor/<nom>.js, et <nom>.wasm s'il en a un ; construits
+  Un runtime (vendor/<nom>.js, et ses binaires s'il en a ; construits
   par proxy/wasm) n'est téléchargé qu'au premier appel, par la PAGE — le bac n'a pas le
   droit de le faire —, gardé en mémoire, puis passé au bac à chaque appel.
 
-  exec({driver, input, runtime, timeout}) → {ok, value, error, logs}
-    driver    une fonction async (input, {mod, wasm, mods}) → valeur,
-              exécutée dans le Worker : passée en TEXTE, elle ne voit rien
-              de ce module ; `mod` est le module du (premier) runtime,
-              `wasm` son binaire, `mods` chaque module par son nom
+  exec({driver, input, runtime, timeout, lib}) → {ok, value, error, logs}
+    driver    une fonction async (input, {mod, wasm, bins, mods, lib}) →
+              valeur, exécutée dans le Worker : passée en TEXTE, elle ne
+              voit rien de ce module ; `mod` est le module du (premier)
+              runtime, `bins` ses binaires par nom de fichier, `wasm` le
+              premier d'entre eux, `mods` chaque module par son nom
     input     ce qu'elle reçoit (clonable)
     runtime   le nom d'un runtime de RUNTIMES, une liste de noms, ou rien
+    lib       des fonctions d'aide {nom: fonction}, passées en texte comme
+              `driver` (aucune ne voit ce module) : `lib.nom` dans le Worker
     logs      ce que le code a écrit sur la console
 */
 
-// Hors du préfixe versionné (ui_static.py) : l'empreinte change à chaque
-// mise à jour de la page, un runtime presque jamais — revalidé, il rend
-// 304 sans être retéléchargé.
-const VENDOR = new URL("/ui/static/vendor/", location.href);
+import { vendorFetch } from "./vendor.js";
 
 const WORKER = `
 const fmt = (v) => { if (typeof v === "string") return v;
   try { return JSON.stringify(v, null, 2) ?? String(v); } catch { return String(v); } };
 const logs = [];
 for (const k of ["log", "info", "warn", "error", "debug"]) console[k] = (...a) => logs.push(a.map(fmt).join(" "));
-self.onmessage = async ({ data: { driver, input, runtimes } }) => {
+self.onmessage = async ({ data: { driver, input, runtimes, lib } }) => {
   try {
     const mods = {};
     for (const r of runtimes) {
       mods[r.name] = await import(URL.createObjectURL(new Blob([r.js], { type: "text/javascript" })));
     }
     const first = runtimes[0];
+    const bins = first ? first.bins : {};
+    const helpers = {};
+    for (const [k, src] of Object.entries(lib)) helpers[k] = (0, eval)("(" + src + ")");
     const drive = (0, eval)("(" + driver + ")");
-    const value = await drive(input, { mod: first ? mods[first.name] : null, wasm: first && first.wasm, mods, fmt });
+    const value = await drive(input, { mod: first ? mods[first.name] : null, wasm: Object.values(bins)[0],
+                                       bins, mods, lib: helpers, fmt });
     postMessage({ ok: true, value, logs });
   } catch (err) {
     // Une Error simple : son message seul (« Error: » est ajouté par l'outil).
@@ -58,35 +62,31 @@ onmessage = (e) => {
   const worker = new Worker(URL.createObjectURL(new Blob([SOURCE], { type: "text/javascript" })));
   worker.onmessage = (m) => parent.postMessage(m.data, "*");
   worker.onerror = (err) => { err.preventDefault(); parent.postMessage({ ok: false, error: String(err.message || "erreur du bac"), logs: [] }, "*"); };
-  worker.postMessage(e.data, e.data.runtimes.map((r) => r.wasm).filter(Boolean));
+  worker.postMessage(e.data, e.data.runtimes.flatMap((r) => Object.values(r.bins)));
 };
 parent.postMessage({ ready: true }, "*");
 <\/script>`;
 
-// Les runtimes de vendor/ : a-t-il un binaire WASM ?
-const RUNTIMES = { php: { wasm: true }, sql: { wasm: true }, chart: { wasm: false },
-                   sucrase: { wasm: false }, typescript: { wasm: false } };
+// Les runtimes de vendor/ : leurs binaires, à côté de <nom>.js.
+const RUNTIMES = { php: ["php.wasm"], sql: ["sql.wasm"], pglite: ["pglite.wasm", "initdb.wasm", "pglite.data"],
+                   chart: [], sucrase: [], typescript: [] };
 
-// nom → promesse de {js, wasm} ; un échec est oublié (réessayé au suivant).
+// nom → promesse de {js, bins} ; un échec est oublié (réessayé au suivant).
 const runtimes = new Map();
 
 function load(name) {
   if (!runtimes.has(name)) {
-    const get = async (file, as) => {
-      const r = await fetch(new URL(file, VENDOR));
-      if (!r.ok) throw new Error(`${file} : HTTP ${r.status}`);
-      return r[as]();
-    };
-    const p = Promise.all([get(`${name}.js`, "text"),
-                           RUNTIMES[name].wasm ? get(`${name}.wasm`, "arrayBuffer") : null])
-      .then(([js, wasm]) => ({ js, wasm }));
+    const get = vendorFetch;
+    const files = RUNTIMES[name];
+    const p = Promise.all([get(`${name}.js`, "text"), ...files.map((f) => get(f, "arrayBuffer"))])
+      .then(([js, ...bins]) => ({ js, bins: Object.fromEntries(files.map((f, i) => [f, bins[i]])) }));
     p.catch(() => runtimes.delete(name));
     runtimes.set(name, p);
   }
   return runtimes.get(name);
 }
 
-export async function exec({ driver, input, runtime, timeout }) {
+export async function exec({ driver, input, runtime, timeout, lib = {} }) {
   const names = !runtime ? [] : Array.isArray(runtime) ? runtime : [runtime];
   const rts = [];
   for (const name of names) {
@@ -112,10 +112,12 @@ export async function exec({ driver, input, runtime, timeout }) {
       if (e.source !== frame.contentWindow) return;
       const d = e.data || {};
       if (!d.ready) { finish({ logs: [], ...d }); return; }
-      // Une copie du binaire : celle du cache reste à la page.
-      const sent = rts.map((r) => ({ name: r.name, js: r.js, wasm: r.wasm && r.wasm.slice(0) }));
-      const msg = { driver: String(driver), input, runtimes: sent };
-      frame.contentWindow.postMessage(msg, "*", sent.map((r) => r.wasm).filter(Boolean));
+      // Une copie des binaires : celle du cache reste à la page.
+      const sent = rts.map((r) => ({ name: r.name, js: r.js,
+        bins: Object.fromEntries(Object.entries(r.bins).map(([f, b]) => [f, b.slice(0)])) }));
+      const helpers = Object.fromEntries(Object.entries(lib).map(([k, f]) => [k, String(f)]));
+      const msg = { driver: String(driver), input, runtimes: sent, lib: helpers };
+      frame.contentWindow.postMessage(msg, "*", sent.flatMap((r) => Object.values(r.bins)));
     }
     window.addEventListener("message", onMessage);
     timer = setTimeout(() => finish({ ok: false, logs: [], error: `arrêté après ${timeout / 1000} s.` }), timeout);

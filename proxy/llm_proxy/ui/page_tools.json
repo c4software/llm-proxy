@@ -163,6 +163,24 @@
       "tools": [
         "run_sql"
       ]
+    },
+    "postgres": {
+      "label": "PostgreSQL",
+      "fixed": false,
+      "tools": [
+        "run_postgres"
+      ]
+    },
+    "linux": {
+      "label": "Linux",
+      "fixed": false,
+      "tools": [
+        "run_shell",
+        "shell_read",
+        "shell_grep",
+        "shell_edit",
+        "shell_write"
+      ]
     }
   }
 }

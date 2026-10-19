@@ -64,6 +64,12 @@ export const TOOL = Object.freeze(/** @type {const} */ ({
   CHECK_TYPESCRIPT: "check_typescript",
   RUN_PHP: "run_php",
   RUN_SQL: "run_sql",
+  RUN_POSTGRES: "run_postgres",
+  RUN_SHELL: "run_shell",
+  SHELL_READ: "shell_read",
+  SHELL_GREP: "shell_grep",
+  SHELL_EDIT: "shell_edit",
+  SHELL_WRITE: "shell_write",
 }));
 
 // Les clés des familles. Celles du menu Outils sont gardées avec chaque
@@ -93,6 +99,8 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
   JAVASCRIPT: "compute",
   PHP: "php",
   SQL: "sql",
+  POSTGRES: "postgres",
+  LINUX: "linux",
 }));
 
 // ── les types ───────────────────────────────────────────────────────────

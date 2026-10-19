@@ -3,8 +3,9 @@
 Dans le [chat](chat.md) de la page, le modèle peut solliciter
 l'**appareil** de l'utilisateur : son heure, sa position, son
 presse-papiers, sa caméra, son écran. Il peut aussi faire tourner du
-**code** (JavaScript, TypeScript, PHP, SQL) dans un bac isolé du
-navigateur, sur des fichiers qui ne quittent pas l'appareil.
+**code** (JavaScript, TypeScript, PHP, SQLite, PostgreSQL) dans un bac isolé du
+navigateur, sur des fichiers qui ne quittent pas l'appareil, et même une
+[VM Linux](linux.md) que l'utilisateur ouvre aussi dans un terminal.
 
 Ces outils ne passent pas par le proxy. Il les rend au navigateur en
 `tool_calls`, comme à tout client : la page les exécute et renvoie leur
@@ -232,8 +233,9 @@ cette langue (`lang`, celle du navigateur par défaut).
 
 ## Le code dans le navigateur
 
-Quatre outils exécutent ou vérifient du code : **JavaScript** (et
-TypeScript), la **vérification de types TypeScript**, **PHP** et **SQL**.
+Cinq outils exécutent ou vérifient du code : **JavaScript** (et
+TypeScript), la **vérification de types TypeScript**, **PHP**, **SQL**
+(SQLite) et **PostgreSQL**.
 
 ### Le bac
 
@@ -243,12 +245,14 @@ TypeScript), la **vérification de types TypeScript**, **PHP** et **SQL**.
 - Une politique de sécurité coupe **tout réseau** : `fetch`, ou
   `file_get_contents` sur une URL en PHP, échouent.
 - Une boucle sans fin ne fige pas la page : le bac est supprimé au délai
-  dépassé (15 s pour JavaScript, 30 s pour PHP, 60 s pour SQL et pour
-  la vérification TypeScript).
-- PHP 8.3 (≈ 18 Mo), SQLite (≈ 700 Ko), Chart.js et sucrase (≈ 200 Ko
+  dépassé (15 s pour JavaScript, 30 s pour PHP, 60 s pour SQL,
+  PostgreSQL et la vérification TypeScript).
+- PHP 8.3 (≈ 18 Mo), SQLite (≈ 700 Ko), PostgreSQL (PGlite, ≈ 17 Mo), Chart.js et sucrase (≈ 200 Ko
   chacun) et le compilateur TypeScript (≈ 7 Mo) sont servis par le proxy sous `/ui/static/vendor/`. Ils ne sont téléchargés
   qu'au premier appel, puis revalidés par le navigateur sans être
-  retéléchargés.
+  retéléchargés. Chacun est demandé à son empreinte (`?v=`, lue dans
+  `vendor/versions.json`) : un cache devant la page ne peut pas servir un
+  runtime périmé après une mise à jour.
 
 ### Fichiers fournis, fichiers produits
 
@@ -260,8 +264,9 @@ renvoie.
 
 Ce que le code produit arrive sous la réponse :
 
-- un fichier **texte** (CSV, JSON, SVG, Markdown…) se télécharge, comme
-  avec `save_file` ;
+- un fichier **texte** (CSV, JSON, SVG, Markdown…) s'**ouvre en aperçu**
+  d'un clic, comme avec `save_file` : le Markdown rendu, le reste tel
+  quel, d'où il se copie ou se télécharge ;
 - une **image** (png, jpeg, webp, gif) s'affiche. Si le modèle de la
   conversation lit les images, la première lui est jointe : il peut
   vérifier son graphique.
@@ -297,6 +302,32 @@ avec la conversation.
 Les tables restent d'un message à l'autre. `reset` vide la base.
 `download` met sous la réponse un fichier `conversation.sqlite`, avec la
 base telle qu'elle est au moment du clic.
+
+### PostgreSQL — `run_postgres`
+
+`run_postgres` exécute du SQL **PostgreSQL 18** complet (PGlite) :
+PL/pgSQL, JSONB, CTE récursives, fonctions fenêtres, types, `RAISE
+NOTICE`. Tout se passe dans le navigateur, comme pour `run_sql`, et rien
+ne part au proxy.
+
+- La base est **propre à la conversation**, et distincte de celle de
+  `run_sql`. Son dossier de données est gardé compressé dans ce
+  navigateur (IndexedDB) : ≈ 4,5 Mo pour une petite base, car
+  PostgreSQL y range son catalogue. Tant que la base ne contient aucun
+  objet de l'utilisateur, rien n'est gardé. Elle est effacée avec la
+  conversation, et `reset` la vide.
+- `files` importe d'abord des fichiers. CSV, TSV, JSON et JSONL sont lus
+  comme pour `run_sql`, avec les mêmes noms de table et de colonnes et
+  les mêmes types déduits, ici en `bigint`, `double precision` ou
+  `text`. Un fichier `.sql` est exécuté tel quel (un schéma, un dump en
+  `INSERT`). Une base SQLite s'importe avec `run_sql`.
+- Le script part en une seule requête, donc en une **transaction
+  implicite** : une erreur l'annule en entier, sauf ce qu'un `COMMIT`
+  explicite a validé avant elle. L'erreur donne le message de
+  PostgreSQL, sa position, son détail et sa piste.
+- Chaque résultat rend 200 lignes au plus.
+- Un appel prend 0,5 à 1 s : la base est rechargée à chaque fois, et
+  le premier appel compile PostgreSQL.
 
 ### JavaScript — `run_javascript`
 
@@ -371,16 +402,40 @@ Un script PHP 8.3 en ligne de commande, sans serveur web.
 
 Chaque appel repart de zéro.
 
+### Linux — `run_shell`
+
+![Panneau Terminal ouvert : le modèle tape dans le terminal le décompte par adresse des erreurs 404 d'un journal nginx joint (awk, sort, uniq) et en résume le résultat dans un tableau ; l'utilisateur lance ensuite, dans le même terminal, la commande qu'il suggère](navigateur-linux.png)
+
+`run_shell` exécute un script bash dans une **VM Linux** (Alpine i386,
+émulée par v86) qui tourne dans l'onglet, sans réseau par défaut : bash, busybox,
+python3, jq, sqlite3. `/work` est gardé avec la conversation, `files` y
+copie des fichiers, et ce qui est écrit sous `/out` arrive sous la
+réponse.
+
+L'utilisateur ouvre la **même machine** dans le panneau **Terminal**
+(bouton de l'en-tête du chat, toujours là ; il s'ouvre dès que le modèle
+se sert de la VM). Pour modifier un fichier, le modèle a `shell_grep`,
+`shell_read`, `shell_edit` et `shell_write`, comme pour un artifact.
+Panneau ouvert, le modèle y
+**tape** ses commandes d'une ligne, sous ses yeux. Le réseau est coupé ;
+le panneau peut l'ouvrir pour la conversation (des requêtes web, par le
+navigateur).
+
+Construction de la VM, protocole, paquets et limites :
+[La VM Linux du navigateur](linux.md).
+
 ### Installer les runtimes
 
-L'image Docker construit les runtimes (PHP, SQLite, Chart.js, sucrase,
-TypeScript) dans l'étape `wasm` de `proxy/Dockerfile`. Hors Docker, il faut les construire une fois :
+L'image Docker construit les runtimes (PHP, SQLite, PostgreSQL, Chart.js,
+sucrase, TypeScript) dans l'étape `wasm` de `proxy/Dockerfile`. Hors Docker, il faut les construire une fois :
 
 ```bash
 cd proxy/wasm && npm ci && npm run build   # → proxy/llm_proxy/ui/web/static/vendor/
 ```
 
-Sans eux, `run_php`, `run_sql` et `check_typescript` répondent que le
+La VM Linux a son propre build (`proxy/linux/build.sh`, voir [La VM Linux](linux.md)).
+
+Sans eux, `run_php`, `run_sql`, `run_postgres` et `check_typescript` répondent que le
 runtime manque. `run_javascript` fonctionne toujours, mais sans
 `chart()` ni TypeScript.
 
@@ -397,7 +452,7 @@ ceux du navigateur, et aussi la question à choix (`ask_user`),
 | `tools/index.js` | le registre : l'inscription des modules, leur vérification, ce que le chat appelle |
 | `tools/page/` | questions (`ask.js`), fichiers (`save.js`), artifacts et leur débogage, dossier ouvert (`folder.js`) |
 | `tools/device/` | l'appareil, un module par famille ; `media.js`, les flux caméra et écran |
-| `tools/sandbox/` | les bacs de code ; `bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits |
+| `tools/sandbox/` | les bacs de code ; `bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits ; `tables.js`, un CSV ou un JSON lu en table (run_sql, run_postgres) |
 
 Le chat (`ChatPanel.js`) ne nomme aucun outil : il passe toujours par
 le registre.

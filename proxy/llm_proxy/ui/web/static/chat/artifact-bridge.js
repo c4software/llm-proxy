@@ -19,6 +19,7 @@
     setOpener(fn)                 comment ouvrir le panneau (ChatPanel)
     busy                          l'artifact en cours d'inspection (le bandeau du panneau)
 */
+import { vendorFetch } from "./tools/sandbox/vendor.js";
 const WAIT_LOAD = 8_000;        // ms pour que le panneau charge l'artifact
 const WAIT_REPLY = 20_000;      // ms d'une demande (une capture, un script)
 
@@ -37,9 +38,8 @@ export const busy = Vue.ref("");
 let captureLib = null;
 function loadCaptureLib() {
   if (!captureLib) {
-    captureLib = fetch(new URL("/ui/static/vendor/html-to-image.js", location.href)).then((r) => {
-      if (!r.ok) throw new Error(`html-to-image absent de ce serveur (HTTP ${r.status}) : proxy/wasm, npm run build`);
-      return r.text();
+    captureLib = vendorFetch("html-to-image.js", "text").catch((e) => {
+      throw new Error(`html-to-image absent de ce serveur (${e.message}) : proxy/wasm, npm run build`);
     });
     captureLib.catch(() => { captureLib = null; });
   }

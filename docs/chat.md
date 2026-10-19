@@ -239,7 +239,7 @@ réponse.
 | `grep_artifact` | cherche un texte (ou une expression régulière) dans la dernière version : les lignes trouvées, numérotées, avec leur contexte | non |
 | `inspect_artifact`, `run_in_artifact` | console, erreurs, page, capture ; un script dans la page affichée (débogage actif par défaut) | non |
 | `request_artifact_debug` | propose de rétablir le débogage d'un artifact coupé par l'utilisateur | oui : *Activer le débogage* ou *Non merci* |
-| `save_file` | un fichier texte (CSV, script…) à télécharger sous la réponse | non |
+| `save_file` | un fichier texte (CSV, script…) sous la réponse : un clic l'ouvre en aperçu (Markdown rendu), d'où il se copie ou se télécharge | non |
 | [*outils du navigateur*](navigateur.md) | position, notifications, caméra… par famille | selon l'outil |
 | `folder_list`, `folder_read`, `folder_search` | parcourir, lire (tranches numérotées), chercher dans le dossier ouvert | non |
 | `folder_write`, `folder_edit` | créer ou remplacer un fichier, remplacer un passage exact | oui : diff, *Appliquer* ou *Refuser* |
