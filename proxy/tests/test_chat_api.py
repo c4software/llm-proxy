@@ -158,14 +158,15 @@ def test_stream_of_two_upstream_turns_reads_as_one(chat):
     assert {d["id"] for d in docs} == {"chatcmpl-1"}
     assert [d["content"] for d in deltas(docs) if d.get("content")] == [
         "Je cherche.", "\n\nVoilà."]
-    # L'appel hébergé n'arrive jamais au client ; une seule fin, un seul usage.
+    # L'appel hébergé n'arrive jamais au client ; une seule fin, un seul
+    # usage : celui du dernier tour, le contexte occupé.
     assert not any("tool_calls" in d for d in deltas(docs))
     assert [c["finish_reason"] for d in docs for c in d["choices"]
             if c["finish_reason"]] == ["stop"]
     assert [d["usage"] for d in docs if d.get("usage")] == [{
-        "prompt_tokens": 250, "completion_tokens": 15,
-        "prompt_tokens_details": {"cached_tokens": 140},
-        "completion_tokens_details": {"reasoning_tokens": 4}}]
+        "prompt_tokens": 150, "completion_tokens": 5,
+        "prompt_tokens_details": {"cached_tokens": 100},
+        "completion_tokens_details": {"reasoning_tokens": 1}}]
     assert docs[-1]["choices"] == []
     # Le second envoi : le premier, plus l'appel et son résultat.
     one, two = chat.sent
@@ -199,8 +200,8 @@ def test_json_mode(chat):
     assert r.status_code == 200 and doc["id"] == "chatcmpl-1"
     assert doc["choices"] == [{"finish_reason": "stop", "message": {
         "content": "Je cherche.\n\nVoilà."}}]
-    assert doc["usage"] == {"prompt_tokens": 250, "completion_tokens": 15,
-                            "prompt_tokens_details": {"cached_tokens": 140}}
+    assert doc["usage"] == {"prompt_tokens": 150, "completion_tokens": 5,
+                            "prompt_tokens_details": {"cached_tokens": 100}}
     assert "stream_options" not in chat.sent[0]
     assert chat.sent[1]["messages"][-1]["content"] == FOUND
     assert len(chat.lines) == 1

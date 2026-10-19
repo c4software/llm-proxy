@@ -249,10 +249,17 @@ class Translator:
             return out + _sse("error", body)
         return json.dumps(body, ensure_ascii=False).encode()
 
+    def _last(self) -> dict | None:
+        """L'usage rendu au CLIENT, à la forme chat/completions : celui du
+        dernier tour upstream. Son prompt relit tous les tours précédents :
+        c'est le contexte occupé, ce que mesure la jauge d'un client."""
+        turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
+        return turns[-1] if turns else None
+
     def _total(self) -> dict | None:
-        """L'usage de la réponse, à la forme chat/completions : celui de
-        l'upstream s'il n'y a eu qu'un tour, la SOMME sinon — chaque tour
-        relit tout le préfixe, et c'est bien ce qui a été consommé."""
+        """L'usage CONSOMMÉ (quotas, statistiques, logs), à la forme
+        chat/completions : celui de l'upstream s'il n'y a eu qu'un tour, la
+        SOMME sinon — chaque tour relit tout le préfixe."""
         turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
         if len(turns) <= 1:
             return turns[0] if turns else None
@@ -267,7 +274,7 @@ class Translator:
     def _final_usage(self) -> dict:
         """L'usage Anthropic du message. `server_tool_use` ne compte que
         les appels hébergés aboutis (comme chez Anthropic)."""
-        usage = _usage(self._total())
+        usage = _usage(self._last())
         if self._done:
             usage["server_tool_use"] = {
                 self.hosted[name].anthropic.prefix + "_requests":

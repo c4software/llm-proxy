@@ -279,9 +279,9 @@ class Translator:
         choice["message"] = msg
         choice["finish_reason"] = self._final_reason()
         doc["choices"] = [choice]
-        total = self._total()
-        if total is not None:
-            doc["usage"] = total
+        last = self._last()
+        if last is not None:
+            doc["usage"] = last
         return json.dumps(doc, ensure_ascii=False).encode()
 
     def fail(self, message: str, status: int = 500) -> bytes:
@@ -298,9 +298,16 @@ class Translator:
             return _sse(body) + DONE
         return json.dumps(body, ensure_ascii=False).encode()
 
+    def _last(self) -> dict | None:
+        """L'usage rendu au CLIENT : celui du dernier tour upstream. Son
+        prompt relit tous les tours précédents : c'est le contexte occupé,
+        ce que mesure la jauge d'un client (la somme la ferait déborder)."""
+        turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
+        return turns[-1] if turns else None
+
     def _total(self) -> dict | None:
-        """L'usage de la réponse : celui de l'upstream s'il n'y a eu
-        qu'un tour, la SOMME sinon."""
+        """L'usage CONSOMMÉ (quotas, statistiques, logs) : celui de
+        l'upstream s'il n'y a eu qu'un tour, la SOMME sinon."""
         turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
         total = None
         for u in turns:
@@ -515,10 +522,10 @@ class Translator:
         if annotations:
             out += self._block({"annotations": annotations})
         out += self._block({}, self._final_reason())
-        total = self._total()
-        if self.ctx.include_usage and total is not None:
+        last = self._last()
+        if self.ctx.include_usage and last is not None:
             out += _sse({"object": "chat.completion.chunk",
-                         **(self._head or {}), "choices": [], "usage": total})
+                         **(self._head or {}), "choices": [], "usage": last})
         return bytes(out) + DONE
 
 

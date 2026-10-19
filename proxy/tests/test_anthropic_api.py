@@ -668,12 +668,12 @@ def test_stream_hosted_search_blocks():
         "content_block_start", "content_block_delta", "content_block_stop",
         "message_delta", "message_stop"]
     assert end[0][1]["index"] == 3
-    # Usage CUMULÉ sur les deux tours, à la forme Anthropic (cache à part),
-    # et le compte des recherches.
+    # Usage du DERNIER tour (le contexte occupé), à la forme Anthropic
+    # (cache à part), et le compte des recherches ; le cumul reste aux stats.
     assert end[3][1] == {"type": "message_delta", "delta": {
         "stop_reason": "end_turn", "stop_sequence": None}, "usage": {
-        "input_tokens": 110, "output_tokens": 15,
-        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 140,
+        "input_tokens": 50, "output_tokens": 5,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 100,
         "server_tool_use": {"web_search_requests": 1}}}
     assert t.tokens(0) == (250, 15, True) and t.cached() == 140
     assert t.content == [
@@ -1262,8 +1262,8 @@ def test_app_json_mode_and_client_domains(proxy):
         {"type": "text", "text": "Voilà."}]
     assert msg["stop_reason"] == "end_turn"
     assert msg["usage"] == {
-        "input_tokens": 110, "output_tokens": 15,
-        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 140,
+        "input_tokens": 50, "output_tokens": 5,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 100,
         "server_tool_use": {"web_search_requests": 1}}
     assert "stream" not in proxy.sent[0]
     # Les listes de domaines du client arrivent à l'exécution.

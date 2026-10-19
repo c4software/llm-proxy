@@ -134,6 +134,10 @@ Sur toutes les surfaces :
 - Log par exécution : `outil hébergé web_search(…) → N car. en 1.2s`.
 - **Une** ligne de statistiques par réponse, usage cumulé. Chaque tour repasse
   par le limiteur d'un backend à quotas.
+- L'`usage` **rendu au client** est celui du **dernier** tour, pas le cumul :
+  son prompt relit tous les tours précédents, c'est le contexte occupé, ce
+  que lit la jauge d'un client (le cumul la ferait déborder, et déclencher à
+  tort un résumé automatique). Le cumul reste aux statistiques et aux quotas.
 - Une ligne par **exécution d'outil** (outil, route, modèle, issue, durée,
   taille, **jamais le contenu**), lue par `GET /v1/organization/usage/tools`
   et la section *Outils* du tableau de bord : voir
@@ -344,11 +348,11 @@ Le client reçoit **une** réponse chat/completions ordinaire :
 
 - Jamais d'appel hébergé en `tool_calls`.
 - En flux : même `id`, deltas des tours à la suite (ligne vide entre deux
-  textes), **un** `finish_reason`, **un** `usage` cumulé (si
-  `stream_options.include_usage`), puis `[DONE]`. `: ping` pendant une
+  textes), **un** `finish_reason`, **un** `usage`, celui du dernier
+  tour (si `stream_options.include_usage`), puis `[DONE]`. `: ping` pendant une
   recherche ou un quota. Erreur en boucle : `{"error": …}` puis `[DONE]` (le
   `200` est parti).
-- En JSON : rien avant la fin, contenu et usage de tous les tours ; une panne
+- En JSON : rien avant la fin, contenu de tous les tours, usage du dernier ; une panne
   du backend donne son vrai statut.
 - Sources en annotations `url_citation` (`message.annotations`, ou
   `delta.annotations` juste avant la fin) : une par **occurrence** d'une URL

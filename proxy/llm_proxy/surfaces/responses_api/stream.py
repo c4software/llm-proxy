@@ -200,10 +200,17 @@ class Translator:
             "code": "server_error", "message": message}),
             ensure_ascii=False).encode()
 
+    def _last(self) -> dict | None:
+        """L'usage rendu au CLIENT, à la forme chat/completions : celui du
+        dernier tour upstream. Son prompt relit tous les tours précédents :
+        c'est le contexte occupé, ce que mesure la jauge d'un client."""
+        turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
+        return turns[-1] if turns else None
+
     def _total(self) -> dict | None:
-        """L'usage de la réponse, à la forme chat/completions : celui de
-        l'upstream s'il n'y a eu qu'un tour, la SOMME sinon — chaque tour
-        relit tout le préfixe, et c'est bien ce qui a été consommé."""
+        """L'usage CONSOMMÉ (quotas, statistiques, logs), à la forme
+        chat/completions : celui de l'upstream s'il n'y a eu qu'un tour, la
+        SOMME sinon — chaque tour relit tout le préfixe."""
         turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
         if len(turns) <= 1:
             return turns[0] if turns else None
@@ -239,7 +246,7 @@ class Translator:
         done = status != "in_progress"
         return _response(self.ctx, self._rid, self._created, status,
                          list(self._output),
-                         _usage(self._total()) if done else None,
+                         _usage(self._last()) if done else None,
                          self._finish_reason, error)
 
     def _start(self, doc: dict) -> bytes:

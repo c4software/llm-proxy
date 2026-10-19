@@ -692,7 +692,8 @@ def test_stream_hosted_calls_span_upstream_turns():
     `web_search_call` s'ouvrir, jamais un `function_call` ; la réponse
     reste ouverte jusqu'au résultat (resolve), dont il ne reçoit que
     l'action. Trois tours upstream font UNE réponse : une ouverture, une
-    clôture, des éléments numérotés à la suite, et l'usage CUMULÉ."""
+    clôture, des éléments numérotés à la suite, et l'usage du DERNIER tour
+    (le contexte occupé ; le cumul reste aux stats)."""
     t = hosted_translator()
     memory = t.ctx.memory
     ev = turn(t, *SEARCH_TURN)
@@ -752,9 +753,9 @@ def test_stream_hosted_calls_span_upstream_turns():
     assert final["output"][3]["action"] == {"type": "open_page",
                                             "url": "https://gufo.org"}
     assert final["usage"] == {
-        "input_tokens": 450, "input_tokens_details": {"cached_tokens": 290},
-        "output_tokens": 22, "output_tokens_details": {"reasoning_tokens": 4},
-        "total_tokens": 472}
+        "input_tokens": 200, "input_tokens_details": {"cached_tokens": 150},
+        "output_tokens": 7, "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 207}
     assert t.tokens(0) == (450, 22, True) and t.cached() == 290
     assert t.finalize() == b"" and t.fail("trop tard") == b""
 
@@ -890,7 +891,7 @@ def test_app_loop_runs_hosted_calls_until_the_answer(proxy):
     assert ev[-1]["type"] == "response.completed"
     assert [o["type"] for o in final["output"]] == [
         "message", "web_search_call", "message"]
-    assert final["usage"]["input_tokens"] == 250
+    assert final["usage"]["input_tokens"] == 150
     assert proxy.hosted.runs == [
         ("web_search", {"query": "llama.cpp latest release"}, {})]
     # Deux envois au backend, préfixe retiré ; le second porte l'appel et
@@ -923,8 +924,8 @@ def test_app_loop_json_mode(proxy):
         "id": resp["output"][1]["id"], "type": "web_search_call",
         "status": "completed", "action": SEARCH}
     assert resp["output"][2]["content"][0]["text"] == "Voilà."
-    assert resp["usage"]["total_tokens"] == 265
-    assert resp["usage"]["input_tokens_details"] == {"cached_tokens": 140}
+    assert resp["usage"]["total_tokens"] == 155
+    assert resp["usage"]["input_tokens_details"] == {"cached_tokens": 100}
     assert "stream" not in proxy.sent[1]
     assert proxy.sent[1]["messages"][-1]["content"] == FOUND
     assert len(proxy.lines) == 1
