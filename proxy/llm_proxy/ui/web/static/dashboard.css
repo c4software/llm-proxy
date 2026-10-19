@@ -403,12 +403,14 @@ html, .thread, .nav-chats ul, .memory-side { scrollbar-gutter: stable; }
 .scrim { display: none; }
 /* Vue chat : la page tient dans la fenêtre, le chat en prend le reste. */
 .wrap.is-chat {
-  padding-top: 26px; padding-bottom: 20px;
+  padding-top: 26px; padding-bottom: 20px; max-width: 1600px;
   height: 100dvh; display: flex; flex-direction: column;
 }
 .wrap.is-chat > .chat, .wrap.is-chat > .chat-off { flex: 1; min-height: 0; }
 .wrap.is-chat header { margin-bottom: 0; }
 .wrap.is-stats { max-width: none; }
+/* Panneau d'artifact ouvert : le chat et le panneau prennent toute la largeur de l'écran. */
+.wrap.is-chat:has(> .chat.side-wide) { max-width: none; }
 
 .btn {
   font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 8px; cursor: pointer;
