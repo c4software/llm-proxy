@@ -11,7 +11,7 @@ from ...core.settings import log
 from ...storage import files
 
 from .common import CHARS_PER_TOKEN, GAP, PREVIEW_CHARS, Context
-from .memory import _key
+from .memory import _key, _weight
 
 
 # Ce qui, juste après une URL trouvée dans le texte, dit qu'elle CONTINUE :
@@ -522,6 +522,13 @@ class Translator:
         if annotations:
             out += self._block({"annotations": annotations})
         out += self._block({}, self._final_reason())
+        # Le chat de la page : ce que le prompt du dernier tour porte sans
+        # que la page l'ait jamais eu — les échanges réinsérés, et les tours
+        # d'outils hébergés de cette réponse —, en caractères, pour la
+        # répartition de sa jauge de contexte.
+        hidden = self.ctx.restored + sum(_weight(m) for m in self._history)
+        if self.ctx.progress and hidden:
+            out += self._block({"x_hidden": {"chars": hidden}})
         last = self._last()
         if self.ctx.include_usage and last is not None:
             out += _sse({"object": "chat.completion.chunk",

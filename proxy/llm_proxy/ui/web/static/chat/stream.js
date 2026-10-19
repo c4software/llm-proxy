@@ -2,7 +2,8 @@
   Le FLUX d'une réponse du chat (SSE de /ui/chat/completions) :
   readStream lit les événements `data:` un à un ; take les applique au
   message en cours — texte, raisonnement, appels d'outils hébergés
-  (`x_hosted_tool`, propre au chat de la page), sources citées, usage —
+  (`x_hosted_tool`, propre au chat de la page), ce que le proxy a
+  réinséré sans que la page l'ait (`x_hidden`), sources citées, usage —
   et les appels que la PAGE doit exécuter (`tool_calls` : chat/tools/),
   rassemblés morceau par morceau dans `hooks.calls` (index → {id, name,
   arguments}) ; `hooks.onCall(slot)` à chaque morceau — un artifact peut
@@ -53,6 +54,9 @@ export function take(doc, live, hooks = {}) {
         if (hooks.onCall) hooks.onCall(slot);
       }
     }
+    // Ce que le prompt du dernier tour portait sans que la page l'ait
+    // (échanges d'outils hébergés réinsérés par le proxy), en caractères.
+    if (d.x_hidden) live.hidden = d.x_hidden.chars || 0;
     if (d.x_hosted_tool) {
       const ev = d.x_hosted_tool;
       const known = live.tools.find((t) => t.id === ev.id);

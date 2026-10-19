@@ -181,13 +181,18 @@ def test_chat_announces_hosted_tool_runs(ui):
     assert [e["status"] for e in events] == ["running", "done"]
     assert events[0]["name"] == events[1]["name"] == "web_search"
     assert events[1]["chars"] > 0 and events[1]["preview"]
+    # Ce que le dernier tour relit sans que la page l'ait : le tour de
+    # recherche (son appel, son résultat).
+    hidden = [c["delta"]["x_hidden"] for d in blocks(r.content)
+              for c in d["choices"] if "x_hidden" in c["delta"]]
+    assert len(hidden) == 1 and hidden[0]["chars"] >= events[1]["chars"]
     ui.replies = search_then_answer()
     r = ui.client.post("/v1/chat/completions",
                        json={"model": "essai/qwen", "stream": True,
                              "tools": [{"type": "web_search"}],
                              "messages": [{"role": "user", "content": "?"}]},
                        headers={"Authorization": f"Bearer {KEY}"})
-    assert b"x_hosted_tool" not in r.content
+    assert b"x_hosted_tool" not in r.content and b"x_hidden" not in r.content
 
 
 def test_chat_offers_one_switch_per_mcp_server(ui, monkeypatch):

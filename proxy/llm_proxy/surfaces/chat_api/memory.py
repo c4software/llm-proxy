@@ -138,6 +138,7 @@ def restore(payload: dict, ctx: Context, client: str) -> int:
             if entry is not None:
                 found += 1
                 out += entry["messages"]
+                ctx.restored += sum(_weight(m) for m in entry["messages"])
                 # Le DERNIER échange reconnu dit la session : c'est le
                 # plus proche de la suite que le client demande.
                 session = entry.get("session") or session

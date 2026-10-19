@@ -449,6 +449,15 @@ def test_two_hidden_exchanges_in_one_conversation(chat):
     assert ask(chat, [Q1, A1, Q2, a2, q3]) == [Q1, A1, Q2, *second, a2, q3]
 
 
+def test_restore_counts_what_it_reinserts(chat):
+    """restore() compte les caractères qu'il réinsère (ctx.restored) : le
+    chat de la page les retrouve dans x_hidden, pour sa jauge."""
+    hidden = searched(chat)[1:]
+    ctx = C.Context()
+    assert C.restore({"messages": [Q1, A1, Q2]}, ctx, "") == 1
+    assert ctx.restored == sum(C.memory._weight(m) for m in hidden) > 0
+
+
 def test_without_declaration_the_history_is_not_read(chat, monkeypatch):
     """Un client qui cesse de déclarer l'outil repasse au relais brut :
     mêmes octets, la mémoire n'est pas consultée — et pas vidée : elle

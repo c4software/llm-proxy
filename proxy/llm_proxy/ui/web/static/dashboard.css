@@ -1412,3 +1412,4 @@ a.btn { display: inline-block; text-decoration: none; }
 .part-images { background: #e879a6; }
 .ctx-legend .part-free { background: var(--track); border: 1px solid var(--line); }
 .part-other { background: repeating-linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 4px); }
+.part-hosted { background: #7cc36a; }

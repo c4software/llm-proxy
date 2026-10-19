@@ -659,6 +659,7 @@ export const ChatPanel = {
               break;
             }
             const start = live.content.length;
+            live.hidden = 0;      // chaque requête redit le sien (x_hidden)
             body.messages = await inline([...apiMessages(conv, upto, guidance), ...tools.stepMessages(live.steps)]);
             const calls = [];
             const r = await fetch(API, {

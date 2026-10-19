@@ -162,10 +162,15 @@ par le catalogue.
   résumé automatique.
 - Son menu montre la **répartition** du contexte, en barre et en légende :
   prompt système, résumé, consignes et définitions des outils, messages,
-  appels d'outils et leurs résultats, images, et ce qui reste libre. Les
-  parts sont estimées (≈ 3,5 caractères par token) ; l'écart avec la
-  mesure du modèle est « non attribué » (son gabarit, l'erreur de
-  l'estimation).
+  appels d'outils et leurs résultats, outils hébergés, images, et ce qui
+  reste libre. Les parts sont estimées (≈ 3,5 caractères par token) ;
+  l'écart avec la mesure du modèle est « non attribué » (son gabarit,
+  l'erreur de l'estimation).
+- Les **outils hébergés** (recherche web, lecture de pages, MCP…)
+  tournent dans le proxy : leurs résultats n'arrivent jamais dans la
+  page, et le proxy les réinsère lui-même à la requête suivante
+  ([chat].memory). Il en donne la taille à la page à la fin de chaque
+  réponse (`x_hidden`, en caractères), qui en fait une part à elle.
 
 **`/compact [consigne]`** résume la conversation. On peut aussi passer par
 *Résumer maintenant* dans le menu de la jauge. Taper `/` propose la

@@ -95,10 +95,11 @@ export function occupancy(conv, max) {
 const PARTS = {
   system: "Prompt système", summary: "Résumé", guidance: "Consignes des outils",
   tools: "Définitions des outils", messages: "Messages", calls: "Appels d'outils et résultats",
-  images: "Images", other: "Non attribué",
+  images: "Images", hosted: "Outils hébergés (proxy)", other: "Non attribué",
 };
 
-/** La répartition du contexte, par part, estimée en caractères. `total`
+/** La répartition du contexte, par part, estimée en caractères — les
+ * outils hébergés comptés par le proxy (m.hidden). `total`
  * (une mesure du modèle), s'il est donné, borne le tout : ce que
  * l'estimation n'explique pas est « non attribué » (le gabarit du modèle,
  * l'écart de l'estimation) ; une estimation qui le dépasse y est ramenée.
@@ -113,7 +114,15 @@ export function breakdown(conv, total, extra = {}) {
   /** @type {Record<string, number>} */
   const n = { system: (conv.system || "").trim().length, summary: s ? preamble(s).length : 0,
               guidance: (extra.guidance || "").length, tools: (extra.tools || "").length,
-              messages: 0, calls: 0, images: 0 };
+              messages: 0, calls: 0, images: 0, hosted: 0 };
+  // Les échanges d'outils hébergés que le proxy a réinsérés, absents de la
+  // page : comptés par lui (x_hidden) pour la requête mesurée.
+  if (total) {
+    for (let i = msgs.length - 1; i >= from; i--) {
+      const m = msgs[i];
+      if (m.role === "assistant" && m.usage && m.usage.prompt_tokens) { n.hosted = m.hidden || 0; break; }
+    }
+  }
   for (const m of msgs.slice(from)) {
     if (isSummary(m)) continue;
     for (const a of m.attachments || []) {

@@ -84,6 +84,10 @@ class Context:
         # Identifiant de conversation (tools.Call.session) ; restore() le
         # remplace par celui du dernier échange reconnu.
         self.session = uuid.uuid4().hex
+        # Caractères des échanges cachés que restore() a réinsérés : avec
+        # ceux de cette réponse, ce que le prompt du dernier tour porte et
+        # que le client n'a jamais vu (x_hidden, Translator._end).
+        self.restored = 0
         # Annoncer l'exécution des outils hébergés dans le flux (le chat
         # du tableau de bord, ui/dashboard.ui_chat) : voir Translator.start.
         self.progress = False
