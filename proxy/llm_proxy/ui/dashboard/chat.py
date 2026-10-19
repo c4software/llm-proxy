@@ -31,16 +31,23 @@ def chat_tool_groups() -> list[dict]:
     """Ce que le chat de la page peut déclarer : un type par groupe
     (`{"type": "web_search"}` présente web_search, web_fetch et
     web_grep), avec les outils actifs qu'il présente. Relu à chaque
-    appel : un serveur MCP découvert depuis y entre."""
-    groups: dict[str, list[str]] = {}
+    appel : un serveur MCP découvert depuis y entre. `specs` : les
+    fonctions que le proxy présentera au modèle pour ce groupe, que la
+    page montre (le prompt qu'elle n'envoie pas) et compte en tokens."""
+    groups: dict[str, list] = {}
     for tool in tools.Hosted().tools:
         if tool.kinds:
             # Un outil MCP se déclare par son nom ou par son serveur
             # (`mcp:<serveur>`) : un interrupteur par SERVEUR, pas par outil.
             kind = next((k for k in tool.kinds
                          if k.startswith(tools.mcp.KIND + ":")), tool.kinds[0])
-            groups.setdefault(kind, []).append(tool.name)
-    return [{"type": kind, "tools": names} for kind, names in groups.items()]
+            groups.setdefault(kind, []).append(tool)
+    out = []
+    for kind, found in groups.items():
+        present = frozenset(t.name for t in found)
+        out.append({"type": kind, "tools": [t.name for t in found],
+                    "specs": [t.spec(present) for t in found]})
+    return out
 
 
 @router.get("/ui/session")

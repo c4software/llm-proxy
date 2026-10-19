@@ -466,6 +466,68 @@ export const ChatPanel = {
       return out;
     }
 
+    // Les outils d'une requête. Incognito : rien de persistant, donc pas
+    // l'outil `memory` ; ce que le modèle ne sait pas faire (`caps`) n'est
+    // pas envoyé. Ceux de la page (tools/) : ceux des familles actives — le
+    // dossier s'il est ouvert —, et leurs consignes au prompt système.
+    function requestTools(conv, ctx) {
+      const can = modelCaps(modelEntry(conv.model));
+      const hosted = can.hostedTools ? conv.tools.filter((t) => available.value.has(t)
+        && !(conv.incognito && t === "memory")) : [];
+      if (!can.folder) ctx.ws = null;
+      const families = conv.device || defaultDevice();
+      const page = tools.specs(ctx, families)
+        .filter((t) => !can.pageTools || can.pageTools.includes(t.function.name));
+      return { hosted, page, guidance: tools.guidance(ctx, families) };
+    }
+
+    // Ce qui part au modèle sans être dans le fil, pour le PROCHAIN
+    // message : le prompt système composé (le sien, un résumé, les
+    // consignes des outils) et les fonctions déclarées — celles de la page,
+    // et celles que le proxy ajoute pour les outils hébergés cochés.
+    // Les tokens sont estimés (Compact.estimate), pas mesurés.
+    // Les outils : relus quand le choix change ; le prompt système, qui
+    // relit le fil, seulement s'il est affiché.
+    const promptOpen = ref(false);
+    const requested = computed(() => {
+      const c = current.value;
+      if (!c) return null;
+      const { hosted, page, guidance } = requestTools(c, toolCtx(c, null));
+      const specs = [
+        ...toolGroups.value.filter((g) => hosted.includes(g.type))
+          .flatMap((g) => (g.specs || []).map((spec) => ({ spec, from: "proxy" }))),
+        ...page.map((spec) => ({ spec, from: "navigateur" }))]
+        .map((d) => ({ ...d, name: d.spec.function.name, json: JSON.stringify(d.spec, null, 2),
+                       tokens: Compact.estimate(JSON.stringify(d.spec)) }));
+      return { guidance, specs, guidanceTokens: Compact.estimate(guidance),
+               toolTokens: specs.reduce((n, d) => n + d.tokens, 0) };
+    });
+    const hiddenPrompt = computed(() => {
+      const c = current.value, r = requested.value;
+      if (!c || !r || !promptOpen.value) return null;
+      const head = apiMessages(c, c.messages.length, r.guidance)[0];
+      const system = head && head.role === "system" ? head.content : "";
+      const systemTokens = Compact.estimate(system);
+      return { ...r, system, systemTokens, total: systemTokens + r.toolTokens };
+    });
+    // Ce que coûte un choix du menu Outils, coché ou non : ses fonctions,
+    // et la consigne de la famille.
+    const hostedCost = (g) => Compact.estimate(JSON.stringify(g.specs || []));
+    function familyCost(f) {
+      const c = current.value;
+      const ctx = c ? toolCtx(c, null) : null;
+      return Compact.estimate(JSON.stringify(f.tools.map((t) => t.spec)) + (ctx ? f.guidance(ctx) : ""));
+    }
+    // Les outils cochés (fonctions et consignes) : ce qu'ils ajoutent à
+    // chaque requête.
+    const toolsCost = computed(() => (requested.value
+      ? requested.value.toolTokens + requested.value.guidanceTokens : 0));
+    function showPrompt() {
+      toolsOpen.value = false;
+      settingsOpen.value = true;
+      promptOpen.value = true;
+    }
+
     function send() {
       const c = current.value;
       if (!canSend.value) return;
@@ -584,19 +646,9 @@ export const ChatPanel = {
       const effort = modelCaps(modelEntry(conv.model)).reasoning ? conv.reasoning || "auto" : "auto";
       if (["low", "medium", "high"].includes(effort)) body.reasoning_effort = effort;
       else if (effort === "none") body.chat_template_kwargs = { enable_thinking: false };
-      // Incognito : rien de persistant, donc pas l'outil `memory`.
-      // Ce que le modèle ne sait pas faire (`caps`) n'est pas envoyé.
-      const can = modelCaps(modelEntry(conv.model));
-      const hosted = can.hostedTools ? conv.tools.filter((t) => available.value.has(t)
-        && !(conv.incognito && t === "memory")) : [];
-      // Les outils de la page (tools/) : ceux des familles actives — le
-      // dossier s'il est ouvert —, et leurs consignes au prompt système.
       const ctx = toolCtx(conv, live);
-      if (!can.folder) ctx.ws = null;
-      const families = conv.device || defaultDevice();
-      body.tools = [...hosted.map((type) => ({ type })), ...tools.specs(ctx, families)
-        .filter((t) => !can.pageTools || can.pageTools.includes(t.function.name))];
-      const guidance = tools.guidance(ctx, families);
+      const { hosted, page, guidance } = requestTools(conv, ctx);
+      body.tools = [...hosted.map((type) => ({ type })), ...page];
       let paused = false;
       try {
         for (;;) {
@@ -1385,6 +1437,7 @@ export const ChatPanel = {
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
              toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
+             promptOpen, hiddenPrompt, hostedCost, familyCost, toolsCost, showPrompt,
              canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              linuxOpen, linuxOffered, toggleLinux,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
@@ -1459,6 +1512,21 @@ export const ChatPanel = {
           <textarea v-model="current.system" rows="3" spellcheck="false"
                     placeholder="Instructions données au modèle avant la conversation (facultatif)."></textarea>
         </label>
+        <div class="field wide hidden-prompt">
+          <label class="check"><input type="checkbox" v-model="promptOpen">
+            Afficher le prompt invisible <span class="dim">— ce que le prochain message enverra en plus
+            du fil{{ hiddenPrompt ? " : ≈ " + kTokens(hiddenPrompt.total) + " tokens" : "" }}</span></label>
+          <div class="hidden-body" v-if="hiddenPrompt">
+            <p class="dim">Prompt système envoyé · ≈ {{ kTokens(hiddenPrompt.systemTokens) }} tokens
+              (dont consignes des outils ≈ {{ kTokens(hiddenPrompt.guidanceTokens) }})</p>
+            <pre>{{ hiddenPrompt.system || "(aucun)" }}</pre>
+            <p class="dim">Outils déclarés ({{ hiddenPrompt.specs.length }}) · ≈ {{ kTokens(hiddenPrompt.toolTokens) }} tokens</p>
+            <details v-for="d in hiddenPrompt.specs" :key="d.from + d.name">
+              <summary><code>{{ d.name }}</code> <span class="dim">{{ d.from }} · ≈ {{ kTokens(d.tokens) }} tokens</span></summary>
+              <pre>{{ d.json }}</pre>
+            </details>
+          </div>
+        </div>
         <div class="field">
           <span>Température</span>
           <div class="temp">
@@ -1770,7 +1838,8 @@ export const ChatPanel = {
                   <input type="checkbox" :checked="hostedOn(g)" @change="toggleTool(g.type)"
                          :disabled="current.incognito && g.type === 'memory'">
                   <span>{{ g.label }}<small>{{ current.incognito && g.type === 'memory'
-                    ? "pas de mémoire en incognito" : g.tools.join(", ") }}</small></span></label>
+                    ? "pas de mémoire en incognito" : g.tools.join(", ") }}<template v-if="g.specs">
+                    · ≈ {{ kTokens(hostedCost(g)) }} tokens</template></small></span></label>
               </template>
               <p class="menu-note" v-else-if="caps.hostedTools && !chat.hosted_tools"
                  title="[chat] hosted_tools = true dans config.toml">Outils du proxy inactifs</p>
@@ -1779,8 +1848,11 @@ export const ChatPanel = {
                 <label role="menuitemcheckbox" v-for="f in devicesShown" :key="f.key"
                        :aria-checked="String(deviceOn.includes(f.key))">
                   <input type="checkbox" :checked="deviceOn.includes(f.key)" @change="toggleDevice(f.key)">
-                  <span>{{ f.label }}<small>{{ f.hint }}</small></span></label>
+                  <span>{{ f.label }}<small>{{ f.hint }} · ≈ {{ kTokens(familyCost(f)) }} tokens</small></span></label>
               </template>
+              <p class="menu-note tools-cost">≈ {{ kTokens(toolsCost) }} tokens ajoutés à chaque requête
+                par les outils cochés<br>
+                <button type="button" class="link" @click="showPrompt">Voir le prompt invisible</button></p>
             </div>
           </div>
           <label class="effort" v-if="imageMode" title="Nombre d'images par demande">

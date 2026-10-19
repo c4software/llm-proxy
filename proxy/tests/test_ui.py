@@ -194,15 +194,24 @@ def test_chat_offers_one_switch_per_mcp_server(ui, monkeypatch):
     """Les outils d'un serveur MCP se déclarent ensemble (`mcp:<serveur>`) :
     un seul interrupteur pour eux, un par type pour les autres."""
     from types import SimpleNamespace as T
-    found = [T(name="web_search", kinds=("web_search",)),
-             T(name="web_fetch", kinds=("web_search",)),
-             T(name="issues", kinds=("issues", "mcp:github", "mcp")),
-             T(name="pulls", kinds=("pulls", "mcp:github", "mcp"))]
+
+    def tool(name, kinds):
+        # Sa fonction dit avec qui elle est présentée : son groupe.
+        return T(name=name, kinds=kinds,
+                 spec=lambda present: {"name": name, "with": sorted(present)})
+    found = [tool("web_search", ("web_search",)),
+             tool("web_fetch", ("web_search",)),
+             tool("issues", ("issues", "mcp:github", "mcp")),
+             tool("pulls", ("pulls", "mcp:github", "mcp"))]
     monkeypatch.setattr(tools, "Hosted", lambda: T(tools=found))
     login(ui)
+    web = ["web_fetch", "web_search"]
+    github = ["issues", "pulls"]
     assert ui.client.get("/ui/session").json()["chat"]["tools"] == [
-        {"type": "web_search", "tools": ["web_search", "web_fetch"]},
-        {"type": "mcp:github", "tools": ["issues", "pulls"]}]
+        {"type": "web_search", "tools": ["web_search", "web_fetch"],
+         "specs": [{"name": "web_search", "with": web}, {"name": "web_fetch", "with": web}]},
+        {"type": "mcp:github", "tools": ["issues", "pulls"],
+         "specs": [{"name": "issues", "with": github}, {"name": "pulls", "with": github}]}]
 
 
 def test_models_for_chat_or_the_whole_catalogue(ui, monkeypatch):

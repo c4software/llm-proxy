@@ -173,6 +173,18 @@ commande, et Tab la complète.
 - *Annuler le résumé* rend tout l'historique au modèle.
 - Le résumé est gardé avec la conversation.
 
+Les **outils cochés coûtent aussi du contexte**, à chaque requête : leurs
+fonctions (nom, description, paramètres) et la consigne de leur famille
+au prompt système.
+
+- Le menu Outils donne, sous chaque choix, son coût estimé (≈ tokens), et
+  en bas le total des outils cochés.
+- *Voir le prompt invisible* (en bas du menu, ou dans Réglages) montre ce
+  que le prochain message enverra en plus du fil : le prompt système
+  composé (le sien, un résumé, les consignes des outils) et chaque
+  fonction déclarée, celles de la page comme celles que le proxy ajoute
+  pour les outils hébergés (`/ui/session` les décrit).
+
 Le **résumé automatique** est actif par défaut, et le menu de la jauge le
 coupe ; ce choix est gardé par navigateur.
 
