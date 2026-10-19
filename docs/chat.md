@@ -160,6 +160,12 @@ par le catalogue.
 - Ce qui a suivi cette mesure est estimé (préfixe « ≈ »).
 - Elle vire à l'orange à 60 %, puis à la couleur d'accent au seuil du
   résumé automatique.
+- Son menu montre la **répartition** du contexte, en barre et en légende :
+  prompt système, résumé, consignes et définitions des outils, messages,
+  appels d'outils et leurs résultats, images, et ce qui reste libre. Les
+  parts sont estimées (≈ 3,5 caractères par token) ; l'écart avec la
+  mesure du modèle est « non attribué » (son gabarit, l'erreur de
+  l'estimation).
 
 **`/compact [consigne]`** résume la conversation. On peut aussi passer par
 *Résumer maintenant* dans le menu de la jauge. Taper `/` propose la

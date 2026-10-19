@@ -11,9 +11,11 @@
     start(conv, upto)      l'indice du premier message envoyé : après le
                            dernier résumé réussi (0 sans résumé)
     preamble(summary)      le résumé, tel qu'il part au prompt système
-    occupancy(conv, max)   {tokens, max, ratio, measured} : la dernière
-                           mesure du modèle (usage), plus une estimation
-                           de ce qui a suivi
+    occupancy(conv, max)   {tokens, max, ratio, measured, metered} : la
+                           dernière mesure du modèle (usage), plus une
+                           estimation de ce qui a suivi
+    breakdown(conv, total, extra)  la répartition estimée du contexte, par
+                           part (prompt système, outils, messages…)
     request(msgs, focus)   la demande de résumé, à la suite de l'échange
     lighten(msgs)          le même échange, allégé (chaque message coupé en
                            son milieu, les images retirées) : une seconde
@@ -61,9 +63,10 @@ function chars(m) {
 
 /** Le contexte occupé : la dernière mesure du modèle (prompt + réponse de
  * son dernier tour), plus l'estimation de ce qui a suivi ; sans mesure
- * depuis le dernier résumé, tout est estimé.
+ * depuis le dernier résumé, tout est estimé. `measured` : rien d'estimé ;
+ * `metered` : une mesure en fait partie (elle compte les outils déclarés).
  * @param {any} conv @param {number | null | undefined} max
- * @returns {{tokens: number, max: number, ratio: number, measured: boolean}} */
+ * @returns {{tokens: number, max: number, ratio: number, measured: boolean, metered: boolean}} */
 export function occupancy(conv, max) {
   const msgs = conv.messages;
   const from = start(conv, msgs.length);
@@ -86,7 +89,54 @@ export function occupancy(conv, max) {
   for (let i = k + 1; i < msgs.length; i++) if (!isSummary(msgs[i])) extra += chars(msgs[i]);
   tokens += Math.round(extra / CHARS_PER_TOKEN);
   const cap = Number(max) || 0;
-  return { tokens, max: cap, ratio: cap ? tokens / cap : 0, measured: measured && !extra };
+  return { tokens, max: cap, ratio: cap ? tokens / cap : 0, measured: measured && !extra, metered: measured };
+}
+
+const PARTS = {
+  system: "Prompt système", summary: "Résumé", guidance: "Consignes des outils",
+  tools: "Définitions des outils", messages: "Messages", calls: "Appels d'outils et résultats",
+  images: "Images", other: "Non attribué",
+};
+
+/** La répartition du contexte, par part, estimée en caractères. `total`
+ * (une mesure du modèle), s'il est donné, borne le tout : ce que
+ * l'estimation n'explique pas est « non attribué » (le gabarit du modèle,
+ * l'écart de l'estimation) ; une estimation qui le dépasse y est ramenée.
+ * `extra` : ce qui part hors du fil, les consignes des outils et leurs
+ * définitions (du JSON).
+ * @param {any} conv @param {number} total @param {{guidance?: string, tools?: string}} [extra]
+ * @returns {{key: string, label: string, tokens: number}[]} */
+export function breakdown(conv, total, extra = {}) {
+  const msgs = conv.messages;
+  const from = start(conv, msgs.length);
+  const s = lastSummary(conv, msgs.length);
+  /** @type {Record<string, number>} */
+  const n = { system: (conv.system || "").trim().length, summary: s ? preamble(s).length : 0,
+              guidance: (extra.guidance || "").length, tools: (extra.tools || "").length,
+              messages: 0, calls: 0, images: 0 };
+  for (const m of msgs.slice(from)) {
+    if (isSummary(m)) continue;
+    for (const a of m.attachments || []) {
+      if (a.kind === "text") n.messages += (a.data || "").length;
+      else n.images += IMAGE_TOKENS * CHARS_PER_TOKEN;
+    }
+    if ((m.steps || []).length) {
+      // Ce qui part d'une réponse à outils : ses tours, puis son dernier texte.
+      for (const st of m.steps) {
+        n.messages += (st.content || "").length;
+        for (const c of st.calls || []) n.calls += (c.arguments || "").length + (c.result || "").length;
+      }
+      n.messages += (m.final || "").length;
+    } else {
+      n.messages += (m.content || "").length;
+    }
+  }
+  const chars = Object.values(n).reduce((a, b) => a + b, 0);
+  const guess = chars / CHARS_PER_TOKEN;
+  const per = total && guess > total ? total / chars : 1 / CHARS_PER_TOKEN;
+  if (total && guess < total) n.other = (total - guess) * CHARS_PER_TOKEN;
+  return Object.entries(n).filter(([, c]) => c > 0)
+    .map(([key, c]) => ({ key, label: PARTS[/** @type {keyof PARTS} */ (key)], tokens: Math.round(c * per) }));
 }
 
 /** Une estimation, en jetons, d'un texte. @param {string} text */

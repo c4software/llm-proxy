@@ -971,6 +971,18 @@ export const ChatPanel = {
       if (!c || !c.messages.length || imageMode.value) return null;
       return Compact.occupancy(c, contextMax(c));
     });
+    // Sa répartition, dans le menu de la jauge (seulement ouvert) : ramenée
+    // à la mesure du modèle s'il y en a une, et ce qui reste libre.
+    const ctxParts = computed(() => {
+      const c = current.value, o = context.value, r = requested.value;
+      if (!c || !o || !ctxOpen.value) return null;
+      const parts = Compact.breakdown(c, o.metered ? o.tokens : 0, {
+        guidance: r ? r.guidance : "", tools: r ? JSON.stringify(r.specs.map((d) => d.spec)) : "" });
+      const used = parts.reduce((n, p) => n + p.tokens, 0);
+      const scale = Math.max(o.max || 0, used) || 1;
+      const free = o.max ? Math.max(0, o.max - used) : 0;
+      return { parts: parts.map((p) => ({ ...p, pct: (p.tokens / scale) * 100 })), free };
+    });
     // Le premier message encore envoyé au modèle : ceux d'avant sont résumés.
     const sentFrom = computed(() => (current.value ? Compact.start(current.value, current.value.messages.length) : 0));
     const contextNear = (conv) => {
@@ -1446,7 +1458,7 @@ export const ChatPanel = {
              download, downloadOut, extOf,
              dropZone, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
-             host, context, contextTitle, sentFrom, autoCompact, ctxOpen, compactNow, uncompact,
+             host, context, contextTitle, ctxParts, sentFrom, autoCompact, ctxOpen, compactNow, uncompact,
              retryCompacted, tooLong, editing, cancelEdit, commandHints, useCommand, kTokens: Compact.kTokens, estimate: Compact.estimate,
              AUTO_AT: Compact.AUTO_AT };
   },
@@ -1891,6 +1903,16 @@ export const ChatPanel = {
                 ? " sur " + num(context.max) + " (" + Math.round(context.ratio * 100) + " %)" : "" }}<br>
                 <span class="dim">{{ context.measured ? "mesuré par le modèle à sa dernière réponse"
                   : "estimé : la dernière mesure, plus ce qui a suivi" }}</span></p>
+              <template v-if="ctxParts">
+                <div class="ctx-bar" role="img" :aria-label="ctxParts.parts.map((p) => p.label + ' ' + num(p.tokens)).join(', ')">
+                  <span v-for="p in ctxParts.parts" :key="p.key" :class="'part-' + p.key"
+                        :style="{ width: p.pct + '%' }" :title="p.label + ' : ≈ ' + num(p.tokens) + ' tokens'"></span></div>
+                <ul class="ctx-legend">
+                  <li v-for="p in ctxParts.parts" :key="p.key"
+                      :title="p.key === 'other' ? 'Ce que mesure le modèle sans que l’estimation l’explique : son gabarit de conversation, l’écart de l’estimation (≈ 3,5 caractères par token)' : ''"><i :class="'part-' + p.key"></i>{{ p.label }}<b>≈ {{ kTokens(p.tokens) }}</b></li>
+                  <li v-if="ctxParts.free"><i class="part-free"></i>Libre<b>{{ kTokens(ctxParts.free) }}</b></li>
+                </ul>
+              </template>
               <button type="button" role="menuitem" :disabled="streaming" @click="compactNow">
                 <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
                 <span>Résumer maintenant<small>/compact [consigne] — les messages restent affichés, le résumé part à leur place</small></span></button>

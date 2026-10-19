@@ -1388,3 +1388,27 @@ a.btn { display: inline-block; text-decoration: none; }
 .hidden-prompt details { margin: 2px 0; }
 .hidden-prompt summary { cursor: pointer; font-size: 13px; }
 .hidden-prompt details pre { margin: 4px 0 6px; }
+/* La répartition du contexte (menu de la jauge) : une barre empilée sur
+   la fenêtre du modèle — le fond, c'est le libre —, et sa légende. */
+.ctx-bar {
+  display: flex; height: 10px; margin: 2px 10px 8px; border-radius: 999px; overflow: hidden;
+  background: var(--track);
+}
+.ctx-bar span { min-width: 2px; }
+.ctx-bar span + span { border-left: 1px solid var(--panel); }
+.ctx-legend {
+  list-style: none; margin: 0 10px 8px; padding: 0; display: grid; gap: 3px;
+  font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.ctx-legend li { display: flex; align-items: center; gap: 8px; }
+.ctx-legend i { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.ctx-legend b { margin-left: auto; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.part-system { background: #9b8afb; }
+.part-summary { background: #c4b5fd; }
+.part-guidance { background: #f2b33d; }
+.part-tools { background: #e0782e; }
+.part-messages { background: #4f9cf9; }
+.part-calls { background: #22b8a6; }
+.part-images { background: #e879a6; }
+.ctx-legend .part-free { background: var(--track); border: 1px solid var(--line); }
+.part-other { background: repeating-linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 4px); }
