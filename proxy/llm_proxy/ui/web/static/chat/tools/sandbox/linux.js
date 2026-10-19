@@ -311,9 +311,11 @@ export const FAMILIES = [defineFamily({
   key: FAMILY.LINUX, label: "Linux",
   hint: "Une VM Linux en WASM (Alpine : bash, python3, git, outils GNU…), sans réseau, partagée avec le panneau Terminal",
   available: () => typeof WebAssembly === "object" && typeof Worker === "function",
-  guidance: (ctx) => "run_shell exécute du bash dans une VM Linux du navigateur, sans réseau : pour "
-    + "tester un script shell ou Python (bibliothèque standard seulement), transformer des "
-    + "fichiers, enchaîner des outils en ligne de commande. /work est gardé avec la "
+  guidance: (ctx) => "run_shell exécute du bash dans une VM Linux du navigateur, sans réseau. Ne "
+    + "s'en servir que si la demande exige d'exécuter quelque chose : lancer ou tester un script "
+    + "shell ou Python (bibliothèque standard seulement), traiter des fichiers déjà dans la VM. "
+    + "Pas pour rédiger une réponse, des notes, un tableau ou un document : répondre directement, "
+    + "ou passer par un artifact. /work est gardé avec la "
     + "conversation ; l'utilisateur voit la même machine dans le panneau Terminal. Pour modifier "
     + "un fichier de la VM : shell_grep (où ?), shell_read sur ses lignes, shell_edit — plutôt que "
     + "sed ou un heredoc dans run_shell ; shell_write pour un fichier neuf."
