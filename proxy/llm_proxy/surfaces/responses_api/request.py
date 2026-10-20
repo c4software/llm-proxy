@@ -253,6 +253,15 @@ def _text_of(parts: list[dict]) -> str:
     return "".join(p["text"] for p in parts if p["type"] == "text")
 
 
+def _reminder(text: str) -> str:
+    """Un system/developer en cours de conversation, dans un bloc
+    <system-reminder> : même forme que la surface Anthropic (voir
+    anthropic_api.request._reminder)."""
+    if text.startswith("<system-reminder>"):
+        return text
+    return f"<system-reminder>\n{text}\n</system-reminder>"
+
+
 def _prepend_text(msg: dict, text: str) -> None:
     content = msg.get("content")
     if isinstance(content, list):
@@ -328,7 +337,7 @@ def _messages(p: dict, images: bool, ctx: Context, hosted=None) -> list[dict]:
     gabarits de chat (Qwen, Mistral…) n'en acceptent qu'un, en tête.
     Ceux qui arrivent EN COURS de conversation suivent la règle de la
     surface Anthropic (voir anthropic_api.to_openai) : fondus en tête du
-    message user qui suit, ou posés en message user à leur place quand
+    message user qui suit, dans un bloc <system-reminder>, ou posés en message user à leur place quand
     c'est un assistant qui suit — même position d'un tour à l'autre, le
     préfixe rendu reste stable pour un backend à cache de préfixe."""
     system: list[str] = []
@@ -379,7 +388,10 @@ def _messages(p: dict, images: bool, ctx: Context, hosted=None) -> list[dict]:
             if role in ("system", "developer"):
                 text = _text_of(parts)
                 if text:
-                    (pending if opened else system).append(text)
+                    if opened:
+                        pending.append(_reminder(text))
+                    else:
+                        system.append(text)
                 continue
             opened = True
             flush_media()

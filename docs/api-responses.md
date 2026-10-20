@@ -29,8 +29,11 @@ Réglages (`enabled`, `reasoning_as_summary`) : voir
   « responses lite »).
 - **Un seul `system`.** `instructions` et les messages `developer` du
   début sont réunis dans le message system de tête, car beaucoup de
-  gabarits n'en acceptent qu'un. Le préfixe reste stable : le cache du
-  backend en profite (colonne *Cache*).
+  gabarits n'en acceptent qu'un. Ceux qui arrivent en cours de
+  conversation (Codex, après une compaction ou une interruption) sont
+  fondus à leur place dans un message `user`, en bloc `<system-reminder>`,
+  comme sur l'[API Anthropic](api-anthropic.md). Le préfixe reste stable :
+  le cache du backend en profite (colonne *Cache*).
 - **`reasoning`.** Les éléments rejoués sont jetés. Le
   `reasoning_content` du backend devient un élément `reasoning` (résumé)
   dans le client (`reasoning_as_summary`). `reasoning.effort` part en

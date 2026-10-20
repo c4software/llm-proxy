@@ -149,8 +149,9 @@ def test_to_chat_developer_mid_conversation_keeps_its_place():
     assert out["messages"] == [
         {"role": "user", "content": "un"},
         {"role": "assistant", "content": "deux"},
-        {"role": "user", "content": "rappel\n\ntrois"},
-        {"role": "user", "content": "fin"},
+        {"role": "user", "content":
+         "<system-reminder>\nrappel\n</system-reminder>\n\ntrois"},
+        {"role": "user", "content": "<system-reminder>\nfin\n</system-reminder>"},
     ]
 
 
