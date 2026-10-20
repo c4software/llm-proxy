@@ -8,8 +8,8 @@
                     celle par défaut ; « Large » la remplace tant qu'il est actif
     l'en-tête       slot `head` (titre, choix) ; slot `actions` (les boutons
                     du panneau), puis Réseau, slot `actions-end`, Large,
-                    Plein écran (`fullscreen`), Fermer ; écran étroit : Pleine
-                    page à la place de Large et de Plein écran
+                    Pleine page, Plein écran (`fullscreen`), Fermer ; écran
+                    étroit : Pleine page seule, sans Large ni Plein écran
     le réseau       `network` (true, false ; null : pas de bouton) : couper
                     d'un clic, ouvrir après l'avertissement (slot
                     `network-warning`) ; émet `network` (vrai ou faux).
@@ -70,13 +70,12 @@ export const SidePanel = {
     // Plein écran : le panneau entier, son en-tête compris (de quoi en sortir).
     const { isSupported, isFullscreen: full, toggle: toggleFull } = VueUse.useFullscreen(panel);
     const canFull = computed(() => props.fullscreen && isSupported.value);
-    // Écran étroit : « Large » n'y change rien, et le plein écran d'un
-    // élément manque sur iPhone ; « Pleine page » pose le panneau sur toute
-    // la fenêtre (en CSS, le terminal compris). Échap en sort.
+    // « Pleine page » étend le panneau à toute la zone du chat, le fil
+    // caché (en CSS, le terminal compris), la barre du haut gardée ; seul
+    // ce bouton l'ouvre et la referme. Écran étroit : « Large » n'y change
+    // rien, et le plein écran d'un élément manque sur iPhone — elle seule.
     const narrow = VueUse.useMediaQuery(NARROW);
     const page = ref(false);
-    watch(narrow, (n) => { if (!n) page.value = false; });
-    VueUse.onKeyStroke("Escape", () => { page.value = false; });
     const sized = computed(() => !!width.value && !wide.value && !full.value);
     const panelStyle = computed(() => (sized.value && !page.value ? { width: width.value + "px" } : {}));
 
@@ -108,12 +107,12 @@ export const SidePanel = {
                 @click="toggleNetwork" :title="network ? networkTitles[0] : networkTitles[1]" aria-label="Réseau">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></button>
         <slot name="actions-end"></slot>
-        <button type="button" class="btn ghost art-btn" v-if="narrow" :aria-pressed="String(page)" @click="page = !page"
-                :title="page ? 'Quitter la pleine page (Échap)' : 'Pleine page'" aria-label="Pleine page">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path v-if="!page" d="M3 3h6M3 3v6M21 3h-6M21 3v6M3 21h6M3 21v-6M21 21h-6M21 21v-6"/><path v-else d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"/></svg></button>
-        <button type="button" class="btn ghost art-btn" v-if="!narrow" :aria-pressed="String(wide)" @click="wide = !wide"
+        <button type="button" class="btn ghost art-btn" v-if="!narrow && !page" :aria-pressed="String(wide)" @click="wide = !wide"
                 :title="wide ? 'Réduire le panneau' : 'Élargir le panneau'" aria-label="Large">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg></button>
+        <button type="button" class="btn ghost art-btn" :aria-pressed="String(page)" @click="page = !page"
+                :title="page ? 'Quitter la pleine page : revoir la conversation' : 'Pleine page : le panneau à la place de la conversation'" aria-label="Pleine page">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path v-if="!page" d="M14 8h3v3M17 8l-4 4M10 16H7v-3M7 16l4-4"/><path v-else d="M13 9v3h3M13 12l4-4M11 15v-3H8M11 12l-4 4"/></svg></button>
         <button type="button" class="btn ghost art-btn" v-if="canFull && !narrow" :aria-pressed="String(full)" @click="toggleFull()"
                 :title="full ? 'Quitter le plein écran (Échap)' : 'Plein écran'" aria-label="Plein écran">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path v-if="!full" d="M3 3h6M3 3v6M21 3h-6M21 3v6M3 21h6M3 21v-6M21 21h-6M21 21v-6"/><path v-else d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"/></svg></button>
