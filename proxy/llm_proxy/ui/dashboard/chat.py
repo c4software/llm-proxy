@@ -23,7 +23,7 @@ from ...upstream.relaying import Call, forward, gate
 from ..usage_api import usage_page
 
 from .accounts import ui_login_mode
-from .. import page_tools
+from .. import linux_relay, page_tools
 from .page import UI_CHAT, UI_CHAT_MODEL, router
 
 
@@ -78,6 +78,8 @@ async def ui_session(request: Request):
             "image_size": tools.image_generation.SIZE,
             # Les outils de la page refusés à tous ([ui].page_tools_disabled).
             "page_tools_disabled": page_tools.disabled(),
+            # Le relais réseau de la VM Linux ([ui].linux_relay).
+            "linux_relay": linux_relay.allowed(user),
         },
         "memory": tools.memory.ENABLED,
         # None : proxy ouvert, personne n'est compté.

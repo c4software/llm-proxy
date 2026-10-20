@@ -449,6 +449,17 @@ conversations_database = "conversations.db"
 # de la page. Liste des familles et de leurs outils : ui/page_tools.json
 # (tiré du registre de la page). Voir docs/navigateur.md.
 # page_tools_disabled = ["camera", "screen"]
+# Relais réseau de la VM Linux de la page (docs/linux.md, « Le réseau ») :
+# un vrai accès à Internet (https, apk, pip, git, ssh) quand l'utilisateur
+# ouvre le réseau de la VM, par un WebSocket Wisp vers le proxy — le trafic
+# PART DU SERVEUR, vers les seules adresses publiques. « * » = tous les
+# comptes actifs (sans comptes OIDC : toute session de la page), ou des
+# adresses de comptes. Vide (défaut) = pas de relais : la VM garde le
+# backend `fetch` du navigateur (http vers les sites qui permettent CORS).
+# linux_relay = ["moi@exemple.fr"]
+linux_relay = []
+# Ports refusés par le relais (25 : pas de courrier sortant depuis le serveur).
+linux_relay_blocked_ports = [25]
 # Bornes (octets) : une conversation, une image, l'historique d'un compte.
 conversation_max_bytes = 20000000
 asset_max_bytes = 20000000

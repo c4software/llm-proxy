@@ -25,7 +25,7 @@ paquets à installer.
 | Système | Alpine Linux 3.24 i386, noyau `linux-virt` |
 | Paquets | bash, python3, les outils GNU (coreutils, findutils, grep, sed, diffutils, patch), git, jq, sqlite, make, bc, curl, htop, less, tree, procps, xz, et busybox ; pas d'éditeur (le `vi` de busybox) |
 | Mémoire | 256 Mo ; tout le système tient dans l'initramfs, en mémoire, sans disque |
-| Réseau | coupé ; l'utilisateur peut l'ouvrir pour une conversation (des requêtes web, par le navigateur) |
+| Réseau | coupé ; l'utilisateur peut l'ouvrir pour une conversation (par le relais du proxy, ou des requêtes web par le navigateur) |
 | Téléchargé | ≈ 35 Mo au premier usage, puis revalidé par le navigateur (`304`) |
 | Démarrage | ≈ 1,5 s : la VM reprend un état déjà démarré, sauvé au build |
 | Un appel | ≈ 0,3 s pour un script court, sauvegarde de `/work` comprise |
@@ -120,16 +120,51 @@ avertissement, comme pour un artifact : le code qui tourne dans la VM, écrit
 par le modèle ou par l'utilisateur, peut alors envoyer ce que contient
 `/work` à un site qui l'accepte.
 
-Il n'y a **aucun relais serveur** : c'est le backend `fetch` de v86.
+Deux façons de relier la VM, selon le compte :
+
+- **Le relais du proxy** (`[ui].linux_relay`) : un vrai accès à Internet.
+- **Le backend `fetch` de v86**, sans relais, pour les autres comptes :
+  des requêtes HTTP vers les sites qui permettent CORS.
+
+Dans les deux cas :
 
 - La carte réseau de la VM (virtio) est toujours là, mais n'est reliée à
   rien tant que le réseau est coupé.
-- Ouvert, chaque requête HTTP de l'invité devient un `fetch()` du
-  navigateur, fait en **https**. Le cadre ouvre alors `connect-src`.
 - L'invité a des adresses fixes : `192.168.86.100`, passerelle et DNS
-  `192.168.86.1`.
+  `192.168.86.1`. v86 répond au DNS lui-même, par DoH (`cloudflare-dns.com`,
+  depuis le navigateur).
+- Le cadre ouvre alors `connect-src` (https, et wss pour le relais).
 
-Ce que ça permet, et ce que ça ne permet pas :
+### Le relais (Wisp)
+
+`[ui].linux_relay` nomme les comptes qui y ont droit (`"*"` : tous les
+comptes actifs, ou des adresses de comptes ; vide par défaut). La page
+l'apprend par `/ui/session` (`chat.linux_relay`).
+
+Au démarrage d'une VM avec réseau, la page demande un jeton
+(`POST /ui/linux/relay`, avec sa session ; valable 24 h). v86 ouvre alors
+un WebSocket vers `/ui/linux/wisp/<jeton>` : le protocole
+[Wisp](https://github.com/MercuryWorkshop/wisp-protocol) v1, que v86 parle
+nativement (`relay_url: "wisps://…"`). Chaque connexion TCP de l'invité y
+devient un flux, que le proxy ouvre vers la cible (`ui/linux_relay.py`) :
+https, `apk add`, `pip install`, `git clone`, ssh marchent.
+
+Le trafic **part du serveur**. Le relais ne joint donc que les adresses
+publiques (`tools/net.py`, `is_public`) : ni le réseau local, ni Tailscale,
+ni le loopback, ni les conteneurs voisins, quel que soit
+`[tools.net].allow_private`. Les noms sont résolus dans la VM : le relais
+juge l'adresse, pas un domaine (`[tools.net]` et ses listes de domaines ne
+s'y appliquent pas). Ports refusés : `[ui].linux_relay_blocked_ports` (25
+par défaut). UDP refusé. Bornes : 64 flux par VM, 4 relais ouverts par
+compte. Chaque connexion est écrite au journal (compte, cible).
+
+Le droit est relu à chaque connexion du WebSocket : un compte bloqué perd
+le relais à la reconnexion suivante.
+
+### Sans relais (`fetch`)
+
+Chaque requête HTTP de l'invité devient un `fetch()` du navigateur, fait
+en **https**. Ce que ça permet, et ce que ça ne permet pas :
 
 | | |
 |---|---|
@@ -385,8 +420,10 @@ d'Alpine Linux (aports) aux versions exactes de
 
 ## Limites
 
-- **Réseau limité**, et coupé par défaut : ouvert, des requêtes web vers
-  les sites qui permettent CORS, rien d'autre (ci-dessus).
+- **Réseau coupé par défaut** ; ouvert, un vrai accès à Internet par le
+  relais du proxy pour les comptes de `[ui].linux_relay`, sinon des
+  requêtes web vers les sites qui permettent CORS, rien d'autre
+  (ci-dessus).
 - **x86 32 bits** : les binaires sont i686.
 - **Lente** : une émulation, environ 10 à 50 fois plus lente que la
   machine.

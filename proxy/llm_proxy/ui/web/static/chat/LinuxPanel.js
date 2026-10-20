@@ -107,8 +107,12 @@ export const LinuxPanel = {
     <template #network-warning>
       <b>Ouvrir le réseau à cette VM ?</b> Le code qui y tourne — écrit par le modèle ou par
       vous — pourra télécharger, et envoyer ce que contient /work à n'importe quel site qui
-      l'accepte. Le trafic passe par votre navigateur : des requêtes web (HTTP, faites en HTTPS)
-      vers les sites qui l'autorisent (API publiques, PyPI, GitHub…) ; ni ssh, ni apk, ni pip.
+      l'accepte.
+      <template v-if="vm.relay">Le trafic passe par le proxy : un vrai accès à Internet (https,
+        apk, pip, git, ssh), sauf vers les réseaux privés ; il part de l'adresse du serveur.</template>
+      <template v-else>Le trafic passe par votre navigateur : des requêtes web (HTTP, faites en
+        HTTPS) vers les sites qui l'autorisent (API publiques, PyPI, GitHub…) ; ni ssh, ni apk,
+        ni pip.</template>
       La VM redémarre, /work gardé.
     </template>
     <p class="linux-note" v-if="elsewhere" role="status">

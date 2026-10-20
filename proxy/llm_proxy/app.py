@@ -35,6 +35,7 @@ from .ui import (
     conversation_routes,
     dashboard,
     health,
+    linux_relay,
     static_files,
     usage_api,
 )
@@ -54,7 +55,8 @@ app.add_middleware(UISession)
 # Les routes des modules, le relais (son catch-all) EN DERNIER, qui sinon
 # les prendrait toutes.
 for module in (endpoints, catalog, usage_api, static_files, dashboard,
-               conversation_routes, config_view, health, tool_routes):
+               conversation_routes, config_view, health, tool_routes,
+               linux_relay):
     app.include_router(module.router)
 
 

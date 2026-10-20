@@ -4,10 +4,12 @@
 //
 // Tout est passé en ArrayBuffer : v86 ne reçoit jamais d'URL, il ne
 // télécharge rien. La carte réseau (virtio) n'est reliée à rien, sauf
-// `network` : son trafic HTTP passe alors par fetch() (le backend « fetch »
-// de v86, sans relais), et vm.network() la configure dans l'invité.
+// `network` : son trafic passe alors par le relais Wisp du proxy (`relay`,
+// une adresse wisps://…, de vraies connexions TCP — ui/linux_relay.py),
+// à défaut par fetch() (le backend « fetch » de v86 : du HTTP vers les
+// sites qui permettent CORS) ; vm.network() la configure dans l'invité.
 //
-//   createVM(V86, files, {memoryMB, network})
+//   createVM(V86, files, {memoryMB, network, relay})
 //                                      files : {wasm, bios, vgaBios} et
 //                                      {state} (reprise) ou {bzimage, initrd}
 //   vm.ready()                         la VM répond (après démarrage ou reprise)
@@ -36,7 +38,7 @@ export const MEMORY_MB = 256;        // 192 au moins : l'initramfs tient en mém
 // que la VM sauvée (uart1, filesystem, net_device.type) : ne pas les
 // changer sans reconstruire l'état. Le backend réseau, lui, n'est pas dans
 // l'état : relié ou non, c'est la même carte.
-export function createVM(V86, files, { memoryMB = MEMORY_MB, network = false } = {}) {
+export function createVM(V86, files, { memoryMB = MEMORY_MB, network = false, relay = "" } = {}) {
   const options = {
     wasm_fn: async (env) => (await WebAssembly.instantiate(files.wasm, env)).instance.exports,
     bios: { buffer: files.bios },
@@ -45,7 +47,7 @@ export function createVM(V86, files, { memoryMB = MEMORY_MB, network = false } =
     vga_memory_size: 2 * 1024 * 1024,
     uart1: true,                     // ttyS1 : le canal du modèle
     filesystem: {},                  // 9p en mémoire, sans baseurl : rien n'est lu au réseau
-    net_device: { type: "virtio", ...(network ? { relay_url: "fetch" } : {}) },
+    net_device: { type: "virtio", ...(network ? { relay_url: relay || "fetch" } : {}) },
     disable_keyboard: true, disable_mouse: true, disable_speaker: true,
     autostart: true,
   };
@@ -171,8 +173,8 @@ class VM {
   }
 
   // Le réseau dans l'invité (VM créée avec `network`) : la carte, et les
-  // adresses fixes de la passerelle `fetch` de v86 (192.168.86.1, qui
-  // répond aussi au DNS) — sans DHCP, qui voudrait le module af_packet.
+  // adresses fixes de la passerelle de v86, `fetch` ou Wisp (192.168.86.1,
+  // qui répond aussi au DNS, par DoH) — sans DHCP, qui voudrait le module af_packet.
   // Rend vrai si la route est posée.
   async network() {
     const r = await this.exec("modprobe virtio_net 2>/dev/null; ip link set eth0 up "

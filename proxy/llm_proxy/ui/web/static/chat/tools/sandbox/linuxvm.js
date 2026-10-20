@@ -25,10 +25,13 @@
 
   Le RÉSEAU est coupé, sauf si l'utilisateur l'ouvre pour la conversation
   (`conv.linuxNetwork`, bouton Réseau du panneau, après un avertissement) :
-  la carte de la VM passe alors par le backend `fetch` de v86 — chaque
-  requête HTTP de l'invité devient un fetch() du navigateur, sans relais,
-  faite en https ; seuls les sites qui permettent CORS répondent (une
-  origine `null`). Changer d'avis redémarre la VM, /work gardé.
+  la carte de la VM passe alors par le RELAIS du proxy si le compte y a
+  droit ([ui].linux_relay, POST /ui/linux/relay : un WebSocket Wisp, de
+  vraies connexions TCP vers Internet — ui/linux_relay.py) ; sinon par le
+  backend `fetch` de v86 — chaque requête HTTP de l'invité devient un
+  fetch() du navigateur, faite en https ; seuls les sites qui permettent
+  CORS répondent (une origine `null`). Changer d'avis redémarre la VM,
+  /work gardé.
 
   /WORK est gardé par conversation (IndexedDB, sqlbase.js sous
   « linux:<id> », en tar.gz) : après chaque appel du modèle, quand
@@ -46,7 +49,7 @@ const key = (/** @type {string} */ id) => `linux:${id}`;
 /** L'état montré par le panneau et l'outil.
  * status : off | loading (téléchargement) | starting | ready | failed */
 export const vm = Vue.reactive({ status: "off", owner: "", error: "", busy: false, typing: false, saved: "", note: "",
-                                  network: false });
+                                  network: false, relay: false });   // relay : le compte a le relais (/ui/session)
 
 const WORKER = `
 let vm = null, ready = false, early = "";   // les frappes d'avant le démarrage
@@ -57,13 +60,13 @@ onmessage = async ({ data: d }) => {
     try {
       const { V86 } = await import(blob(d.files.v86js));
       const { createVM } = await import(blob(d.files.vmjs));
-      if (d.network) {
+      if (d.network && !d.relay) {
         // Les requêtes de l'invité (http://, port 80) partent en https : une
         // page https refuse le http, et la plupart des sites y redirigent.
         const f = self.fetch.bind(self);
         self.fetch = (u, o) => f(typeof u === "string" && u.startsWith("http://") ? "https://" + u.slice(7) : u, o);
       }
-      vm = createVM(V86, d.files, { network: !!d.network });
+      vm = createVM(V86, d.files, { network: !!d.network, relay: d.relay || "" });
       // Le terminal : les octets de ttyS0, regroupés par 16 ms.
       let pending = [], timer = 0;
       vm.onConsole((b) => {
@@ -99,9 +102,10 @@ onmessage = async ({ data: d }) => {
   }
 };`;
 
-// Le cadre ; `connect-src` ouvert seulement avec le réseau (le Worker en hérite).
+// Le cadre ; `connect-src` ouvert seulement avec le réseau (le Worker en hérite) :
+// le relais (wss:), le DNS de la VM par DoH et le backend `fetch` (https:).
 const frameDoc = (/** @type {boolean} */ network) => `<!doctype html><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src blob:; style-src 'unsafe-inline'${network ? "; connect-src https: http:" : ""}">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src blob:; style-src 'unsafe-inline'${network ? "; connect-src https: http: wss: ws:" : ""}">
 <style>html, body { margin: 0; height: 100%; overflow: hidden; } #t { position: absolute; inset: 6px 2px 2px 8px; }</style>
 <div id="t"></div>
 <script>
@@ -128,7 +132,7 @@ onmessage = async (e) => {
     worker.onerror = (err) => { err.preventDefault(); post({ op: "fatal", error: String(err.message || "erreur de la VM") }); };
     term.onData((s) => { worker.postMessage({ op: "type", data: s }); post({ op: "activity" }); });
     term.onResize(({ cols, rows }) => worker.postMessage({ op: "resize", cols, rows }));
-    worker.postMessage({ op: "start", files: d.files, network: d.network, cols: term.cols, rows: term.rows }, Object.values(d.files).filter((v) => v instanceof ArrayBuffer));
+    worker.postMessage({ op: "start", files: d.files, network: d.network, relay: d.relay, cols: term.cols, rows: term.rows }, Object.values(d.files).filter((v) => v instanceof ArrayBuffer));
   } else if (d.op === "theme") {
     if (term) { term.options.theme = d.theme; document.body.style.background = d.theme.background; }
   } else if (d.op === "focus") {
@@ -223,6 +227,19 @@ function call(script, opts, op = "exec") {
   });
 }
 
+// L'adresse du relais Wisp du proxy (un jeton de 24 h, pour cette VM),
+// ou « » : pas de relais pour ce compte, la VM garde le backend `fetch`.
+async function relayUrl() {
+  try {
+    const r = await fetch("/ui/linux/relay", { method: "POST" });
+    if (!r.ok) return "";
+    const { path } = await r.json();
+    return (location.protocol === "https:" ? "wisps://" : "wisp://") + location.host + path;
+  } catch {
+    return "";
+  }
+}
+
 // La VM de `conv`, démarrée, son /work rechargé.
 async function start(/** @type {any} */ conv) {
   vm.status = "loading";
@@ -237,6 +254,8 @@ async function start(/** @type {any} */ conv) {
     throw new Error(`VM Linux absente de ce serveur (${e.message}) : elle est construite par `
       + "proxy/linux/build.sh, ce que fait l'image Docker");
   });
+  const relay = vm.network && vm.relay ? await relayUrl() : "";
+  if (vm.network && !relay) vm.note = "réseau limité : pas de relais pour ce compte, seulement les sites qui permettent CORS, en http";
   if (gen !== generation) throw new Error("VM arrêtée pendant son démarrage");
   vm.status = "starting";
   frame = document.createElement("iframe");
@@ -255,7 +274,7 @@ async function start(/** @type {any} */ conv) {
         // Des copies des binaires : celles du cache restent à la page.
         const sent = { ...files, wasm: files.wasm.slice(0), bios: files.bios.slice(0), vgaBios: files.vgaBios.slice(0),
                        state: files.state.slice(0) };
-        f.contentWindow.postMessage({ op: "start", files: sent, xterm, theme: theme(), font: FONT, network: vm.network }, "*",
+        f.contentWindow.postMessage({ op: "start", files: sent, xterm, theme: theme(), font: FONT, network: vm.network, relay }, "*",
                                     [sent.wasm, sent.bios, sent.vgaBios, sent.state]);
       } else if (op === "started") { window.removeEventListener("message", onReady); resolve(null); }
       else if (op === "fatal") { window.removeEventListener("message", onReady); reject(new Error(e.data.error)); }

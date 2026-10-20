@@ -58,7 +58,7 @@ import * as tools from "./tools/index.js";
 import * as artifactBridge from "./artifact-bridge.js";
 import { ArtifactPanel } from "./ArtifactPanel.js";
 import { LinuxPanel } from "./LinuxPanel.js";
-import { setOpener as setLinuxOpener } from "./tools/sandbox/linuxvm.js";
+import { setOpener as setLinuxOpener, vm as linuxVm } from "./tools/sandbox/linuxvm.js";
 import { download, useCopy } from "../lib/files.js";
 import * as voice from "./voice.js";
 import { Markdown } from "../lib/markdown.js";
@@ -111,6 +111,9 @@ export const ChatPanel = {
       offTick.value++;
     }, { immediate: true, deep: true });
     const deviceFamilies = computed(() => (offTick.value, tools.menuFamilies()));
+    // Le relais réseau de la VM Linux, ouvert à ce compte ([ui].linux_relay).
+    watch(() => !!(props.session.chat && props.session.chat.linux_relay), (on) => { linuxVm.relay = on; },
+          { immediate: true });
     const devicePrefs = VueUse.useLocalStorage("llm-proxy-chat-device", null,
                                                { serializer: VueUse.StorageSerializers.object });
     const defaultDevice = () => (Array.isArray(devicePrefs.value) ? devicePrefs.value : tools.defaultFamilies());

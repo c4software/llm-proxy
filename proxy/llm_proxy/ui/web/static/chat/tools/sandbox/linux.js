@@ -311,7 +311,7 @@ export const FAMILIES = [defineFamily({
   key: FAMILY.LINUX, label: "Linux",
   hint: "Une VM Linux en WASM (Alpine : bash, python3, git, outils GNU…), sans réseau, partagée avec le panneau Terminal",
   available: () => typeof WebAssembly === "object" && typeof Worker === "function",
-  guidance: (ctx) => "run_shell exécute du bash dans une VM Linux du navigateur, sans réseau. Ne "
+  guidance: (ctx) => "run_shell exécute du bash dans une VM Linux du navigateur. Ne "
     + "s'en servir que si la demande exige d'exécuter quelque chose : lancer ou tester un script "
     + "shell ou Python (bibliothèque standard seulement), traiter des fichiers déjà dans la VM. "
     + "Pas pour rédiger une réponse, des notes, un tableau ou un document : répondre directement, "
@@ -320,10 +320,13 @@ export const FAMILIES = [defineFamily({
     + "un fichier de la VM : shell_grep (où ?), shell_read sur ses lignes, shell_edit — plutôt que "
     + "sed ou un heredoc dans run_shell ; shell_write pour un fichier neuf."
     + (ctx && ctx.conv && ctx.conv.linuxNetwork
-      ? " L'utilisateur a OUVERT le réseau de la VM : des requêtes web seulement, en écrivant les "
-        + "adresses en http:// (le navigateur les fait en https), vers les sites qui permettent CORS "
-        + "(API publiques, pypi.org/pypi/<paquet>/json, raw.githubusercontent.com, api.github.com…) ; "
-        + "pas de https:// direct, ni ssh, ni apk, ni pip install."
+      ? linux.vm.relay
+        ? " L'utilisateur a OUVERT le réseau de la VM : un vrai accès à Internet (https, apk add, "
+          + "pip install, git clone, ssh), sauf vers les réseaux privés."
+        : " L'utilisateur a OUVERT le réseau de la VM : des requêtes web seulement, en écrivant les "
+          + "adresses en http:// (le navigateur les fait en https), vers les sites qui permettent CORS "
+          + "(API publiques, pypi.org/pypi/<paquet>/json, raw.githubusercontent.com, api.github.com…) ; "
+          + "pas de https:// direct, ni ssh, ni apk, ni pip install."
       : " La VM n'a pas de réseau (l'utilisateur peut l'ouvrir dans le panneau Terminal).")
     + (ctx && ctx.conv && linux.visible(ctx.conv)
       ? " Le panneau Terminal est OUVERT : ce que run_shell exécute y est tapé, sous les yeux de "
