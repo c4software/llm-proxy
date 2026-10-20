@@ -124,6 +124,9 @@ export const ChatPanel = {
     S.open(props.session.client);
     const current = S.current;
     const currentId = computed(() => S.state.currentId);
+    const pendingConv = S.pending;
+    const loadError = computed(() => S.state.loadError);
+    const retryLoad = () => S.fetchCurrent();
     const draft = ref("");
     const pending = ref([]);          // pièces jointes du message en cours
     const streaming = ref(false);
@@ -1428,26 +1431,33 @@ export const ChatPanel = {
     const when = S.when;
     const host = (url) => { try { return new URL(url).host; } catch { return url; } };
 
+    // Une conversation lue du proxy (à l'ouverture, ou plus tard depuis le
+    // menu) : ses réglages manquants.
+    function prepareConv(c) {
+      if (!c.model) c.model = defaultModel();
+      if (!c.imageSize) c.imageSize = chat.value.image_size;
+      if (!c.imageCount) c.imageCount = 1;
+      if (!c.reasoning) c.reasoning = "auto";
+      // Une carte du navigateur en cours au rechargement : ses boutons
+      // reviennent (le flux de caméra, lui, est perdu).
+      for (const m of c.messages || []) if (m.waiting && m.waiting.kind === "device") m.waiting.busy = false;
+    }
+    S.setPrepare(prepareConv);
+
     onMounted(async () => {
+      // Le catalogue et l'historique en même temps : l'un n'attend pas l'autre.
+      const models = loadModels();
       await S.open(props.session.client);
       if (!S.state.convs.length) S.newConv();
-      await loadModels();
-      for (const c of S.state.convs) {
-        if (!c.model) c.model = defaultModel();
-        if (!c.imageSize) c.imageSize = chat.value.image_size;
-        if (!c.imageCount) c.imageCount = 1;
-        if (!c.reasoning) c.reasoning = "auto";
-        // Une carte du navigateur en cours au rechargement : ses boutons
-        // reviennent (le flux de caméra, lui, est perdu).
-        for (const m of c.messages) if (m.waiting && m.waiting.kind === "device") m.waiting.busy = false;
-      }
+      await models;
+      for (const c of S.state.convs) if (!c.stub && !c.model) c.model = defaultModel();
       nextTick(() => {
         if (thread.value) thread.value.scrollTop = thread.value.scrollHeight;
         autosize();
       });
     });
 
-    return { chat, toolGroups, available, current, currentId,
+    return { chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
              ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
@@ -1479,6 +1489,24 @@ export const ChatPanel = {
        :class="{ 'with-memory': (memoryOpen && $props.session.memory) || (artifactsOpen && current && (current.artifacts || []).length)
                    || (linuxOpen && current),
                  'side-wide': artifactsOpen || linuxOpen, incognito: current && current.incognito }">
+    <section class="chat-main chat-loading" v-if="!current" :aria-busy="String(!loadError)">
+      <header class="chat-head">
+        <h2>{{ pendingConv ? pendingConv.title : "Conversations" }}</h2>
+      </header>
+      <div class="thread">
+        <div class="empty" v-if="loadError">
+          <div>{{ loadError }}</div>
+          <div><button type="button" class="btn ghost" @click="retryLoad">Réessayer</button></div>
+        </div>
+        <div class="loading-thread" v-else role="status">
+          <div class="loading-line"><span class="spinner" aria-hidden="true"></span>
+            {{ pendingConv ? "Chargement de la conversation…" : "Chargement des conversations…" }}</div>
+          <div class="skeleton-msg user" aria-hidden="true"></div>
+          <div class="skeleton-msg" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="skeleton-msg user short" aria-hidden="true"></div>
+        </div>
+      </div>
+    </section>
     <section class="chat-main" v-if="current" ref="dropZone">
       <header class="chat-head">
         <h2 :title="current.title">{{ current.title }}</h2>

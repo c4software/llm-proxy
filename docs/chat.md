@@ -14,7 +14,13 @@ appareil. Chacune garde son modèle, son prompt système, sa température,
 ses outils, ses artifacts et ses fichiers produits.
 
 - Dans le menu latéral : renommer, supprimer, **rechercher** (chaque
-  mot, sans casse ni accents, dans le titre ou les messages).
+  mot, sans casse ni accents, dans le titre ou les messages ; le proxy
+  cherche aussi dans celles que le menu n'a pas encore lues).
+- **Chargement à la demande** : le menu ne lit que des résumés (titre,
+  date, nombre de messages), 40 à la fois, la suite en arrivant au bout
+  de la liste ; une conversation n'arrive entière qu'ouverte. L'adresse
+  nomme la conversation affichée (`/ui#chat/<id>`) : un rechargement la
+  rouvre, lue en même temps que la première page du menu.
 - Dans le fil : modifier une question (la suite repart d'elle),
   régénérer la dernière réponse, arrêter un flux.
 - **Export** Markdown (⤓ dans le menu, ou *Réglages*) : titre, date,
@@ -400,5 +406,6 @@ envoyer sans requête CORS préliminaire, que le proxy ne sert pas.
 | `POST /ui/images/generations` | `/v1/images/generations` |
 | `POST /ui/images/edits` | corps JSON (`model`, `prompt`, `image` en data URL, `size`) converti en formulaire pour `/v1/images/edits` |
 | `POST /ui/audio/speech`, `GET /ui/audio/voices` | `/v1/audio/*` |
-| `GET /ui/conversations`, `PUT` / `DELETE /ui/conversations/{id}` | conversations |
+| `GET /ui/conversations` | conversations ; `?summary=1&limit=&offset=` : leurs résumés par pages (`next` : la page suivante) ; `?q=` : les résumés de celles qui contiennent chaque mot |
+| `GET` / `PUT` / `DELETE /ui/conversations/{id}` | une conversation |
 | `POST /ui/assets`, `GET /ui/assets/{id}` | images des conversations |

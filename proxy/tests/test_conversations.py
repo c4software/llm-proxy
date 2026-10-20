@@ -108,3 +108,35 @@ def test_chat_ferme(proxy, monkeypatch):
     everywhere(monkeypatch, dashboard, "UI_CHAT", False)
     proxy.post("/ui/login", json={"key": "sk-a"})
     assert proxy.get("/ui/conversations").status_code == 404
+
+
+def test_resumes_par_pages_une_seule_et_recherche(proxy):
+    proxy.post("/ui/login", json={"key": "sk-a"})
+    for i in range(5):
+        doc = conv(f"c{i}", title=f"Conv {i}", updated=1_700_000_000_000 + i * 1000,
+                   messages=[{"role": "user", "content": f"Réponse numéro {i}"}] * (i + 1))
+        proxy.put(f"/ui/conversations/c{i}", json=doc)
+    # Le menu : des résumés, sans les messages, la plus récente d'abord.
+    j = proxy.get("/ui/conversations?summary=1&limit=2").json()
+    assert j["data"] == [
+        {"id": "c4", "title": "Conv 4", "created": 1_700_000_000_000,
+         "updated": 1_700_000_004_000, "count": 5},
+        {"id": "c3", "title": "Conv 3", "created": 1_700_000_000_000,
+         "updated": 1_700_000_003_000, "count": 4}]
+    assert j["next"] == 2 and j["usage"]["conversations"] == 5
+    j = proxy.get("/ui/conversations?summary=1&limit=2&offset=4").json()
+    assert [c["id"] for c in j["data"]] == ["c0"] and j["next"] is None
+    # Une conversation, entière ; d'un autre compte : inconnue.
+    assert len(proxy.get("/ui/conversations/c2").json()["messages"]) == 3
+    assert proxy.get("/ui/conversations/zz").status_code == 404
+    assert proxy.get("/ui/conversations/..%2Fx").status_code in (400, 404)
+    # La recherche : chaque mot, sans casse ni accents, titre ou messages.
+    found = proxy.get("/ui/conversations", params={"q": "REPONSE 3"}).json()["data"]
+    assert [c["id"] for c in found] == ["c3"]
+    found = proxy.get("/ui/conversations", params={"q": "conv"}).json()["data"]
+    assert [c["id"] for c in found] == ["c4", "c3", "c2", "c1", "c0"]
+    assert proxy.get("/ui/conversations", params={"q": "role"}).json()["data"] == []
+    proxy.cookies.clear()
+    proxy.post("/ui/login", json={"key": "sk-b"})
+    assert proxy.get("/ui/conversations/c2").status_code == 404
+    assert proxy.get("/ui/conversations", params={"q": "conv"}).json()["data"] == []

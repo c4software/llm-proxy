@@ -32,6 +32,9 @@
 <body>
 <!-- Vue compile le CONTENU de #app, pas ses propres attributs : la classe
      qui suit la vue est donc sur l'enveloppe intérieure. -->
+<!-- Avant Vue (scripts en cours de chargement) : visible tant que #app
+     n'est pas monté (Vue retire alors v-cloak). -->
+<div class="boot" role="status"><span class="spinner" aria-hidden="true"></span> Chargement…</div>
 <div id="app" v-cloak>
 <div class="shell" :class="{ 'has-nav': session, 'nav-open': navOpen, 'nav-compact': navCompact }">
   <aside class="sidenav" v-if="session" aria-label="Navigation">
@@ -49,11 +52,17 @@
       <button type="button" class="nav-new" :disabled="chatState.streaming" @click="newChat" title="Nouvelle conversation">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         <span>Nouvelle conversation</span></button>
-      <input type="search" class="nav-search" v-model="chatState.query" v-if="chats.sorted.value.length > 1"
+      <input type="search" class="nav-search" v-model="chatState.query"
+             v-if="chats.sorted.value.length > 1 || chatState.total > 1"
              placeholder="Rechercher…" aria-label="Rechercher dans les conversations">
-      <p class="nav-none dim" v-if="chatState.query && !chatList.some((c) => c.id !== chatState.currentId)">
+      <p class="nav-none dim" v-if="chatState.searching" role="status">Recherche…</p>
+      <p class="nav-none dim" v-else-if="chatState.query && !chatList.some((c) => c.id !== chatState.currentId)">
         Aucune autre conversation ne contient « {{ chatState.query }} ».</p>
-      <ul>
+      <ul :aria-busy="String(chatState.listing)">
+        <!-- La première page du menu arrive : des lignes vides à sa place. -->
+        <template v-if="chatState.listing && chatList.length < 2">
+          <li v-for="n in 5" :key="'s' + n" class="conv-skeleton" aria-hidden="true"><i></i><i></i></li>
+        </template>
         <li v-for="c in chatList" :key="c.id"
             :class="{ current: view === 'chat' && c.id === chatState.currentId }">
           <input v-if="chatState.renaming === c.id" v-model="chatState.renameText" class="rename"
@@ -64,10 +73,10 @@
                   :disabled="chatState.streaming && c.id !== chatState.currentId"
                   @click="openChat(c.id)" @dblclick="chats.startRename(c)" :title="c.title">
             <span class="title"><span class="tag-incognito" v-if="c.incognito">incognito</span>{{ c.title }}</span>
-            <span class="dim">{{ chats.when(c.updated) }} · {{ c.messages.length }} msg</span>
+            <span class="dim">{{ chats.when(c.updated) }} · {{ chats.count(c) }} msg</span>
           </button>
           <span class="conv-actions" v-if="chatState.renaming !== c.id">
-            <button type="button" class="icon" title="Exporter en Markdown" :disabled="!c.messages.length"
+            <button type="button" class="icon" title="Exporter en Markdown" :disabled="!chats.count(c)"
                     @click="chats.exportMd(c)">⤓</button>
             <button type="button" class="icon" title="Renommer" @click="chats.startRename(c)">✎</button>
             <button type="button" class="icon danger" :class="{ armed: chatState.confirming === c.id }"
@@ -75,6 +84,11 @@
                     :disabled="chatState.streaming && c.id === chatState.currentId"
                     @click="chats.remove(c.id)">{{ chatState.confirming === c.id ? "Supprimer ?" : "×" }}</button>
           </span>
+        </li>
+        <!-- Au bout de la liste : la page suivante, chargée en y arrivant. -->
+        <li class="nav-more" ref="moreRef" :key="chatState.more" v-if="chatState.more !== null && !chatState.query">
+          <button type="button" class="link" :disabled="chatState.loadingMore" @click="chats.loadMore()">
+            {{ chatState.loadingMore ? "Chargement…" : "Plus de conversations" }}</button>
         </li>
       </ul>
     </div>
@@ -155,15 +169,18 @@
     </div>
   </form>
 
+  <div class="boot" role="status" v-if="!session && !needLogin && !inactive">
+    <span class="spinner" aria-hidden="true"></span> Chargement…</div>
+
   <!-- Le chat reste monté d'une vue à l'autre : une réponse en cours
        continue pendant qu'on regarde les chiffres. -->
   <chat-panel v-if="session" v-show="view === 'chat'" :session="session"
               :key="session.client || 'open'" @unauthorized="onUnauthorized"></chat-panel>
 
-  <config-panel v-if="session" v-show="view === 'config'" :session="session"
+  <config-panel v-if="session && visited.config" v-show="view === 'config'" :session="session"
                 :health="health"></config-panel>
 
-  <stats-view v-if="session" v-show="view === 'stats'" :session="session" :health="health"
+  <stats-view v-if="session && visited.stats" v-show="view === 'stats'" :session="session" :health="health"
               :active="view === 'stats'" @unauthorized="onUnauthorized"></stats-view>
 </div>
 </div>

@@ -479,6 +479,32 @@ button.icon:disabled { opacity: .4; cursor: default; }
 }
 .nav-search:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
 .nav-none { margin: 2px 4px; font-size: 12px; }
+/* ── chargement ─────────────────────────────────────────────────────── */
+.spinner { display: inline-block; width: 16px; height: 16px; flex: none; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+.boot { display: flex; align-items: center; justify-content: center; gap: 10px;
+  min-height: 60vh; color: var(--muted); font-size: 14px; }
+body > .boot { min-height: 100dvh; }
+body:has(> #app:not([v-cloak])) > .boot { display: none; }
+@keyframes shimmer { 0%,100% { opacity: .55 } 50% { opacity: 1 } }
+.conv-skeleton { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; }
+.conv-skeleton i, .skeleton-msg, .skeleton-msg i { display: block; border-radius: 6px; background: var(--track);
+  animation: shimmer 1.4s ease-in-out infinite; }
+.conv-skeleton i { height: 11px; width: 80%; }
+.conv-skeleton i + i { height: 8px; width: 45%; }
+.nav-more { padding: 6px 10px; font-size: 12px; }
+.loading-thread { display: flex; flex-direction: column; gap: 14px; color: var(--muted); font-size: 13px; }
+.loading-line { display: flex; align-items: center; gap: 10px; }
+.skeleton-msg { width: min(100%, 680px); background: none; animation: none;
+  display: flex; flex-direction: column; gap: 9px; }
+.skeleton-msg i { height: 12px; }
+.skeleton-msg i:nth-child(2) { width: 92%; } .skeleton-msg i:nth-child(3) { width: 60%; }
+.skeleton-msg.user { align-self: flex-end; height: 42px; width: min(60%, 420px); background: var(--track);
+  animation: shimmer 1.4s ease-in-out infinite; border-radius: var(--radius); }
+.skeleton-msg.user.short { width: min(40%, 260px); }
+@media (prefers-reduced-motion: reduce) {
+  .spinner, .conv-skeleton i, .skeleton-msg, .skeleton-msg i { animation: none; }
+}
 .nav-chats ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
 .nav-chats li { position: relative; }
 .nav-chats .conv {

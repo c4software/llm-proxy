@@ -3,7 +3,10 @@
   (conversations.py) : le même compte retrouve ses conversations sur tout
   navigateur, tout appareil.
 
-    load()           les conversations du compte
+    page(offset)     une page de la liste du menu : des résumés (id, titre,
+                     dates, nombre de messages), sans les messages
+    one(id)          une conversation entière (null : inconnue)
+    search(q)        les résumés de celles qui contiennent chaque mot
     save(conv)       le document entier, après avoir envoyé ses images
     drop(id)         supprime (images comprises)
 
@@ -19,8 +22,25 @@ const isAsset = (url) => typeof url === "string" && url.startsWith(ASSET);
 // Une image que la page tient elle-même (et peut donc retoucher).
 export const ownImage = (url) => typeof url === "string" && (url.startsWith("data:") || isAsset(url));
 
-export async function load() {
-  const r = await call("GET", "/ui/conversations");
+export const PAGE = 40;
+
+export async function page(offset = 0) {
+  const r = await call("GET", `/ui/conversations?summary=1&limit=${PAGE}&offset=${offset}`);
+  return { list: Array.isArray(r && r.data) ? r.data : [], next: r ? r.next : null,
+           total: r && r.usage ? r.usage.conversations : 0 };
+}
+
+export async function one(id) {
+  try {
+    return await call("GET", "/ui/conversations/" + encodeURIComponent(id));
+  } catch (e) {
+    if (e.status === 404 || e.status === 400) return null;
+    throw e;
+  }
+}
+
+export async function search(q) {
+  const r = await call("GET", "/ui/conversations?q=" + encodeURIComponent(q));
   return Array.isArray(r && r.data) ? r.data : [];
 }
 

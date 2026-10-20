@@ -17,12 +17,17 @@
 */
 import { ChatStore } from "./chat/store.js";
 import { ChatPanel } from "./chat/ChatPanel.js";
-import { ConfigPanel } from "./config/ConfigPanel.js";
 import { MemoryPanel } from "./memory/MemoryPanel.js";
-import { StatsView } from "./stats/StatsView.js";
 import { useTheme } from "./lib/theme.js";
 
-const { createApp, ref, watch, onMounted, onUnmounted } = Vue;
+const { createApp, ref, reactive, watch, onMounted, onUnmounted, defineAsyncComponent } = Vue;
+
+// La configuration et les statistiques : lues à leur première ouverture
+// seulement (le chat, lui, est là dès l'entrée).
+const Loading = { template: `<div class="boot" role="status"><span class="spinner" aria-hidden="true"></span> Chargement…</div>` };
+const lazy = (load) => defineAsyncComponent({ loader: load, loadingComponent: Loading, delay: 150 });
+const ConfigPanel = lazy(() => import("./config/ConfigPanel.js").then((m) => m.ConfigPanel));
+const StatsView = lazy(() => import("./stats/StatsView.js").then((m) => m.StatsView));
 const REFRESH = 5000;
 const STORE_VIEW = "llm-proxy-view";
 
@@ -44,6 +49,9 @@ createApp({
       catch { return "stats"; }
     };
     const view = ref(storedView());
+    // Les vues déjà ouvertes : montées une fois, gardées ensuite.
+    const visited = reactive({ [view.value]: true });
+    watch(view, (v) => { visited[v] = true; });
     const navOpen = ref(false);      // le menu latéral, sur mobile
     // Le menu latéral en rail d'icônes (grand écran), choix de ce navigateur.
     const navCompact = VueUse.useLocalStorage("llm-proxy-nav-compact", false);
@@ -75,6 +83,11 @@ createApp({
       writeHash();
     });
     const chatList = chats.filtered;
+    // La fin du menu en vue : sa page suivante.
+    const moreRef = ref(null);
+    VueUse.useIntersectionObserver(moreRef, ([entry]) => {
+      if (entry && entry.isIntersecting) chats.loadMore();
+    });
     function openChat(id) { chats.select(id); setView("chat"); navOpen.value = false; }
     function newChat() { chats.newConv(); setView("chat"); navOpen.value = false; }
 
@@ -200,7 +213,7 @@ createApp({
       window.removeEventListener("keydown", onKey);
     });
 
-    return { views, view, setView, navOpen, navCompact, chats, chatState, chatList, openChat,
+    return { views, view, visited, setView, navOpen, navCompact, chats, chatState, chatList, moreRef, openChat,
              newChat, session, needLogin, loginKey, loginError,
              loginBusy, login, logout, onUnauthorized, authMode, authLabel,
              inactive, loadSession, health, theme, themeLabel, cycleTheme };

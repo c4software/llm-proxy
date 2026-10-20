@@ -16,6 +16,11 @@ cache. Sans préfixe (/ui/static/icon.svg, le manifeste, les runtimes
 WASM de vendor/), il est revalidé à chaque fois : un ETag inchangé rend
 304, sans le contenu.
 
+Les modules qu'importe app.js, de proche en proche, sont annoncés dans la
+page (`<link rel="modulepreload">`, preloads) : le navigateur les demande
+tous d'un coup, au lieu d'un niveau d'imports après l'autre — une dizaine
+d'allers-retours sur un réseau lent, à la première visite d'une version.
+
 Ouvert sans clé (auth.ui_open) : c'est la page d'entrée qui en a besoin.
 """
 
@@ -59,6 +64,38 @@ def versioned(html: str) -> str:
     application installée doit rester où il est)."""
     return re.sub(r'/ui/static/([\w./-]+\.(?:js|css))(?=")',
                   rf"/ui/static/v/{VERSION}/\1", html)
+
+
+_IMPORT = re.compile(r"""^\s*(?:import|export)\s[^;]*?from\s+["'](\.[^"']+)["']"""
+                     r"""|^\s*import\s+["'](\.[^"']+)["']""", re.M)
+
+
+def module_graph(entry: str = "app.js") -> list[str]:
+    """Les modules (chemins sous web/static) qu'`entry` importe
+    statiquement, de proche en proche, lui compris."""
+    seen: list[str] = []
+    todo = [entry]
+    while todo:
+        rel = todo.pop(0)
+        full = os.path.realpath(os.path.join(STATIC_DIR, rel))
+        if rel in seen or not full.startswith(STATIC_DIR + os.sep) or not os.path.isfile(full):
+            continue
+        seen.append(rel)
+        with open(full, encoding="utf-8") as fh:
+            src = fh.read()
+        for a, b in _IMPORT.findall(src):
+            todo.append(os.path.normpath(os.path.join(os.path.dirname(rel), a or b)))
+    return seen
+
+
+MODULES = module_graph()
+
+
+def preloads(html: str) -> str:
+    """Les modules de la page annoncés avant son script."""
+    links = "".join(f'<link rel="modulepreload" href="/ui/static/v/{VERSION}/{m}">\n'
+                    for m in MODULES)
+    return html.replace('<script type="module"', links + '<script type="module"', 1)
 
 
 @router.api_route(PREFIX + "{path:path}", methods=["GET", "HEAD"])

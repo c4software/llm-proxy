@@ -369,3 +369,19 @@ def test_page_ui_versionne_ses_fichiers_statiques():
     assert c.get("/ui/static/v/0/app.js").headers["cache-control"] == "no-cache"
     assert c.get("/ui/static/icon.svg").headers["cache-control"] == "no-cache"
     assert c.get("/ui/static/v/0/../../dashboard.py").status_code == 404
+
+
+def test_page_ui_annonce_ses_modules():
+    """Les modules qu'importe app.js, de proche en proche, sont annoncés
+    (modulepreload) avant lui ; la configuration et les statistiques, lues
+    à leur ouverture (import dynamique), n'en sont pas."""
+    from fastapi.testclient import TestClient
+    from llm_proxy import app as A
+    from llm_proxy.ui import static_files
+    html = TestClient(A.app).get("/ui").text
+    pre = f'<link rel="modulepreload" href="/ui/static/v/{static_files.VERSION}/'
+    for name in ("app.js", "chat/store.js", "chat/ChatPanel.js", "lib/http.js"):
+        assert pre + name + '">' in html, name
+    assert "config/ConfigPanel.js" not in static_files.MODULES
+    assert "stats/StatsView.js" not in static_files.MODULES
+    assert html.index(pre) < html.index('<script type="module"')

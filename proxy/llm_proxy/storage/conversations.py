@@ -33,6 +33,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import unicodedata
 
 from ..core import config
 from . import files
@@ -76,6 +77,8 @@ def _connect() -> sqlite3.Connection:
         created REAL NOT NULL, PRIMARY KEY (owner, id))""")
     conn.execute("CREATE INDEX IF NOT EXISTS assets_conv "
                  "ON assets (owner, conversation)")
+    conn.execute("CREATE INDEX IF NOT EXISTS conversations_recent "
+                 "ON conversations (owner, updated DESC)")
     return conn
 
 
@@ -122,6 +125,69 @@ def list_all(owner: str) -> list[dict]:
             out.append(json.loads(doc))
         except ValueError:
             continue
+    return out
+
+
+# Le résumé d'une conversation pour le menu : sans ses messages.
+_SUMMARY = ("SELECT id, title, created, updated, "
+            "coalesce(json_array_length(doc, '$.messages'), 0) FROM conversations ")
+
+
+def _summary(row) -> dict:
+    cid, title, created, updated, count = row
+    # Les dates de la page : des millisecondes.
+    return {"id": cid, "title": title, "created": round(created * 1000),
+            "updated": round(updated * 1000), "count": count}
+
+
+def summaries(owner: str, limit: int, offset: int = 0) -> list[dict]:
+    """Une page de la liste du menu, la plus récente d'abord."""
+    rows = _run(lambda c: c.execute(
+        _SUMMARY + "WHERE owner = ? ORDER BY updated DESC, id LIMIT ? OFFSET ?",
+        (owner, limit, offset)).fetchall())
+    return [_summary(r) for r in rows]
+
+
+def get(owner: str, cid: str) -> dict | None:
+    """Le document complet d'une conversation, None si inconnue."""
+    _check_id(cid)
+    row = _run(lambda c: c.execute(
+        "SELECT doc FROM conversations WHERE owner = ? AND id = ?",
+        (owner, cid)).fetchone())
+    try:
+        return json.loads(row[0]) if row else None
+    except ValueError:
+        return None
+
+
+def fold(text) -> str:
+    """Sans casse ni accents : la recherche du menu (chat/store.js)."""
+    return "".join(ch for ch in unicodedata.normalize("NFD", str(text or ""))
+                   if not unicodedata.combining(ch)).lower()
+
+
+def search(owner: str, query: str, limit: int) -> list[dict]:
+    """Les résumés des conversations dont le titre ou le texte d'un message
+    contient chaque mot de `query`, la plus récente d'abord."""
+    words = fold(query).split()
+    if not words:
+        return []
+    rows = _run(lambda c: c.execute(
+        "SELECT id, title, created, updated, doc FROM conversations "
+        "WHERE owner = ? ORDER BY updated DESC, id", (owner,)).fetchall())
+    out = []
+    for cid, title, created, updated, doc in rows:
+        try:
+            messages = json.loads(doc).get("messages") or []
+        except (ValueError, AttributeError):
+            continue
+        text = fold(title + "\n" + "\n".join(
+            m["content"] for m in messages
+            if isinstance(m, dict) and isinstance(m.get("content"), str)))
+        if all(w in text for w in words):
+            out.append(_summary((cid, title, created, updated, len(messages))))
+            if len(out) >= limit:
+                break
     return out
 
 

@@ -38,7 +38,7 @@ async def ui_page(request: Request):
     """Tableau de bord : page statique. Les chiffres sont lus côté client
     sur /ui/usage, toutes les 5 s, sans jamais recharger la page."""
     with open(UI_HTML, encoding="utf-8") as fh:
-        html = static_files.versioned(fh.read())
+        html = static_files.preloads(static_files.versioned(fh.read()))
     # La page elle-même n'est jamais gardée : c'est elle qui porte les URL
     # versionnées de ses fichiers.
     response = HTMLResponse(html, headers={"Cache-Control": "no-cache"})

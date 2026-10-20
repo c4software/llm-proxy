@@ -4,7 +4,12 @@ Les routes de l'HISTORIQUE du chat de la page (conversations.py), sous
 autre. Les écritures exigent un corps JSON (json_only) : une page tierce
 ne peut pas les déclencher.
 
-  GET    /ui/conversations          les conversations du compte
+  GET    /ui/conversations          les conversations du compte ;
+                                    ?summary=1 : leurs résumés (sans les
+                                    messages), par pages : limit, offset ;
+                                    ?q=… : les résumés de celles qui
+                                    contiennent chaque mot
+  GET    /ui/conversations/{id}     une conversation (le document entier)
   PUT    /ui/conversations/{id}     crée ou remplace (le document entier)
   DELETE /ui/conversations/{id}     supprime, images comprises
   POST   /ui/assets                 garde une image : {conversation, name,
@@ -44,14 +49,48 @@ async def run(fn, *args):
         return None, error_response("openai", exc.status, "invalid_request_error", str(exc))
 
 
+MAX_PAGE = 200
+
+
+def _int(value, default: int, top: int) -> int:
+    try:
+        return max(0, min(int(value), top))
+    except (TypeError, ValueError):
+        return default
+
+
 @router.get("/ui/conversations")
 async def ui_conversations(request: Request):
     if (off := closed()) is not None:
         return off
     owner = ui_client(request)
+    params = request.query_params
+    limit = _int(params.get("limit"), 50, MAX_PAGE)
+    if params.get("q") is not None:
+        data = await asyncio.to_thread(conversations.search, owner, params["q"], limit)
+        return {"object": "list", "data": data}
+    if params.get("summary") in ("1", "true"):
+        offset = _int(params.get("offset"), 0, 10**9)
+        data = await asyncio.to_thread(conversations.summaries, owner, limit + 1, offset)
+        more = len(data) > limit
+        return {"object": "list", "data": data[:limit],
+                "next": offset + limit if more else None,
+                "usage": await asyncio.to_thread(conversations.usage, owner)}
     data = await asyncio.to_thread(conversations.list_all, owner)
     return {"object": "list", "data": data,
             "usage": await asyncio.to_thread(conversations.usage, owner)}
+
+
+@router.get("/ui/conversations/{cid}")
+async def ui_conversation(request: Request, cid: str):
+    if (off := closed()) is not None:
+        return off
+    doc, bad = await run(conversations.get, ui_client(request), cid)
+    if bad is not None:
+        return bad
+    if doc is None:
+        return error_response("openai", 404, "not_found", "conversation inconnue")
+    return doc
 
 
 @router.put("/ui/conversations/{cid}")
