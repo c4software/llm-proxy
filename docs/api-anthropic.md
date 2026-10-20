@@ -89,3 +89,17 @@ L'exemple envoie tous les noms connus sur `albert/deepseek-v4-flash`.
 | `stop_reason` `end_turn` / `max_tokens` / `tool_use` | `finish_reason` `stop` / `length` / `tool_calls` |
 | bloc `thinking` (`reasoning_as_thinking`) | `reasoning_content` du backend |
 | `{"type": "error", "error": {type, message}}` | `{"error": {…}}`, type déduit du statut |
+
+**Rappels `system` et cache de préfixe.** Claude Code ajoute à chaque
+tour un message `role: "system"` dans `messages` et le garde dans les
+requêtes suivantes. Servi en direct par gufo sur `/v1/messages`, ce
+texte est déplacé dans le system de tête (le gabarit de Qwen n'en
+accepte qu'un) : le préfixe change à chaque requête et tout ce qui suit
+est recalculé (gufo-org/gufo#522 ; gufo déclare Claude Code non pris en
+charge avec Qwen, #672). Le proxy le laisse à sa place, en message
+`user` : le préfixe ne bouge plus. Mesuré le 20/10/2026 (Claude Code
+2.1.302, gufo 0.18.0, Qwen3.8-Flash-Next, même tâche de quatre ou cinq
+tours) : en direct, le cache plafonne à 15 779 tokens et chaque tour
+recalcule 1 091 à 2 363 tokens, un écart qui grandit avec l'historique ;
+par le proxy, il suit l'historique et chaque tour n'en recalcule que 127
+à 141 (premier token en 0,42 s au lieu de 0,9 à 2,1 s).
