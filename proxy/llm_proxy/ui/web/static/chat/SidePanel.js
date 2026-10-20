@@ -70,9 +70,9 @@ export const SidePanel = {
     // Plein écran : le panneau entier, son en-tête compris (de quoi en sortir).
     const { isSupported, isFullscreen: full, toggle: toggleFull } = VueUse.useFullscreen(panel);
     const canFull = computed(() => props.fullscreen && isSupported.value);
-    // « Pleine page » étend le panneau à toute la zone du chat, le fil
-    // caché (en CSS, le terminal compris), la barre du haut gardée ; seul
-    // ce bouton l'ouvre et la referme. Écran étroit : « Large » n'y change
+    // « Pleine page » étend le panneau à toute la fenêtre, menu, barre du
+    // haut et fil cachés (en CSS, le terminal compris), son en-tête gardé ;
+    // seul ce bouton l'ouvre et la referme. Écran étroit : « Large » n'y change
     // rien, et le plein écran d'un élément manque sur iPhone — elle seule.
     const narrow = VueUse.useMediaQuery(NARROW);
     const page = ref(false);
@@ -111,7 +111,7 @@ export const SidePanel = {
                 :title="wide ? 'Réduire le panneau' : 'Élargir le panneau'" aria-label="Large">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg></button>
         <button type="button" class="btn ghost art-btn" :aria-pressed="String(page)" @click="page = !page"
-                :title="page ? 'Quitter la pleine page : revoir la conversation' : 'Pleine page : le panneau à la place de la conversation'" aria-label="Pleine page">
+                :title="page ? 'Quitter la pleine page : revoir la conversation' : 'Pleine page : le panneau seul dans la fenêtre'" aria-label="Pleine page">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path v-if="!page" d="M14 8h3v3M17 8l-4 4M10 16H7v-3M7 16l4-4"/><path v-else d="M13 9v3h3M13 12l4-4M11 15v-3H8M11 12l-4 4"/></svg></button>
         <button type="button" class="btn ghost art-btn" v-if="canFull && !narrow" :aria-pressed="String(full)" @click="toggleFull()"
                 :title="full ? 'Quitter le plein écran (Échap)' : 'Plein écran'" aria-label="Plein écran">

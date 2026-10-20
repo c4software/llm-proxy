@@ -962,6 +962,8 @@ a.btn { display: inline-block; text-decoration: none; }
     box-shadow: 0 10px 40px rgb(0 0 0 / .25);
   }
   .shell.nav-open .sidenav { transform: none; }
+  /* Replié, son ombre ne déborde pas sur le bord gauche de la page. */
+  .shell:not(.nav-open) .sidenav { box-shadow: none; }
   .scrim { display: block; position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / .4); }
   .mobilebar { display: flex; }
   .wrap.is-chat .mobilebar { margin-bottom: 10px; }
@@ -1171,9 +1173,13 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .artifact-source { flex: 1; min-height: 0; margin: 0; padding: 12px 14px; overflow: auto;
   font: 12.5px/1.5 ui-monospace, SFMono-Regular, monospace; white-space: pre-wrap; }
-/* Pleine page (SidePanel.js) : le panneau couvre toute la zone du chat,
-   le fil dessous ; la barre du haut (en-tête, .mobilebar) reste. */
-.chat.with-memory .artifact-side.page { position: absolute; z-index: 6; inset: 0; border-left: 0; }
+/* Pleine page (SidePanel.js) : le panneau couvre toute la fenêtre — menu,
+   barre du haut et fil dessous ; son en-tête reste, de quoi en sortir.
+   Le terminal (z-index 7, plus loin dans <body>) passe dessus. */
+.chat.with-memory .artifact-side.page {
+  position: fixed; z-index: 7; inset: 0; height: 100dvh; border-left: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
 .artifact-side.page .artifact-resize { display: none; }
 @media (max-width: 1100px) {
   .chat.with-memory.side-wide { grid-template-columns: minmax(0, 1fr); }
