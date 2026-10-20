@@ -1177,6 +1177,13 @@ a.btn { display: inline-block; text-decoration: none; }
     position: absolute; z-index: 6; inset: 0 0 0 auto; width: min(96%, 720px);
     box-shadow: 0 10px 40px rgb(0 0 0 / .18);
   }
+  /* Pleine page (SidePanel.js) : toute la fenêtre, sous le menu latéral
+     et les fenêtres ; le terminal (z-index 7, dans <body>) reste dessus. */
+  .chat.with-memory .artifact-side.page {
+    position: fixed; z-index: 7; inset: 0; width: auto; height: 100dvh;
+    border-left: 0; box-shadow: none; padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  }
+  .artifact-side.page .artifact-resize { display: none; }
 }
 
 /* ── Chat : cartes qui attendent l'utilisateur ── */

@@ -8,7 +8,8 @@
                     celle par défaut ; « Large » la remplace tant qu'il est actif
     l'en-tête       slot `head` (titre, choix) ; slot `actions` (les boutons
                     du panneau), puis Réseau, slot `actions-end`, Large,
-                    Plein écran (`fullscreen`), Fermer
+                    Plein écran (`fullscreen`), Fermer ; écran étroit : Pleine
+                    page à la place de Large et de Plein écran
     le réseau       `network` (true, false ; null : pas de bouton) : couper
                     d'un clic, ouvrir après l'avertissement (slot
                     `network-warning`) ; émet `network` (vrai ou faux).
@@ -19,6 +20,7 @@
 const { ref, computed, watch } = Vue;
 
 const MIN = 320;                     // px, du panneau comme du fil
+const NARROW = "(max-width: 1100px)"; // le panneau passe par-dessus le fil (dashboard.css)
 
 export const SidePanel = {
   props: {
@@ -68,8 +70,15 @@ export const SidePanel = {
     // Plein écran : le panneau entier, son en-tête compris (de quoi en sortir).
     const { isSupported, isFullscreen: full, toggle: toggleFull } = VueUse.useFullscreen(panel);
     const canFull = computed(() => props.fullscreen && isSupported.value);
+    // Écran étroit : « Large » n'y change rien, et le plein écran d'un
+    // élément manque sur iPhone ; « Pleine page » pose le panneau sur toute
+    // la fenêtre (en CSS, le terminal compris). Échap en sort.
+    const narrow = VueUse.useMediaQuery(NARROW);
+    const page = ref(false);
+    watch(narrow, (n) => { if (!n) page.value = false; });
+    VueUse.onKeyStroke("Escape", () => { page.value = false; });
     const sized = computed(() => !!width.value && !wide.value && !full.value);
-    const panelStyle = computed(() => (sized.value ? { width: width.value + "px" } : {}));
+    const panelStyle = computed(() => (sized.value && !page.value ? { width: width.value + "px" } : {}));
 
     // Le réseau : coupé d'un clic, ouvert après l'avertissement.
     const asking = ref(false);
@@ -83,11 +92,11 @@ export const SidePanel = {
       emit("network", true);
     }
     return { panel, wide, width, dragging, sized, panelStyle, startResize, keyResize,
-             resetWidth: () => { width.value = 0; }, canFull, full, toggleFull,
+             resetWidth: () => { width.value = 0; }, canFull, full, toggleFull, narrow, page,
              asking, toggleNetwork, allowNetwork };
   },
   template: `
-  <section class="artifact-side" :class="{ wide, sized, dragging }" ref="panel" :style="panelStyle">
+  <section class="artifact-side" :class="{ wide, sized, dragging, page }" ref="panel" :style="panelStyle">
     <div class="artifact-resize" role="separator" aria-orientation="vertical" tabindex="0"
          aria-label="Largeur du panneau" title="Tirer pour redimensionner ; double-clic : largeur par défaut"
          :aria-valuenow="width || undefined" @pointerdown="startResize" @dblclick="resetWidth" @keydown="keyResize"></div>
@@ -99,10 +108,13 @@ export const SidePanel = {
                 @click="toggleNetwork" :title="network ? networkTitles[0] : networkTitles[1]" aria-label="Réseau">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></button>
         <slot name="actions-end"></slot>
-        <button type="button" class="btn ghost art-btn" :aria-pressed="String(wide)" @click="wide = !wide"
+        <button type="button" class="btn ghost art-btn" v-if="narrow" :aria-pressed="String(page)" @click="page = !page"
+                :title="page ? 'Quitter la pleine page (Échap)' : 'Pleine page'" aria-label="Pleine page">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path v-if="!page" d="M3 3h6M3 3v6M21 3h-6M21 3v6M3 21h6M3 21v-6M21 21h-6M21 21v-6"/><path v-else d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"/></svg></button>
+        <button type="button" class="btn ghost art-btn" v-if="!narrow" :aria-pressed="String(wide)" @click="wide = !wide"
                 :title="wide ? 'Réduire le panneau' : 'Élargir le panneau'" aria-label="Large">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg></button>
-        <button type="button" class="btn ghost art-btn" v-if="canFull" :aria-pressed="String(full)" @click="toggleFull()"
+        <button type="button" class="btn ghost art-btn" v-if="canFull && !narrow" :aria-pressed="String(full)" @click="toggleFull()"
                 :title="full ? 'Quitter le plein écran (Échap)' : 'Plein écran'" aria-label="Plein écran">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path v-if="!full" d="M3 3h6M3 3v6M21 3h-6M21 3v6M3 21h6M3 21v-6M21 21h-6M21 21v-6"/><path v-else d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"/></svg></button>
         <button type="button" class="btn ghost art-btn" title="Fermer" aria-label="Fermer" @click="$emit('close')">
