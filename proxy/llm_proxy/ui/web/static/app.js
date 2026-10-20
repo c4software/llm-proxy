@@ -22,7 +22,7 @@ import { MemoryPanel } from "./memory/MemoryPanel.js";
 import { StatsView } from "./stats/StatsView.js";
 import { useTheme } from "./lib/theme.js";
 
-const { createApp, ref, onMounted, onUnmounted } = Vue;
+const { createApp, ref, watch, onMounted, onUnmounted } = Vue;
 const REFRESH = 5000;
 const STORE_VIEW = "llm-proxy-view";
 
@@ -32,8 +32,14 @@ createApp({
     const views = [{ id: "stats", label: "Statistiques" }, { id: "chat", label: "Chat" },
                    { id: "config", label: "Configuration" }];
     const known = (id) => views.some((v) => v.id === id);
+    // L'adresse : #<vue>, et pour le chat #chat/<id de la conversation>,
+    // qu'un rechargement rouvre.
+    const fromHash = () => {
+      const [v, conv] = location.hash.slice(1).split("/");
+      return { view: known(v) ? v : null, conv: conv ? decodeURIComponent(conv) : null };
+    };
     const storedView = () => {
-      if (known(location.hash.slice(1))) return location.hash.slice(1);
+      if (fromHash().view) return fromHash().view;
       try { const v = localStorage.getItem(STORE_VIEW); return known(v) ? v : "stats"; }
       catch { return "stats"; }
     };
@@ -46,12 +52,28 @@ createApp({
       if (id === view.value || !known(id)) return;
       view.value = id;
       try { localStorage.setItem(STORE_VIEW, id); } catch { /* sans stockage */ }
-      history.replaceState(null, "", location.pathname + location.search + "#" + id);
     }
 
     // Les conversations du chat, listées dans le menu latéral.
     const chats = ChatStore;
     const chatState = chats.state;
+    if (fromHash().conv) chats.want(fromHash().conv);
+    // La vue et la conversation affichées, écrites dans l'adresse (sans
+    // entrée d'historique) ; une adresse changée à la main est suivie.
+    function writeHash() {
+      const v = view.value, conv = chatState.currentId;
+      // La liste pas encore là : l'id de l'adresse reste en attendant.
+      if (v === "chat" && !conv && fromHash().view === "chat") return;
+      const hash = "#" + v + (v === "chat" && conv ? "/" + encodeURIComponent(conv) : "");
+      if (location.hash !== hash) history.replaceState(null, "", location.pathname + location.search + hash);
+    }
+    watch([view, () => chatState.currentId], writeHash, { immediate: true });
+    window.addEventListener("hashchange", () => {
+      const { view: v, conv } = fromHash();
+      if (v) setView(v);
+      if (conv) chats.want(conv);
+      writeHash();
+    });
     const chatList = chats.filtered;
     function openChat(id) { chats.select(id); setView("chat"); navOpen.value = false; }
     function newChat() { chats.newConv(); setView("chat"); navOpen.value = false; }

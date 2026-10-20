@@ -38,6 +38,7 @@ export const ChatStore = (() => {
   // L'historique du COMPTE connecté, gardé par le proxy (chat/history.js).
   // Rien n'est relu si c'est déjà le sien. `ready` : la liste est là.
   let ready = Promise.resolve();
+  let wanted = null;                // l'id de l'adresse (#chat/<id>), avant la liste
   const saved = new Map();          // id → le JSON envoyé en dernier
   function open(client) {
     const key = client || "open";
@@ -51,7 +52,9 @@ export const ChatStore = (() => {
       for (const c of list) saved.set(c.id, JSON.stringify(c));
       // Une conversation commencée pendant le chargement reste en tête.
       state.convs = [...state.convs.filter((c) => !saved.has(c.id)), ...list];
-      if (!state.currentId && state.convs[0]) state.currentId = state.convs[0].id;
+      if (wanted && state.convs.some((c) => c.id === wanted)) state.currentId = wanted;
+      else if (!state.currentId && state.convs[0]) state.currentId = state.convs[0].id;
+      wanted = null;
       state.storageWarning = "";
     }).catch((e) => {
       state.storageWarning = "Historique indisponible : " + e.message;
@@ -130,6 +133,13 @@ export const ChatStore = (() => {
     state.confirming = null;
   }
 
+  // La conversation que nomme l'adresse : ouverte tout de suite si elle est
+  // là, sinon dès que la liste arrive (introuvable : la plus récente).
+  function want(id) {
+    if (state.convs.some((c) => c.id === id)) select(id);
+    else wanted = id;
+  }
+
   function remove(id) {
     if (state.confirming !== id) { state.confirming = id; return; }
     const gone = state.convs.find((c) => c.id === id);
@@ -190,7 +200,7 @@ export const ChatStore = (() => {
   }
 
 
-  return { state, sorted, filtered, current, open, newConv, persist, select, remove,
+  return { state, sorted, filtered, current, open, newConv, persist, select, want, remove,
            startRename, endRename, exportMd, when, uid,
            setDefaults(fn) { defaults = fn; } };
 })();
