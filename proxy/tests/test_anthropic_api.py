@@ -152,23 +152,9 @@ def test_to_openai_mid_conversation_system_folds_into_next_user():
     ]})["messages"]
     assert [m["role"] for m in out] == [
         "user", "assistant", "user", "assistant", "tool", "user", "user"]
-    assert out[2]["content"] == (
-        "<system-reminder>\nRappel : sois bref.\n</system-reminder>\n\nQuestion")
-    assert out[5] == {"role": "user", "content":
-                      "<system-reminder>\nRappel 2\n</system-reminder>"}
-    assert out[6] == {"role": "user", "content":
-                      "<system-reminder>\nRappel final\n</system-reminder>"}
-
-
-def test_to_openai_mid_conversation_system_already_wrapped():
-    """Un rappel déjà dans un bloc <system-reminder> n'est pas enveloppé
-    deux fois."""
-    text = "<system-reminder>\nDéjà enveloppé\n</system-reminder>"
-    out = A.to_openai({"model": "m", "messages": [
-        {"role": "user", "content": "Salut"},
-        {"role": "system", "content": text},
-    ]})["messages"]
-    assert out[-1] == {"role": "user", "content": text}
+    assert out[2]["content"] == "Rappel : sois bref.\n\nQuestion"
+    assert out[5] == {"role": "user", "content": "Rappel 2"}
+    assert out[6] == {"role": "user", "content": "Rappel final"}
 
 
 def test_to_openai_assistant_only_tools_has_null_content():
@@ -500,8 +486,7 @@ def test_mid_conversation_system_keeps_its_place_across_turns():
     a = A.to_openai({"model": "m", "messages": turn_n})["messages"]
     b = A.to_openai({"model": "m", "messages": turn_n1})["messages"]
     assert b[:len(a)] == a
-    assert a[-1] == {"role": "user", "content":
-                     "<system-reminder>\n<total_tokens>1</total_tokens>\n</system-reminder>"}
+    assert a[-1] == {"role": "user", "content": "<total_tokens>1</total_tokens>"}
     assert b[len(a)]["role"] == "assistant"
 
 

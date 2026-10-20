@@ -144,18 +144,6 @@ def _user_message(content, images: bool) -> list[dict]:
     return out
 
 
-def _reminder(text: str) -> str:
-    """Le texte d'un system en cours de conversation, tel qu'il entre dans
-    un message user : dans un bloc <system-reminder>, la forme que Qwen
-    Code donne à ses propres rappels (gufo-org/gufo#523) et que Claude
-    Code emploie dans ses messages user. Le modèle y lit une consigne du
-    client, pas une phrase de l'utilisateur. Un texte déjà dans un tel
-    bloc n'est pas enveloppé deux fois."""
-    if text.startswith("<system-reminder>"):
-        return text
-    return f"<system-reminder>\n{text}\n</system-reminder>"
-
-
 def _prepend_text(msg: dict, text: str) -> None:
     content = msg.get("content")
     if isinstance(content, list):
@@ -384,9 +372,7 @@ def to_openai(p: dict, images: bool = False, hosted=None,
     # Un message `system` EN COURS de conversation (rappels de certains
     # clients) : beaucoup de gabarits de chat (Qwen, Mistral…) n'acceptent
     # un system qu'en tête et répondent 500 sinon. Son texte est fondu en
-    # tête du message user qui le suit, dans un bloc <system-reminder>
-    # (_reminder). Le remonter en tête, comme vLLM ou gufo, changerait le
-    # préfixe à chaque requête (gufo-org/gufo#522).
+    # tête du message user qui le suit.
     # Suivi d'un assistant, il est posé en message user À SA PLACE, avant
     # lui : c'est là qu'il était au tour précédent, quand il fermait la
     # requête. Le déplacer ferait diverger le préfixe d'un tour à l'autre,
@@ -416,7 +402,7 @@ def to_openai(p: dict, images: bool = False, hosted=None,
         elif role == "system":
             text = _text_of(content)
             if text:
-                pending.append(_reminder(text))
+                pending.append(text)
     if pending:
         messages.append({"role": "user", "content": "\n\n".join(pending)})
     out["messages"] = messages
