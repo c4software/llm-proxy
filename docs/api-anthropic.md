@@ -71,7 +71,7 @@ L'exemple envoie tous les noms connus sur `albert/deepseek-v4-flash`.
 | Anthropic | OpenAI |
 |---|---|
 | `system` (chaîne ou blocs) | message `system` en tête |
-| `system` en cours de conversation (rappels) | fondu en tête du `user` suivant (Qwen / Mistral refusent un `system` ailleurs : 500) |
+| `system` en cours de conversation (rappels) | fondu en tête du `user` suivant, dans un bloc `<system-reminder>` (Qwen / Mistral refusent un `system` ailleurs : 500) |
 | bloc `text` | texte |
 | bloc `image` | `image_url` (data URI) si autorisé ; sinon `[image ignorée : image/png, 12 Ko]` |
 | bloc `document` | son texte ; un PDF → `[document ignoré : …]` |
@@ -97,7 +97,10 @@ texte est déplacé dans le system de tête (le gabarit de Qwen n'en
 accepte qu'un) : le préfixe change à chaque requête et tout ce qui suit
 est recalculé (gufo-org/gufo#522 ; gufo déclare Claude Code non pris en
 charge avec Qwen, #672). Le proxy le laisse à sa place, en message
-`user` : le préfixe ne bouge plus. Mesuré le 20/10/2026 (Claude Code
+`user`, dans un bloc `<system-reminder>` (la forme que Qwen Code donne
+à ses propres rappels) : le préfixe ne bouge plus. gufo écarte cette
+forme pour lui-même (réponse du mainteneur sur #522 : un moteur ne
+réécrit pas les rôles) ; elle relève du client, ou du proxy. Mesuré le 20/10/2026 (Claude Code
 2.1.302, gufo 0.18.0, Qwen3.8-Flash-Next, même tâche de quatre ou cinq
 tours) : en direct, le cache plafonne à 15 779 tokens et chaque tour
 recalcule 1 091 à 2 363 tokens, un écart qui grandit avec l'historique ;
