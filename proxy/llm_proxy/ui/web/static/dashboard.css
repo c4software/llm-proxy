@@ -1189,6 +1189,12 @@ a.btn { display: inline-block; text-decoration: none; }
   }
   .chat.with-memory .artifact-side.page { width: auto; box-shadow: none; }
 }
+/* Écran étroit : les boutons du panneau passent sous le titre plutôt que
+   de sortir de l'écran (Pleine page et Fermer compris). */
+@media (max-width: 760px) {
+  .artifact-side .artifact-head { flex-wrap: wrap; height: auto; min-height: var(--head-h); padding: 8px 12px; row-gap: 8px; }
+  .artifact-side .artifact-actions { flex-wrap: wrap; justify-content: flex-end; }
+}
 
 /* ── Chat : cartes qui attendent l'utilisateur ── */
 .tool-card {
