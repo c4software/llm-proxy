@@ -95,8 +95,19 @@ quand Chrome le propose. Il répond **sur l'appareil**, sans le proxy.
   `/v1/images/edits`.
 - 1 à 4 images par demande, une requête chacune. Tailles :
   `[tools.image_generation].sizes`, `size` par défaut.
-- Un clic agrandit l'image (Échap ferme), pour la télécharger ou la
-  retoucher. Elle est gardée avec la conversation.
+- *Générer encore* (sous la réponse, avec un nombre de 1 à 4) : d'autres
+  images avec le **même prompt**, tel qu'envoyé — rien du fil depuis —,
+  jointes à la même réponse (et la même image retouchée, si c'en était une).
+- Un clic agrandit l'image (Échap ferme ; ← → passent aux autres images
+  de la conversation), pour la télécharger ou la retoucher. Elle est
+  gardée avec la conversation.
+
+**Panneau Images** (bouton *Images (n)* de l'en-tête, dès qu'il y en a
+une) : toutes les images générées de la conversation — modèle d'images,
+outil *Images*, graphiques d'un script, captures —, pas celles jointes
+aux questions. Une en grand, *Précédent* / *Suivant* (ou ← →), la
+planche des vignettes ; chacune se télécharge, se retouche ou se
+retrouve dans le fil.
 - Les fichiers texte et une seconde image ne sont pas envoyés ; la page
   le dit.
 

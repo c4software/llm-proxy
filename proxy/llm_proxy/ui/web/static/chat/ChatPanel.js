@@ -57,6 +57,7 @@ import * as notify from "./notify.js";
 import * as tools from "./tools/index.js";
 import * as artifactBridge from "./artifact-bridge.js";
 import { ArtifactPanel } from "./ArtifactPanel.js";
+import { AssetPanel, conversationImages } from "./AssetPanel.js";
 import { LinuxPanel } from "./LinuxPanel.js";
 import { setOpener as setLinuxOpener, vm as linuxVm } from "./tools/sandbox/linuxvm.js";
 import { download, useCopy } from "../lib/files.js";
@@ -66,7 +67,7 @@ import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
 
 export const ChatPanel = {
-  components: { ArtifactPanel, LinuxPanel },
+  components: { ArtifactPanel, AssetPanel, LinuxPanel },
   props: { session: { type: Object, required: true } },
   emits: ["unauthorized"],
   setup(props, { emit }) {
@@ -152,13 +153,30 @@ export const ChatPanel = {
       artifactsOpen.value = true;
       memoryOpen.value = false;
       linuxOpen.value = false;
+      assetsOpen.value = false;
     }
     // Le modèle teste un artifact (inspect_artifact, run_in_artifact) : le
     // panneau s'ouvre dessus s'il ne l'est pas.
     artifactBridge.setOpener(openArtifact);
     function toggleArtifacts(open = !artifactsOpen.value) {
       artifactsOpen.value = open;
-      if (open) { memoryOpen.value = false; linuxOpen.value = false; }
+      if (open) { memoryOpen.value = false; linuxOpen.value = false; assetsOpen.value = false; }
+    }
+    // Les images générées de la conversation (AssetPanel) : un panneau de
+    // plus, un seul à la fois. `assetKey` vide : la dernière.
+    const assetsOpen = ref(false);
+    const assetKey = ref("");
+    const assets = computed(() => conversationImages(current.value));
+    function toggleAssets(open = !assetsOpen.value) {
+      assetsOpen.value = open;
+      if (open) { memoryOpen.value = false; artifactsOpen.value = false; linuxOpen.value = false; }
+    }
+    // Retrouver une image dans le fil : son message, à l'écran.
+    function locateAsset(a) {
+      const el = thread.value && thread.value.querySelector(`[data-msg="${CSS.escape(a.msgId)}"]`);
+      if (!el) return;
+      pinned = false;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
     }
     // Le terminal de la VM Linux (LinuxPanel) : un panneau de plus, un
     // seul à la fois. Toujours proposé (la famille Linux ne fait que donner
@@ -169,7 +187,7 @@ export const ChatPanel = {
       && tools.menuFamilies().some((f) => f.key === tools.FAMILY.LINUX));
     function toggleLinux(open = !linuxOpen.value) {
       linuxOpen.value = open;
-      if (open) { memoryOpen.value = false; artifactsOpen.value = false; }
+      if (open) { memoryOpen.value = false; artifactsOpen.value = false; assetsOpen.value = false; }
     }
     // Le premier run_shell d'une conversation ouvre le terminal, si c'est
     // celle qui est affichée.
@@ -206,7 +224,7 @@ export const ChatPanel = {
     async function toggleNotify(e) { notifyOn.value = await notify.setEnabled(e.target.checked); }
     function toggleMemory(open = !memoryOpen.value) {
       memoryOpen.value = open;
-      if (open) { artifactsOpen.value = false; linuxOpen.value = false; }
+      if (open) { artifactsOpen.value = false; linuxOpen.value = false; assetsOpen.value = false; }
     }
     const thread = ref(null);
     // Écran étroit : textes courts (la zone de saisie, sur mobile).
@@ -1134,24 +1152,51 @@ export const ChatPanel = {
       conv.updated = Date.now();
       const live = conv.messages[conv.messages.length - 1];
       live.prompt = prompt;
+      if (!ask || !ask.content.trim()) {
+        live.error = "Décrire l'image à générer.";
+        done(conv, live, controller = new AbortController());
+        return;
+      }
+      await drawImages(conv, live, source, Number(conv.imageCount) || 1);
+    }
+    // GÉNÉRER ENCORE : `count` images de plus, jointes à la même réponse,
+    // avec le prompt qu'elle a envoyé (m.prompt, tel quel : rien du fil
+    // depuis) — et l'image retouchée par sa question, si c'en était une.
+    const moreCount = ref(1);
+    async function generateMore(m, count = moreCount.value) {
+      const c = current.value;
+      if (streaming.value || !c || !m.image || !m.prompt) return;
+      const i = c.messages.indexOf(m);
+      const ask = c.messages[i - 1];
+      const source = ask && ask.role === "user" && (ask.attachments || []).find((a) => a.kind === "image" && a.data);
+      m.error = "";
+      // La durée s'ajoute à celle de la réponse (done la recalcule).
+      m.started = Date.now() - (m.duration || 0) * 1000;
+      await drawImages(c, m, source, count);
+    }
+    // Les images d'une réponse, une à une (n = 1 chacune : plus d'un
+    // serveur ignore `n`), affichées à mesure ; `live.want` : le compte
+    // attendu, pour l'indicateur du fil.
+    async function drawImages(conv, live, source, count) {
       streaming.value = true;
       status.value = "";
       const ctrl = controller = new AbortController();
       const size = imageSizes.value.includes(conv.imageSize) ? conv.imageSize
         : (chat.value.image_size || imageSizes.value[0]);
-      const count = Math.min(Math.max(Number(conv.imageCount) || 1, 1), 4);
+      const before = live.attachments.length;
+      live.want = before + Math.min(Math.max(count, 1), 4);
       try {
-        if (!ask || !ask.content.trim()) { live.error = "Décrire l'image à générer."; return; }
-        for (let k = 0; k < count && !ctrl.signal.aborted; k++) {
-          const got = await oneImage(conv, { model: conv.model, prompt, size, n: 1,
+        while (live.attachments.length < live.want && !ctrl.signal.aborted) {
+          const got = await oneImage(conv, { model: live.model || conv.model, prompt: live.prompt, size, n: 1,
             ...(source ? { image: await dataUrl(source.data) } : {}) }, ctrl.signal, () => emit("unauthorized"));
           const { revised, ...image } = got;
           live.attachments.push(image);
           if (revised && !live.content) live.content = "*" + revised + "*";
         }
       } catch (e) {
-        live.error = e.name === "AbortError" ? (live.attachments.length ? "" : "Arrêté.") : e.message;
+        live.error = e.name === "AbortError" ? (live.attachments.length > before ? "" : "Arrêté.") : e.message;
       } finally {
+        delete live.want;
         done(conv, live, ctrl);
       }
     }
@@ -1159,6 +1204,19 @@ export const ChatPanel = {
     // L'image agrandie (clic sur une image rendue), et la retouche : l'image
     // rejoint les pièces jointes du message en cours.
     const zoom = ref(null);
+    // Précédent et Suivant dans l'image agrandie : parmi les images de la
+    // conversation (celles du panneau), si elle en est une.
+    const zoomIndex = computed(() => (zoom.value ? assets.value.findIndex((a) => a.data === zoom.value.data) : -1));
+    function zoomGo(step) {
+      const list = assets.value;
+      if (zoomIndex.value < 0 || list.length < 2) return;
+      zoom.value = list[(zoomIndex.value + step + list.length) % list.length];
+    }
+    VueUse.onKeyStroke(["ArrowLeft", "ArrowRight"], (e) => {
+      if (!zoom.value || e.defaultPrevented) return;
+      e.preventDefault();
+      zoomGo(e.key === "ArrowLeft" ? -1 : 1);
+    });
     function retouch(a) {
       pending.value = [...pending.value.filter((p) => p.kind !== "image"),
         { kind: "image", name: a.name, type: a.type, size: a.size, data: a.data }];
@@ -1339,6 +1397,12 @@ export const ChatPanel = {
       } catch { status.value = "Copie refusée par le navigateur."; }
     }
     function onThreadClick(e) {
+      // Une image rendue dans le texte (lien d'un outil hébergé) : agrandie.
+      if (e.target.tagName === "IMG" && e.target.closest(".md") && !e.target.closest("a")) {
+        const src = e.target.getAttribute("src");
+        const a = assets.value.find((x) => x.data === src);
+        if (a) { zoom.value = a; return; }
+      }
       const b = e.target.closest("button.copy");
       if (!b) return;
       const code = b.closest(".code").querySelector("code");
@@ -1464,7 +1528,7 @@ export const ChatPanel = {
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
              toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
              promptOpen, hiddenPrompt, hostedCost, familyCost, toolsCost, showPrompt,
-             canPick, pickFolder, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
+             canPick, pickFolder, generateMore, moreCount, assets, assetsOpen, assetKey, toggleAssets, locateAsset, zoomIndex, zoomGo, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              linuxOpen, linuxOffered, toggleLinux,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
              voicePrefs, voiceList, voiceName, voiceSupported: voice.supported, playing, listen,
@@ -1487,8 +1551,8 @@ export const ChatPanel = {
   </div>
   <div class="panel chat" v-else
        :class="{ 'with-memory': (memoryOpen && $props.session.memory) || (artifactsOpen && current && (current.artifacts || []).length)
-                   || (linuxOpen && current),
-                 'side-wide': artifactsOpen || linuxOpen, incognito: current && current.incognito }">
+                   || (linuxOpen && current) || (assetsOpen && assets.length),
+                 'side-wide': artifactsOpen || linuxOpen || (assetsOpen && assets.length), incognito: current && current.incognito }">
     <section class="chat-main chat-loading" v-if="!current" :aria-busy="String(!loadError)">
       <header class="chat-head">
         <h2>{{ pendingConv ? pendingConv.title : "Conversations" }}</h2>
@@ -1534,6 +1598,11 @@ export const ChatPanel = {
                 title="Les artifacts de la conversation (pages, documents, schémas)">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 9h16M9 9v11"/></svg>
           <span class="lbl">Artifacts ({{ current.artifacts.length }})</span></button>
+        <button type="button" class="btn ghost ico-btn" v-if="assets.length"
+                :aria-pressed="String(assetsOpen)" @click="toggleAssets()"
+                title="Les images générées dans la conversation">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>
+          <span class="lbl">Images ({{ assets.length }})</span></button>
         <button type="button" class="btn ghost ico-btn" v-if="linuxOffered"
                 :aria-pressed="String(linuxOpen)" @click="toggleLinux()"
                 title="Terminal : la VM Linux de la conversation, celle où le modèle exécute ses scripts">
@@ -1620,7 +1689,7 @@ export const ChatPanel = {
           <div class="big">{{ imageMode ? "Quelle image ?" : current.incognito ? "Une question, sans trace ?" : "Une question ?" }}</div>
           <div v-if="!current.model">Choisir un modèle</div>
         </div>
-        <article v-for="(m, i) in current.messages" :key="m.id" class="msg"
+        <article v-for="(m, i) in current.messages" :key="m.id" :data-msg="m.id" class="msg"
                  :class="[m.role, { compacted: i < sentFrom && m.role !== 'summary' }]">
           <template v-if="m.role === 'summary'">
             <div class="compact-mark" role="separator">
@@ -1749,10 +1818,10 @@ export const ChatPanel = {
                       @click="openOut(f)" title="Ouvrir (aperçu, copier, télécharger)">{{ f.name }}
                 <span class="dim">{{ size(f.size) }}</span></button>
             </div>
-            <div class="typing" v-if="streaming && i === current.messages.length - 1 && !m.error
-                 && (m.image ? (m.attachments || []).length < (current.imageCount || 1) : !m.content)">
-              <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ (current.imageCount || 1) > 1
-                ? " " + ((m.attachments || []).length + 1) + " / " + current.imageCount : "" }}…</span></div>
+            <div class="typing" v-if="streaming && !m.error
+                 && (m.image ? m.want > (m.attachments || []).length : i === current.messages.length - 1 && !m.content)">
+              <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ m.want > 1
+                ? " " + ((m.attachments || []).length + 1) + " / " + m.want : "" }}…</span></div>
             <p class="msg-error" v-if="m.error">{{ m.error }}
               <button type="button" class="link" v-if="tooLong(m) && i === current.messages.length - 1 && !streaming"
                       @click="retryCompacted">Résumer la conversation et réessayer</button></p>
@@ -1776,6 +1845,11 @@ export const ChatPanel = {
                         :disabled="streaming" @click="retouch(m.attachments[0])">Retoucher</button>
               </template>
               <span v-else-if="m.image && m.attachments.length > 1">cliquer une image pour la télécharger ou la retoucher</span>
+              <span class="gen-more" v-if="m.image && m.prompt && !streaming">
+                <button type="button" class="link" @click="generateMore(m)"
+                        title="D'autres images avec le même prompt, jointes à cette réponse (sans le fil depuis)">Générer encore</button>
+                <select v-model.number="moreCount" aria-label="Nombre d'images à générer encore">
+                  <option v-for="n in 4" :key="n" :value="n">{{ n }}</option></select></span>
               <button type="button" class="link" v-if="i === current.messages.length - 1"
                       @click="regenerate">Régénérer</button>
             </div>
@@ -1972,11 +2046,18 @@ export const ChatPanel = {
     <artifact-panel v-else-if="artifactsOpen && current && (current.artifacts || []).length"
                     :artifacts="current.artifacts" :selected="artifactId"
                     @select="artifactId = $event" @close="toggleArtifacts(false)"></artifact-panel>
+    <asset-panel v-else-if="assetsOpen && assets.length" :images="assets" :selected="assetKey" :busy="streaming"
+                 @select="assetKey = $event" @retouch="retouch" @locate="locateAsset" @close="toggleAssets(false)"></asset-panel>
     <linux-panel v-else-if="linuxOpen && current" :conv="current" @close="toggleLinux(false)"></linux-panel>
     <teleport to="body">
     <div class="lightbox" v-if="zoom" @click.self="zoom = null" role="dialog" aria-label="Image agrandie">
       <img :src="zoom.data" :alt="zoom.name" @click="zoom = null">
       <div class="lightbox-bar">
+        <template v-if="zoomIndex >= 0 && assets.length > 1">
+          <button type="button" class="btn ghost" @click="zoomGo(-1)" title="Image précédente (←)" aria-label="Image précédente">‹</button>
+          <span class="dim">{{ zoomIndex + 1 }} / {{ assets.length }}</span>
+          <button type="button" class="btn ghost" @click="zoomGo(1)" title="Image suivante (→)" aria-label="Image suivante">›</button>
+        </template>
         <span class="dim">{{ zoom.name }}</span>
         <a class="btn ghost" :href="zoom.data" :download="zoom.name">Télécharger</a>
         <button type="button" class="btn ghost" v-if="ownImage(zoom.data)"

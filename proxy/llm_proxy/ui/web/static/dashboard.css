@@ -1190,6 +1190,44 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .art-btn.net[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .artifact-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; color-scheme: light; }
+/* Les images générées de la conversation (chat/AssetPanel.js) : l'image
+   en grand, Précédent et Suivant par-dessus, la planche des vignettes. */
+.artifact-head a.art-btn { color: inherit; text-decoration: none; }
+.asset-view {
+  position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+  padding: 14px; background: var(--track);
+}
+.asset-view img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+.asset-nav {
+  position: absolute; top: 50%; transform: translateY(-50%); display: inline-flex; padding: 10px;
+  border: 1px solid var(--line); border-radius: 999px; cursor: pointer; color: var(--ink);
+  background: color-mix(in srgb, var(--panel) 85%, transparent); opacity: .75; transition: opacity .15s;
+}
+.asset-nav:hover, .asset-nav:focus-visible { opacity: 1; }
+.asset-nav.prev { left: 10px; }
+.asset-nav.next { right: 10px; }
+.asset-nav .ico {
+  display: block; width: 20px; height: 20px; fill: none; stroke: currentColor;
+  stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
+}
+.asset-strip {
+  flex: none; display: flex; gap: 6px; padding: 8px 12px; overflow-x: auto;
+  border-top: 1px solid var(--line);
+}
+.asset-strip button {
+  flex: none; padding: 0; line-height: 0; border: 2px solid transparent; border-radius: 8px;
+  background: none; cursor: pointer; opacity: .7;
+}
+.asset-strip button:hover { opacity: 1; }
+.asset-strip button[aria-current="true"] { border-color: var(--accent); opacity: 1; }
+.asset-strip img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; background: var(--track); }
+.artifact-side.dragging .asset-view { pointer-events: none; }
+/* « Générer encore » sous une réponse du mode images, et son nombre. */
+.gen-more { display: inline-flex; align-items: center; gap: 4px; }
+.gen-more select {
+  font: inherit; font-size: 12px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 1px 4px; cursor: pointer;
+}
 /* Le terminal Linux : le cadre de la VM (linuxvm.js, hors du panneau, dans
    <body>) est posé par-dessus .linux-term. */
 .linux-term { flex: 1; min-height: 0; }
