@@ -1222,6 +1222,29 @@ a.btn { display: inline-block; text-decoration: none; }
 .asset-strip button[aria-current="true"] { border-color: var(--accent); opacity: 1; }
 .asset-strip img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; background: var(--track); }
 .artifact-side.dragging .asset-view { pointer-events: none; }
+/* La grille : des cases carrées de --cell px (le curseur), autant que la
+   largeur en tient. */
+.asset-zoom {
+  flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 14px;
+  border-bottom: 1px solid var(--line); font-size: 12.5px;
+}
+.asset-zoom .ico {
+  width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor;
+  stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; color: var(--muted);
+}
+.asset-zoom input { flex: 1; min-width: 0; max-width: 260px; accent-color: var(--accent); }
+.asset-zoom .dim { min-width: 4.5em; font-variant-numeric: tabular-nums; }
+.asset-grid {
+  flex: 1; min-height: 0; overflow: auto; padding: 12px; align-content: start;
+  display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(var(--cell), 100%), 1fr));
+}
+.asset-grid button {
+  padding: 0; line-height: 0; aspect-ratio: 1; border: 2px solid transparent; border-radius: 10px;
+  background: var(--track); cursor: zoom-in; overflow: hidden;
+}
+.asset-grid button:hover, .asset-grid button:focus-visible { border-color: var(--line); outline: none; }
+.asset-grid button[aria-current="true"] { border-color: var(--accent); }
+.asset-grid img { width: 100%; height: 100%; object-fit: cover; }
 /* « Générer encore » sous une réponse du mode images, et son nombre. */
 .gen-more { display: inline-flex; align-items: center; gap: 4px; }
 .gen-more select {

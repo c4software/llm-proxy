@@ -107,8 +107,11 @@ quand Chrome le propose. Il répond **sur l'appareil**, sans le proxy.
 une) : toutes les images générées de la conversation — modèle d'images,
 outil *Images*, graphiques d'un script, captures —, pas celles jointes
 aux questions. Une en grand, *Précédent* / *Suivant* (ou ← →), la
-planche des vignettes ; chacune se télécharge, se retouche ou se
-retrouve dans le fil.
+planche des vignettes ; ou la **grille** de toutes (bouton de l'en-tête),
+à cases réglables par le curseur (72 à 480 px, double-clic : 160), un
+clic ouvrant l'image en grand — vue et taille gardées dans ce
+navigateur. Chacune se télécharge, se retouche ou se retrouve dans le
+fil.
 - Les fichiers texte et une seconde image ne sont pas envoyés ; la page
   le dit.
 
