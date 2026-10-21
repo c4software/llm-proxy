@@ -74,6 +74,19 @@ def test_images_orphelines_effacees(monkeypatch):
     assert conversations.asset("a", lost["id"]) is None
 
 
+def test_suppression_rend_la_place():
+    conversations.save("a", "c1", conv())
+    for i in range(20):
+        conversations.add_asset("a", "c1", f"{i}.png", PNG + b"\0" * 100_000)
+    conversations.delete("a", "c1")
+    conn = conversations._connect()
+    try:
+        assert conn.execute("PRAGMA auto_vacuum").fetchone() == (2,)   # INCREMENTAL
+        assert conn.execute("PRAGMA freelist_count").fetchone() == (0,)
+    finally:
+        conn.close()
+
+
 def test_routes_du_compte_connecte(proxy):
     proxy.post("/ui/login", json={"key": "sk-a"})
     r = proxy.post("/ui/assets", json={"conversation": "c1", "name": "i.png", "data": PNG_URL})

@@ -74,6 +74,15 @@ Le Dockerfile seul ne livre pas :
   mémoires, toutes les clés gérées et toutes les sessions ;
 - `config.toml`.
 
+`conversations.db` rend au disque la place des conversations et des
+images supprimées (auto_vacuum incrémental). Une base créée avant ce
+réglage le prend une fois, proxy arrêté (le `VACUUM` réécrit toute la
+base : prévoir sa taille en espace libre) :
+
+```bash
+sqlite3 data/conversations.db "PRAGMA auto_vacuum=INCREMENTAL; VACUUM;"
+```
+
 Les bases sont en WAL : un `cp` pendant que le proxy écrit ne donne pas
 une copie fiable. Utilisez `python -m llm_proxy.backup`. Il copie les
 bases à chaud de façon cohérente (API de sauvegarde SQLite) et met le

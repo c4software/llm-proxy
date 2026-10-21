@@ -19,7 +19,11 @@ Une image que plus aucun message de sa conversation ne cite (réponse
 régénérée, message modifié) est effacée au prochain enregistrement de la
 conversation, celle d'une conversation qui n'existe pas à la prochaine
 lecture de la liste — passé un délai : celle qui vient d'être envoyée
-attend que le document qui la cite arrive.
+attend que le document qui la cite arrive. La base est en auto_vacuum
+INCREMENTAL : après chaque effacement, les pages libérées sont rendues au
+disque (sans cela, le fichier ne rétrécit jamais). Une base créée avant
+ce réglage le prend une fois pour toutes, proxy arrêté :
+  sqlite3 data/conversations.db "PRAGMA auto_vacuum=INCREMENTAL; VACUUM;"
 
 Bornes par compte (taille d'un document, d'une image, du tout), pour
 qu'une page qui boucle ne remplisse pas le disque. SQLite, comme la
@@ -65,6 +69,9 @@ _lock = threading.Lock()
 def _connect() -> sqlite3.Connection:
     # Résolu à l'appel : un test qui remplace DB_PATH ouvre SA base.
     conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
+    # Pris à la création de la base seulement (avant le passage en WAL,
+    # qui écrit déjà son en-tête) ; sinon sans effet jusqu'à un VACUUM.
+    conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=10000")
     conn.execute("""CREATE TABLE IF NOT EXISTS conversations (
@@ -80,6 +87,12 @@ def _connect() -> sqlite3.Connection:
     conn.execute("CREATE INDEX IF NOT EXISTS conversations_recent "
                  "ON conversations (owner, updated DESC)")
     return conn
+
+
+def _reclaim(conn) -> None:
+    """Rend au disque les pages libérées (sans effet hors auto_vacuum
+    INCREMENTAL). Le pragma libère une page par pas : tout lire."""
+    conn.execute("PRAGMA incremental_vacuum").fetchall()
 
 
 def _run(fn):
@@ -113,9 +126,11 @@ def list_all(owner: str) -> list[dict]:
     (jamais enregistrée, ou supprimée pendant leur envoi) sont effacées,
     passé ORPHAN_GRACE."""
     def q(c):
-        c.execute("DELETE FROM assets WHERE owner = ? AND created < ? AND NOT EXISTS "
-                  "(SELECT 1 FROM conversations v WHERE v.owner = assets.owner "
-                  "AND v.id = assets.conversation)", (owner, time.time() - ORPHAN_GRACE))
+        if c.execute("DELETE FROM assets WHERE owner = ? AND created < ? AND NOT EXISTS "
+                     "(SELECT 1 FROM conversations v WHERE v.owner = assets.owner "
+                     "AND v.id = assets.conversation)",
+                     (owner, time.time() - ORPHAN_GRACE)).rowcount:
+            _reclaim(c)
         return c.execute("SELECT doc FROM conversations WHERE owner = ? "
                          "ORDER BY updated DESC", (owner,)).fetchall()
     rows = _run(q)
@@ -234,6 +249,8 @@ def save(owner: str, cid: str, doc) -> None:
             (owner, cid, now - ORPHAN_GRACE)) if aid not in cited]
         c.executemany("DELETE FROM assets WHERE owner = ? AND id = ?",
                       [(owner, aid) for aid in stale])
+        if stale:
+            _reclaim(c)
     _run(q)
 
 
@@ -254,6 +271,7 @@ def delete(owner: str, cid: str) -> int:
                       (owner, cid)).rowcount
         c.execute("DELETE FROM assets WHERE owner = ? AND conversation = ?",
                   (owner, cid))
+        _reclaim(c)
         return n
     return _run(q)
 
