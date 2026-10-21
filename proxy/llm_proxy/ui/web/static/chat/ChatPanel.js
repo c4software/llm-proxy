@@ -1147,7 +1147,7 @@ export const ChatPanel = {
                     started: Date.now(), duration: 0 };
       const ask = [...conv.messages].reverse().find((m) => m.role === "user");
       const source = ask && (ask.attachments || []).find((a) => a.kind === "image" && a.data);
-      const prompt = imagePrompt(conv, !!source);
+      const prompt = imagePrompt(conv, !!source || !!conv.imageAlone);
       conv.messages.push(msg);
       conv.updated = Date.now();
       const live = conv.messages[conv.messages.length - 1];
@@ -1501,6 +1501,7 @@ export const ChatPanel = {
       if (!c.model) c.model = defaultModel();
       if (!c.imageSize) c.imageSize = chat.value.image_size;
       if (!c.imageCount) c.imageCount = 1;
+      if (c.imageAlone === undefined) c.imageAlone = false;
       if (!c.reasoning) c.reasoning = "auto";
       // Une carte du navigateur en cours au rechargement : ses boutons
       // reviennent (le flux de caméra, lui, est perdu).
@@ -1973,6 +1974,14 @@ export const ChatPanel = {
                 <button type="button" class="link" @click="showPrompt">Voir le prompt invisible</button></p>
             </div>
           </div>
+          <label class="effort" v-if="imageMode"
+                 title="Contexte : avec la suite, les demandes précédentes de la même suite d'images partent avec le message (« plus sombre » suit « un phare ») ; seul, le dernier message uniquement">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12M4 12h16M4 18h9"/></svg>
+            <select v-model="current.imageAlone" :disabled="streaming" aria-label="Contexte des images">
+              <option :value="false">avec la suite</option>
+              <option :value="true">message seul</option>
+            </select>
+          </label>
           <label class="effort" v-if="imageMode" title="Nombre d'images par demande">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
             <select v-model.number="current.imageCount" :disabled="streaming" aria-label="Nombre d'images">

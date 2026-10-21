@@ -89,7 +89,8 @@ quand Chrome le propose. Il répond **sur l'appareil**, sans le proxy.
 - Le modèle reçoit le dernier message **avec son contexte** : les
   demandes précédentes de la même suite d'images. « plus sombre » suit
   « un phare au coucher du soleil ». Le prompt envoyé se relit sous
-  l'image.
+  l'image. Le réglage *Contexte → message seul* (par conversation)
+  n'envoie que le dernier message.
 - Une image jointe, ou reprise par *Retoucher*, est retouchée
   (`/ui/images/edits`) : seule la consigne part. Le backend doit servir
   `/v1/images/edits`.

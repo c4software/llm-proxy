@@ -14,16 +14,17 @@ function b64Type(b64) {
 // auquel un modèle d'images a répondu, en remontant jusqu'à une
 // réponse de conversation), puis la dernière. « Plus sombre » suit
 // donc « un phare au coucher du soleil ». Une retouche n'en a pas
-// besoin : l'image porte le contexte.
+// besoin : l'image porte le contexte ; ni le mode « message seul »
+// (conv.imageAlone) : `alone`, la dernière demande uniquement.
 const MAX_PROMPT = 4000;
-export function imagePrompt(conv, edit) {
+export function imagePrompt(conv, alone) {
   const msgs = conv.messages;
   const parts = [];
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i];
     if (m.role === "assistant" && !m.image) break;
     if (m.role === "user" && m.content.trim()) parts.unshift(m.content.trim());
-    if (edit) break;
+    if (alone) break;
   }
   const text = parts.join("\n");
   return text.length > MAX_PROMPT ? text.slice(-MAX_PROMPT) : text;
