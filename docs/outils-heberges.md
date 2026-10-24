@@ -595,6 +595,21 @@ modèles Claude y sont entraînés, les autres suivent la description) :
 | `delete` | `path` | un fichier ou un répertoire entier |
 | `rename` | `old_path`, `new_path` | renomme ou déplace |
 
+**À la demande seulement** : la description de l'outil dit au modèle de ne
+s'en servir que si l'utilisateur le demande (retenir, rappeler, corriger,
+oublier), jamais pour y noter de lui-même l'avancement d'une tâche ou des
+notes de travail. Sans cela, un agent (Codex par le serveur MCP) y rangeait
+ses notes de travail, relues ensuite par d'autres tâches de la même clé.
+
+**Durée de vie** (ajout du proxy) : `expires_in_days` sur `create`,
+`str_replace` et `insert`, choisi par le modèle. Un nombre de jours (> 0,
+fractions permises, au plus 3650) après lequel le fichier disparaît ; `0` le
+rend persistant ; absent, l'échéance ne change pas (un nouveau fichier est
+persistant, un `rename` la garde). `view` la montre (`(expires …)`). Un
+fichier échu devient invisible aussitôt et est effacé à l'opération suivante.
+Une base d'avant reçoit la colonne à sa première ouverture, tous ses fichiers
+persistants.
+
 **Cloisonnée par clé** :
 
 - Un fichier appartient à la clé qui l'a écrit (`call.client`, condensé de
@@ -616,8 +631,10 @@ l'outil memory d'Anthropic s'exécute chez le client.
 
 **Tableau de bord** : *Configuration → Mémoire* montre les fichiers de la clé
 connectée à `/ui` (lecture, édition, renommage, suppression), jamais ceux d'une
-autre clé. Routes, même cookie : `GET /ui/memory`,
-`GET|PUT|DELETE /ui/memory/file`, `POST /ui/memory/rename`.
+autre clé, avec leur échéance (« expire le … » dans la liste ; *Durée de vie* :
+*Persistant* ou *Jusqu'au* une date, dans l'éditeur). Routes, même cookie :
+`GET /ui/memory`, `GET|PUT|DELETE /ui/memory/file` (`expires` : horodatage ou
+`null` ; absent du `PUT`, inchangé), `POST /ui/memory/rename`.
 
 > Ce qu'un modèle range ici revient dans les conversations suivantes : une page
 > web lue par un agent peut lui faire écrire une consigne durable. Relisez-la

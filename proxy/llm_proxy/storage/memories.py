@@ -16,7 +16,13 @@ Avec les comptes OIDC (accounts.py), le client d'une clé gérée est son
 COMPTE (auth.account_owner) : toutes ses clés, et la page connectée,
 partagent une mémoire.
 
-Un fichier = (client, chemin, contenu, dates). Les répertoires n'existent
+Un fichier = (client, chemin, contenu, dates, échéance). L'échéance
+(`expires`, horodatage) est facultative : sans elle, le fichier est
+PERSISTANT ; avec, il disparaît une fois passée — invisible aussitôt,
+effacé à l'opération suivante. C'est le modèle qui la choisit (l'outil
+`memory`, `expires_in_days`), ou l'utilisateur dans le tableau de bord.
+
+Les répertoires n'existent
 pas en tant que tels : ce sont les préfixes des chemins, comme dans un
 magasin d'objets. Bornes par client (nombre de fichiers, taille d'un
 fichier, taille totale), pour qu'un modèle qui boucle ne remplisse pas le
@@ -62,17 +68,24 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=10000")
     conn.execute("""CREATE TABLE IF NOT EXISTS files (
         owner TEXT NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL,
-        created REAL NOT NULL, updated REAL NOT NULL,
+        created REAL NOT NULL, updated REAL NOT NULL, expires REAL,
         PRIMARY KEY (owner, path))""")
+    # Une base d'avant l'échéance : la colonne, vide (tout persistant).
+    if "expires" not in {r[1] for r in conn.execute("PRAGMA table_info(files)")}:
+        conn.execute("ALTER TABLE files ADD COLUMN expires REAL")
     return conn
 
 
 def _run(fn):
-    """fn(conn) sous le verrou, dans une transaction."""
+    """fn(conn) sous le verrou, dans une transaction, après avoir effacé
+    les fichiers échus (de tous les clients) : ce qui suit ne les voit
+    plus."""
     with _lock:
         conn = _connect()
         try:
             with conn:
+                conn.execute("DELETE FROM files WHERE expires IS NOT NULL "
+                             "AND expires <= ?", (time.time(),))
                 return fn(conn)
         finally:
             conn.close()
@@ -113,11 +126,11 @@ def list_files(owner: str, directory: str = ROOT) -> list[dict]:
     directory = normalize(directory, directory=True)
     low, high = _under(directory)
     rows = _run(lambda c: c.execute(
-        "SELECT path, length(content), created, updated FROM files "
+        "SELECT path, length(content), created, updated, expires FROM files "
         "WHERE owner = ? AND path >= ? AND path < ? ORDER BY path",
         (owner, low, high)).fetchall())
-    return [{"path": p, "chars": n, "created": c, "updated": u}
-            for p, n, c, u in rows]
+    return [{"path": p, "chars": n, "created": c, "updated": u, "expires": e}
+            for p, n, c, u, e in rows]
 
 
 def is_dir(owner: str, path: str) -> bool:
@@ -130,20 +143,41 @@ def is_dir(owner: str, path: str) -> bool:
 
 
 def read(owner: str, path: str) -> str | None:
+    entry = stat(owner, path)
+    return entry["content"] if entry else None
+
+
+def stat(owner: str, path: str) -> dict | None:
+    """Le fichier et son échéance : {content, created, updated, expires},
+    ou None."""
     path = normalize(path)
     row = _run(lambda c: c.execute(
-        "SELECT content FROM files WHERE owner = ? AND path = ?",
-        (owner, path)).fetchone())
-    return row[0] if row else None
+        "SELECT content, created, updated, expires FROM files "
+        "WHERE owner = ? AND path = ?", (owner, path)).fetchone())
+    if row is None:
+        return None
+    return dict(zip(("content", "created", "updated", "expires"), row))
 
 
-def write(owner: str, path: str, content: str) -> bool:
-    """Crée ou remplace le fichier. → True s'il existait déjà. Refusé :
-    contenu trop long, chemin qui est un répertoire, ou bornes du client
-    dépassées."""
+# `write(..., expires=KEEP)` : l'échéance du fichier ne change pas (un
+# nouveau fichier est persistant).
+KEEP = object()
+
+
+def write(owner: str, path: str, content: str, expires=KEEP) -> bool:
+    """Crée ou remplace le fichier. → True s'il existait déjà. `expires` :
+    l'horodatage où il disparaît, None = persistant, KEEP = inchangée.
+    Refusé : contenu trop long, échéance passée, chemin qui est un
+    répertoire, ou bornes du client dépassées."""
     path = normalize(path)
     if not isinstance(content, str):
         raise MemoryError_("the content must be text")
+    if expires is not KEEP and expires is not None:
+        if (not isinstance(expires, (int, float)) or isinstance(expires, bool)
+                or expires != expires):
+            raise MemoryError_("the expiry must be a timestamp, or none")
+        if expires <= time.time():
+            raise MemoryError_("the expiry is already past")
     if len(content) > MAX_FILE_CHARS:
         raise MemoryError_(f"a memory file holds at most {MAX_FILE_CHARS} "
                            f"characters (got {len(content)})", "failed")
@@ -174,11 +208,16 @@ def write(owner: str, path: str, content: str) -> bool:
                                "failed")
         now = time.time()
         if old is None:
-            c.execute("INSERT INTO files VALUES (?, ?, ?, ?, ?)",
-                      (owner, path, content, now, now))
-        else:
+            c.execute("INSERT INTO files VALUES (?, ?, ?, ?, ?, ?)",
+                      (owner, path, content, now, now,
+                       None if expires is KEEP else expires))
+        elif expires is KEEP:
             c.execute("UPDATE files SET content = ?, updated = ? WHERE owner = ? "
                       "AND path = ?", (content, now, owner, path))
+        else:
+            c.execute("UPDATE files SET content = ?, updated = ?, expires = ? "
+                      "WHERE owner = ? AND path = ?",
+                      (content, now, expires, owner, path))
         return old is not None
     return _run(go)
 

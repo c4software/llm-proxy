@@ -2,6 +2,8 @@
 (tools/memory.py), son cloisonnement par clé par /mcp et /v1/tools, et
 les routes de la section Mémoire de /ui. Sur une base temporaire."""
 
+import time
+
 import pytest
 
 from fakes import bearer, go, rendu, rpc
@@ -105,6 +107,57 @@ def test_commandes_de_l_outil():
     assert code(command="create", path="/memories/x", file_text="x" * 200_000) == "failed"
 
 
+def test_duree_de_vie(monkeypatch):
+    now = [1_000_000.0]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    # Sans durée : persistant, rien de plus dans la réponse ni dans view.
+    assert mem(command="create", path="/memories/p.md", file_text="p") \
+        == "File created: /memories/p.md"
+    out = mem(command="create", path="/memories/t.md", file_text="t",
+              expires_in_days=2)
+    assert out.startswith("File created: /memories/t.md (expires ")
+    assert memories.stat("a", "/memories/t.md")["expires"] == now[0] + 2 * 86400
+    listing = mem(command="view", path="/memories")
+    assert "persistent" in listing
+    assert [l.endswith(")") for l in listing.split("\n")[1:]] == [False, True]
+    assert mem(command="view", path="/memories/t.md").startswith("/memories/t.md (expires ")
+    # Modifier sans durée la garde ; 0 rend persistant ; refus hors bornes.
+    mem(command="str_replace", path="/memories/t.md", old_str="t", new_str="u")
+    assert memories.stat("a", "/memories/t.md")["expires"] == now[0] + 2 * 86400
+    mem(command="rename", old_path="/memories/t.md", new_path="/memories/u.md")
+    assert memories.stat("a", "/memories/u.md")["expires"] == now[0] + 2 * 86400
+    mem(command="insert", path="/memories/p.md", insert_line=0, insert_text="x",
+        expires_in_days=0.5)
+    assert memories.stat("a", "/memories/p.md")["expires"] == now[0] + 43200
+    mem(command="create", path="/memories/p.md", file_text="p", expires_in_days=0)
+    assert memories.stat("a", "/memories/p.md")["expires"] is None
+    for bad in (-1, "7", True, memory.MAX_DAYS + 1):
+        assert code(command="create", path="/memories/x.md", file_text="x",
+                    expires_in_days=bad) == "invalid_input"
+    # Échu : invisible, et effacé (de tous les clients).
+    memories.write("b", "/memories/b.md", "b", now[0] + 10)
+    now[0] += 2 * 86400
+    assert memories.read("a", "/memories/u.md") is None
+    assert "does not exist" in mem(command="view", path="/memories/u.md")
+    assert [f["path"] for f in memories.list_files("a")] == ["/memories/p.md"]
+    assert memories.usage("b")["files"] == 0
+
+
+def test_base_d_avant_l_echeance():
+    """Une memory.db sans la colonne `expires` : ajoutée, tout persistant."""
+    import sqlite3
+    conn = sqlite3.connect(memories.DB_PATH)
+    conn.execute("CREATE TABLE files (owner TEXT NOT NULL, path TEXT NOT NULL, "
+                 "content TEXT NOT NULL, created REAL NOT NULL, updated REAL "
+                 "NOT NULL, PRIMARY KEY (owner, path))")
+    conn.execute("INSERT INTO files VALUES ('a', '/memories/v.md', 'v', 1, 1)")
+    conn.commit()
+    conn.close()
+    assert memories.stat("a", "/memories/v.md")["expires"] is None
+    memories.write("a", "/memories/w.md", "w", time.time() + 60)
+    assert [f["expires"] is None for f in memories.list_files("a")] == [True, False]
+
+
 def test_cloisonnement_entre_clients():
     mem("a", command="create", path="/memories/secret.md", file_text="à a")
     assert "does not exist" in mem("b", command="view", path="/memories/secret.md")
@@ -158,7 +211,22 @@ def test_routes_ui_de_la_cle_connectee(proxy):
     assert proxy.get("/ui/memory/file", params={"path": "/memories/n.md"}).json()[
         "content"] == "un"
     r = proxy.put("/ui/memory/file", json={"path": "/memories/n.md", "content": "deux"})
-    assert r.json() == {"path": "/memories/n.md", "created": False}
+    assert r.json() == {"path": "/memories/n.md", "created": False, "expires": None}
+    # L'échéance : lue avec le fichier, posée par PUT, gardée sans `expires`.
+    soon = time.time() + 3600
+    r = proxy.put("/ui/memory/file", json={"path": "/memories/n.md", "content": "deux",
+                                           "expires": soon})
+    assert r.json()["expires"] == soon
+    assert proxy.get("/ui/memory").json()["data"][0]["expires"] == soon
+    proxy.put("/ui/memory/file", json={"path": "/memories/n.md", "content": "deux"})
+    assert proxy.get("/ui/memory/file", params={"path": "/memories/n.md"}).json()[
+        "expires"] == soon
+    assert proxy.put("/ui/memory/file", json={"path": "/memories/n.md", "content": "deux",
+                                              "expires": time.time() - 1}).status_code == 400
+    proxy.put("/ui/memory/file", json={"path": "/memories/n.md", "content": "deux",
+                                       "expires": None})
+    assert proxy.get("/ui/memory/file", params={"path": "/memories/n.md"}).json()[
+        "expires"] is None
     r = proxy.post("/ui/memory/rename", json={"old_path": "/memories/n.md",
                                               "new_path": "/memories/m.md"})
     assert r.json() == {"renamed": 1, "path": "/memories/m.md"}

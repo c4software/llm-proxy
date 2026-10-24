@@ -12,10 +12,19 @@ l'outil `memory` d'Anthropic — mêmes commandes, mêmes arguments :
   delete       {path}                un fichier, ou un répertoire entier
   rename       {old_path, new_path}  renomme ou déplace
 
+Ajout du proxy : `expires_in_days` (create, str_replace, insert), la durée
+de vie du fichier, choisie par le modèle — un nombre de jours (> 0, les
+fractions permises) après lequel il disparaît, 0 = persistant, absent =
+inchangée (un nouveau fichier est persistant). L'échéance se lit dans
+`view` et dans le tableau de bord.
+
 À ne pas confondre avec les mémoires de CONVERSATION (tools.Memory,
 chat_api) : celle-ci survit aux conversations et au redémarrage, et c'est
 le modèle qui décide de ce qu'il y range. L'utilisateur la voit et la
-corrige dans le tableau de bord (/ui, section Mémoire).
+corrige dans le tableau de bord (/ui, section Mémoire). Elle ne s'écrit
+que sur DEMANDE de l'utilisateur (voir la description) : un modèle à qui
+l'on disait d'y noter « au fil de l'eau » l'avancement de ses tâches la
+remplissait de notes de travail, relues ensuite par d'autres tâches.
 
 Le client est `call.client` (tools.owner : le condensé STABLE de sa clé),
 jamais un argument du modèle : il ne peut pas lire la mémoire d'un autre.
@@ -37,10 +46,36 @@ NAME = ToolName.MEMORY
 # Lignes au plus rendues par `view` d'un fichier sans `view_range`.
 VIEW_LINES = 2000
 COMMANDS = ("view", "create", "str_replace", "insert", "delete", "rename")
+# Durée de vie au plus qu'un modèle peut donner (expires_in_days).
+MAX_DAYS = 3650
 
 
 def _date(ts: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+
+
+def _expiry(args: dict):
+    """`expires_in_days` → l'échéance pour memories.write : KEEP (absent),
+    None (0 : persistant), ou un horodatage."""
+    days = args.get("expires_in_days")
+    if days is None:
+        return memories.KEEP
+    if not isinstance(days, (int, float)) or isinstance(days, bool) \
+            or not 0 <= days <= MAX_DAYS:
+        raise memories.MemoryError_(
+            f"`expires_in_days` must be a number of days from 0 (persistent) "
+            f"to {MAX_DAYS}")
+    return None if days == 0 else time.time() + days * 86400
+
+
+def _lifetime(expires) -> str:
+    """Le suffixe d'un fichier à échéance, rien pour un persistant."""
+    return f" (expires {_date(expires)})" if expires else ""
+
+
+def _written(verb: str, owner: str, path: str) -> str:
+    entry = memories.stat(owner, path)
+    return f"{verb}: {path}" + _lifetime(entry and entry["expires"])
 
 
 def _numbered(text: str, first: int = 1) -> str:
@@ -50,8 +85,8 @@ def _numbered(text: str, first: int = 1) -> str:
 
 def _view(owner: str, args: dict) -> str:
     path = memories.normalize(args.get("path") or memories.ROOT, directory=True)
-    content = None if path == memories.ROOT else memories.read(owner, path)
-    if content is None:
+    entry = None if path == memories.ROOT else memories.stat(owner, path)
+    if entry is None:
         if not memories.is_dir(owner, path):
             raise memories.MemoryError_(f"{path} does not exist", "not_accessible")
         files = memories.list_files(owner, path)
@@ -61,10 +96,10 @@ def _view(owner: str, args: dict) -> str:
                 f"{use['chars']}/{use['max_chars']} characters.")
         if not files:
             return head + "\n(empty: nothing remembered yet)"
-        return head + "\n" + "\n".join(
+        return head + " Files without an expiry are persistent.\n" + "\n".join(
             f"{f['chars']:>8} chars  {_date(f['updated'])}  {f['path']}"
-            for f in files)
-    lines = content.split("\n")
+            + _lifetime(f["expires"]) for f in files)
+    lines = entry["content"].split("\n")
     first, last = 1, len(lines)
     rng = args.get("view_range")
     if rng is not None:
@@ -81,7 +116,7 @@ def _view(owner: str, args: dict) -> str:
     out = _numbered("\n".join(lines[first - 1:last]), first)
     note = (f"\n[lines {first}-{last} of {len(lines)}; pass view_range for more]"
             if last < len(lines) or first > 1 else "")
-    return f"{path}:\n{out}{note}"
+    return f"{path}{_lifetime(entry['expires'])}:\n{out}{note}"
 
 
 def _existing(owner: str, args: dict) -> tuple[str, str]:
@@ -97,8 +132,9 @@ def _create(owner: str, args: dict) -> str:
     if not isinstance(text, str):
         raise memories.MemoryError_("`file_text` is required")
     path = memories.normalize(args.get("path"))
-    existed = memories.write(owner, path, text)
-    return f"File {'overwritten' if existed else 'created'}: {path}"
+    existed = memories.write(owner, path, text, _expiry(args))
+    return _written(f"File {'overwritten' if existed else 'created'}",
+                    owner, path)
 
 
 def _str_replace(owner: str, args: dict) -> str:
@@ -107,6 +143,7 @@ def _str_replace(owner: str, args: dict) -> str:
         raise memories.MemoryError_("`old_str` is required")
     if not isinstance(new, str):
         raise memories.MemoryError_("`new_str` must be text")
+    expires = _expiry(args)
     path, content = _existing(owner, args)
     n = content.count(old)
     if n == 0:
@@ -116,8 +153,8 @@ def _str_replace(owner: str, args: dict) -> str:
         raise memories.MemoryError_(
             f"`old_str` appears {n} times in {path}; include more context so "
             f"it is unique")
-    memories.write(owner, path, content.replace(old, new, 1))
-    return f"File edited: {path}"
+    memories.write(owner, path, content.replace(old, new, 1), expires)
+    return _written("File edited", owner, path)
 
 
 def _insert(owner: str, args: dict) -> str:
@@ -126,14 +163,15 @@ def _insert(owner: str, args: dict) -> str:
         raise memories.MemoryError_("`insert_line` must be an integer")
     if not isinstance(text, str):
         raise memories.MemoryError_("`insert_text` is required")
+    expires = _expiry(args)
     path, content = _existing(owner, args)
     lines = content.split("\n")
     if line < 0 or line > len(lines):
         raise memories.MemoryError_(
             f"insert_line {line} is outside the file (0-{len(lines)})")
     lines[line:line] = text.split("\n")
-    memories.write(owner, path, "\n".join(lines))
-    return f"Text inserted after line {line}: {path}"
+    memories.write(owner, path, "\n".join(lines), expires)
+    return _written(f"Text inserted after line {line}", owner, path)
 
 
 def _delete(owner: str, args: dict) -> str:
@@ -181,18 +219,24 @@ class MemoryTool(Tool):
 
     def prompt(self, present) -> str:
         return (
-            "Persistent memory that survives across conversations: text "
-            "files under /memories, private to the user. At the start of a "
-            "task, view /memories to recall earlier progress, decisions and "
-            "preferences. Record what is worth keeping (facts about the user "
-            "or the project, decisions, progress on long tasks) as you go, "
-            "keep it organized and up to date, and delete what is obsolete. "
-            "Never store secrets. Commands: view (a directory or a file, "
-            "with optional view_range [first, last]), create (path, "
-            "file_text: creates or overwrites), str_replace (path, old_str, "
-            "new_str: old_str must appear exactly once), insert (path, "
-            "insert_line, insert_text: after line N, 0 = at the top), delete "
-            "(path: a file or a directory), rename (old_path, new_path).")
+            "Memory that survives across conversations: text files under "
+            "/memories, private to the user. Use it ONLY when the user asks: "
+            "to remember something (a preference, a fact, a decision), to "
+            "recall what was remembered, or to change or forget it. Never "
+            "write to it on your own initiative: no task progress, working "
+            "notes, summaries or intermediate results, even on a long task; "
+            "and do not read it unless the user refers to what was "
+            "remembered. Never store secrets. Each file is persistent unless "
+            "it has a lifetime: pass expires_in_days (create, str_replace, "
+            "insert) for something that only matters for a while, e.g. 7 "
+            "for this week's context; 0 makes the file persistent again, "
+            "omitting it keeps the current lifetime. Commands: view (a "
+            "directory or a file, with optional view_range [first, last]; "
+            "shows each file's expiry), create (path, file_text: creates or "
+            "overwrites), str_replace (path, old_str, new_str: old_str must "
+            "appear exactly once), insert (path, insert_line, insert_text: "
+            "after line N, 0 = at the top), delete (path: a file or a "
+            "directory), rename (old_path, new_path).")
 
     def parameters(self, present) -> dict:
         return {
@@ -215,6 +259,12 @@ class MemoryTool(Tool):
                 "insert_text": {"type": "string", "description": "insert: the text to insert."},
                 "old_path": {"type": "string", "description": "rename: the current path."},
                 "new_path": {"type": "string", "description": "rename: the new path."},
+                "expires_in_days": {
+                    "type": "number", "minimum": 0, "maximum": MAX_DAYS,
+                    "description": "create, str_replace, insert: the file's "
+                                   "lifetime in days from now (fractions "
+                                   "allowed); 0 = persistent; omit to keep "
+                                   "the current one (new files: persistent)."},
             },
             "required": ["command"],
         }

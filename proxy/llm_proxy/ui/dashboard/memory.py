@@ -17,7 +17,9 @@ from .page import router
 # ── Mémoire, sous /ui ───────────────────────────────────────────────────
 # Ce que l'outil `memory` a gardé pour le client CONNECTÉ (la session de
 # la page, ou l'en-tête) : la liste, un fichier, l'écriture, la
-# suppression, le renommage. Jamais la mémoire d'un autre. Les écritures
+# suppression, le renommage. Jamais la mémoire d'un autre. L'échéance d'un
+# fichier (`expires`, horodatage, null = persistant) se lit avec lui et
+# s'écrit par PUT ; absente du corps, elle ne change pas. Les écritures
 # exigent un corps JSON (json_only) : une page tierce ne peut pas les
 # déclencher.
 
@@ -50,13 +52,14 @@ async def ui_memory_list(request: Request):
 async def ui_memory_read(request: Request, path: str = ""):
     if (off := memory_disabled()) is not None:
         return off
-    content, bad = await asyncio.to_thread(
-        memory_call, memories.read, ui_client(request), path)
+    entry, bad = await asyncio.to_thread(
+        memory_call, memories.stat, ui_client(request), path)
     if bad is not None:
         return bad
-    if content is None:
+    if entry is None:
         return error_response("openai", 404, "not_found", f"{path} n'existe pas")
-    return {"path": memories.normalize(path), "content": content}
+    return {"path": memories.normalize(path), "content": entry["content"],
+            "expires": entry["expires"]}
 
 
 @router.put("/ui/memory/file")
@@ -68,13 +71,17 @@ async def ui_memory_write(request: Request):
     body = parse_json(await request.body())
     if not isinstance(body, dict):
         return error_response("openai", 400, "invalid_request_error",
-                              "corps JSON attendu : {path, content}")
+                              "corps JSON attendu : {path, content, expires?}")
     existed, bad = await asyncio.to_thread(
         memory_call, memories.write, ui_client(request),
-        body.get("path"), body.get("content"))
+        body.get("path"), body.get("content"),
+        body.get("expires") if "expires" in body else memories.KEEP)
     if bad is not None:
         return bad
-    return {"path": memories.normalize(body.get("path")), "created": not existed}
+    path = memories.normalize(body.get("path"))
+    entry = await asyncio.to_thread(memories.stat, ui_client(request), path)
+    return {"path": path, "created": not existed,
+            "expires": entry and entry["expires"]}
 
 
 @router.delete("/ui/memory/file")

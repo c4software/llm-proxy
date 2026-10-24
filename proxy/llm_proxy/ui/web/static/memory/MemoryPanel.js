@@ -6,10 +6,14 @@
   Routes (même cookie que /ui/usage) :
     GET    /ui/memory               la liste et l'occupation
     GET    /ui/memory/file?path=    un fichier
-    PUT    /ui/memory/file          {path, content} : crée ou remplace
+    PUT    /ui/memory/file          {path, content, expires} : crée ou remplace
     DELETE /ui/memory/file?path=    un fichier
     POST   /ui/memory/rename        {old_path, new_path}
   Mémoire désactivée sur le proxy (404) : la section ne s'affiche pas.
+
+  Durée de vie : un fichier est persistant, ou disparaît à son échéance
+  (`expires`, en secondes ; choisie par le modèle, ou ici). La liste la
+  montre, l'éditeur la change : « Persistant » ou une date.
 
   Rien ne se rafraîchit tout seul : une modification en cours ne doit
   jamais être écrasée par la liste. Elle se relit à l'ouverture, après
@@ -38,15 +42,32 @@ export const MemoryPanel = {
     const path = ref("/memories/");
     const content = ref("");
     const original = ref("");        // contenu tel que lu, pour « modifié »
+    const until = ref("");           // échéance (datetime-local), "" = persistant
+    const originalUntil = ref("");
     const status = ref("");
     const error = ref(false);
     const confirming = ref(false);
     const busy = ref(false);
 
     const dirty = computed(() => content.value !== original.value
+      || until.value !== originalUntil.value
       || (selected.value !== null && path.value !== selected.value));
+    // Le choix « Persistant » / « Jusqu'au » : passer à une date propose
+    // dans une semaine.
+    const lifetime = computed({
+      get: () => until.value ? "until" : "persistent",
+      set: (v) => { until.value = v === "until" ? local(Date.now() / 1000 + 7 * 86400) : ""; },
+    });
     const renaming = computed(() => selected.value !== null
       && path.value.trim() !== selected.value);
+
+    // Secondes ↔ la valeur d'un <input type="datetime-local"> (heure locale).
+    function local(ts) {
+      if (!ts) return "";
+      const d = new Date(ts * 1000);
+      return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    }
+    const seconds = (v) => v ? new Date(v).getTime() / 1000 : null;
 
     function say(text, isError = false) {
       status.value = text;
@@ -72,6 +93,7 @@ export const MemoryPanel = {
         selected.value = j.path;
         path.value = j.path;
         content.value = original.value = j.content;
+        until.value = originalUntil.value = local(j.expires);
         confirming.value = false;
         say("");
       } catch (e) {
@@ -84,6 +106,7 @@ export const MemoryPanel = {
       selected.value = null;
       path.value = "/memories/";
       content.value = original.value = "";
+      until.value = originalUntil.value = "";
       confirming.value = false;
       say("");
     }
@@ -97,10 +120,12 @@ export const MemoryPanel = {
                                { old_path: selected.value, new_path: target });
           target = r.path;
         }
-        const w = await call("PUT", "/ui/memory/file", { path: target, content: content.value });
+        const w = await call("PUT", "/ui/memory/file", { path: target, content: content.value,
+                                                          expires: seconds(until.value) });
         selected.value = w.path;
         path.value = w.path;
         original.value = content.value;
+        until.value = originalUntil.value = local(w.expires);
         say(w.created ? "Fichier créé." : "Enregistré.");
         await load();
       } catch (e) {
@@ -136,9 +161,9 @@ export const MemoryPanel = {
       await load();
       if (selected.value !== null && !dirty.value) open(selected.value);
     });
-    return { enabled, files, usage, selected, path, content, status, error,
-             confirming, busy, dirty, renaming, open, fresh, save, remove,
-             load, onToggle, num, when, short };
+    return { enabled, files, usage, selected, path, content, until, lifetime,
+             status, error, confirming, busy, dirty, renaming, open, fresh,
+             save, remove, load, onToggle, num, when, short };
   },
   template: `
   <details class="panel howto memory" v-if="enabled && !compact" :open="expanded" @toggle="onToggle">
@@ -160,6 +185,7 @@ export const MemoryPanel = {
                     @click="open(f.path)">
               <span class="name">{{ short(f.path) }}</span>
               <span class="dim">{{ num(f.chars) }} car. · {{ when(f.updated) }}</span>
+              <span class="dim expiry" v-if="f.expires">expire le {{ when(f.expires) }}</span>
             </button>
           </li>
         </ul>
@@ -173,6 +199,17 @@ export const MemoryPanel = {
           <span>Chemin</span>
           <input v-model="path" spellcheck="false" placeholder="/memories/notes.md">
         </label>
+        <div class="field">
+          <span>Durée de vie</span>
+          <div class="memory-lifetime">
+            <select v-model="lifetime" aria-label="Durée de vie">
+              <option value="persistent">Persistant</option>
+              <option value="until">Jusqu'au</option>
+            </select>
+            <input v-if="until" type="datetime-local" v-model="until" required
+                   aria-label="Échéance">
+          </div>
+        </div>
         <label class="field grow">
           <span>Contenu</span>
           <textarea v-model="content" spellcheck="false"
@@ -207,6 +244,7 @@ export const MemoryPanel = {
                     @click="open(f.path)">
               <span class="name">{{ short(f.path) }}</span>
               <span class="dim">{{ num(f.chars) }} car. · {{ when(f.updated) }}</span>
+              <span class="dim expiry" v-if="f.expires">expire le {{ when(f.expires) }}</span>
             </button>
           </li>
         </ul>
@@ -220,6 +258,17 @@ export const MemoryPanel = {
           <span>Chemin</span>
           <input v-model="path" spellcheck="false" placeholder="/memories/notes.md">
         </label>
+        <div class="field">
+          <span>Durée de vie</span>
+          <div class="memory-lifetime">
+            <select v-model="lifetime" aria-label="Durée de vie">
+              <option value="persistent">Persistant</option>
+              <option value="until">Jusqu'au</option>
+            </select>
+            <input v-if="until" type="datetime-local" v-model="until" required
+                   aria-label="Échéance">
+          </div>
+        </div>
         <label class="field grow">
           <span>Contenu</span>
           <textarea v-model="content" spellcheck="false"
