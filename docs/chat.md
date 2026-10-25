@@ -114,7 +114,9 @@ la conversation (`/ui/assets`), comme une image. Selon le modèle :
 - *voix clonée* (`…-base`) : une voix clonée de ce navigateur, choisie
   dans la barre ; *＋ nouvelle voix…* ouvre le studio en fenêtre sur la
   conversation (voir *Voix clonées* plus bas), et la voix gardée devient
-  celle de la conversation.
+  celle de la conversation. La même liste **télécharge** la voix choisie
+  (WAV portant son nom et sa transcription, à réutiliser ailleurs) ou
+  **copie sa transcription** (le texte que demande la référence).
 - *voix décrite* (`…-voice-design`) : le prompt système **décrit** la
   voix (genre, âge, timbre, accent, style) ; une voix nouvelle à chaque
   message.

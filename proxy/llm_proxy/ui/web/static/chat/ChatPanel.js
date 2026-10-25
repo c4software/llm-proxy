@@ -80,6 +80,7 @@ import * as asr from "./voice/transcribe.js";
 import { useRecorder } from "./voice/recorder.js";
 import { role as voiceRole, presetVoices, language as voiceLanguage } from "./voice/proxy.js";
 import { clones as voiceClones, load as loadClones } from "./voice/clones.js";
+import * as voicefile from "./voice/voicefile.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
@@ -1268,6 +1269,24 @@ export const ChatPanel = {
       studioOpen.value = false;
       if (current.value) current.value.voiceClone = c.id;
     }
+    // Le choix de la liste des voix clonées : une voix, ou une action — en
+    // créer une, télécharger celle choisie (WAV portant nom et
+    // transcription, à réutiliser ailleurs : curl, autre application), ou
+    // copier sa transcription (le texte que demande la référence).
+    async function cloneAction(select) {
+      const c = current.value;
+      const what = select.value;
+      if (!["+", "dl", "copy"].includes(what)) { c.voiceClone = what; return; }
+      select.value = c.voiceClone || "";
+      if (what === "+") { newVoice(); return; }
+      const v = voiceClones.value.find((x) => x.id === c.voiceClone);
+      if (!v) return;
+      if (what === "dl") {
+        download({ name: voicefile.fileName(v.name), content: await voicefile.pack(v.wav, { name: v.name, text: v.text }) }, "audio/wav");
+      } else {
+        if (await copyText(v.text)) status.value = `Transcription de « ${v.name} » copiée.`;
+      }
+    }
     const voiceLang = computed(() => voice.prefs.language);
     // La dernière réponse lue : son audio part tout seul. Un audio à la
     // fois : en lancer un arrête les autres (et la lecture d'Écouter).
@@ -1550,7 +1569,8 @@ export const ChatPanel = {
           button.textContent = "Copié";
           setTimeout(() => { button.textContent = was; }, 1200);
         }
-      } catch { status.value = "Copie refusée par le navigateur."; }
+        return true;
+      } catch { status.value = "Copie refusée par le navigateur."; return false; }
     }
     function onThreadClick(e) {
       // Une image rendue dans le texte (lien d'un outil hébergé) : agrandie.
@@ -1680,7 +1700,7 @@ export const ChatPanel = {
 
     return { chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
              ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes,
-             voiceMode, asrMode, rec, toggleRecord, genMode, voiceChoices, newVoice, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
+             voiceMode, asrMode, rec, toggleRecord, genMode, voiceChoices, newVoice, cloneAction, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, pickFiles, pickFolderFiles, closeFolder, folderReady, folderCount, attachOpen,
@@ -2170,10 +2190,13 @@ export const ChatPanel = {
               <option v-for="v in voiceChoices" :key="v.id" :value="v.id">{{ v.name }}</option>
             </select>
             <select v-else :value="current.voiceClone || ''" :disabled="streaming" aria-label="Voix clonée"
-                    @change="$event.target.value === '+' ? ($event.target.value = current.voiceClone || '', newVoice()) : (current.voiceClone = $event.target.value)">
+                    @change="cloneAction($event.target)">
               <option v-if="!voiceChoices.length" value="" disabled>aucune voix</option>
               <option v-for="v in voiceChoices" :key="v.id" :value="v.id">{{ v.name }}</option>
               <option value="+">＋ nouvelle voix…</option>
+              <template v-if="current.voiceClone && voiceChoices.length">
+                <option value="dl">⤓ télécharger cette voix (WAV)</option>
+                <option value="copy">⧉ copier sa transcription</option></template>
             </select>
           </label>
           <label class="effort" v-if="!genMode && caps.reasoning" title="Niveau de réflexion du modèle : auto (celui du modèle), non, faible, moyenne, élevée">
