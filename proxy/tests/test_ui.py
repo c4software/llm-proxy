@@ -413,6 +413,39 @@ def test_chat_edits_an_attached_image(ui, monkeypatch):
         **body, "image": "data:image/png;base64,AAAA"}).status_code == 400
 
 
+def test_chat_transcribes_an_audio(ui, monkeypatch):
+    """/ui/audio/transcriptions : un corps JSON (audio en data URL) devient
+    le formulaire de /v1/audio/transcriptions — préfixe retiré, langue
+    passée ; refusé sans audio reconnu, et chat fermé."""
+    import base64
+    from llm_proxy.core import multipart
+    seen = []
+
+    async def send_upstream(call, request, path, body):
+        seen.append((path, request.headers["content-type"], body))
+        return FakeUpstream(json.dumps({"text": "Bonjour."}).encode())
+
+    monkeypatch.setattr(relaying, "send_upstream", send_upstream)
+    wav = b"RIFF\x00\x00\x00\x00WAVEfmt " + b"0" * 30
+    body = {"model": "essai/asr", "language": "French",
+            "file": "data:audio/wav;base64," + base64.b64encode(wav).decode()}
+    assert ui.client.post("/ui/audio/transcriptions", json=body).status_code == 401
+    login(ui)
+    r = ui.client.post("/ui/audio/transcriptions", json=body)
+    assert r.status_code == 200 and r.json() == {"text": "Bonjour."}
+    path, ctype, raw = seen[-1]
+    assert path == "v1/audio/transcriptions" and ctype.startswith("multipart/form-data")
+    assert multipart.model_field(raw, ctype) == "asr"
+    assert wav in raw and b"audio/wav" in raw and b"French" in raw
+    webm = "data:audio/webm;codecs=opus;base64," + base64.b64encode(b"\x1aE\xdf\xa3" + b"0" * 20).decode()
+    assert ui.client.post("/ui/audio/transcriptions", json={**body, "file": webm}).status_code == 200
+    assert ui.client.post("/ui/audio/transcriptions", json={
+        **body, "file": "data:audio/wav;base64,AAAA"}).status_code == 400
+    assert ui.client.post("/ui/audio/transcriptions", content="{}").status_code == 415
+    everywhere(monkeypatch, dashboard, "UI_CHAT", False)
+    assert ui.client.post("/ui/audio/transcriptions", json=body).status_code == 404
+
+
 def test_healthz_says_only_ok_without_a_key(ui):
     """Auth active : sans clé, /healthz ne dit que « ok » — ni backends,
     ni outils (c'est ce que lit le HEALTHCHECK du conteneur)."""

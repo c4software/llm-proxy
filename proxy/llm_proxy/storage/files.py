@@ -93,6 +93,10 @@ def sniff_audio(data: bytes) -> str | None:
         return "audio/ogg"
     if data[:4] == b"fLaC":
         return "audio/flac"
+    if data[:4] == b"\x1aE\xdf\xa3":         # Matroska : le micro de Chrome
+        return "audio/webm"
+    if data[4:8] == b"ftyp":                  # MP4 : M4A, le micro de Safari
+        return "audio/mp4"
     if data[:3] == b"ID3" or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):
         return "audio/mpeg"
     return None

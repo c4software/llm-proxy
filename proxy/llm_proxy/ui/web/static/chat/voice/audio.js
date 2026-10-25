@@ -22,18 +22,18 @@ const PEAK_DB = -1;
 
 const db = (x) => 20 * Math.log10(Math.max(x, 1e-9));
 
-/** Un fichier ou un enregistrement → ses échantillons, mono à RATE.
- * @param {Blob} blob @returns {Promise<Float32Array>} */
-export async function decode(blob) {
+/** Un fichier ou un enregistrement → ses échantillons, mono à `rate`.
+ * @param {Blob} blob @param {number} [rate] @returns {Promise<Float32Array>} */
+export async function decode(blob, rate = RATE) {
   const bytes = await blob.arrayBuffer();
-  const ctx = new OfflineAudioContext(1, 1, RATE);
+  const ctx = new OfflineAudioContext(1, 1, rate);
   let buf;
   try { buf = await ctx.decodeAudioData(bytes); } catch {
     throw new Error("format audio illisible par ce navigateur");
   }
   if (!buf.duration) throw new Error("enregistrement vide");
   // Rééchantillonné et mélangé en mono par le rendu (canaux moyennés).
-  const out = new OfflineAudioContext(1, Math.ceil(buf.duration * RATE), RATE);
+  const out = new OfflineAudioContext(1, Math.ceil(buf.duration * rate), rate);
   const src = out.createBufferSource();
   src.buffer = buf;
   src.connect(out.destination);
@@ -107,14 +107,14 @@ export async function level(s) {
   return { samples: out, lufs: before + db(gain), gain: db(gain) };
 }
 
-/** Échantillons mono → fichier WAV PCM 16 bits.
- * @param {Float32Array} s */
-export function wav(s) {
+/** Échantillons mono (à `rate`) → fichier WAV PCM 16 bits.
+ * @param {Float32Array} s @param {number} [rate] */
+export function wav(s, rate = RATE) {
   const out = new DataView(new ArrayBuffer(44 + s.length * 2));
   const str = (o, t) => { for (let i = 0; i < t.length; i++) out.setUint8(o + i, t.charCodeAt(i)); };
   str(0, "RIFF"); out.setUint32(4, 36 + s.length * 2, true); str(8, "WAVE");
   str(12, "fmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
-  out.setUint32(24, RATE, true); out.setUint32(28, RATE * 2, true); out.setUint16(32, 2, true);
+  out.setUint32(24, rate, true); out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true);
   out.setUint16(34, 16, true); str(36, "data"); out.setUint32(40, s.length * 2, true);
   for (let i = 0; i < s.length; i++) {
     const v = Math.max(-1, Math.min(1, s[i]));

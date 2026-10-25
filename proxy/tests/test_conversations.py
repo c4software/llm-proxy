@@ -51,13 +51,16 @@ def test_magasin_bornes_et_incognito(monkeypatch):
         conversations.save("a", "c3", conv("c3", system="x" * 300))
     assert exc.value.status == 413
     # Seules les images matricielles, et l'audio (une réponse lue à voix
-    # haute), sont gardés.
+    # haute, un audio à transcrire), sont gardés.
     with pytest.raises(conversations.HistoryError, match="images"):
         conversations.add_asset("a", "c1", "x.svg", b"<svg onload=alert(1)>")
     wav = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\0" * 28
     got = conversations.add_asset("a", "c1", "voix.wav", wav)
     assert got["type"] == "audio/wav"
     assert conversations.asset("a", got["id"])[:2] == ("audio/wav", "voix.wav")
+    # Le micro : WebM (Chrome), MP4 (Safari).
+    assert conversations.add_asset("a", "c1", "m.webm", b"\x1aE\xdf\xa3" + b"\0" * 20)["type"] == "audio/webm"
+    assert conversations.add_asset("a", "c1", "m.m4a", b"\0\0\0\x20ftypM4A " + b"\0" * 20)["type"] == "audio/mp4"
 
 
 def test_images_orphelines_effacees(monkeypatch):

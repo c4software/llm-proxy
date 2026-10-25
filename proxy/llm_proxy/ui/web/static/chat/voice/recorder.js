@@ -1,19 +1,22 @@
 // @ts-check
 /*
-  L'ENREGISTREMENT au micro d'une voix à cloner, avec VueUse : le flux du
-  micro (useUserMedia), le vu-mètre et le chrono (useRafFn) ; l'audio,
-  par MediaRecorder. Brut : sans contrôle automatique du gain ni
-  annulation d'écho (le clonage copierait leurs artefacts). S'arrête de
-  lui-même au bout de MAX secondes. À créer dans un setup() : le micro est
-  rendu quand le composant disparaît.
+  L'ENREGISTREMENT au micro (une voix à cloner, un audio à transcrire),
+  avec VueUse : le flux du micro (useUserMedia), le vu-mètre et le chrono
+  (useRafFn) ; l'audio, par MediaRecorder. Brut : sans contrôle
+  automatique du gain ni annulation d'écho (le clonage copierait leurs
+  artefacts). S'arrête de lui-même au bout de `max` secondes (MAX par
+  défaut). À créer dans un setup() : le micro est rendu quand le
+  composant disparaît.
 
-    const rec = useRecorder();
+    const rec = useRecorder();                  // ou useRecorder({max: 600})
     await rec.start((blob) => …);   // WebM ou Ogg : audio.js le lit
     rec.state.level, rec.state.seconds ; rec.stop() (ou MAX atteint)
 */
 const MAX = 30;
 
-export function useRecorder() {
+/** @param {{max?: number}} [opts] */
+export function useRecorder(opts = {}) {
+  const max = opts.max || MAX;
   const state = Vue.reactive({ recording: false, seconds: 0, level: 0 });
   const supported = VueUse.useSupported(() => typeof MediaRecorder !== "undefined"
     && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
@@ -39,7 +42,7 @@ export function useRecorder() {
       state.level = peak;
     }
     state.seconds = (performance.now() - began) / 1000;
-    if (state.seconds >= MAX) stop();
+    if (state.seconds >= max) stop();
   }, { immediate: false });
 
   function release() {
@@ -89,5 +92,5 @@ export function useRecorder() {
   }
 
   VueUse.tryOnScopeDispose(cancel);
-  return { state, supported, start, stop, cancel, MAX };
+  return { state, supported, start, stop, cancel, MAX: max };
 }

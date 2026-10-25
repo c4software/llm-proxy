@@ -1478,6 +1478,11 @@ button.link.danger { color: var(--err); }
 .voice-modal .voice-studio textarea { resize: vertical; }
 .gen-audio { width: 100%; max-width: 420px; height: 40px; }
 .gen-images:has(.gen-audio) { display: block; }
+/* L'audio d'un message envoyé (modèle de transcription), et le micro. */
+.msg-audio { display: flex; flex-direction: column; gap: 2px; width: min(420px, 70vw); }
+.msg-audio .dim { font-size: 12px; }
+.mic.rec { color: var(--err); }
+.mic.rec .ico { animation: pulse 1.2s ease-in-out infinite; }
 .rec-meter i { display: block; height: 100%; background: var(--accent); transition: width .08s linear; }
 
 /* ── Chat : contexte (jauge, résumé /compact ; chat/compact.js) ── */

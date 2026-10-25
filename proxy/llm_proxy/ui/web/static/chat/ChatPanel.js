@@ -49,6 +49,11 @@
   réponse est son audio, joint. La voix se choisit dans la barre (toute
   faite, ou clonée dans ce navigateur) ; le prompt système donne le ton,
   ou décrit la voix (modèle de conception).
+
+  MODÈLES DE TRANSCRIPTION (`automatic-speech-recognition` au catalogue,
+  voice/transcribe.js) : l'audio du dernier message (joint, ou enregistré
+  au micro de la barre) part à /ui/audio/transcriptions ; la réponse est
+  son texte. Le texte du message, s'il y en a, guide le modèle.
 */
 import { ChatStore } from "./store.js";
 import { inline, dataUrl, ownImage } from "./history.js";
@@ -71,6 +76,8 @@ import * as voice from "./voice/index.js";
 import { VoiceSettings } from "./voice/VoiceSettings.js";
 import { VoiceStudio } from "./voice/VoiceStudio.js";
 import * as speech from "./voice/speech.js";
+import * as asr from "./voice/transcribe.js";
+import { useRecorder } from "./voice/recorder.js";
 import { role as voiceRole, presetVoices, language as voiceLanguage } from "./voice/proxy.js";
 import { clones as voiceClones, load as loadClones } from "./voice/clones.js";
 import { Markdown } from "../lib/markdown.js";
@@ -254,15 +261,17 @@ export const ChatPanel = {
     const uid = S.uid;
 
     // ── modèles ─────────────────────────────────────────────────────────
-    const modelIds = computed(() => models.value.filter((m) => !m.image && !m.voice).map((m) => m.id));
+    const modelIds = computed(() => models.value.filter((m) => !m.image && !m.voice && !m.asr).map((m) => m.id));
     // Les modèles : ceux du catalogue du proxy (de conversation et
     // d'images ; lib/catalog.js, gardé dans le navigateur), puis ceux du
     // navigateur (browser.js), décrits avec ce qu'ils savent faire.
     const browserModels = ref([]);
-    // Les modèles de voix (`voice` : leur rôle, voice/proxy.js) aussi.
+    // Les modèles de voix (`voice` : leur rôle, voice/proxy.js) et de
+    // transcription (`asr`) aussi.
     const models = computed(() => catalogState.data
-      .filter((m) => m.chat || m.image || m.type === "text-to-speech")
-      .map((m) => (m.type === "text-to-speech" ? { ...m, voice: voiceRole(m.id) } : m))
+      .filter((m) => m.chat || m.image || m.type === "text-to-speech" || m.type === "automatic-speech-recognition")
+      .map((m) => (m.type === "text-to-speech" ? { ...m, voice: voiceRole(m.id) }
+        : m.type === "automatic-speech-recognition" ? { ...m, asr: true } : m))
       .sort((a, b) => a.id.localeCompare(b.id)).concat(browserModels.value));
     // Sans catalogue gardé, l'échec se dit ; avec, le bouton le rappelle.
     const modelsError = computed(() => catalogState.error && !catalogState.data.length
@@ -279,14 +288,14 @@ export const ChatPanel = {
     // La liste, groupée par fournisseur (le préfixe « fournisseur/ » de
     // l'identifiant, ou le `group` de l'entrée) : sous chaque groupe, le
     // seul nom du modèle. La conversation d'abord, puis le navigateur,
-    // puis les images, puis les voix.
+    // puis les images, puis les voix, puis les transcriptions.
     const modelGroups = computed(() => {
       const groups = new Map();
       for (const m of models.value) {
         const cut = m.id.indexOf("/");
         const from = m.group || (cut > 0 ? m.id.slice(0, cut) : "Autres");
-        const label = m.image ? "Images · " + from : m.voice ? "Voix · " + from : from;
-        if (!groups.has(label)) groups.set(label, { label, rank: m.voice ? 3 : m.image ? 2 : m.browser ? 1 : 0, models: [] });
+        const label = m.image ? "Images · " + from : m.voice ? "Voix · " + from : m.asr ? "Transcription · " + from : from;
+        if (!groups.has(label)) groups.set(label, { label, rank: m.asr ? 4 : m.voice ? 3 : m.image ? 2 : m.browser ? 1 : 0, models: [] });
         const name = m.name || (cut > 0 ? m.id.slice(cut + 1) : m.id);
         const notes = [m.vision && !m.image && "vision", m.voice && speech.ROLE_LABELS[m.voice],
                        m.availability && m.availability !== "available" && "à télécharger"];
@@ -299,8 +308,11 @@ export const ChatPanel = {
     // Un modèle de voix : son rôle (custom, clone, design), sinon «».
     const voiceOf = (id) => (models.value.find((m) => m.id === id) || {}).voice || "";
     const voiceMode = computed(() => (current.value ? voiceOf(current.value.model) : ""));
-    // Ni conversation ni outils : une image, ou une lecture.
-    const genMode = computed(() => imageMode.value || !!voiceMode.value);
+    // Un modèle de transcription (voice/transcribe.js).
+    const isAsr = (id) => !!(models.value.find((m) => m.id === id) || {}).asr;
+    const asrMode = computed(() => !!current.value && isAsr(current.value.model));
+    // Ni conversation ni outils : une image, une lecture, une transcription.
+    const genMode = computed(() => imageMode.value || !!voiceMode.value || asrMode.value);
     const imageSizes = computed(() => chat.value.image_sizes || ["512x512"]);
     // Le modèle d'une nouvelle conversation : celui que le proxy
     // présélectionne ([ui].chat_model), s'il est au catalogue ; sinon le
@@ -310,7 +322,7 @@ export const ChatPanel = {
       if (preset && modelIds.value.includes(preset)) return preset;
       const last = lastModel.value;
       if (last && modelIds.value.includes(last)) return last;
-      const first = models.value.find((m) => !m.image && !m.voice && m.byDefault !== false);
+      const first = models.value.find((m) => !m.image && !m.voice && !m.asr && m.byDefault !== false);
       return (first && first.id) || last || "";
     }
     // Des images à un modèle que le catalogue ne dit pas capable de les
@@ -321,9 +333,13 @@ export const ChatPanel = {
       return !!(m && !m.vision && !m.image && pending.value.some((a) => a.kind === "image"));
     });
     // Un modèle d'images ne reçoit qu'UNE image (à retoucher) : ni fichier
-    // texte, ni seconde image.
-    const unsent = computed(() => (imageMode.value && (pending.value.some((a) => a.kind !== "image")
-      || pending.value.filter((a) => a.kind === "image").length > 1)) || (!!voiceMode.value && pending.value.length > 0));
+    // texte, ni seconde image ; un modèle de transcription, que l'audio ;
+    // les autres, jamais l'audio.
+    const unsent = computed(() => (imageMode.value ? pending.value.some((a) => a.kind !== "image")
+      || pending.value.filter((a) => a.kind === "image").length > 1
+      : voiceMode.value ? pending.value.length > 0
+      : asrMode.value ? pending.value.some((a) => a.kind !== "audio")
+      : pending.value.some((a) => a.kind === "audio")));
 
     async function loadModels() {
       // Chrome peut mettre quelques secondes à dire ses modèles : le
@@ -342,7 +358,7 @@ export const ChatPanel = {
     }
 
     watch(() => current.value && current.value.model, (m) => {
-      if (m && !isImage(m) && !voiceOf(m)) lastModel.value = m;
+      if (m && !isImage(m) && !voiceOf(m) && !isAsr(m)) lastModel.value = m;
     });
 
     // Incognito : la conversation vide change de genre ; sinon, une neuve
@@ -650,6 +666,7 @@ export const ChatPanel = {
     async function respond(conv, resumeMsg = null) {
       if (!resumeMsg && isImage(conv.model)) return generate(conv);
       if (!resumeMsg && voiceOf(conv.model)) return speakReply(conv);
+      if (!resumeMsg && isAsr(conv.model)) return transcribeReply(conv);
       if (!resumeMsg) {
         conv.messages.push({ id: uid(), role: "assistant", content: "", reasoning: "",
                              tools: [], sources: [], model: conv.model, usage: null,
@@ -1290,6 +1307,55 @@ export const ChatPanel = {
       }
     }
 
+    // ── un modèle de transcription (voice/transcribe.js) ────────────────
+    // L'audio du dernier message (data URL, ou adresse /ui/assets une fois
+    // la conversation gardée) → le texte de la réponse.
+    async function transcribeReply(conv) {
+      const msg = { id: uid(), role: "assistant", content: "", reasoning: "", tools: [], sources: [],
+                    attachments: [], asr: true, model: conv.model, usage: null, error: "",
+                    started: Date.now(), duration: 0 };
+      const ask = [...conv.messages].reverse().find((m) => m.role === "user");
+      conv.messages.push(msg);
+      conv.updated = Date.now();
+      const live = conv.messages[conv.messages.length - 1];
+      streaming.value = true;
+      status.value = "";
+      const ctrl = controller = new AbortController();
+      try {
+        const sources = ((ask && ask.attachments) || []).filter((a) => a.kind === "audio" && a.data);
+        const blobs = [];
+        for (const a of sources) blobs.push(await (await fetch(a.data, { signal: ctrl.signal })).blob());
+        const got = await asr.transcribeTurn({
+          audio: blobs, model: conv.model, prompt: ask ? ask.content : "",
+          language: asr.languageCode(voice.prefs.language), incognito: !!conv.incognito, signal: ctrl.signal,
+          onPart: (k, n) => { live.progress = n > 1 ? `passage ${k + 1} / ${n}` : ""; } });
+        live.audioDuration = got.duration;
+        live.content = got.text || "(rien d'entendu)";
+      } catch (e) {
+        live.error = e.name === "AbortError" ? "Arrêté." : e.message;
+      } finally {
+        delete live.progress;
+        done(conv, live, ctrl);
+      }
+    }
+    // Le micro de la barre (modèle de transcription) : l'enregistrement
+    // rejoint les pièces jointes du message.
+    const rec = useRecorder({ max: 10 * 60 });
+    async function toggleRecord() {
+      if (rec.state.recording) { rec.stop(); return; }
+      try {
+        await rec.start((blob) => {
+          const ext = /ogg/.test(blob.type) ? "ogg" : /mp4/.test(blob.type) ? "m4a" : "webm";
+          const name = "micro-" + new Date().toLocaleTimeString("fr-FR").replace(/:/g, "-") + "." + ext;
+          const r = new FileReader();
+          r.onload = () => { pending.value.push({ kind: "audio", name, type: blob.type, size: blob.size, data: String(r.result) }); };
+          r.readAsDataURL(blob);
+        });
+        status.value = "";
+      } catch (e) { status.value = "Micro : " + (e.name === "NotAllowedError" ? "accès refusé" : e.message); }
+    }
+    watch(asrMode, (on) => { if (!on && rec.state.recording) rec.cancel(); });
+
     // L'image agrandie (clic sur une image rendue), et la retouche : l'image
     // rejoint les pièces jointes du message en cours.
     const zoom = ref(null);
@@ -1614,7 +1680,7 @@ export const ChatPanel = {
 
     return { chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
              ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes,
-             voiceMode, genMode, voiceChoices, newVoice, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
+             voiceMode, asrMode, rec, toggleRecord, genMode, voiceChoices, newVoice, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, pickFiles, pickFolderFiles, closeFolder, folderReady, folderCount, attachOpen,
@@ -1768,10 +1834,12 @@ export const ChatPanel = {
 
       <div class="thread" ref="thread" @scroll="onScroll" @click="onThreadClick">
         <div class="empty" v-if="!current.messages.length">
-          <div class="big">{{ imageMode ? "Quelle image ?" : voiceMode ? "Quel texte lire ?" : current.incognito ? "Une question, sans trace ?" : "Une question ?" }}</div>
+          <div class="big">{{ imageMode ? "Quelle image ?" : voiceMode ? "Quel texte lire ?" : asrMode ? "Quel audio transcrire ?" : current.incognito ? "Une question, sans trace ?" : "Une question ?" }}</div>
           <div v-if="voiceMode === 'design'">La voix se décrit dans le prompt système (Réglages) : genre, âge, timbre, accent, style.</div>
           <div v-else-if="voiceMode">Le message envoyé est lu par la voix choisie<template v-if="voiceMode === 'custom'"> ;
             le prompt système (Réglages) en donne le ton</template>.</div>
+          <div v-if="asrMode">Joindre un audio (ou l'enregistrer : Micro) ; la réponse est son texte.
+            Le message, facultatif, guide le modèle (noms propres, vocabulaire).</div>
           <div v-if="!current.model">Choisir un modèle</div>
         </div>
         <article v-for="(m, i) in current.messages" :key="m.id" :data-msg="m.id" class="msg"
@@ -1804,6 +1872,9 @@ export const ChatPanel = {
               <div class="attachments" v-if="m.attachments && m.attachments.length">
                 <template v-for="a in m.attachments" :key="a.name">
                   <img v-if="a.kind === 'image' && a.data" :src="a.data" :alt="a.name">
+                  <span v-else-if="a.kind === 'audio' && a.data" class="msg-audio">
+                    <audio class="gen-audio" controls preload="metadata" :src="a.data" @play="onlyOne"></audio>
+                    <span class="dim">{{ a.name }}</span></span>
                   <span v-else class="chip file" :data-ext="extOf(a.name)">{{ a.name }}<span class="dim" v-if="a.kind === 'image'">
                     · image absente</span></span>
                 </template>
@@ -1909,7 +1980,8 @@ export const ChatPanel = {
                  && (m.image ? m.want > (m.attachments || []).length : i === current.messages.length - 1 && !m.content)">
               <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ m.want > 1
                 ? " " + ((m.attachments || []).length + 1) + " / " + m.want : "" }}…</span>
-              <span class="dim" v-else-if="m.voice">synthèse vocale{{ m.progress ? " · " + m.progress : "" }}…</span></div>
+              <span class="dim" v-else-if="m.voice">synthèse vocale{{ m.progress ? " · " + m.progress : "" }}…</span>
+              <span class="dim" v-else-if="m.asr">transcription{{ m.progress ? " · " + m.progress : "" }}…</span></div>
             <p class="msg-error" v-if="m.error">{{ m.error }}
               <button type="button" class="link" v-if="tooLong(m) && i === current.messages.length - 1 && !streaming"
                       @click="retryCompacted">Résumer la conversation et réessayer</button></p>
@@ -1926,6 +1998,7 @@ export const ChatPanel = {
               <button type="button" class="link" v-if="m.content && voiceSupported" @click="listen(m)"
                       :title="'Lire à voix haute (' + voiceName + ')'">{{ playing.id === m.id
                         ? (playing.loading ? "Synthèse…" : "Arrêter la lecture") : "Écouter" }}</button>
+              <span v-if="m.asr && m.audioDuration">{{ m.audioDuration.toFixed(1) }} s d'audio</span>
               <!-- Une image : ses actions ici ; plusieurs : dans l'image agrandie. -->
               <template v-if="m.voice && m.attachments.length && m.attachments[0].data">
                 <span v-if="m.voiceName">voix : {{ m.voiceName }}</span>
@@ -2009,10 +2082,11 @@ export const ChatPanel = {
             <kbd>Tab</kbd></button>
         </div>
         <textarea ref="input" v-model="draft" rows="1" @keydown="onKey" @paste="onPaste"
-                  :placeholder="narrow ? (streaming ? 'Réponse en cours… (mise en file)' : imageMode ? 'Décrire l’image…' : voiceMode ? 'Texte à lire…' : 'Écrire un message…')
+                  :placeholder="narrow ? (streaming ? 'Réponse en cours… (mise en file)' : imageMode ? 'Décrire l’image…' : voiceMode ? 'Texte à lire…' : asrMode ? 'Contexte (facultatif)…' : 'Écrire un message…')
                     : streaming ? 'Réponse en cours — Entrée pour mettre un message en file'
                     : imageMode ? 'Décrire l’image à générer — Entrée pour envoyer'
                     : voiceMode ? 'Texte à lire à voix haute — Entrée pour envoyer'
+                    : asrMode ? 'Audio joint ou enregistré ; contexte facultatif (noms propres, vocabulaire) — Entrée pour envoyer'
                     : 'Écrire un message — Entrée pour envoyer'"
                   title="Entrée pour envoyer, Maj+Entrée pour aller à la ligne"></textarea>
         <div class="composer-bar">
@@ -2024,13 +2098,18 @@ export const ChatPanel = {
               <span class="lbl">Joindre</span></button>
             <div class="menu" role="menu" v-show="attachOpen" @click="attachOpen = false">
               <button type="button" role="menuitem" @click="pickFiles"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/></svg>
-                <span>Fichiers…<small>images, textes : joints au message</small></span></button>
+                <span>Fichiers…<small>{{ asrMode ? "audios : transcrits" : "images, textes : joints au message" }}</small></span></button>
               <button type="button" role="menuitem" v-if="caps.folder && canPick" @click.stop="pickFolder"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
                 <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut, propose des écritures</small></span></button>
               <button type="button" role="menuitem" v-else-if="caps.folder" @click="pickFolderFiles"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
                 <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut ; écritures téléchargées</small></span></button>
             </div>
           </div>
+          <button type="button" class="btn ghost ico-btn mic" v-if="asrMode && rec.supported.value"
+                  :class="{ rec: rec.state.recording }" @click="toggleRecord"
+                  :title="rec.state.recording ? 'Arrêter : l’enregistrement est joint au message' : 'Enregistrer au micro (' + rec.MAX / 60 + ' min au plus)'">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+            <span class="lbl">{{ rec.state.recording ? "Arrêter · " + Math.floor(rec.state.seconds) + " s" : "Micro" }}</span></button>
           <div class="attach-menu tools-menu" v-if="!genMode && (hostedShown.length || devicesShown.length)">
             <button type="button" class="btn ghost attach ico-btn" aria-haspopup="menu"
                     :aria-expanded="String(toolsOpen)" @click="toolsOpen = !toolsOpen"
@@ -2142,6 +2221,8 @@ export const ChatPanel = {
           </div>
           <span class="status" :class="{ warn: (blind || unsent) && !status }">{{ status
             || (unsent && voiceMode ? "les pièces jointes ne sont pas lues"
+              : unsent && asrMode ? "seuls les audios sont transcrits"
+              : unsent && !imageMode ? "l'audio n'est lu que par un modèle de transcription"
               : unsent ? "seule la première image est envoyée (à retoucher)"
             : blind ? "ce modèle ne lit peut-être pas les images" : "") }}</span>
           <button type="submit" class="btn ico-btn send" :class="{ ghost: streaming }" :disabled="!canSend"

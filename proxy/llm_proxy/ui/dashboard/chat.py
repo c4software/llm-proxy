@@ -160,8 +160,8 @@ async def ui_images(request: Request):
     return await forward_post(request, "/v1/images/generations", "openai")
 
 
-# La voix du chat (synthèse), relayée comme /v1/audio/*, comptée à la clé
-# connectée.
+# La voix du chat (synthèse, transcription), relayée comme /v1/audio/*,
+# comptée à la clé connectée.
 def _chat_closed():
     if not UI_CHAT:
         return error_response("openai", 404, "unknown_route",
@@ -223,31 +223,85 @@ async def ui_images_edits(request: Request):
     if kind is None:
         return error_response("openai", 400, "invalid_request_error",
                               "`image` n'est ni PNG, ni JPEG, ni GIF, ni WebP")
+    fields = {"prompt": prompt.strip()}
+    for name in ("size", "n"):
+        if payload.get(name) not in (None, ""):
+            fields[name] = str(payload[name])
+    # Le coût : le prompt, pas les octets de l'image.
+    return await _relay_form(request, payload, fields, (
+        "image", "image." + kind.split("/")[1], image, kind),
+        "/v1/images/edits", prompt.encode())
+
+
+async def _relay_form(request: Request, payload: dict, fields: dict,
+                      file: tuple, normalized: str, cost: bytes):
+    """Un corps JSON du chat relayé en FORMULAIRE (multipart) à la route
+    `normalized` du backend que nomme son `model` : préfixe retiré, porte
+    de quota (coût estimé sur `cost`), flux. `file` : (champ, nom,
+    octets, type)."""
     model_key = str(payload.get("model") or "")
     backend, prefixed = route_backend({"model": model_key})
     if backend is None:
         return error_response("openai", 400, "unknown_backend_prefix",
                               unknown_prefix_message(model_key))
-    fields = {"model": model_key[len(backend.name) + 1:] if prefixed
-              else model_key, "prompt": prompt.strip()}
-    for name in ("size", "n"):
-        if payload.get(name) not in (None, ""):
-            fields[name] = str(payload[name])
-    form = httpx2.Request("POST", "http://form.invalid", data=fields, files={
-        "image": ("image." + kind.split("/")[1], image, kind)})
+    field, name, data, kind = file
+    form = httpx2.Request("POST", "http://form.invalid", data={
+        "model": model_key[len(backend.name) + 1:] if prefixed else model_key,
+        **fields}, files={field: (name, data, kind)})
     raw = form.read()
     # La requête relayée porte le type du formulaire, pas celui du JSON.
     headers = [(k, v) for k, v in request.scope["headers"]
                if k.lower() not in (b"content-type", b"content-length")]
     headers.append((b"content-type", form.headers["content-type"].encode()))
     relayed = Request({**request.scope, "headers": headers}, request.receive)
-    call = Call(backend, model_key, "/v1/images/edits", "openai")
-    # Le coût : le prompt, pas les octets de l'image.
-    blocked = await gate(call, relayed, payload, albert.estimate_generic_cost(
-        prompt.encode(), payload))
+    call = Call(backend, model_key, normalized, "openai")
+    blocked = await gate(call, relayed, payload,
+                         albert.estimate_generic_cost(cost, payload))
     if blocked is not None:
         return blocked
-    return await forward(call, relayed, "v1/images/edits", raw)
+    return await forward(call, relayed, normalized.lstrip("/"), raw)
+
+
+AUDIO_URL = re.compile(r"data:(audio/[\w.+-]+)(?:;[\w.+-]+=[\w.+-]+)*;base64,"
+                       r"([A-Za-z0-9+/=\s]+)\Z")
+
+
+@router.post("/ui/audio/transcriptions")
+async def ui_transcriptions(request: Request):
+    """La transcription d'un audio du chat (modèle de transcription choisi
+    dans la conversation) : un corps JSON (`model`, `file` en data URL,
+    `language` et `prompt` au choix) converti en formulaire
+    /v1/audio/transcriptions. JSON pour la même raison que la retouche."""
+    if (bad := _chat_closed()) is not None:
+        return bad
+    if (bad := json_only(request)) is not None:
+        return bad
+    incognito(request)
+    payload = parse_json(await request.body())
+    if not isinstance(payload, dict):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps JSON attendu")
+    found = AUDIO_URL.match(str(payload.get("file") or ""))
+    if found is None:
+        return error_response("openai", 400, "invalid_request_error",
+                              "`file` (data URL d'un audio) attendu")
+    try:
+        data = base64.b64decode(found.group(2))
+    except (binascii.Error, ValueError):
+        return error_response("openai", 400, "invalid_request_error",
+                              "`file` illisible")
+    kind = files.sniff_audio(data)
+    if kind is None:
+        return error_response("openai", 400, "invalid_request_error",
+                              "`file` n'est ni WAV, ni MP3, ni Ogg, ni FLAC, "
+                              "ni WebM, ni MP4")
+    fields = {name: str(payload[name]) for name in ("language", "prompt")
+              if isinstance(payload.get(name), str) and payload[name].strip()}
+    ext = {"audio/mpeg": "mp3", "audio/mp4": "m4a"}.get(kind, kind.split("/")[1])
+    # Le coût : le prompt, pas les octets de l'audio.
+    return await _relay_form(request, payload, fields, (
+        "file", "audio." + ext, data, kind), "/v1/audio/transcriptions",
+        fields.get("prompt", "").encode())
 
 
 @router.get("/ui/usage")

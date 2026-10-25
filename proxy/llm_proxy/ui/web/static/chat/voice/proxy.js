@@ -1,7 +1,8 @@
 // @ts-check
 /*
   Le moteur PROXY de la voix : la synthèse d'un modèle du catalogue
-  (POST /ui/audio/speech, compté à la clé connectée ; docs/voix.md).
+  (POST /ui/audio/speech, compté à la clé connectée ; docs/voix.md), et
+  la transcription (POST /ui/audio/transcriptions, transcribe.js).
   Les modèles de synthèse (`text-to-speech` au catalogue), rangés par
   rôle d'après leur nom (Qwen3-TTS) :
 
@@ -21,6 +22,7 @@ import { catalogState } from "../../lib/catalog.js";
 import { state } from "./state.js";
 import { sentences } from "./text.js";
 import * as clones from "./clones.js";
+import { base64 as audioBase64 } from "./audio.js";
 
 const RETRIES = 5;
 const RETRY_MS = 3000;
@@ -103,6 +105,21 @@ export async function synthesize(body, opts = {}) {
     body: JSON.stringify({ response_format: "wav", ...body }),
   }), opts.signal);
   return r.blob();
+}
+
+/** Une transcription : un audio (WAV) → son texte.
+ * @param {Blob} wav @param {{model: string, language?: string, prompt?: string}} body
+ * @param {{incognito?: boolean, signal?: AbortSignal}} [opts] @returns {Promise<string>} */
+export async function transcribe(wav, body, opts = {}) {
+  const file = "data:audio/wav;base64," + await audioBase64(wav);
+  const r = await withRetry(() => fetch("/ui/audio/transcriptions", {
+    method: "POST", signal: opts.signal,
+    headers: { "content-type": "application/json", accept: "application/json",
+               ...(opts.incognito ? { "x-incognito": "1" } : {}) },
+    body: JSON.stringify({ ...body, file }),
+  }), opts.signal);
+  const json = await r.json();
+  return String((json && json.text) || "").trim();
 }
 
 /** @typedef {{kind: "preset", model: string, name: string} | {kind: "clone", model: string, id: string}} Voice */

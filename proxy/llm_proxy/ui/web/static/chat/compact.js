@@ -53,7 +53,7 @@ export const preamble = (s) => "RÉSUMÉ DE LA CONVERSATION JUSQU'ICI (les messa
 /** @param {any} m */
 function chars(m) {
   let n = (m.content || "").length;
-  for (const a of m.attachments || []) n += a.kind === "text" ? (a.data || "").length : IMAGE_TOKENS * CHARS_PER_TOKEN;
+  for (const a of m.attachments || []) n += a.kind === "text" ? (a.data || "").length : a.kind === "image" ? IMAGE_TOKENS * CHARS_PER_TOKEN : 0;
   for (const st of m.steps || []) {
     n += (st.content || "").length;
     for (const c of st.calls || []) n += (c.arguments || "").length + (c.result || "").length;

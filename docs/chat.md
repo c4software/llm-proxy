@@ -123,6 +123,28 @@ Un long texte (6 000 caractères au plus) part par passages, mis bout à
 bout en un seul audio ; la langue est celle des réglages de la voix,
 sinon celle du navigateur. Pas d'outils ni de pièces jointes.
 
+**Modèles de transcription** (*Transcription · backend* dans le
+sélecteur, les modèles `automatic-speech-recognition`, Qwen3-ASR ou
+Whisper par exemple) : l'audio du message est **écouté**, et la réponse
+est son texte — à copier, écouter, ou reprendre en passant à un modèle de
+conversation dans la même conversation.
+
+- L'audio se **joint** (*Joindre → Fichiers…*, glisser-déposer, coller :
+  WAV, MP3, M4A, Ogg, FLAC, WebM, 20 Mo au plus) ou s'**enregistre** au
+  bouton *Micro* de la barre (10 minutes au plus ; *Arrêter* le joint au
+  message). Plusieurs audios : un paragraphe chacun.
+- Le texte du message, facultatif, **guide** le modèle (`prompt` : noms
+  propres, vocabulaire).
+- Tout se prépare dans la page : l'audio décodé, mono 16 kHz, en WAV
+  (Qwen3-ASR ne lit que lui) ; un long audio part par passages d'une
+  minute au plus, coupés dans le moment le plus calme, puis mis bout à
+  bout. 30 minutes au plus.
+- La langue est celle des réglages de la voix si elle y est choisie ;
+  sinon le modèle la reconnaît.
+- L'audio est gardé avec la conversation (`/ui/assets`) : *Régénérer* le
+  relit. Joint à un modèle de conversation, il n'est pas envoyé (la page
+  le dit).
+
 **Panneau Images** (bouton *Images (n)* de l'en-tête, dès qu'il y en a
 une) : toutes les images générées de la conversation — modèle d'images,
 outil *Images*, graphiques d'un script, captures —, pas celles jointes
@@ -471,6 +493,7 @@ envoyer sans requête CORS préliminaire, que le proxy ne sert pas.
 | `POST /ui/images/generations` | `/v1/images/generations` |
 | `POST /ui/images/edits` | corps JSON (`model`, `prompt`, `image` en data URL, `size`) converti en formulaire pour `/v1/images/edits` |
 | `POST /ui/audio/speech`, `GET /ui/audio/voices` | `/v1/audio/*` (voir [Voix](voix.md)) |
+| `POST /ui/audio/transcriptions` | JSON (`model`, `file` en data URL, `language`, `prompt`) relayé en formulaire à `/v1/audio/transcriptions` |
 | `GET /ui/conversations` | conversations ; `?summary=1&limit=&offset=` : leurs résumés par pages (`next` : la page suivante) ; `?q=` : les résumés de celles qui contiennent chaque mot |
 | `GET` / `PUT` / `DELETE /ui/conversations/{id}` | une conversation |
 | `POST /ui/assets`, `GET /ui/assets/{id}` | images des conversations |
