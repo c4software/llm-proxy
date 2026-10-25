@@ -1469,6 +1469,8 @@ button.link.danger { color: var(--err); }
 .voice-studio audio { width: 100%; max-width: 480px; height: 36px; }
 .rec-meter { display: inline-block; width: 120px; height: 6px; border-radius: 3px; background: var(--track);
   overflow: hidden; }
+.gen-audio { width: 100%; max-width: 420px; height: 40px; }
+.gen-images:has(.gen-audio) { display: block; }
 .rec-meter i { display: block; height: 100%; background: var(--accent); transition: width .08s linear; }
 
 /* ── Chat : contexte (jauge, résumé /compact ; chat/compact.js) ── */

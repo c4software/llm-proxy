@@ -10,7 +10,8 @@
     save(conv)       le document entier, après avoir envoyé ses images
     drop(id)         supprime (images comprises)
 
-  Les IMAGES (jointes, générées) partent à part (/ui/assets) : le
+  Les IMAGES (jointes, générées) et l'AUDIO (réponse d'un modèle de
+  voix, voice/speech.js) partent à part (/ui/assets) : le
   document n'en garde que l'adresse, /ui/assets/<id>. Ce qui part au
   modèle, ou à la retouche, les reprend en data URL (inline, dataUrl).
   Une conversation incognito n'est jamais envoyée.
@@ -61,7 +62,7 @@ async function upload(conv) {
   const isData = (v) => typeof v === "string" && v.startsWith("data:");
   for (const m of conv.messages || []) {
     for (const a of m.attachments || []) {
-      if (a.kind !== "image" || !isData(a.data)) continue;
+      if ((a.kind !== "image" && a.kind !== "audio") || !isData(a.data)) continue;
       const data = a.data;
       const url = await put(data, a.name);
       if (a.data === data) a.data = url;

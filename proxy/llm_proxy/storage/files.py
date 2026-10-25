@@ -84,6 +84,20 @@ def sniff(data: bytes) -> str | None:
     return None
 
 
+def sniff_audio(data: bytes) -> str | None:
+    """Le type d'un fichier audio (la voix du chat), d'après ses premiers
+    octets ; None pour tout le reste."""
+    if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return "audio/wav"
+    if data[:4] == b"OggS":
+        return "audio/ogg"
+    if data[:4] == b"fLaC":
+        return "audio/flac"
+    if data[:3] == b"ID3" or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):
+        return "audio/mpeg"
+    return None
+
+
 def safe_name(name: str) -> str:
     """Le nom servi : le dernier élément du chemin, réduit aux lettres,
     chiffres, `.`, `-` et `_` — rien qui ait un sens dans une URL, un

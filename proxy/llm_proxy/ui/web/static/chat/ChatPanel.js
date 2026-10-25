@@ -43,6 +43,12 @@
   reste affiché). Automatique, au choix, avant un message quand le
   contexte dépasse AUTO_AT ; « Résumer et réessayer » sur une réponse
   refusée pour un contexte trop long.
+
+  MODÈLES DE VOIX (`text-to-speech` au catalogue, voice/speech.js) :
+  comme ceux d'images, le dernier message part à /ui/audio/speech ; la
+  réponse est son audio, joint. La voix se choisit dans la barre (toute
+  faite, ou clonée dans ce navigateur) ; le prompt système donne le ton,
+  ou décrit la voix (modèle de conception).
 */
 import { ChatStore } from "./store.js";
 import { inline, dataUrl, ownImage } from "./history.js";
@@ -63,6 +69,9 @@ import { setOpener as setLinuxOpener, vm as linuxVm } from "./tools/sandbox/linu
 import { download, useCopy } from "../lib/files.js";
 import * as voice from "./voice/index.js";
 import { VoiceSettings } from "./voice/VoiceSettings.js";
+import * as speech from "./voice/speech.js";
+import { role as voiceRole, presetVoices, language as voiceLanguage } from "./voice/proxy.js";
+import { clones as voiceClones, load as loadClones } from "./voice/clones.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
@@ -244,12 +253,15 @@ export const ChatPanel = {
     const uid = S.uid;
 
     // ── modèles ─────────────────────────────────────────────────────────
-    const modelIds = computed(() => models.value.filter((m) => !m.image).map((m) => m.id));
+    const modelIds = computed(() => models.value.filter((m) => !m.image && !m.voice).map((m) => m.id));
     // Les modèles : ceux du catalogue du proxy (de conversation et
     // d'images ; lib/catalog.js, gardé dans le navigateur), puis ceux du
     // navigateur (browser.js), décrits avec ce qu'ils savent faire.
     const browserModels = ref([]);
-    const models = computed(() => catalogState.data.filter((m) => m.chat || m.image)
+    // Les modèles de voix (`voice` : leur rôle, voice/proxy.js) aussi.
+    const models = computed(() => catalogState.data
+      .filter((m) => m.chat || m.image || m.type === "text-to-speech")
+      .map((m) => (m.type === "text-to-speech" ? { ...m, voice: voiceRole(m.id) } : m))
       .sort((a, b) => a.id.localeCompare(b.id)).concat(browserModels.value));
     // Sans catalogue gardé, l'échec se dit ; avec, le bouton le rappelle.
     const modelsError = computed(() => catalogState.error && !catalogState.data.length
@@ -266,16 +278,16 @@ export const ChatPanel = {
     // La liste, groupée par fournisseur (le préfixe « fournisseur/ » de
     // l'identifiant, ou le `group` de l'entrée) : sous chaque groupe, le
     // seul nom du modèle. La conversation d'abord, puis le navigateur,
-    // puis les images.
+    // puis les images, puis les voix.
     const modelGroups = computed(() => {
       const groups = new Map();
       for (const m of models.value) {
         const cut = m.id.indexOf("/");
         const from = m.group || (cut > 0 ? m.id.slice(0, cut) : "Autres");
-        const label = m.image ? "Images · " + from : from;
-        if (!groups.has(label)) groups.set(label, { label, rank: m.image ? 2 : m.browser ? 1 : 0, models: [] });
+        const label = m.image ? "Images · " + from : m.voice ? "Voix · " + from : from;
+        if (!groups.has(label)) groups.set(label, { label, rank: m.voice ? 3 : m.image ? 2 : m.browser ? 1 : 0, models: [] });
         const name = m.name || (cut > 0 ? m.id.slice(cut + 1) : m.id);
-        const notes = [m.vision && !m.image && "vision",
+        const notes = [m.vision && !m.image && "vision", m.voice && speech.ROLE_LABELS[m.voice],
                        m.availability && m.availability !== "available" && "à télécharger"];
         groups.get(label).models.push({ id: m.id, text: [name, ...notes.filter(Boolean)].join(" · ") });
       }
@@ -283,6 +295,11 @@ export const ChatPanel = {
     });
     const isImage = (id) => !!(models.value.find((m) => m.id === id) || {}).image;
     const imageMode = computed(() => !!current.value && isImage(current.value.model));
+    // Un modèle de voix : son rôle (custom, clone, design), sinon «».
+    const voiceOf = (id) => (models.value.find((m) => m.id === id) || {}).voice || "";
+    const voiceMode = computed(() => (current.value ? voiceOf(current.value.model) : ""));
+    // Ni conversation ni outils : une image, ou une lecture.
+    const genMode = computed(() => imageMode.value || !!voiceMode.value);
     const imageSizes = computed(() => chat.value.image_sizes || ["512x512"]);
     // Le modèle d'une nouvelle conversation : celui que le proxy
     // présélectionne ([ui].chat_model), s'il est au catalogue ; sinon le
@@ -292,7 +309,7 @@ export const ChatPanel = {
       if (preset && modelIds.value.includes(preset)) return preset;
       const last = lastModel.value;
       if (last && modelIds.value.includes(last)) return last;
-      const first = models.value.find((m) => !m.image && m.byDefault !== false);
+      const first = models.value.find((m) => !m.image && !m.voice && m.byDefault !== false);
       return (first && first.id) || last || "";
     }
     // Des images à un modèle que le catalogue ne dit pas capable de les
@@ -304,8 +321,8 @@ export const ChatPanel = {
     });
     // Un modèle d'images ne reçoit qu'UNE image (à retoucher) : ni fichier
     // texte, ni seconde image.
-    const unsent = computed(() => imageMode.value && (pending.value.some((a) => a.kind !== "image")
-      || pending.value.filter((a) => a.kind === "image").length > 1));
+    const unsent = computed(() => (imageMode.value && (pending.value.some((a) => a.kind !== "image")
+      || pending.value.filter((a) => a.kind === "image").length > 1)) || (!!voiceMode.value && pending.value.length > 0));
 
     async function loadModels() {
       // Chrome peut mettre quelques secondes à dire ses modèles : le
@@ -324,7 +341,7 @@ export const ChatPanel = {
     }
 
     watch(() => current.value && current.value.model, (m) => {
-      if (m && !isImage(m)) lastModel.value = m;
+      if (m && !isImage(m) && !voiceOf(m)) lastModel.value = m;
     });
 
     // Incognito : la conversation vide change de genre ; sinon, une neuve
@@ -625,6 +642,7 @@ export const ChatPanel = {
     // rechargement.
     async function respond(conv, resumeMsg = null) {
       if (!resumeMsg && isImage(conv.model)) return generate(conv);
+      if (!resumeMsg && voiceOf(conv.model)) return speakReply(conv);
       if (!resumeMsg) {
         conv.messages.push({ id: uid(), role: "assistant", content: "", reasoning: "",
                              tools: [], sources: [], model: conv.model, usage: null,
@@ -988,7 +1006,7 @@ export const ChatPanel = {
     const contextMax = (conv) => { const e = conv && modelEntry(conv.model); return (e && e.context) || 0; };
     const context = computed(() => {
       const c = current.value;
-      if (!c || !c.messages.length || imageMode.value) return null;
+      if (!c || !c.messages.length || genMode.value) return null;
       return Compact.occupancy(c, contextMax(c));
     });
     // Sa répartition, dans le menu de la jauge (seulement ouvert) : ramenée
@@ -1122,7 +1140,7 @@ export const ChatPanel = {
                         hint: "résumer la conversation pour libérer du contexte (les messages restent affichés)" }];
     const commandHints = computed(() => {
       const d = draft.value;
-      if (!d.startsWith("/") || /\s/.test(d) || imageMode.value) return [];
+      if (!d.startsWith("/") || /\s/.test(d) || genMode.value) return [];
       return COMMANDS.filter((c) => c.name.startsWith(d.toLowerCase()));
     });
     function useCommand(c) {
@@ -1192,6 +1210,72 @@ export const ChatPanel = {
         live.error = e.name === "AbortError" ? (live.attachments.length > before ? "" : "Arrêté.") : e.message;
       } finally {
         delete live.want;
+        done(conv, live, ctrl);
+      }
+    }
+
+    // ── un modèle de voix (voice/speech.js) ─────────────────────────────
+    // La voix de la conversation : toute faite (conv.voiceName, parmi
+    // celles du modèle) ou clonée (conv.voiceClone, de ce navigateur).
+    const presets = reactive({});
+    watch(() => current.value && voiceMode.value === "custom" && current.value.model, async (m) => {
+      if (!m || presets[m]) return;
+      try { presets[m] = await presetVoices(m); } catch (e) { status.value = "Voix : " + e.message; }
+    }, { immediate: true });
+    watch(voiceMode, (r) => { if (r === "clone") loadClones(); }, { immediate: true });
+    const voiceChoices = computed(() => {
+      const c = current.value;
+      if (!c) return [];
+      if (voiceMode.value === "custom") return (presets[c.model] || []).map((v) => ({ id: v, name: v }));
+      if (voiceMode.value === "clone") return voiceClones.value.map((v) => ({ id: v.id, name: v.name }));
+      return [];
+    });
+    // Rien de choisi (ou plus là) : la première voix.
+    watch(voiceChoices, (list) => {
+      const c = current.value;
+      const key = voiceMode.value === "clone" ? "voiceClone" : "voiceName";
+      if (c && list.length && !list.some((v) => v.id === c[key])) c[key] = list[0].id;
+    });
+    // Le studio des voix clonées, dans les réglages.
+    const studioTick = ref(0);
+    function newVoice() {
+      settingsOpen.value = true;
+      studioTick.value++;
+    }
+    // La dernière réponse lue : son audio part tout seul. Un audio à la
+    // fois : en lancer un arrête les autres (et la lecture d'Écouter).
+    const justSpoken = ref("");
+    function onlyOne(e) {
+      for (const a of document.querySelectorAll("audio.gen-audio")) if (a !== e.target) a.pause();
+      voice.stop();
+    }
+    async function speakReply(conv) {
+      const r = voiceOf(conv.model);
+      const msg = { id: uid(), role: "assistant", content: "", reasoning: "", tools: [], sources: [],
+                    attachments: [], voice: r, voiceName: "", model: conv.model, usage: null, error: "",
+                    started: Date.now(), duration: 0 };
+      const ask = [...conv.messages].reverse().find((m) => m.role === "user");
+      conv.messages.push(msg);
+      conv.updated = Date.now();
+      const live = conv.messages[conv.messages.length - 1];
+      streaming.value = true;
+      status.value = "";
+      const ctrl = controller = new AbortController();
+      try {
+        if (!ask || !ask.content.trim()) throw new Error("Écrire le texte à lire.");
+        const clone = voiceClones.value.find((v) => v.id === conv.voiceClone);
+        live.voiceName = r === "custom" ? conv.voiceName || "" : r === "clone" ? (clone ? clone.name : "") : "décrite";
+        const got = await speech.speakTurn({
+          text: ask.content, model: conv.model, role: r, voice: conv.voiceName, clone: conv.voiceClone,
+          instructions: conv.system, language: voice.prefs.language || voiceLanguage(),
+          incognito: !!conv.incognito, signal: ctrl.signal,
+          onPart: (k, n) => { live.progress = n > 1 ? `passage ${k + 1} / ${n}` : ""; } });
+        live.attachments.push(got);
+        if (current.value && current.value.id === conv.id) justSpoken.value = live.id;
+      } catch (e) {
+        live.error = e.name === "AbortError" ? "Arrêté." : e.message;
+      } finally {
+        delete live.progress;
         done(conv, live, ctrl);
       }
     }
@@ -1518,7 +1602,8 @@ export const ChatPanel = {
     });
 
     return { chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
-             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
+             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes,
+             voiceMode, genMode, voiceChoices, newVoice, studioTick, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
@@ -1652,7 +1737,7 @@ export const ChatPanel = {
           <label class="check"><input type="checkbox" v-model="current.showReasoning">
             montrer le raisonnement du modèle</label>
         </div>
-        <voice-settings :incognito="!!current.incognito"></voice-settings>
+        <voice-settings :incognito="!!current.incognito" :studio="studioTick"></voice-settings>
         <div class="field" v-if="notifySupported">
           <span>Notifications</span>
           <label class="check"><input type="checkbox" :checked="notifyOn" @change="toggleNotify">
@@ -1672,7 +1757,10 @@ export const ChatPanel = {
 
       <div class="thread" ref="thread" @scroll="onScroll" @click="onThreadClick">
         <div class="empty" v-if="!current.messages.length">
-          <div class="big">{{ imageMode ? "Quelle image ?" : current.incognito ? "Une question, sans trace ?" : "Une question ?" }}</div>
+          <div class="big">{{ imageMode ? "Quelle image ?" : voiceMode ? "Quel texte lire ?" : current.incognito ? "Une question, sans trace ?" : "Une question ?" }}</div>
+          <div v-if="voiceMode === 'design'">La voix se décrit dans le prompt système (Réglages) : genre, âge, timbre, accent, style.</div>
+          <div v-else-if="voiceMode">Le message envoyé est lu par la voix choisie<template v-if="voiceMode === 'custom'"> ;
+            le prompt système (Réglages) en donne le ton</template>.</div>
           <div v-if="!current.model">Choisir un modèle</div>
         </div>
         <article v-for="(m, i) in current.messages" :key="m.id" :data-msg="m.id" class="msg"
@@ -1745,7 +1833,9 @@ export const ChatPanel = {
             </div>
             <div class="gen-images" :class="{ multi: m.attachments.length > 1 }" v-if="m.attachments && m.attachments.length">
               <template v-for="a in m.attachments" :key="a.name">
-                <button v-if="a.data" type="button" class="gen-image" title="Agrandir"
+                <audio v-if="a.kind === 'audio' && a.data" class="gen-audio" controls preload="metadata"
+                       :src="a.data" :autoplay="m.id === justSpoken" @play="onlyOne"></audio>
+                <button v-else-if="a.data" type="button" class="gen-image" title="Agrandir"
                         @click="zoom = a"><img :src="a.data" :alt="a.name" @load="onImageLoad"></button>
                 <span v-else class="chip file" :data-ext="extOf(a.name)">{{ a.name }}<span class="dim">
                   · image absente</span></span>
@@ -1807,7 +1897,8 @@ export const ChatPanel = {
             <div class="typing" v-if="streaming && !m.error
                  && (m.image ? m.want > (m.attachments || []).length : i === current.messages.length - 1 && !m.content)">
               <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ m.want > 1
-                ? " " + ((m.attachments || []).length + 1) + " / " + m.want : "" }}…</span></div>
+                ? " " + ((m.attachments || []).length + 1) + " / " + m.want : "" }}…</span>
+              <span class="dim" v-else-if="m.voice">synthèse vocale{{ m.progress ? " · " + m.progress : "" }}…</span></div>
             <p class="msg-error" v-if="m.error">{{ m.error }}
               <button type="button" class="link" v-if="tooLong(m) && i === current.messages.length - 1 && !streaming"
                       @click="retryCompacted">Résumer la conversation et réessayer</button></p>
@@ -1825,6 +1916,11 @@ export const ChatPanel = {
                       :title="'Lire à voix haute (' + voiceName + ')'">{{ playing.id === m.id
                         ? (playing.loading ? "Synthèse…" : "Arrêter la lecture") : "Écouter" }}</button>
               <!-- Une image : ses actions ici ; plusieurs : dans l'image agrandie. -->
+              <template v-if="m.voice && m.attachments.length && m.attachments[0].data">
+                <span v-if="m.voiceName">voix : {{ m.voiceName }}</span>
+                <span v-if="m.attachments[0].duration">{{ m.attachments[0].duration.toFixed(1) }} s d'audio</span>
+                <a class="link" :href="m.attachments[0].data" :download="m.attachments[0].name">Télécharger</a>
+              </template>
               <template v-if="m.image && m.attachments.length === 1 && m.attachments[0].data">
                 <a class="link" :href="m.attachments[0].data" :download="m.attachments[0].name">Télécharger</a>
                 <button type="button" class="link" v-if="ownImage(m.attachments[0].data)"
@@ -1902,9 +1998,10 @@ export const ChatPanel = {
             <kbd>Tab</kbd></button>
         </div>
         <textarea ref="input" v-model="draft" rows="1" @keydown="onKey" @paste="onPaste"
-                  :placeholder="narrow ? (streaming ? 'Réponse en cours… (mise en file)' : imageMode ? 'Décrire l’image…' : 'Écrire un message…')
+                  :placeholder="narrow ? (streaming ? 'Réponse en cours… (mise en file)' : imageMode ? 'Décrire l’image…' : voiceMode ? 'Texte à lire…' : 'Écrire un message…')
                     : streaming ? 'Réponse en cours — Entrée pour mettre un message en file'
                     : imageMode ? 'Décrire l’image à générer — Entrée pour envoyer'
+                    : voiceMode ? 'Texte à lire à voix haute — Entrée pour envoyer'
                     : 'Écrire un message — Entrée pour envoyer'"
                   title="Entrée pour envoyer, Maj+Entrée pour aller à la ligne"></textarea>
         <div class="composer-bar">
@@ -1927,7 +2024,7 @@ export const ChatPanel = {
                 <input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
             </div>
           </div>
-          <div class="attach-menu tools-menu" v-if="!imageMode && (hostedShown.length || devicesShown.length)">
+          <div class="attach-menu tools-menu" v-if="!genMode && (hostedShown.length || devicesShown.length)">
             <button type="button" class="btn ghost attach ico-btn" aria-haspopup="menu"
                     :aria-expanded="String(toolsOpen)" @click="toolsOpen = !toolsOpen"
                     :title="activeTools.length ? 'Outils actifs : ' + activeTools.join(', ') : 'Aucun outil actif'">
@@ -1979,7 +2076,21 @@ export const ChatPanel = {
               <option v-for="z in imageSizes" :key="z" :value="z">{{ z.replace("x", " × ") }}</option>
             </select>
           </label>
-          <label class="effort" v-if="!imageMode && caps.reasoning" title="Niveau de réflexion du modèle : auto (celui du modèle), non, faible, moyenne, élevée">
+          <label class="effort" v-if="voiceMode === 'custom' || voiceMode === 'clone'"
+                 :title="voiceMode === 'clone' ? 'Voix clonée (gardée dans ce navigateur)' : 'Voix du modèle'">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+            <select v-if="voiceMode === 'custom'" v-model="current.voiceName" :disabled="streaming" aria-label="Voix">
+              <option v-if="!voiceChoices.length" value="" disabled>chargement…</option>
+              <option v-for="v in voiceChoices" :key="v.id" :value="v.id">{{ v.name }}</option>
+            </select>
+            <select v-else :value="current.voiceClone || ''" :disabled="streaming" aria-label="Voix clonée"
+                    @change="$event.target.value === '+' ? ($event.target.value = current.voiceClone || '', newVoice()) : (current.voiceClone = $event.target.value)">
+              <option v-if="!voiceChoices.length" value="" disabled>aucune voix</option>
+              <option v-for="v in voiceChoices" :key="v.id" :value="v.id">{{ v.name }}</option>
+              <option value="+">＋ nouvelle voix…</option>
+            </select>
+          </label>
+          <label class="effort" v-if="!genMode && caps.reasoning" title="Niveau de réflexion du modèle : auto (celui du modèle), non, faible, moyenne, élevée">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>
             <select v-model="current.reasoning" :disabled="streaming" aria-label="Réflexion">
               <option value="auto">auto</option>
@@ -2023,7 +2134,8 @@ export const ChatPanel = {
             </div>
           </div>
           <span class="status" :class="{ warn: (blind || unsent) && !status }">{{ status
-            || (unsent ? "seule la première image est envoyée (à retoucher)"
+            || (unsent && voiceMode ? "les pièces jointes ne sont pas lues"
+              : unsent ? "seule la première image est envoyée (à retoucher)"
             : blind ? "ce modèle ne lit peut-être pas les images" : "") }}</span>
           <button type="submit" class="btn ico-btn send" :class="{ ghost: streaming }" :disabled="!canSend"
                   :title="streaming ? 'Mettre en file' : 'Envoyer'">

@@ -103,6 +103,25 @@ quand Chrome le propose. Il répond **sur l'appareil**, sans le proxy.
   de la conversation), pour la télécharger ou la retoucher. Elle est
   gardée avec la conversation.
 
+**Modèles de voix** (*Voix · backend* dans le sélecteur, les modèles
+`text-to-speech` : [Voix](voix.md)) : le message envoyé est **lu**, et
+la réponse est son audio — un lecteur dans le fil, qui part tout seul
+(un seul audio joue à la fois), *Télécharger* en WAV. Il est gardé avec
+la conversation (`/ui/assets`), comme une image. Selon le modèle :
+
+- *voix toutes faites* (`…-customvoice`) : la voix se choisit dans la
+  barre de saisie ; le prompt système (*Réglages*) donne le ton.
+- *voix clonée* (`…-base`) : une voix clonée de ce navigateur, choisie
+  dans la barre ; *＋ nouvelle voix…* ouvre le studio (voir *Voix
+  clonées* plus bas).
+- *voix décrite* (`…-voice-design`) : le prompt système **décrit** la
+  voix (genre, âge, timbre, accent, style) ; une voix nouvelle à chaque
+  message.
+
+Un long texte (6 000 caractères au plus) part par passages, mis bout à
+bout en un seul audio ; la langue est celle des réglages de la voix,
+sinon celle du navigateur. Pas d'outils ni de pièces jointes.
+
 **Panneau Images** (bouton *Images (n)* de l'en-tête, dès qu'il y en a
 une) : toutes les images générées de la conversation — modèle d'images,
 outil *Images*, graphiques d'un script, captures —, pas celles jointes

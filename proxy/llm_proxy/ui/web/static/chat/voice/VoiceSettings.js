@@ -3,7 +3,9 @@
   Les RÉGLAGES de la voix, dans ceux du chat : le moteur (navigateur ou
   modèle du proxy), la voix, le ton et la langue (proxy), le débit ; les
   voix clonées de ce navigateur (écouter la référence, la télécharger, la
-  supprimer) et le studio qui en crée une (VoiceStudio.js).
+  supprimer) et le studio qui en crée une (VoiceStudio.js) — ouvert aussi
+  par le chat (prop `studio`, un compteur : « nouvelle voix… » d'un
+  modèle de clonage).
 */
 import * as browser from "./browser.js";
 import * as proxy from "./proxy.js";
@@ -16,8 +18,8 @@ const { ref, reactive, computed, watch, onUnmounted } = Vue;
 
 export const VoiceSettings = {
   components: { VoiceStudio },
-  props: { incognito: { type: Boolean, default: false } },
-  setup() {
+  props: { incognito: { type: Boolean, default: false }, studio: { type: Number, default: 0 } },
+  setup(props) {
     const models = proxy.models;
     const proxyOk = proxy.available;
     // Les voix toutes faites de chaque modèle, lues quand le moteur du
@@ -49,7 +51,8 @@ export const VoiceSettings = {
     const defaultLang = computed(() => proxy.language() || "le modèle devine");
 
     // Les voix clonées : écouter une référence, en supprimer une (confirmée).
-    const studioOpen = ref(false);
+    const studioOpen = ref(props.studio > 0);
+    watch(() => props.studio, () => { studioOpen.value = true; clones.load(); });
     const listening = reactive({ id: "", url: "" });
     let player = null;
     function stopRef() {
@@ -86,15 +89,21 @@ export const VoiceSettings = {
       studioOpen.value = false;
       use(c);
     }
+    // Ouvert depuis le chat : le studio à l'écran.
+    const root = ref(null);
+    watch(studioOpen, (open) => {
+      if (open) Vue.nextTick(() => { const el = root.value && root.value.querySelector(".voice-studio");
+                                     if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); });
+    }, { immediate: true });
     onUnmounted(stopRef);
 
     return { prefs, models, proxyOk, presetGroups, presetError, isPreset, defaultLang, cloneModel,
              clones: clones.clones, browserOk: browser.supported, browserVoices: browser.voices,
              languages: proxy.LANGUAGES, studioOpen, listening, playRef, saveRef, confirming, remove,
-             use, saved, cloneKey };
+             use, saved, cloneKey, root };
   },
   template: `
-  <div class="field wide voice-settings" v-if="browserOk || proxyOk">
+  <div class="field wide voice-settings" v-if="browserOk || proxyOk" ref="root">
     <span>Voix</span>
     <div class="voice-pick">
       <label v-if="proxyOk">moteur

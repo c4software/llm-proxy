@@ -12,7 +12,7 @@ ne peut pas les déclencher.
   GET    /ui/conversations/{id}     une conversation (le document entier)
   PUT    /ui/conversations/{id}     crée ou remplace (le document entier)
   DELETE /ui/conversations/{id}     supprime, images comprises
-  POST   /ui/assets                 garde une image : {conversation, name,
+  POST   /ui/assets                 garde une image ou un audio : {conversation, name,
                                     data (data URL)} → {id, url}
   GET    /ui/assets/{id}            la rend
 """

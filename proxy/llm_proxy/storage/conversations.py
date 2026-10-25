@@ -277,12 +277,14 @@ def delete(owner: str, cid: str) -> int:
 
 
 def add_asset(owner: str, cid: str, name: str, data: bytes) -> dict:
-    """Garde une image de la conversation `cid` (qui peut ne pas encore
-    exister : le document suit) → {id, url, type, size}."""
+    """Garde une image (ou l'audio d'une réponse lue à voix haute) de la
+    conversation `cid` (qui peut ne pas encore exister : le document suit)
+    → {id, url, type, size}."""
     _check_id(cid)
-    kind = files.sniff(data)
+    kind = files.sniff(data) or files.sniff_audio(data)
     if kind is None:
-        raise HistoryError("seules les images PNG, JPEG, GIF et WebP sont gardées")
+        raise HistoryError("seules les images PNG, JPEG, GIF et WebP, et l'audio WAV, "
+                           "MP3, Ogg et FLAC sont gardés")
     if len(data) > MAX_ASSET_BYTES:
         raise HistoryError(f"image trop grande ({len(data)} octets, "
                            f"{MAX_ASSET_BYTES} au plus)", 413)

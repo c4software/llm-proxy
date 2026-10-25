@@ -36,8 +36,9 @@ export function language(code) {
   return LANGS[String(code || navigator.language || "").slice(0, 2).toLowerCase()] || "";
 }
 
-/** @param {string} id */
-function role(id) {
+/** Le rôle d'un modèle de synthèse, d'après son nom : « custom »,
+ * « clone » ou « design ». @param {string} id */
+export function role(id) {
   const n = id.toLowerCase();
   if (/design/.test(n)) return "design";
   if (/(^|[-_/.])base($|[-_.])|clone/.test(n)) return "clone";

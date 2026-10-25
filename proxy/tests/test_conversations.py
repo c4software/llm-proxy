@@ -50,9 +50,14 @@ def test_magasin_bornes_et_incognito(monkeypatch):
     with pytest.raises(conversations.HistoryError, match="plein") as exc:
         conversations.save("a", "c3", conv("c3", system="x" * 300))
     assert exc.value.status == 413
-    # Seules les images matricielles sont gardées.
+    # Seules les images matricielles, et l'audio (une réponse lue à voix
+    # haute), sont gardés.
     with pytest.raises(conversations.HistoryError, match="images"):
         conversations.add_asset("a", "c1", "x.svg", b"<svg onload=alert(1)>")
+    wav = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\0" * 28
+    got = conversations.add_asset("a", "c1", "voix.wav", wav)
+    assert got["type"] == "audio/wav"
+    assert conversations.asset("a", got["id"])[:2] == ("audio/wav", "voix.wav")
 
 
 def test_images_orphelines_effacees(monkeypatch):
