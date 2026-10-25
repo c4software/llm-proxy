@@ -1432,11 +1432,44 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .attach-menu .menu button[role="menuitem"]:hover { background: var(--accent-soft); }
 
-/* ── Chat : voix (chat/voice.js) ── */
+/* ── Chat : voix (chat/voice/) ── */
+.voice-settings { gap: 8px; }
 .voice-pick { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; color: var(--muted); }
 .voice-pick label { display: inline-flex; align-items: center; gap: 6px; }
-.voice-pick select { font: inherit; color: var(--ink); background: var(--bg);
+.voice-pick select, .chat-settings .voice-pick input[type=text], .voice-studio .studio-bar select {
+  font: inherit; color: var(--ink); background: var(--bg);
   border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 260px; }
+.chat-settings .voice-pick input[type=text] { width: 200px; font-size: 13px; }
+.voice-clones { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.voice-clones ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px;
+  font-size: 13px; width: 100%; }
+.voice-clones li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 4px 8px;
+  border-radius: 6px; }
+.voice-clones li.on { background: var(--accent-soft); }
+.voice-clones .dim { font-size: 12px; }
+button.link.danger { color: var(--err); }
+.voice-studio { width: 100%; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 10px; }
+.voice-studio p { margin: 0; font-size: 12.5px; }
+.voice-studio .small { font-size: 12px; }
+.studio-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.studio-head .icon { margin-left: auto; }
+.voice-studio .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.voice-studio .seg button { font: inherit; font-size: 13px; padding: 4px 12px; background: none; border: 0;
+  color: var(--ink); cursor: pointer; }
+.voice-studio .seg button + button { border-left: 1px solid var(--line); }
+.voice-studio .seg button[aria-pressed="true"] { background: var(--track); font-weight: 600; }
+.voice-studio .seg button:disabled { opacity: .45; cursor: default; }
+.studio-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; font-size: 13px; }
+.studio-bar input[type=text] { flex: 1 1 220px; width: auto !important; }
+.studio-bar .spinner { width: 13px; height: 13px; vertical-align: -2px; }
+.voice-studio label.btn.disabled { opacity: .45; pointer-events: none; }
+.studio-result { display: flex; flex-direction: column; gap: 10px; }
+.studio-result .dim { font-size: 12.5px; }
+.voice-studio audio { width: 100%; max-width: 480px; height: 36px; }
+.rec-meter { display: inline-block; width: 120px; height: 6px; border-radius: 3px; background: var(--track);
+  overflow: hidden; }
+.rec-meter i { display: block; height: 100%; background: var(--accent); transition: width .08s linear; }
 
 /* ── Chat : contexte (jauge, résumé /compact ; chat/compact.js) ── */
 .ctx-gauge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; font-size: 12.5px;

@@ -67,7 +67,7 @@ de compte, corps non JSON) partent vers le backend à quotas.
 | `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info`. Court : un backend lent ne doit pas bloquer le catalogue |
 | `catalog_ttl` | `30` | Secondes de garde du catalogue d'un backend (réponse ou silence). Passé ce délai, il est relu en arrière-plan et l'ancien reste servi. Seule la première lecture attend un backend éteint. Les lectures simultanées n'en font qu'une |
 | `tool_choice` | `"auto"` | Valeur injectée pour les backends à `force_tool_choice = true`. L'injection est désactivée par défaut |
-| `forward_post_paths` | `["/v1/completions", "/v1/embeddings", "/v1/rerank", "/v1/audio/transcriptions", "/v1/audio/speech", "/v1/images/generations", "/v1/images/edits", "/v1/ocr"]` | Routes POST relayées en plus des handlers dédiés. Les autres → 404 |
+| `forward_post_paths` | `["/v1/completions", "/v1/embeddings", "/v1/rerank", "/v1/audio/transcriptions", "/v1/audio/speech", "/v1/images/generations", "/v1/images/edits", "/v1/ocr"]` | Routes POST relayées en plus des handlers dédiés. Les autres → 404. Synthèse et clonage de voix : [Voix](voix.md) |
 | `exempt_paths` | `["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]` | Suffixes de routes exclus du limiteur |
 | `log_level` | `"INFO"` | `INFO` logue chaque injection et chaque mise en attente |
 

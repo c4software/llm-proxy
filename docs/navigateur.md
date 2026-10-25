@@ -223,13 +223,17 @@ l'écran et le bascule, après un rechargement aussi.
 
 ![speak lit une étape de recette et laisse une carte durable « Lu à voix haute », avec Relire](navigateur-voix.png)
 
-Le navigateur lit un texte avec sa synthèse vocale : une étape d'un
-pas-à-pas mains libres, un résumé à écouter. La lecture part aussitôt
+La page lit un texte à voix haute : une étape d'un pas-à-pas mains
+libres, un résumé à écouter — avec le moteur choisi dans les *Réglages*
+du chat (le navigateur, ou un modèle de synthèse du proxy : voir
+[Chat](chat.md)). La lecture part aussitôt
 (l'utilisateur vient d'écrire, la page a eu son geste) ; la carte
 durable permet de **relire**, ou d'**arrêter** pendant la lecture. La
 voix et le débit sont ceux choisis dans les *Réglages* du chat (ceux
-d'*Écouter*), si la voix parle la langue du texte ; sinon une voix de
-cette langue (`lang`, celle du navigateur par défaut).
+d'*Écouter*). Avec le navigateur, si la voix parle la langue du texte ;
+sinon une voix de cette langue (`lang`, celle du navigateur par défaut).
+Avec un modèle du proxy, `lang` donne la langue de lecture, sauf si les
+réglages en fixent une.
 
 ## Le code dans le navigateur
 

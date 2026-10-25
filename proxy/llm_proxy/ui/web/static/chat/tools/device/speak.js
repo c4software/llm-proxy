@@ -1,11 +1,12 @@
 // @ts-check
-// Lecture à voix haute : le navigateur lit un texte (synthèse vocale,
-// chat/voice.js : la voix et le débit choisis dans les réglages du chat,
-// lu phrase par phrase) — un pas-à-pas mains libres, un résumé à écouter.
+// Lecture à voix haute : la page lit un texte (chat/voice/ : le moteur, la
+// voix et le débit choisis dans les réglages du chat — navigateur, ou
+// modèle de synthèse du proxy) — un pas-à-pas mains libres, un résumé à
+// écouter.
 // L'appel lit tout de suite (l'utilisateur vient d'écrire : la page a eu
 // son geste) et laisse une CARTE DURABLE, pour relire ou arrêter.
 import { TOOL, FAMILY, PageTool, defineFamily, failure } from "../contract.js";
-import * as voice from "../../voice.js";
+import * as voice from "../../voice/index.js";
 
 /** @typedef {import("../contract.js").Kept} Kept */
 
@@ -13,8 +14,8 @@ const MAX_TEXT = 4000;
 
 /** @param {string} ref @param {string} text @param {string} lang */
 function say(ref, text, lang) {
-  const prefs = voice.loadPrefs();
-  voice.speak("tool:" + ref, text, { voice: prefs.voice, rate: prefs.rate, lang });
+  // Un échec se lit sur la carte (voice.state.error).
+  voice.speak("tool:" + ref, text, { lang }).catch(() => {});
 }
 
 class Speak extends PageTool {
@@ -49,7 +50,9 @@ class Speak extends PageTool {
   /** @override @param {Kept} k */
   keptView(k) {
     const playing = voice.state.id === "tool:" + k.ref;
-    return { title: playing ? "Lecture en cours…" : "Lu à voix haute", quote: k.text,
+    const failed = voice.state.errorId === "tool:" + k.ref && voice.state.error;
+    return { title: playing ? (voice.state.loading ? "Synthèse…" : "Lecture en cours…")
+               : failed ? "Lecture impossible : " + failed : "Lu à voix haute", quote: k.text,
              actions: playing ? [{ id: "stop", label: "Arrêter" }]
                : [{ id: "say", label: "Relire", primary: true }] };
   }
@@ -64,6 +67,6 @@ class Speak extends PageTool {
 
 export const FAMILIES = [defineFamily({
   key: FAMILY.SPEAK, label: "Lecture à voix haute", hint: "le navigateur lit un texte (synthèse vocale)",
-  available: () => voice.supported,
+  available: () => voice.supported.value,
   tools: [new Speak()],
 })];

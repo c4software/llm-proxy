@@ -39,7 +39,8 @@ détaille.
   `unknown_route`. Le streaming SSE passe intact.
 - **Audio et images** : synthèse, transcription, génération et édition
   d'image routées au préfixe du modèle, multipart compris.
-  `GET /v1/audio/voices?model=<backend>/<modèle>` liste les voix.
+  `GET /v1/audio/voices?model=<backend>/<modèle>` liste les voix. Synthèse,
+  conception et clonage de voix pas à pas : [Voix](voix.md).
 
 ## Autres API
 

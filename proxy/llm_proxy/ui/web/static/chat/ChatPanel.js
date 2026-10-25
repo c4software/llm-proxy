@@ -61,13 +61,14 @@ import { AssetPanel, conversationImages } from "./AssetPanel.js";
 import { LinuxPanel } from "./LinuxPanel.js";
 import { setOpener as setLinuxOpener, vm as linuxVm } from "./tools/sandbox/linuxvm.js";
 import { download, useCopy } from "../lib/files.js";
-import * as voice from "./voice.js";
+import * as voice from "./voice/index.js";
+import { VoiceSettings } from "./voice/VoiceSettings.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
 
 export const ChatPanel = {
-  components: { ArtifactPanel, AssetPanel, LinuxPanel },
+  components: { ArtifactPanel, AssetPanel, LinuxPanel, VoiceSettings },
   props: { session: { type: Object, required: true } },
   emits: ["unauthorized"],
   setup(props, { emit }) {
@@ -196,26 +197,20 @@ export const ChatPanel = {
       toggleLinux(true);
       return true;
     });
-    // ── voix (voice.js) : écouter ───────────────────────────────
-    // La synthèse vocale du navigateur : tout de suite, sans modèle. Le
-    // choix (voix, débit) reste dans ce navigateur.
-    const voicePrefs = reactive(voice.loadPrefs());
-    watch(voicePrefs, (p) => voice.savePrefs({ ...p }), { deep: true });
-    const voiceList = voice.voices;
-    const voiceName = computed(() => {
-      const v = voiceList.value.find((x) => x.uri === voicePrefs.voice);
-      return v ? v.name : "voix du navigateur";
-    });
+    // ── voix (voice/) : écouter ─────────────────────────────────
+    // Par le navigateur ou par un modèle de synthèse du proxy (voix toutes
+    // faites ou clonées) : le choix, dans les réglages (VoiceSettings),
+    // reste dans ce navigateur.
+    const voiceName = voice.label;
+    const voiceSupported = voice.supported;
     // Le message en cours de lecture (voice.state : une seule à la fois).
-    const playing = computed(() => ({ id: voice.state.id.startsWith("msg:") ? voice.state.id.slice(4) : "" }));
+    const playing = computed(() => ({ id: voice.state.id.startsWith("msg:") ? voice.state.id.slice(4) : "",
+                                      loading: voice.state.loading }));
     function listen(m) {
       if (playing.value.id === m.id) { voice.stop(); return; }
-      try {
-        voice.speak("msg:" + m.id, voice.speakable(m.final || m.content),
-                    { voice: voicePrefs.voice, rate: voicePrefs.rate });
-      } catch (e) {
-        status.value = "Écoute : " + e.message;
-      }
+      voice.speak("msg:" + m.id, voice.speakable(m.final || m.content),
+                  { incognito: !!(current.value && current.value.incognito) })
+        .catch((e) => { status.value = "Écoute : " + e.message; });
     }
     onUnmounted(() => { if (voice.state.id.startsWith("msg:")) voice.stop(); });
 
@@ -1532,7 +1527,7 @@ export const ChatPanel = {
              canPick, pickFolder, generateMore, moreCount, assets, assetsOpen, assetKey, toggleAssets, locateAsset, zoomIndex, zoomGo, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
              linuxOpen, linuxOffered, toggleLinux,
              notifyOn, toggleNotify, notifySupported: notify.supported(),
-             voicePrefs, voiceList, voiceName, voiceSupported: voice.supported, playing, listen,
+             voiceName, voiceSupported, playing, listen,
              sheet, sheetOpen, cardAct, cardView, keptView, keptAct, keptNotes, body, keptComponent, keptBelow, cardComponent, cardPlacement, cardPending, folderCtx,
              download, downloadOut, extOf,
              dropZone, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
@@ -1657,17 +1652,7 @@ export const ChatPanel = {
           <label class="check"><input type="checkbox" v-model="current.showReasoning">
             montrer le raisonnement du modèle</label>
         </div>
-        <div class="field" v-if="voiceSupported">
-          <span>Voix</span>
-          <div class="voice-pick">
-            <label>lecture
-              <select v-model="voicePrefs.voice"><option value="">voix du navigateur (défaut)</option>
-                <option v-for="v in voiceList" :key="v.uri" :value="v.uri">{{ v.name }} — {{ v.lang }}{{ v.local ? "" : " (en ligne)" }}</option></select></label>
-            <label>débit
-              <select v-model.number="voicePrefs.rate">
-                <option v-for="r in [0.8, 1, 1.2, 1.5, 2]" :key="r" :value="r">× {{ r }}</option></select></label>
-          </div>
-        </div>
+        <voice-settings :incognito="!!current.incognito"></voice-settings>
         <div class="field" v-if="notifySupported">
           <span>Notifications</span>
           <label class="check"><input type="checkbox" :checked="notifyOn" @change="toggleNotify">
@@ -1838,7 +1823,7 @@ export const ChatPanel = {
               <button type="button" class="link" v-if="m.content" @click="copyText(m.content, $event.target)">Copier</button>
               <button type="button" class="link" v-if="m.content && voiceSupported" @click="listen(m)"
                       :title="'Lire à voix haute (' + voiceName + ')'">{{ playing.id === m.id
-                        ? "Arrêter la lecture" : "Écouter" }}</button>
+                        ? (playing.loading ? "Synthèse…" : "Arrêter la lecture") : "Écouter" }}</button>
               <!-- Une image : ses actions ici ; plusieurs : dans l'image agrandie. -->
               <template v-if="m.image && m.attachments.length === 1 && m.attachments[0].data">
                 <a class="link" :href="m.attachments[0].data" :download="m.attachments[0].name">Télécharger</a>

@@ -157,13 +157,35 @@ modèle ne passe. Seuls `http(s)`, `mailto` et les chemins du proxy
 montre une seule phrase complète, renouvelée au plus toutes les 1,8 s
 pendant le flux. Tokens et durée s'affichent sous la réponse.
 
-**Voix** : *Écouter*, sous une réponse, la lit avec la **synthèse
-vocale du navigateur** : tout de suite, sans passer par un modèle (sans
-code ni Markdown, 20 000 caractères au plus). Le texte est lu phrase par
-phrase, ce qui évite les coupures de certaines voix en ligne ; *Arrêter
-la lecture* l'interrompt. La voix (celles du navigateur, la langue de la
-page d'abord) et le débit se choisissent dans *Réglages* ; l'outil
-`speak` les reprend.
+**Voix** : *Écouter*, sous une réponse, la lit (sans code ni Markdown,
+20 000 caractères au plus) ; *Arrêter la lecture* l'interrompt. Le
+*moteur* se choisit dans *Réglages*, l'outil `speak` reprend le choix :
+
+- **navigateur** (défaut) : sa synthèse vocale, tout de suite, sans
+  modèle. Lu phrase par phrase, ce qui évite les coupures de certaines
+  voix en ligne. La voix (la langue de la page d'abord) et le débit.
+- **modèle du proxy**, si le catalogue a un modèle de synthèse
+  (`text-to-speech`, Qwen3-TTS : [Voix](voix.md)) : ses **voix toutes
+  faites** (`/ui/audio/voices`, avec un *ton* facultatif) ou une **voix
+  clonée**. La langue (par défaut celle du navigateur) et le débit. Le
+  texte part par passages, le premier court ; le suivant se synthétise
+  pendant que l'autre est joué (*Synthèse…* le temps du premier). Un
+  backend qui charge le modèle (`backend_offline`) est réessayé quelques
+  secondes.
+
+**Voix clonées** (un modèle de clonage, `…-base`, au catalogue) :
+*Nouvelle voix clonée…* ouvre le studio. La référence vient du **micro**
+(lire le texte proposé, une quinzaine de secondes, 30 s au plus), d'un
+**fichier** audio (avec sa transcription exacte) ou d'une
+**description** (un modèle `…-voice-design` invente la voix, qui lit le
+texte ; *Relancer* jusqu'à ce qu'elle plaise). Elle est **normalisée
+dans la page**, sans ffmpeg ni serveur : mono 24 kHz, silences de début
+et de fin coupés (0,15 s gardée), -20 LUFS, crêtes à -1 dB au plus.
+*Essayer* la fait lire une autre phrase par le modèle de clonage ;
+*Garder cette voix* la range dans **ce navigateur** (IndexedDB), avec sa
+transcription : le proxy n'en garde rien, et la référence part avec
+chaque passage lu. Chaque voix gardée s'écoute (*Référence*), se
+télécharge en WAV ou se supprime.
 
 **Mémoire** (si `[tools.memory]` est actif) : le bouton *Mémoire* de
 l'en-tête ouvre le panneau des fichiers mémoire de la clé, à lire,
@@ -420,7 +442,7 @@ envoyer sans requête CORS préliminaire, que le proxy ne sert pas.
 | `POST /ui/chat/completions` | `/v1/chat/completions` |
 | `POST /ui/images/generations` | `/v1/images/generations` |
 | `POST /ui/images/edits` | corps JSON (`model`, `prompt`, `image` en data URL, `size`) converti en formulaire pour `/v1/images/edits` |
-| `POST /ui/audio/speech`, `GET /ui/audio/voices` | `/v1/audio/*` |
+| `POST /ui/audio/speech`, `GET /ui/audio/voices` | `/v1/audio/*` (voir [Voix](voix.md)) |
 | `GET /ui/conversations` | conversations ; `?summary=1&limit=&offset=` : leurs résumés par pages (`next` : la page suivante) ; `?q=` : les résumés de celles qui contiennent chaque mot |
 | `GET` / `PUT` / `DELETE /ui/conversations/{id}` | une conversation |
 | `POST /ui/assets`, `GET /ui/assets/{id}` | images des conversations |
