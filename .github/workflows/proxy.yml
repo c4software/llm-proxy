@@ -1,0 +1,62 @@
+# Image du proxy (proxy/Dockerfile, contexte à la racine), à chaque tag
+# poussé (v2026.10.25, v2026.10.25.1…). amd64 seul : l'étape de la VM Linux
+# du navigateur est en i386, qu'un hôte arm64 n'exécuterait qu'émulé.
+# Sur la machine, avec `image:` dans l'override (docs/deploiement.md) :
+#   docker compose pull albert-proxy && docker compose up -d albert-proxy
+name: Image du proxy
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/llm-proxy
+
+concurrency:
+  group: proxy-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Construire et publier (amd64)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Étiquettes
+        id: tags
+        run: |
+          {
+            echo "sha=sha-${GITHUB_SHA::7}"
+            # Le tag poussé ; lancé à la main, pas d'étiquette de version.
+            if [ "$GITHUB_REF_TYPE" = tag ]; then echo "version=$IMAGE:$GITHUB_REF_NAME"; fi
+          } >> "$GITHUB_OUTPUT"
+      - name: Construire et publier
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: proxy/Dockerfile
+          platforms: linux/amd64
+          push: true
+          # Le cache garde les étapes lourdes (WASM, VM Linux) d'un tag à
+          # l'autre tant que leurs fichiers ne bougent pas.
+          cache-from: type=gha,scope=proxy
+          cache-to: type=gha,scope=proxy,mode=max
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}
+            ${{ steps.tags.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=llm-proxy : proxy OpenAI-compatible et son interface de chat
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
