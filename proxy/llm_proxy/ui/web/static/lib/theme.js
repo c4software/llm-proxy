@@ -8,17 +8,13 @@
   pose l'attribut avant le premier rendu (script en tête de page) : pas
   d'éclair de l'autre thème au chargement.
 */
-const { ref, computed } = Vue;
+const { computed, watch } = Vue;
 
 const THEME_KEY = "llm-proxy-theme";
 const ORDER = ["auto", "light", "dark"];
 const LABELS = { auto: "auto", light: "clair", dark: "sombre" };
 const BAR = { light: "#faf9f5", dark: "#1a1917" };
 
-function stored() {
-  try { const t = localStorage.getItem(THEME_KEY); return ORDER.includes(t) ? t : "auto"; }
-  catch { return "auto"; }
-}
 
 function apply(theme) {
   const root = document.documentElement;
@@ -32,16 +28,14 @@ function apply(theme) {
 }
 
 export function useTheme() {
-  const theme = ref(stored());
-  apply(theme.value);
+  // Gardé par useLocalStorage (« auto » compris : le script de la page
+  // l'ignore), suivi d'un onglet à l'autre.
+  const theme = VueUse.useLocalStorage(THEME_KEY, "auto");
+  if (!ORDER.includes(theme.value)) theme.value = "auto";
+  watch(theme, apply, { immediate: true });
   const themeLabel = computed(() => LABELS[theme.value]);
   function cycleTheme() {
     theme.value = ORDER[(ORDER.indexOf(theme.value) + 1) % ORDER.length];
-    try {
-      if (theme.value === "auto") localStorage.removeItem(THEME_KEY);
-      else localStorage.setItem(THEME_KEY, theme.value);
-    } catch { /* sans stockage : le choix vaut pour cette page */ }
-    apply(theme.value);
   }
   return { theme, themeLabel, cycleTheme };
 }

@@ -20,7 +20,7 @@ import { AccountsPart } from "./AccountsPart.js";
 import { ProxyPart } from "./ProxyPart.js";
 import { useAccount, useUsers } from "./shared.js";
 
-const { ref, computed, onMounted } = Vue;
+const { computed, onMounted } = Vue;
 const STORE_PART = "llm-proxy-config-part";
 
 export const ConfigPanel = {
@@ -39,10 +39,7 @@ export const ConfigPanel = {
       ...(isAdmin.value ? [{ id: "accounts", label: "Comptes" }] : []),
       ...(!account.value || isAdmin.value ? [{ id: "proxy", label: "Proxy" }] : []),
     ]);
-    const stored = ref((() => {
-      try { return localStorage.getItem(STORE_PART) || "clients"; }
-      catch { return "clients"; }
-    })());
+    const stored = VueUse.useLocalStorage(STORE_PART, "clients");
     // « settings », encore gardé par un navigateur : la partie Proxy.
     const part = computed(() => {
       const want = stored.value === "settings" ? "proxy" : stored.value;
@@ -50,7 +47,6 @@ export const ConfigPanel = {
     });
     function setPart(p) {
       stored.value = p;
-      try { localStorage.setItem(STORE_PART, p); } catch { /* sans stockage */ }
     }
     // Admin : le nombre de comptes en attente, sur le sélecteur.
     onMounted(() => { if (isAdmin.value) loadUsers(); });

@@ -67,12 +67,14 @@ export const StatsView = {
     const metricById = Object.fromEntries(metrics.map((m) => [m.id, m]));
 
     // ── état ────────────────────────────────────────────────────────────
-    const current = ref(byId[localStorage.getItem(STORE)] ? localStorage
-      .getItem(STORE) : "all");
+    // La période et la mesure choisies, gardées dans ce navigateur ; une
+    // valeur inconnue (ancienne version) reprend le défaut.
+    const current = VueUse.useLocalStorage(STORE, "all");
+    if (!byId[current.value]) current.value = "all";
     // Mesure portée par la courbe : requêtes servies ou tokens échangés.
     // Les deux viennent de la même réponse — basculer ne relance rien.
-    const metric = ref(metricById[localStorage.getItem(STORE_METRIC)]
-      ? localStorage.getItem(STORE_METRIC) : "requests");
+    const metric = VueUse.useLocalStorage(STORE_METRIC, "requests");
+    if (!metricById[metric.value]) metric.value = "requests";
     const buckets = ref([]);      // seaux de la période, groupés par modèle
     const bucketWidth = ref("1d");
     const since = ref(0);         // plus ancien enregistrement connu
@@ -373,7 +375,6 @@ export const StatsView = {
     function select(id) {
       if (!byId[id] || id === current.value) return;
       current.value = id;
-      localStorage.setItem(STORE, id);
       since.value = 0;   // recalculé pour la nouvelle période
       // Le découpage change : les barres ne représentent plus les mêmes
       // seaux, les faire glisser d'une valeur à l'autre n'aurait pas de
@@ -389,7 +390,6 @@ export const StatsView = {
     function selectMetric(id) {
       if (!metricById[id] || id === metric.value) return;
       metric.value = id;
-      localStorage.setItem(STORE_METRIC, id);
     }
 
     // Raccourcis A / W / D, R / T. Ignorés dès qu'un modificateur est enfoncé ou

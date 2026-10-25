@@ -7,10 +7,16 @@
 const KEY = "llm-proxy-chat-notify";
 const MARK = "● ";
 
+// Le choix, gardé dans ce navigateur (« 1 » ou « 0 », comme avant) ;
+// l'onglet regardé ou non (useDocumentVisibility).
+const wanted = VueUse.useLocalStorage(KEY, false,
+  { serializer: { read: (v) => v === "1", write: (v) => (v ? "1" : "0") } });
+const visibility = VueUse.useDocumentVisibility();
+const hidden = () => visibility.value === "hidden";
+
 export const supported = () => "Notification" in window;
 export function enabled() {
-  try { return localStorage.getItem(KEY) === "1" && supported() && Notification.permission === "granted"; }
-  catch { return false; }
+  return !!wanted.value && supported() && Notification.permission === "granted";
 }
 
 // Activer : la permission du navigateur est demandée (geste de l'utilisateur).
@@ -18,13 +24,13 @@ export async function setEnabled(on) {
   if (on && supported() && Notification.permission !== "granted") {
     if ((await Notification.requestPermission()) !== "granted") on = false;
   }
-  try { localStorage.setItem(KEY, on ? "1" : "0"); } catch { /* sans stockage */ }
+  wanted.value = on;
   return on;
 }
 
 // Le titre revient à la normale dès que l'onglet est regardé.
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && document.title.startsWith(MARK)) document.title = document.title.slice(MARK.length);
+Vue.watch(visibility, () => {
+  if (!hidden() && document.title.startsWith(MARK)) document.title = document.title.slice(MARK.length);
 });
 
 // Une notification demandée (outil `notify`) : même onglet au premier
@@ -37,7 +43,7 @@ export function show(title, body) {
 }
 
 export function notify(title, body) {
-  if (!document.hidden) return;
+  if (!hidden()) return;
   if (!document.title.startsWith(MARK)) document.title = MARK + document.title;
   if (!enabled()) return;
   try {

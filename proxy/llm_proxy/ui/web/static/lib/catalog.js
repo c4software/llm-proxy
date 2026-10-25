@@ -19,14 +19,9 @@ import { call } from "./http.js";
 const { reactive } = Vue;
 const KEY = "llm-proxy-catalog";
 
-function stored() {
-  try {
-    const got = JSON.parse(localStorage.getItem(KEY) || "null");
-    return got && Array.isArray(got.data) ? got : null;
-  } catch { return null; }
-}
-
-const kept = stored();
+// Le dernier catalogue lu, {at, data}, gardé par useLocalStorage.
+const stored = VueUse.useLocalStorage(KEY, null, { serializer: VueUse.StorageSerializers.object });
+const kept = stored.value && Array.isArray(stored.value.data) ? stored.value : null;
 export const catalogState = reactive({
   data: kept ? kept.data : [], at: kept ? kept.at : 0, loading: false, error: "" });
 let reading = null;
@@ -39,9 +34,7 @@ export function refreshCatalog() {
   reading = call("GET", "/ui/models?all=1").then((r) => {
     const data = (r.data || []).filter((m) => m.id);
     Object.assign(catalogState, { data, at: Date.now(), error: "" });
-    try {
-      localStorage.setItem(KEY, JSON.stringify({ at: catalogState.at, data }));
-    } catch { /* sans stockage : relu à chaque ouverture */ }
+    stored.value = { at: catalogState.at, data };
     return data;
   }, (e) => {
     catalogState.error = e.message;

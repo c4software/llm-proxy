@@ -43,12 +43,9 @@ createApp({
       const [v, conv] = location.hash.slice(1).split("/");
       return { view: known(v) ? v : null, conv: conv ? decodeURIComponent(conv) : null };
     };
-    const storedView = () => {
-      if (fromHash().view) return fromHash().view;
-      try { const v = localStorage.getItem(STORE_VIEW); return known(v) ? v : "stats"; }
-      catch { return "stats"; }
-    };
-    const view = ref(storedView());
+    // La dernière vue ouverte, gardée dans ce navigateur.
+    const lastView = VueUse.useLocalStorage(STORE_VIEW, "stats");
+    const view = ref(fromHash().view || (known(lastView.value) ? lastView.value : "stats"));
     // Les vues déjà ouvertes : montées une fois, gardées ensuite.
     const visited = reactive({ [view.value]: true });
     watch(view, (v) => { visited[v] = true; });
@@ -59,7 +56,7 @@ createApp({
       navOpen.value = false;
       if (id === view.value || !known(id)) return;
       view.value = id;
-      try { localStorage.setItem(STORE_VIEW, id); } catch { /* sans stockage */ }
+      lastView.value = id;
     }
 
     // Les conversations du chat, listées dans le menu latéral.
