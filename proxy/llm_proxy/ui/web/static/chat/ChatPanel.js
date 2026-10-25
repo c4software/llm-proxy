@@ -1269,10 +1269,13 @@ export const ChatPanel = {
       if (current.value) current.value.voiceClone = c.id;
     }
     const voiceLang = computed(() => voice.prefs.language);
-    // La dernière réponse lue : son audio part tout seul. Un audio à la
-    // fois : en lancer un arrête les autres (et la lecture d'Écouter).
+    // La dernière réponse lue : son audio part tout seul, une fois et
+    // seulement si l'onglet est regardé (caché, le navigateur garderait la
+    // lecture pour le retour sur l'onglet). Un audio à la fois : en lancer
+    // un arrête les autres (et la lecture d'Écouter).
     const justSpoken = ref("");
     function onlyOne(e) {
+      justSpoken.value = "";
       for (const a of document.querySelectorAll("audio.gen-audio")) if (a !== e.target) a.pause();
       voice.stop();
     }
@@ -1298,7 +1301,7 @@ export const ChatPanel = {
           incognito: !!conv.incognito, signal: ctrl.signal,
           onPart: (k, n) => { live.progress = n > 1 ? `passage ${k + 1} / ${n}` : ""; } });
         live.attachments.push(got);
-        if (current.value && current.value.id === conv.id) justSpoken.value = live.id;
+        if (current.value && current.value.id === conv.id && document.visibilityState === "visible") justSpoken.value = live.id;
       } catch (e) {
         live.error = e.name === "AbortError" ? "Arrêté." : e.message;
       } finally {
