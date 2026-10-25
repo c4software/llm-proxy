@@ -34,29 +34,6 @@ docker compose config       # affiche la pile fusionnée
 docker compose up -d --build
 ```
 
-### L'image de la CI
-
-Chaque tag poussé (`v2026.10.25`, `v2026.10.25.1`…) construit et publie
-`ghcr.io/c4software/llm-proxy` (`.github/workflows/proxy.yml`), étiquetée
-`latest`, au nom du tag et `sha-<commit>`. Pour s'en servir plutôt que de
-construire sur place, dans l'override :
-
-```yaml
-services:
-  albert-proxy:
-    image: ghcr.io/c4software/llm-proxy:latest   # ou :v2026.10.25.1, figée
-```
-
-puis, à chaque version :
-
-```bash
-git pull                     # le compose et settings.yml de SearXNG
-docker compose pull albert-proxy && docker compose up -d albert-proxy
-```
-
-Le `build:` du compose reste : `docker compose up -d --build` construit
-toujours sur place, sous le même nom d'image.
-
 Le service `executor` ([exécution de code](execution-de-code.md)) vit
 dans cet override. Sans lui, il n'est ni construit ni lancé. Pour
 l'activer :

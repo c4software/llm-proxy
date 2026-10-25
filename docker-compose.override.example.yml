@@ -128,9 +128,6 @@ services:
   # `!reset` vide une liste héritée, `!override` la remplace.
   #
   # albert-proxy:
-  #   # L'image de la CI, publiée à chaque tag (.github/workflows/proxy.yml) :
-  #   # `docker compose pull albert-proxy` plutôt qu'un build sur place.
-  #   image: ghcr.io/c4software/llm-proxy:latest
   #   container_name: llm-proxy
   #   # Derrière un reverse proxy du même hôte : plus de port publié.
   #   ports: !reset []
