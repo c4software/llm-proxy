@@ -114,9 +114,7 @@ la conversation (`/ui/assets`), comme une image. Selon le modèle :
 - *voix clonée* (`…-base`) : une voix clonée de ce navigateur, choisie
   dans la barre ; *＋ nouvelle voix…* ouvre le studio en fenêtre sur la
   conversation (voir *Voix clonées* plus bas), et la voix gardée devient
-  celle de la conversation. La même liste **télécharge** la voix choisie
-  (WAV portant son nom et sa transcription, à réutiliser ailleurs) ou
-  **copie sa transcription** (le texte que demande la référence).
+  celle de la conversation.
 - *voix décrite* (`…-voice-design`) : le prompt système **décrit** la
   voix (genre, âge, timbre, accent, style) ; une voix nouvelle à chaque
   message.
@@ -232,7 +230,9 @@ normalisé, avec son nom et sa transcription dans ses métadonnées (bloc
 LIST/INFO). *Garder cette voix* la range dans **ce navigateur**
 (IndexedDB), avec sa transcription : le proxy n'en garde rien, et la
 référence part avec chaque passage lu. Chaque voix gardée s'écoute
-(*Référence*), se télécharge de même ou se supprime. *Importer une
+(*Référence*), se télécharge de même, donne sa transcription
+(*Copier la transcription* : le texte à reprendre avec le WAV, dans une
+autre application) ou se supprime. *Importer une
 voix…* (*Réglages*) reprend un fichier téléchargé, dans un autre
 navigateur par exemple, sans ressaisir la transcription ; ouvert depuis
 *Fichier* dans le studio, il remplit aussi le nom et la transcription.

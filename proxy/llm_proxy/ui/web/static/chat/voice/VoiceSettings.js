@@ -42,6 +42,9 @@ export const VoiceSettings = {
         else if (cloneModel.value && clones.clones.value.length) prefs.proxyVoice = cloneKey(clones.clones.value[0].id);
       }
     }
+    // Les voix clonées de ce navigateur : leur liste (Télécharger, Copier
+    // la transcription…) se montre quel que soit le moteur.
+    clones.load();
     watch(() => [prefs.engine, models.value.custom.join()], () => {
       if (prefs.engine === "proxy") { clones.load().then(loadPresets); }
     }, { immediate: true });
@@ -86,6 +89,14 @@ export const VoiceSettings = {
       }
     });
     const importVoice = () => { clones.load(); importer.open({ reset: true }); };
+    // La transcription d'une voix : le texte que demande sa référence
+    // (reference_text), à reprendre ailleurs avec le WAV téléchargé.
+    const clipboard = VueUse.useClipboard({ legacy: true });
+    const copiedId = VueUse.refAutoReset("", 1400);
+    function copyText(c) {
+      clipboard.copy(c.text);
+      copiedId.value = c.id;
+    }
     const confirming = ref("");
     async function remove(c) {
       if (confirming.value !== c.id) { confirming.value = c.id; return; }
@@ -112,7 +123,7 @@ export const VoiceSettings = {
     return { prefs, models, proxyOk, presetGroups, presetError, isPreset, defaultLang, cloneModel,
              clones: clones.clones, browserOk: browser.supported, browserVoices: browser.voices,
              languages: proxy.LANGUAGES, studioOpen, listening, playRef, saveRef, confirming, remove,
-             use, saved, cloneKey, root, importVoice, importError, refUrl, player, stopRef };
+             use, saved, cloneKey, copyText, copiedId, root, importVoice, importError, refUrl, player, stopRef };
   },
   template: `
   <div class="field wide voice-settings" v-if="browserOk || proxyOk" ref="root">
@@ -158,6 +169,9 @@ export const VoiceSettings = {
           <button type="button" class="link" @click="playRef(c)">{{ listening.id === c.id ? "Arrêter" : "Référence" }}</button>
           <button type="button" class="link" @click="saveRef(c)"
                   title="Le WAV, avec son nom et sa transcription : à réimporter, ou pour curl">Télécharger</button>
+          <button type="button" class="link" @click="copyText(c)"
+                  title="Le texte de la référence (reference_text), à reprendre avec le WAV">{{
+            copiedId === c.id ? "Copiée" : "Copier la transcription" }}</button>
           <button type="button" class="link danger" @click="remove(c)" @blur="confirming = ''">{{
             confirming === c.id ? "Confirmer la suppression" : "Supprimer" }}</button>
         </li>
@@ -167,9 +181,9 @@ export const VoiceSettings = {
         <button type="button" class="btn ghost" @click="importVoice"
                 title="Une voix téléchargée d'ici (son WAV porte nom et transcription)">Importer une voix…</button>
       </div>
-      <p class="msg-error" v-if="importError">{{ importError }}</p>
       <voice-studio v-else :clone-model="cloneModel" :language="prefs.language" :incognito="incognito"
                     @saved="saved" @close="studioOpen = false"></voice-studio>
+      <p class="msg-error" v-if="importError">{{ importError }}</p>
     </div>
   </div>`,
 };
