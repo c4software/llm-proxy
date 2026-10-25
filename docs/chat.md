@@ -112,8 +112,9 @@ la conversation (`/ui/assets`), comme une image. Selon le modèle :
 - *voix toutes faites* (`…-customvoice`) : la voix se choisit dans la
   barre de saisie ; le prompt système (*Réglages*) donne le ton.
 - *voix clonée* (`…-base`) : une voix clonée de ce navigateur, choisie
-  dans la barre ; *＋ nouvelle voix…* ouvre le studio (voir *Voix
-  clonées* plus bas).
+  dans la barre ; *＋ nouvelle voix…* ouvre le studio en fenêtre sur la
+  conversation (voir *Voix clonées* plus bas), et la voix gardée devient
+  celle de la conversation.
 - *voix décrite* (`…-voice-design`) : le prompt système **décrit** la
   voix (genre, âge, timbre, accent, style) ; une voix nouvelle à chaque
   message.
@@ -193,7 +194,8 @@ pendant le flux. Tokens et durée s'affichent sous la réponse.
   secondes.
 
 **Voix clonées** (un modèle de clonage, `…-base`, au catalogue) :
-*Nouvelle voix clonée…* ouvre le studio. La référence vient du **micro**
+*Nouvelle voix clonée…* (dans *Réglages*, ou *＋ nouvelle voix…* dans la
+barre d'un modèle de clonage) ouvre le studio. La référence vient du **micro**
 (lire le texte proposé, une quinzaine de secondes, 30 s au plus), d'un
 **fichier** audio (avec sa transcription exacte) ou d'une
 **description** (un modèle `…-voice-design` invente la voix, qui lit le
@@ -201,10 +203,17 @@ texte ; *Relancer* jusqu'à ce qu'elle plaise). Elle est **normalisée
 dans la page**, sans ffmpeg ni serveur : mono 24 kHz, silences de début
 et de fin coupés (0,15 s gardée), -20 LUFS, crêtes à -1 dB au plus.
 *Essayer* la fait lire une autre phrase par le modèle de clonage ;
-*Garder cette voix* la range dans **ce navigateur** (IndexedDB), avec sa
-transcription : le proxy n'en garde rien, et la référence part avec
-chaque passage lu. Chaque voix gardée s'écoute (*Référence*), se
-télécharge en WAV ou se supprime.
+*Télécharger* donne la voix en un **fichier réutilisable** : le WAV
+normalisé, avec son nom et sa transcription dans ses métadonnées (bloc
+LIST/INFO). *Garder cette voix* la range dans **ce navigateur**
+(IndexedDB), avec sa transcription : le proxy n'en garde rien, et la
+référence part avec chaque passage lu. Chaque voix gardée s'écoute
+(*Référence*), se télécharge de même ou se supprime. *Importer une
+voix…* (*Réglages*) reprend un fichier téléchargé, dans un autre
+navigateur par exemple, sans ressaisir la transcription ; ouvert depuis
+*Fichier* dans le studio, il remplit aussi le nom et la transcription.
+Le fichier reste un WAV ordinaire, utilisable tel quel avec curl
+([Voix](voix.md)).
 
 **Mémoire** (si `[tools.memory]` est actif) : le bouton *Mémoire* de
 l'en-tête ouvre le panneau des fichiers mémoire de la clé, à lire,

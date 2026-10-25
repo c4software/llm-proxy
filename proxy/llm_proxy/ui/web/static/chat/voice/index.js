@@ -26,23 +26,13 @@ const KEY = "llm-proxy-chat-voice";
 /** @typedef {{engine: string, voice: string, rate: number, proxyVoice: string,
  *   tone: string, language: string, cloneModel: string}} Prefs */
 
-/** @returns {Prefs} */
-function loadPrefs() {
-  /** @type {any} */
-  let p = {};
-  try { p = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch { /* sans stockage */ }
-  const str = (v) => (typeof v === "string" ? v : "");
-  return { engine: p.engine === "proxy" ? "proxy" : "browser", voice: str(p.voice), rate: Number(p.rate) || 1,
-           proxyVoice: str(p.proxyVoice), tone: str(p.tone), language: str(p.language),
-           cloneModel: str(p.cloneModel) };
-}
+/** @type {Prefs} */
+const DEFAULTS = { engine: "browser", voice: "", rate: 1, proxyVoice: "", tone: "", language: "", cloneModel: "" };
 
-const kept = loadPrefs();
-/** Les réglages de la voix, partagés par le chat et l'outil `speak`. */
-export const prefs = Vue.reactive(kept);
-Vue.watch(prefs, (p) => {
-  try { localStorage.setItem(KEY, JSON.stringify({ ...p })); } catch { /* sans stockage */ }
-}, { deep: true });
+/** Les réglages de la voix, partagés par le chat et l'outil `speak` :
+ * gardés par useLocalStorage (les clés manquantes reprennent leur défaut),
+ * suivis d'un onglet à l'autre. @type {Prefs} */
+export const prefs = VueUse.toReactive(VueUse.useLocalStorage(KEY, DEFAULTS, { mergeDefaults: true }));
 
 // `proxyVoice` : « preset:<modèle>␀<voix> » ou « clone:<id> ».
 const SEP = "\u0000";
@@ -109,4 +99,4 @@ export function stop() {
 }
 
 // Le nom d'une voix clonée choisie, pour `label`, dès l'ouverture.
-if (kept.proxyVoice.startsWith("clone:")) clones.load();
+if (String(prefs.proxyVoice).startsWith("clone:")) clones.load();

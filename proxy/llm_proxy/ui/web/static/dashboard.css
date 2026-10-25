@@ -1469,6 +1469,13 @@ button.link.danger { color: var(--err); }
 .voice-studio audio { width: 100%; max-width: 480px; height: 36px; }
 .rec-meter { display: inline-block; width: 120px; height: 6px; border-radius: 3px; background: var(--track);
   overflow: hidden; }
+.voice-modal { justify-content: flex-start; overflow-y: auto; }
+.voice-modal .voice-studio { width: min(640px, 100%); margin: auto 0; flex: none; background: var(--panel);
+  color: var(--ink); border: 0; border-radius: var(--radius); padding: 16px 18px; }
+.voice-modal .voice-studio .field input, .voice-modal .voice-studio .field textarea {
+  width: 100%; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.voice-modal .voice-studio textarea { resize: vertical; }
 .gen-audio { width: 100%; max-width: 420px; height: 40px; }
 .gen-images:has(.gen-audio) { display: block; }
 .rec-meter i { display: block; height: 100%; background: var(--accent); transition: width .08s linear; }

@@ -2,24 +2,25 @@
 /*
   Les RÉGLAGES de la voix, dans ceux du chat : le moteur (navigateur ou
   modèle du proxy), la voix, le ton et la langue (proxy), le débit ; les
-  voix clonées de ce navigateur (écouter la référence, la télécharger, la
-  supprimer) et le studio qui en crée une (VoiceStudio.js) — ouvert aussi
-  par le chat (prop `studio`, un compteur : « nouvelle voix… » d'un
-  modèle de clonage).
+  voix clonées de ce navigateur (écouter la référence, la télécharger
+  avec sa transcription, la supprimer ; en importer une téléchargée :
+  voicefile.js) et le studio qui en crée une (VoiceStudio.js).
 */
 import * as browser from "./browser.js";
 import * as proxy from "./proxy.js";
 import * as clones from "./clones.js";
 import { prefs, presetKey, cloneKey, cloneModel } from "./index.js";
 import { VoiceStudio } from "./VoiceStudio.js";
+import * as voicefile from "./voicefile.js";
+import * as audio from "./audio.js";
 import { download } from "../../lib/files.js";
 
-const { ref, reactive, computed, watch, onUnmounted } = Vue;
+const { ref, reactive, computed, watch } = Vue;
 
 export const VoiceSettings = {
   components: { VoiceStudio },
-  props: { incognito: { type: Boolean, default: false }, studio: { type: Number, default: 0 } },
-  setup(props) {
+  props: { incognito: { type: Boolean, default: false } },
+  setup() {
     const models = proxy.models;
     const proxyOk = proxy.available;
     // Les voix toutes faites de chaque modèle, lues quand le moteur du
@@ -51,28 +52,40 @@ export const VoiceSettings = {
     const defaultLang = computed(() => proxy.language() || "le modèle devine");
 
     // Les voix clonées : écouter une référence, en supprimer une (confirmée).
-    const studioOpen = ref(props.studio > 0);
-    watch(() => props.studio, () => { studioOpen.value = true; clones.load(); });
-    const listening = reactive({ id: "", url: "" });
-    let player = null;
-    function stopRef() {
-      if (player) player.pause();
-      if (listening.url) URL.revokeObjectURL(listening.url);
-      player = null;
-      Object.assign(listening, { id: "", url: "" });
-    }
+    const studioOpen = ref(false);
+    // La référence écoutée : un <audio> caché, son adresse par useObjectUrl.
+    const listening = reactive({ id: "" });
+    const refBlob = computed(() => (clones.clones.value.find((x) => x.id === listening.id) || {}).wav);
+    const refUrl = VueUse.useObjectUrl(refBlob);
+    const player = ref(null);
+    const stopRef = () => { listening.id = ""; };
     function playRef(c) {
-      const again = listening.id === c.id;
-      stopRef();
-      if (again) return;
-      listening.url = URL.createObjectURL(c.wav);
-      listening.id = c.id;
-      player = new Audio(listening.url);
-      player.onended = stopRef;
-      player.play().catch(stopRef);
+      listening.id = listening.id === c.id ? "" : c.id;
+      if (listening.id) Vue.nextTick(() => player.value && player.value.play().catch(stopRef));
     }
-    const saveRef = (c) => download({ name: c.name.replace(/[\\/:*?"<>|]+/g, "_") + ".wav", content: c.wav },
-                                    "audio/wav");
+    // Télécharger : le WAV avec son nom et sa transcription (voicefile.js).
+    const saveRef = async (c) => download({ name: voicefile.fileName(c.name),
+      content: await voicefile.pack(c.wav, { name: c.name, text: c.text }) }, "audio/wav");
+    // Importer une voix téléchargée : gardée telle quelle si elle porte sa
+    // transcription ; sinon, au studio (Fichier) de la compléter.
+    const importError = ref("");
+    const importer = VueUse.useFileDialog({ accept: "audio/wav,.wav", multiple: false });
+    importer.onChange(async (files) => {
+      const f = files && files[0];
+      if (!f) return;
+      importError.value = "";
+      try {
+        const tags = await voicefile.unpack(f);
+        if (!tags.text) throw new Error("ce fichier n'a pas de transcription : Nouvelle voix clonée → Fichier");
+        const got = await audio.normalize(f);
+        const c = await clones.add({ name: tags.name || f.name.replace(/\.wav$/i, ""), text: tags.text,
+                                     wav: got.wav, duration: got.duration, source: "importée" });
+        use(c);
+      } catch (e) {
+        importError.value = "Import : " + (e.message || e);
+      }
+    });
+    const importVoice = () => { clones.load(); importer.open({ reset: true }); };
     const confirming = ref("");
     async function remove(c) {
       if (confirming.value !== c.id) { confirming.value = c.id; return; }
@@ -89,18 +102,17 @@ export const VoiceSettings = {
       studioOpen.value = false;
       use(c);
     }
-    // Ouvert depuis le chat : le studio à l'écran.
+    // Le studio ouvert : à l'écran.
     const root = ref(null);
     watch(studioOpen, (open) => {
       if (open) Vue.nextTick(() => { const el = root.value && root.value.querySelector(".voice-studio");
                                      if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); });
     }, { immediate: true });
-    onUnmounted(stopRef);
 
     return { prefs, models, proxyOk, presetGroups, presetError, isPreset, defaultLang, cloneModel,
              clones: clones.clones, browserOk: browser.supported, browserVoices: browser.voices,
              languages: proxy.LANGUAGES, studioOpen, listening, playRef, saveRef, confirming, remove,
-             use, saved, cloneKey, root };
+             use, saved, cloneKey, root, importVoice, importError, refUrl, player, stopRef };
   },
   template: `
   <div class="field wide voice-settings" v-if="browserOk || proxyOk" ref="root">
@@ -136,6 +148,7 @@ export const VoiceSettings = {
           <option v-for="r in [0.8, 1, 1.2, 1.5, 2]" :key="r" :value="r">× {{ r }}</option></select></label>
     </div>
     <p class="msg-error" v-if="prefs.engine === 'proxy' && presetError">{{ presetError }}</p>
+    <audio ref="player" hidden :src="refUrl || undefined" @ended="stopRef"></audio>
 
     <div class="voice-clones" v-if="proxyOk && cloneModel">
       <ul v-if="clones.length">
@@ -143,12 +156,18 @@ export const VoiceSettings = {
           <b>{{ c.name }}</b> <span class="dim">{{ c.duration.toFixed(1) }} s · {{ c.source }}</span>
           <button type="button" class="link" @click="use(c)">Utiliser</button>
           <button type="button" class="link" @click="playRef(c)">{{ listening.id === c.id ? "Arrêter" : "Référence" }}</button>
-          <button type="button" class="link" @click="saveRef(c)">Télécharger</button>
+          <button type="button" class="link" @click="saveRef(c)"
+                  title="Le WAV, avec son nom et sa transcription : à réimporter, ou pour curl">Télécharger</button>
           <button type="button" class="link danger" @click="remove(c)" @blur="confirming = ''">{{
             confirming === c.id ? "Confirmer la suppression" : "Supprimer" }}</button>
         </li>
       </ul>
-      <button type="button" class="btn ghost" v-if="!studioOpen" @click="studioOpen = true">Nouvelle voix clonée…</button>
+      <div class="studio-bar" v-if="!studioOpen">
+        <button type="button" class="btn ghost" @click="studioOpen = true">Nouvelle voix clonée…</button>
+        <button type="button" class="btn ghost" @click="importVoice"
+                title="Une voix téléchargée d'ici (son WAV porte nom et transcription)">Importer une voix…</button>
+      </div>
+      <p class="msg-error" v-if="importError">{{ importError }}</p>
       <voice-studio v-else :clone-model="cloneModel" :language="prefs.language" :incognito="incognito"
                     @saved="saved" @close="studioOpen = false"></voice-studio>
     </div>

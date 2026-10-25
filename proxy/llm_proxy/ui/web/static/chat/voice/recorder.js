@@ -1,9 +1,11 @@
 // @ts-check
 /*
-  L'ENREGISTREMENT au micro d'une voix à cloner (MediaRecorder) : brut,
-  sans contrôle automatique du gain ni annulation d'écho (le clonage
-  copierait leurs artefacts). Le niveau d'entrée, pour le vu-mètre, et
-  l'arrêt de lui-même au bout de MAX secondes.
+  L'ENREGISTREMENT au micro d'une voix à cloner, avec VueUse : le flux du
+  micro (useUserMedia), le vu-mètre et le chrono (useRafFn) ; l'audio,
+  par MediaRecorder. Brut : sans contrôle automatique du gain ni
+  annulation d'écho (le clonage copierait leurs artefacts). S'arrête de
+  lui-même au bout de MAX secondes. À créer dans un setup() : le micro est
+  rendu quand le composant disparaît.
 
     const rec = useRecorder();
     await rec.start((blob) => …);   // WebM ou Ogg : audio.js le lit
@@ -11,28 +13,40 @@
 */
 const MAX = 30;
 
-export const supported = typeof navigator !== "undefined" && !!navigator.mediaDevices
-  && !!navigator.mediaDevices.getUserMedia && typeof MediaRecorder !== "undefined";
-
 export function useRecorder() {
   const state = Vue.reactive({ recording: false, seconds: 0, level: 0 });
+  const supported = VueUse.useSupported(() => typeof MediaRecorder !== "undefined"
+    && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+  const mic = VueUse.useUserMedia({ constraints: { audio: {
+    echoCancellation: false, autoGainControl: false, noiseSuppression: true, channelCount: 1 }, video: false } });
   /** @type {MediaRecorder | null} */
   let rec = null;
-  /** @type {MediaStream | null} */
-  let stream = null;
   /** @type {AudioContext | null} */
   let ctx = null;
-  let frame = 0, began = 0;
-  /** @type {Blob[]} */
-  let parts = [];
+  /** @type {AnalyserNode | null} */
+  let analyser = null;
+  const data = new Float32Array(1024);
+  let began = 0;
   /** @type {((b: Blob) => void) | null} */
   let done = null;
 
+  // À chaque image : la crête du signal, le temps écoulé.
+  const meter = VueUse.useRafFn(() => {
+    if (analyser) {
+      analyser.getFloatTimeDomainData(data);
+      let peak = 0;
+      for (const v of data) peak = Math.max(peak, Math.abs(v));
+      state.level = peak;
+    }
+    state.seconds = (performance.now() - began) / 1000;
+    if (state.seconds >= MAX) stop();
+  }, { immediate: false });
+
   function release() {
-    cancelAnimationFrame(frame);
-    if (stream) for (const t of stream.getTracks()) t.stop();
+    meter.pause();
+    mic.stop();
     if (ctx) ctx.close().catch(() => {});
-    stream = null; ctx = null;
+    ctx = null; analyser = null; rec = null;
     state.recording = false;
     state.level = 0;
   }
@@ -40,37 +54,26 @@ export function useRecorder() {
   /** @param {(b: Blob) => void} onBlob l'enregistrement fini */
   async function start(onBlob) {
     done = onBlob;
-    stream = await navigator.mediaDevices.getUserMedia({ audio: {
-      echoCancellation: false, autoGainControl: false, noiseSuppression: true, channelCount: 1 } });
-    parts = [];
-    rec = new MediaRecorder(stream);
-    rec.ondataavailable = (e) => { if (e.data && e.data.size) parts.push(e.data); };
-    rec.onstop = () => {
-      const blob = new Blob(parts, { type: rec ? rec.mimeType : "audio/webm" });
+    const stream = await mic.start();
+    if (!stream) throw new Error("micro indisponible");
+    const parts = [];
+    const r = rec = new MediaRecorder(stream);
+    r.ondataavailable = (e) => { if (e.data && e.data.size) parts.push(e.data); };
+    r.onstop = () => {
+      const blob = new Blob(parts, { type: r.mimeType || "audio/webm" });
       release();
       if (done) done(blob);
       done = null;
     };
-    // Le vu-mètre : la crête de chaque image.
     ctx = new AudioContext();
-    const an = ctx.createAnalyser();
-    an.fftSize = 1024;
-    ctx.createMediaStreamSource(stream).connect(an);
-    const data = new Float32Array(an.fftSize);
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = data.length;
+    ctx.createMediaStreamSource(stream).connect(analyser);
     began = performance.now();
-    const tick = () => {
-      an.getFloatTimeDomainData(data);
-      let peak = 0;
-      for (const v of data) peak = Math.max(peak, Math.abs(v));
-      state.level = peak;
-      state.seconds = (performance.now() - began) / 1000;
-      if (state.seconds >= MAX) { stop(); return; }
-      frame = requestAnimationFrame(tick);
-    };
-    rec.start();
+    r.start();
     state.recording = true;
     state.seconds = 0;
-    tick();
+    meter.resume();
   }
 
   function stop() {
@@ -85,5 +88,6 @@ export function useRecorder() {
     release();
   }
 
-  return { state, start, stop, cancel, MAX };
+  VueUse.tryOnScopeDispose(cancel);
+  return { state, supported, start, stop, cancel, MAX };
 }

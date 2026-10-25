@@ -69,6 +69,7 @@ import { setOpener as setLinuxOpener, vm as linuxVm } from "./tools/sandbox/linu
 import { download, useCopy } from "../lib/files.js";
 import * as voice from "./voice/index.js";
 import { VoiceSettings } from "./voice/VoiceSettings.js";
+import { VoiceStudio } from "./voice/VoiceStudio.js";
 import * as speech from "./voice/speech.js";
 import { role as voiceRole, presetVoices, language as voiceLanguage } from "./voice/proxy.js";
 import { clones as voiceClones, load as loadClones } from "./voice/clones.js";
@@ -77,7 +78,7 @@ import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
 
 export const ChatPanel = {
-  components: { ArtifactPanel, AssetPanel, LinuxPanel, VoiceSettings },
+  components: { ArtifactPanel, AssetPanel, LinuxPanel, VoiceSettings, VoiceStudio },
   props: { session: { type: Object, required: true } },
   emits: ["unauthorized"],
   setup(props, { emit }) {
@@ -388,7 +389,10 @@ export const ChatPanel = {
         }
       }
     }
-    function onPick(e) { addFiles([...e.target.files]); e.target.value = ""; }
+    // Le sélecteur du système (useFileDialog) : des fichiers à joindre.
+    const filesDialog = VueUse.useFileDialog({ multiple: true });
+    filesDialog.onChange((files) => { if (files && files.length) addFiles([...files]); });
+    const pickFiles = () => filesDialog.open({ reset: true });
 
     // ── dossier ouvert (chat/workspace.js) ──────────────────────────────
     // En mémoire seulement, par conversation : `conv.folder` n'en garde
@@ -399,10 +403,13 @@ export const ChatPanel = {
       && folders.has(current.value.id)));
     const folderCount = computed(() => (folderTick.value, current.value
       && folders.has(current.value.id) ? folders.get(current.value.id).count : 0));
-    function onFolder(e) {
+    // Sans le sélecteur de dossier qui permet d'écrire (canPick) : un
+    // dossier lu par useFileDialog, ses écritures téléchargées.
+    const folderDialog = VueUse.useFileDialog({ directory: true, multiple: true });
+    folderDialog.onChange((files) => onFolder(files ? [...files] : []));
+    const pickFolderFiles = () => folderDialog.open({ reset: true });
+    function onFolder(list) {
       const c = current.value;
-      const list = [...e.target.files];
-      e.target.value = "";
       if (!c || !list.length) return;
       const ws = workspace.openFolder(list);
       if (!ws.count) { status.value = `${ws.name} : aucun fichier lisible.`; return; }
@@ -1236,12 +1243,15 @@ export const ChatPanel = {
       const key = voiceMode.value === "clone" ? "voiceClone" : "voiceName";
       if (c && list.length && !list.some((v) => v.id === c[key])) c[key] = list[0].id;
     });
-    // Le studio des voix clonées, dans les réglages.
-    const studioTick = ref(0);
-    function newVoice() {
-      settingsOpen.value = true;
-      studioTick.value++;
+    // Le studio des voix clonées, en fenêtre sur la conversation : la
+    // voix gardée devient celle de la conversation.
+    const studioOpen = ref(false);
+    const newVoice = () => { studioOpen.value = true; };
+    function voiceSaved(c) {
+      studioOpen.value = false;
+      if (current.value) current.value.voiceClone = c.id;
     }
+    const voiceLang = computed(() => voice.prefs.language);
     // La dernière réponse lue : son audio part tout seul. Un audio à la
     // fois : en lancer un arrête les autres (et la lecture d'Écouter).
     const justSpoken = ref("");
@@ -1307,6 +1317,7 @@ export const ChatPanel = {
     // feuille de questions, champ d'un menu).
     VueUse.onKeyStroke("Escape", (e) => {
       if (zoom.value) { zoom.value = null; return; }
+      if (studioOpen.value) { studioOpen.value = false; return; }
       if (filePreview.value) { filePreview.value = null; return; }
       if (e.defaultPrevented || !inputShown()) return;
       if (streaming.value) { e.preventDefault(); stop(); }
@@ -1603,10 +1614,10 @@ export const ChatPanel = {
 
     return { chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
              ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes,
-             voiceMode, genMode, voiceChoices, newVoice, studioTick, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
+             voiceMode, genMode, voiceChoices, newVoice, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
-             toggleTool, onPick, onFolder, closeFolder, folderReady, folderCount, attachOpen,
+             toggleTool, pickFiles, pickFolderFiles, closeFolder, folderReady, folderCount, attachOpen,
              toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
              promptOpen, hiddenPrompt, hostedCost, familyCost, toolsCost, showPrompt,
              canPick, pickFolder, generateMore, moreCount, assets, assetsOpen, assetKey, toggleAssets, locateAsset, zoomIndex, zoomGo, artifactsOpen, artifactId, openArtifact, toggleArtifacts,
@@ -1737,7 +1748,7 @@ export const ChatPanel = {
           <label class="check"><input type="checkbox" v-model="current.showReasoning">
             montrer le raisonnement du modèle</label>
         </div>
-        <voice-settings :incognito="!!current.incognito" :studio="studioTick"></voice-settings>
+        <voice-settings :incognito="!!current.incognito"></voice-settings>
         <div class="field" v-if="notifySupported">
           <span>Notifications</span>
           <label class="check"><input type="checkbox" :checked="notifyOn" @change="toggleNotify">
@@ -1977,7 +1988,7 @@ export const ChatPanel = {
             {{ current.folder.name }}/
             <span class="dim" v-if="folderReady">{{ num(folderCount) }} fichier{{ folderCount > 1 ? "s" : "" }}</span>
             <button type="button" class="link" v-else-if="canPick" @click="pickFolder">à rouvrir</button>
-            <label class="link" v-else>à rouvrir<input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
+            <button type="button" class="link" v-else @click="pickFolderFiles">à rouvrir</button>
             <button type="button" class="icon" title="Fermer le dossier" @click="closeFolder">×</button>
           </span>
           <span v-for="(a, k) in pending" :key="k" class="chip" :class="{ file: a.kind !== 'image' }">
@@ -2011,17 +2022,13 @@ export const ChatPanel = {
                     title="Joindre : des fichiers (ou glisser-déposer, ou coller), ou un dossier que le modèle lira">
               <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4L14.6 7.5"/></svg>
               <span class="lbl">Joindre</span></button>
-            <!-- v-show : les champs restent dans la page pendant que le
-                 sélecteur du système est ouvert. -->
             <div class="menu" role="menu" v-show="attachOpen" @click="attachOpen = false">
-              <label role="menuitem"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/></svg>
-                <span>Fichiers…<small>images, textes : joints au message</small></span>
-                <input type="file" multiple hidden @change="onPick"></label>
+              <button type="button" role="menuitem" @click="pickFiles"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/></svg>
+                <span>Fichiers…<small>images, textes : joints au message</small></span></button>
               <button type="button" role="menuitem" v-if="caps.folder && canPick" @click.stop="pickFolder"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
                 <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut, propose des écritures</small></span></button>
-              <label role="menuitem" v-else-if="caps.folder"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
-                <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut ; écritures téléchargées</small></span>
-                <input type="file" webkitdirectory multiple hidden @change="onFolder"></label>
+              <button type="button" role="menuitem" v-else-if="caps.folder" @click="pickFolderFiles"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
+                <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut ; écritures téléchargées</small></span></button>
             </div>
           </div>
           <div class="attach-menu tools-menu" v-if="!genMode && (hostedShown.length || devicesShown.length)">
@@ -2170,6 +2177,12 @@ export const ChatPanel = {
                 :disabled="streaming" @click="retouch(zoom)">Retoucher</button>
         <button type="button" class="btn" @click="zoom = null">Fermer</button>
       </div>
+    </div>
+    <!-- Le studio d'une voix clonée (« ＋ nouvelle voix… » de la barre) : fermé
+         par ✕ ou Échap seulement, un clic à côté ne perd pas l'enregistrement. -->
+    <div class="lightbox voice-modal" v-if="studioOpen && current" role="dialog" aria-label="Nouvelle voix clonée">
+      <voice-studio :clone-model="current.model" :language="voiceLang" :incognito="!!current.incognito"
+                    @saved="voiceSaved" @close="studioOpen = false"></voice-studio>
     </div>
     <div class="lightbox file-preview" v-if="filePreview" @click.self="filePreview = null" role="dialog" :aria-label="filePreview.name">
       <div class="file-preview-box">

@@ -11,15 +11,19 @@
                    lit le texte ; relancer jusqu'à ce qu'elle plaise
 
   — normalisée dans la page (audio.js), écoutée, ESSAYÉE sur une autre
-  phrase par le modèle de clonage, puis gardée dans ce navigateur
-  (clones.js). La transcription doit être exacte, mot pour mot.
+  phrase par le modèle de clonage, TÉLÉCHARGÉE pour la réutiliser
+  (voicefile.js : le WAV porte son nom et sa transcription), puis gardée
+  dans ce navigateur (clones.js). La transcription doit être exacte, mot
+  pour mot. Un fichier ainsi téléchargé, rouvert ici, reprend les siens.
 */
 import * as audio from "./audio.js";
 import * as clones from "./clones.js";
 import * as proxy from "./proxy.js";
-import { useRecorder, supported as canRecord } from "./recorder.js";
+import * as voicefile from "./voicefile.js";
+import { useRecorder } from "./recorder.js";
+import { download } from "../../lib/files.js";
 
-const { ref, reactive, computed, watch, onUnmounted } = Vue;
+const { ref, reactive, computed, watch } = Vue;
 
 const SAMPLE = "Il était une fois, au bord d'une forêt immense, un vieux meunier qui vivait seul "
   + "avec son chat. Chaque matin, il ouvrait les volets de son moulin et regardait le soleil se "
@@ -39,14 +43,18 @@ export const VoiceStudio = {
   emits: ["saved", "close"],
   setup(props, { emit }) {
     const designModels = computed(() => proxy.models.value.design);
-    const source = ref(canRecord ? "micro" : "fichier");
-    const form = reactive({ text: SAMPLE, description: DESCRIPTION, designModel: "", name: "", trial: TRIAL });
     const rec = useRecorder();
+    const canRecord = rec.supported;
+    const source = ref(canRecord.value ? "micro" : "fichier");
+    const form = reactive({ text: SAMPLE, description: DESCRIPTION, designModel: "", name: "", trial: TRIAL });
     const busy = ref("");
     const error = ref("");
     /** @type {any} */
-    const result = ref(null);       // {wav, duration, lufs, url, source}
-    const trialUrl = ref("");
+    const result = ref(null);       // {wav, duration, lufs, source}
+    const resultUrl = VueUse.useObjectUrl(() => result.value && result.value.wav);
+    /** @type {any} */
+    const trialBlob = ref(null);
+    const trialUrl = VueUse.useObjectUrl(trialBlob);
     const lang = computed(() => props.language || proxy.language());
     // Le texte proposé ne transcrit pas un fichier : vidé pour lui, rendu
     // au micro et à la description s'il n'a pas été écrit.
@@ -56,9 +64,8 @@ export const VoiceStudio = {
     });
 
     function setResult(r) {
-      if (result.value) URL.revokeObjectURL(result.value.url);
-      result.value = r && { ...r, url: URL.createObjectURL(r.wav) };
-      if (trialUrl.value) { URL.revokeObjectURL(trialUrl.value); trialUrl.value = ""; }
+      result.value = r;
+      trialBlob.value = null;
     }
 
     /** @param {Blob} blob @param {string} from */
@@ -83,12 +90,26 @@ export const VoiceStudio = {
       }
     }
 
-    /** @param {Event} e */
-    function pickFile(e) {
-      const input = /** @type {HTMLInputElement} */ (e.target);
-      const f = input.files && input.files[0];
-      input.value = "";
-      if (f) prepare(f, "fichier");
+    // Un fichier audio ; une voix téléchargée d'ici rend aussi son nom et
+    // sa transcription.
+    const dialog = VueUse.useFileDialog({ accept: "audio/*,.wav,.mp3,.ogg,.flac,.m4a,.webm", multiple: false });
+    dialog.onChange(async (files) => {
+      const f = files && files[0];
+      if (!f) return;
+      const tags = await voicefile.unpack(f).catch(() => ({ name: "", text: "" }));
+      if (tags.text) form.text = tags.text;
+      if (tags.name) form.name = tags.name;
+      prepare(f, "fichier");
+    });
+    const pickFile = () => dialog.open({ reset: true });
+
+    // Le résultat, pour le réutiliser : le WAV normalisé, avec son nom et
+    // sa transcription.
+    async function saveFile() {
+      if (!result.value) return;
+      const name = form.name.trim() || NAMES[result.value.source] || "Voix";
+      download({ name: voicefile.fileName(name),
+                 content: await voicefile.pack(result.value.wav, { name, text: form.text.trim() }) }, "audio/wav");
     }
 
     async function design() {
@@ -117,8 +138,7 @@ export const VoiceStudio = {
           reference_audio: await audio.base64(result.value.wav), reference_text: form.text.trim(),
           ...(lang.value ? { language: lang.value } : {}),
         }, { incognito: props.incognito });
-        if (trialUrl.value) URL.revokeObjectURL(trialUrl.value);
-        trialUrl.value = URL.createObjectURL(blob);
+        trialBlob.value = blob;
       } catch (e) {
         error.value = e.message || String(e);
       } finally { busy.value = ""; }
@@ -145,13 +165,8 @@ export const VoiceStudio = {
       return "";
     });
 
-    onUnmounted(() => {
-      rec.cancel();
-      setResult(null);
-    });
-
-    return { source, form, rec, busy, error, result, trialUrl, advice, designModels, canRecord,
-             record, pickFile, design, trial, save, close: () => emit("close") };
+    return { source, form, rec, busy, error, result, resultUrl, trialUrl, advice, designModels, canRecord,
+             record, pickFile, saveFile, design, trial, save, close: () => emit("close") };
   },
   template: `
   <div class="voice-studio">
@@ -189,8 +204,10 @@ export const VoiceStudio = {
           <i :style="{ width: Math.min(100, rec.state.level * 140) + '%' }"></i></span>
         <span class="dim" v-if="rec.state.recording">{{ rec.state.seconds.toFixed(1) }} s / {{ rec.MAX }} s</span>
       </template>
-      <label class="btn ghost" v-else-if="source === 'fichier'" :class="{ disabled: !!busy }">Choisir un fichier audio…
-        <input type="file" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a,.webm" hidden :disabled="!!busy" @change="pickFile"></label>
+      <template v-else-if="source === 'fichier'">
+        <button type="button" class="btn ghost" :disabled="!!busy" @click="pickFile">Choisir un fichier audio…</button>
+        <span class="dim">une voix téléchargée d'ici reprend son nom et sa transcription</span>
+      </template>
       <template v-else>
         <select v-if="designModels.length > 1" v-model="form.designModel" aria-label="Modèle de conception">
           <option value="">{{ designModels[0] }}</option>
@@ -205,7 +222,7 @@ export const VoiceStudio = {
     <div class="studio-result" v-if="result">
       <div class="dim">Référence normalisée : {{ result.duration.toFixed(1) }} s · mono 24 kHz ·
         {{ result.lufs.toFixed(1) }} LUFS<template v-if="advice"> — {{ advice }}</template></div>
-      <audio controls :src="result.url"></audio>
+      <audio controls :src="resultUrl"></audio>
       <label class="field">
         <span>Essayer sur une autre phrase</span>
         <div class="studio-bar">
@@ -218,11 +235,14 @@ export const VoiceStudio = {
         <span>Nom de la voix</span>
         <div class="studio-bar">
           <input v-model="form.name" type="text" maxlength="60">
+          <button type="button" class="btn ghost" :disabled="!!busy" @click="saveFile"
+                  title="Le WAV normalisé, avec son nom et sa transcription : à réimporter ici, ou pour curl">Télécharger</button>
           <button type="button" class="btn" :disabled="!!busy || !form.text.trim()" @click="save">Garder cette voix</button>
         </div>
       </label>
     </div>
-    <p class="dim small">Gardée dans ce navigateur seulement ; l'enregistrement part avec chaque lecture.
+    <p class="dim small">Gardée dans ce navigateur seulement (Télécharger pour la reprendre ailleurs) ;
+      l'enregistrement part avec chaque lecture.
       Ne cloner que des voix qu'on a le droit d'utiliser : une voix conçue, la sienne, ou celle d'une
       personne d'accord.</p>
   </div>`,

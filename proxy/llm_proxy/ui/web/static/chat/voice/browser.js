@@ -29,7 +29,7 @@ function loadVoices() {
 }
 if (synth) {
   loadVoices();
-  synth.addEventListener("voiceschanged", loadVoices);
+  VueUse.useEventListener(synth, "voiceschanged", loadVoices);
 }
 
 /** La voix choisie (son URI), sinon celle de la langue `lang`, sinon celle
