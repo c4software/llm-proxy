@@ -13,7 +13,7 @@
   — normalisée dans la page (audio.js), écoutée, ESSAYÉE sur une autre
   phrase par le modèle de clonage, TÉLÉCHARGÉE pour la réutiliser
   (voicefile.js : le WAV porte son nom et sa transcription), puis gardée
-  dans ce navigateur (clones.js). La transcription doit être exacte, mot
+  par le proxy, avec le compte (clones.js). La transcription doit être exacte, mot
   pour mot. Un fichier ainsi téléchargé, rouvert ici, reprend les siens.
 */
 import * as audio from "./audio.js";
@@ -152,7 +152,7 @@ export const VoiceStudio = {
           wav: result.value.wav, duration: result.value.duration, source: result.value.source });
         emit("saved", clone);
       } catch (e) {
-        error.value = "Enregistrement dans ce navigateur : " + (e.message || e);
+        error.value = "Enregistrement de la voix : " + (e.message || e);
       }
     }
 

@@ -2,7 +2,7 @@
 /*
   Les RÉGLAGES de la voix, dans ceux du chat : le moteur (navigateur ou
   modèle du proxy), la voix, le ton et la langue (proxy), le débit ; les
-  voix clonées de ce navigateur (écouter la référence, la télécharger
+  voix clonées du compte (écouter la référence, la télécharger
   avec sa transcription, la supprimer ; en importer une téléchargée :
   voicefile.js) et le studio qui en crée une (VoiceStudio.js).
 */
@@ -42,7 +42,7 @@ export const VoiceSettings = {
         else if (cloneModel.value && clones.clones.value.length) prefs.proxyVoice = cloneKey(clones.clones.value[0].id);
       }
     }
-    // Les voix clonées de ce navigateur : leur liste (Télécharger, Copier
+    // Les voix clonées du compte : leur liste (Télécharger, Copier
     // la transcription…) se montre quel que soit le moteur.
     clones.load();
     watch(() => [prefs.engine, models.value.custom.join()], () => {
@@ -56,19 +56,30 @@ export const VoiceSettings = {
 
     // Les voix clonées : écouter une référence, en supprimer une (confirmée).
     const studioOpen = ref(false);
-    // La référence écoutée : un <audio> caché, son adresse par useObjectUrl.
+    // La référence écoutée (lue au proxy) : un <audio> caché, son adresse
+    // par useObjectUrl.
     const listening = reactive({ id: "" });
-    const refBlob = computed(() => (clones.clones.value.find((x) => x.id === listening.id) || {}).wav);
+    /** @type {any} */
+    const refBlob = ref(null);
     const refUrl = VueUse.useObjectUrl(refBlob);
     const player = ref(null);
-    const stopRef = () => { listening.id = ""; };
-    function playRef(c) {
-      listening.id = listening.id === c.id ? "" : c.id;
-      if (listening.id) Vue.nextTick(() => player.value && player.value.play().catch(stopRef));
+    const stopRef = () => { listening.id = ""; refBlob.value = null; };
+    async function playRef(c) {
+      if (listening.id === c.id) { stopRef(); return; }
+      listening.id = c.id;
+      try {
+        const blob = await clones.wav(c.id);
+        if (listening.id !== c.id) return;
+        refBlob.value = blob;
+        Vue.nextTick(() => player.value && player.value.play().catch(stopRef));
+      } catch (e) {
+        stopRef();
+        importError.value = e.message || String(e);
+      }
     }
     // Télécharger : le WAV avec son nom et sa transcription (voicefile.js).
     const saveRef = async (c) => download({ name: voicefile.fileName(c.name),
-      content: await voicefile.pack(c.wav, { name: c.name, text: c.text }) }, "audio/wav");
+      content: await voicefile.pack(await clones.wav(c.id), { name: c.name, text: c.text }) }, "audio/wav");
     // Importer une voix téléchargée : gardée telle quelle si elle porte sa
     // transcription ; sinon, au studio (Fichier) de la compléter.
     const importError = ref("");
@@ -142,7 +153,7 @@ export const VoiceSettings = {
             <option value="" disabled>choisir une voix</option>
             <optgroup v-for="g in presetGroups" :key="g.model" :label="'Toutes faites — ' + g.model">
               <option v-for="v in g.voices" :key="v.key" :value="v.key">{{ v.name }}</option></optgroup>
-            <optgroup v-if="cloneModel && clones.length" label="Clonées (ce navigateur)">
+            <optgroup v-if="cloneModel && clones.length" label="Clonées">
               <option v-for="c in clones" :key="c.id" :value="cloneKey(c.id)">{{ c.name }}</option></optgroup>
           </select></label>
         <label v-if="isPreset">ton

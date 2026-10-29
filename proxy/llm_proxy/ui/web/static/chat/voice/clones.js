@@ -1,88 +1,79 @@
 // @ts-check
 /*
-  Les VOIX CLONÉES de ce navigateur (IndexedDB, « llm-proxy-voices ») :
-  chacune sa référence normalisée (audio.js, un WAV de quelques centaines
-  de Ko — trop pour localStorage) et sa transcription mot pour mot. Le
-  proxy n'en garde rien : la référence part avec CHAQUE requête de
-  synthèse (docs/voix.md).
+  Les VOIX CLONÉES du compte, gardées par le proxy (storage/voices.py,
+  /ui/voices) : chacune sa référence normalisée (audio.js, un WAV de
+  quelques centaines de Ko) et sa transcription mot pour mot. Le même
+  compte les retrouve sur tout navigateur. La référence repart de la page
+  avec CHAQUE requête de synthèse (docs/voix.md).
 
-    clones          réactif : [{id, name, text, wav, duration, created, source}]
+    clones          réactif : [{id, name, text, duration, created, source}]
     load()          les relit (une fois suffit, au premier besoin)
     add(v) / rename(id, nom) / remove(id)
+    wav(id)         la référence (Blob), lue une fois puis gardée en mémoire
     reference(id)   {audio: base64, text} pour /v1/audio/speech, gardé en mémoire
 */
 import { base64 } from "./audio.js";
+import { call } from "../../lib/http.js";
 
-const DB = "llm-proxy-voices";
-const STORE = "voices";
+const BASE = "/ui/voices/";
 
-/** @typedef {{id: string, name: string, text: string, wav: Blob, duration: number,
+/** @typedef {{id: string, name: string, text: string, duration: number,
  *   created: number, source: string}} Clone */
 
 /** @type {any} */
 export const clones = Vue.ref([]);
-/** @type {Promise<IDBDatabase> | null} */
-let opening = null;
 /** @type {Promise<void> | null} */
 let loading = null;
+/** @type {Map<string, Promise<Blob>>} */
+const blobs = new Map();
 /** @type {Map<string, string>} */
 const encoded = new Map();
 
-function open() {
-  if (!opening) {
-    opening = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB, 1);
-      req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: "id" });
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    opening.catch(() => { opening = null; });
-  }
-  return opening;
-}
-
-/** @param {IDBTransactionMode} mode @param {(s: IDBObjectStore) => IDBRequest} fn */
-async function tx(mode, fn) {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const t = db.transaction(STORE, mode);
-    const req = fn(t.objectStore(STORE));
-    t.oncomplete = () => resolve(req.result);
-    t.onerror = () => reject(t.error);
-  });
-}
-
 export function load() {
   if (!loading) {
-    loading = tx("readonly", (s) => s.getAll()).then((all) => {
-      clones.value = (/** @type {Clone[]} */ (all) || []).sort((a, b) => a.created - b.created);
-    }, () => { clones.value = []; });
+    loading = call("GET", "/ui/voices").then((r) => {
+      clones.value = (r && r.data) || [];
+    }, () => { clones.value = []; loading = null; });
   }
   return loading;
 }
 
-/** @param {Omit<Clone, "id" | "created">} v @returns {Promise<Clone>} */
+/** @param {Omit<Clone, "id" | "created"> & {wav: Blob}} v @returns {Promise<Clone>} */
 export async function add(v) {
-  const clone = { ...v, id: crypto.randomUUID(), created: Date.now() };
-  await tx("readwrite", (s) => s.put(clone));
+  const { wav: blob, ...meta } = v;
+  const id = crypto.randomUUID();
+  const clone = await call("PUT", BASE + id, { ...meta, data: "data:audio/wav;base64," + await base64(blob) });
+  blobs.set(id, Promise.resolve(blob));
   clones.value = [...clones.value, clone];
   return clone;
 }
 
 /** @param {string} id @param {string} name */
 export async function rename(id, name) {
-  const c = clones.value.find((x) => x.id === id);
-  if (!c || !name.trim()) return;
-  const next = { ...c, name: name.trim() };
-  await tx("readwrite", (s) => s.put(next));
+  if (!clones.value.some((x) => x.id === id) || !name.trim()) return;
+  const next = await call("PATCH", BASE + encodeURIComponent(id), { name: name.trim() });
   clones.value = clones.value.map((x) => (x.id === id ? next : x));
 }
 
 /** @param {string} id */
 export async function remove(id) {
-  await tx("readwrite", (s) => s.delete(id));
+  await call("DELETE", BASE + encodeURIComponent(id));
+  blobs.delete(id);
   encoded.delete(id);
   clones.value = clones.value.filter((x) => x.id !== id);
+}
+
+/** @param {string} id @returns {Promise<Blob>} */
+export function wav(id) {
+  if (!blobs.has(id)) {
+    const got = fetch(BASE + encodeURIComponent(id) + "/audio").then((r) => {
+      if (!r.ok) throw new Error(`référence de la voix : HTTP ${r.status}`);
+      return r.blob();
+    });
+    got.catch(() => blobs.delete(id));
+    blobs.set(id, got);
+  }
+  return /** @type {Promise<Blob>} */ (blobs.get(id));
 }
 
 /** @param {string} id @returns {Promise<{audio: string, text: string} | null>} */
@@ -90,6 +81,6 @@ export async function reference(id) {
   await load();
   const c = clones.value.find((x) => x.id === id);
   if (!c) return null;
-  if (!encoded.has(id)) encoded.set(id, await base64(c.wav));
+  if (!encoded.has(id)) encoded.set(id, await base64(await wav(id)));
   return { audio: /** @type {string} */ (encoded.get(id)), text: c.text };
 }

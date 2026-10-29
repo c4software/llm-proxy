@@ -47,7 +47,7 @@
   MODÈLES DE VOIX (`text-to-speech` au catalogue, voice/speech.js) :
   comme ceux d'images, le dernier message part à /ui/audio/speech ; la
   réponse est son audio, joint. La voix se choisit dans la barre (toute
-  faite, ou clonée dans ce navigateur) ; le prompt système donne le ton,
+  faite, ou clonée, gardée avec le compte) ; le prompt système donne le ton,
   ou décrit la voix (modèle de conception).
 
   MODÈLES DE TRANSCRIPTION (`automatic-speech-recognition` au catalogue,
@@ -1240,7 +1240,7 @@ export const ChatPanel = {
 
     // ── un modèle de voix (voice/speech.js) ─────────────────────────────
     // La voix de la conversation : toute faite (conv.voiceName, parmi
-    // celles du modèle) ou clonée (conv.voiceClone, de ce navigateur).
+    // celles du modèle) ou clonée (conv.voiceClone, du compte).
     const presets = reactive({});
     watch(() => current.value && voiceMode.value === "custom" && current.value.model, async (m) => {
       if (!m || presets[m]) return;
@@ -2166,7 +2166,7 @@ export const ChatPanel = {
             </select>
           </label>
           <label class="effort" v-if="voiceMode === 'custom' || voiceMode === 'clone'"
-                 :title="voiceMode === 'clone' ? 'Voix clonée (gardée dans ce navigateur)' : 'Voix du modèle'">
+                 :title="voiceMode === 'clone' ? 'Voix clonée (gardée avec le compte)' : 'Voix du modèle'">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
             <select v-if="voiceMode === 'custom'" v-model="current.voiceName" :disabled="streaming" aria-label="Voix">
               <option v-if="!voiceChoices.length" value="" disabled>chargement…</option>

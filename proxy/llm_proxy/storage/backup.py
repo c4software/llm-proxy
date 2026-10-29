@@ -3,7 +3,8 @@ Sauvegarde et restauration de data/ — ce qu'on ne peut pas reconstruire :
 
   stats.db, memory.db, accounts.db,  les bases SQLite (statistiques,
   conversations.db                   mémoire persistante, comptes et clés,
-                                     historique du chat de la page)
+                                     historique et voix clonées du chat
+                                     de la page)
   client.secret                      le secret des condensés : le perdre,
                                      c'est perdre toutes les mémoires, les
                                      clés gérées et les sessions

@@ -7,7 +7,7 @@
 
   Selon le rôle du modèle (proxy.js) :
     custom    une voix toute faite (`voice`), le prompt système comme ton
-    clone     une voix clonée de ce navigateur (clones.js)
+    clone     une voix clonée du compte (clones.js)
     design    le prompt système DÉCRIT la voix ; une seule requête (le
               modèle inventerait une voix nouvelle à chaque passage)
 
@@ -50,7 +50,7 @@ export async function speakTurn(o) {
     Object.assign(base, { voice: o.voice, ...(o.instructions && o.instructions.trim() ? { instructions: o.instructions.trim() } : {}) });
   } else if (o.role === "clone") {
     const ref = await clones.reference(/** @type {string} */ (o.clone));
-    if (!ref) throw new Error("Cette voix clonée n'est pas dans ce navigateur.");
+    if (!ref) throw new Error("Cette voix clonée n'existe plus (Réglages → Voix).");
     Object.assign(base, { reference_audio: ref.audio, reference_text: ref.text });
   } else {
     Object.assign(base, { instructions: /** @type {string} */ (o.instructions).trim() });

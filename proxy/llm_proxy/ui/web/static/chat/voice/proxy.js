@@ -134,7 +134,7 @@ async function bodyFor(voice, input, opts) {
              ...(opts.tone ? { instructions: opts.tone } : {}) };
   }
   const ref = await clones.reference(voice.id);
-  if (!ref) throw new Error("voix clonée introuvable dans ce navigateur");
+  if (!ref) throw new Error("voix clonée introuvable (Réglages → Voix)");
   return { model: voice.model, input, reference_audio: ref.audio, reference_text: ref.text, ...lang };
 }
 

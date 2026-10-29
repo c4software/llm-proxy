@@ -111,7 +111,7 @@ la conversation (`/ui/assets`), comme une image. Selon le modèle :
 
 - *voix toutes faites* (`…-customvoice`) : la voix se choisit dans la
   barre de saisie ; le prompt système (*Réglages*) donne le ton.
-- *voix clonée* (`…-base`) : une voix clonée de ce navigateur, choisie
+- *voix clonée* (`…-base`) : une voix clonée du compte, choisie
   dans la barre ; *＋ nouvelle voix…* ouvre le studio en fenêtre sur la
   conversation (voir *Voix clonées* plus bas), et la voix gardée devient
   celle de la conversation.
@@ -227,14 +227,15 @@ et de fin coupés (0,15 s gardée), -20 LUFS, crêtes à -1 dB au plus.
 *Essayer* la fait lire une autre phrase par le modèle de clonage ;
 *Télécharger* donne la voix en un **fichier réutilisable** : le WAV
 normalisé, avec son nom et sa transcription dans ses métadonnées (bloc
-LIST/INFO). *Garder cette voix* la range dans **ce navigateur**
-(IndexedDB), avec sa transcription : le proxy n'en garde rien, et la
-référence part avec chaque passage lu. Chaque voix gardée s'écoute
+LIST/INFO). *Garder cette voix* la range **avec le compte**, sur le
+proxy (`data/conversations.db`, table `voices` ; `/ui/voices`), avec sa
+transcription : le même compte la retrouve sur tout navigateur, et la
+référence repart de la page avec chaque passage lu. Chaque voix gardée s'écoute
 (*Référence*), se télécharge de même, donne sa transcription
 (*Copier la transcription* : le texte à reprendre avec le WAV, dans une
 autre application) ou se supprime. *Importer une
-voix…* (*Réglages*) reprend un fichier téléchargé, dans un autre
-navigateur par exemple, sans ressaisir la transcription ; ouvert depuis
+voix…* (*Réglages*) reprend un fichier téléchargé, d'un autre compte
+par exemple, sans ressaisir la transcription ; ouvert depuis
 *Fichier* dans le studio, il remplit aussi le nom et la transcription.
 Le fichier reste un WAV ordinaire, utilisable tel quel avec curl
 ([Voix](voix.md)).
@@ -499,3 +500,4 @@ envoyer sans requête CORS préliminaire, que le proxy ne sert pas.
 | `GET /ui/conversations` | conversations ; `?summary=1&limit=&offset=` : leurs résumés par pages (`next` : la page suivante) ; `?q=` : les résumés de celles qui contiennent chaque mot |
 | `GET` / `PUT` / `DELETE /ui/conversations/{id}` | une conversation |
 | `POST /ui/assets`, `GET /ui/assets/{id}` | images des conversations |
+| `GET /ui/voices`, `PUT` / `PATCH` / `DELETE /ui/voices/{id}`, `GET /ui/voices/{id}/audio` | voix clonées du compte (`PUT` : `{name, text, duration, source, data}`, le WAV en data URL) |

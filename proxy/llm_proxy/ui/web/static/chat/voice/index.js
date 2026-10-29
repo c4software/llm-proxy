@@ -5,7 +5,7 @@
 
     browser.js    la synthèse du NAVIGATEUR : tout de suite, sans modèle
     proxy.js      un MODÈLE DE SYNTHÈSE du proxy (Qwen3-TTS) : ses voix
-                  toutes faites, ou une voix CLONÉE de ce navigateur
+                  toutes faites, ou une voix CLONÉE du compte
                   (clones.js), créée dans VoiceStudio.js — enregistrée au
                   micro, d'un fichier, ou conçue d'après une description,
                   normalisée dans la page (audio.js)

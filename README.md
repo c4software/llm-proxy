@@ -32,7 +32,7 @@ complète sur les backends du proxy ([Le chat](docs/chat.md)) :
 - **Voix** : réponses lues par le navigateur ou par un modèle du proxy
   (Qwen3-TTS, voix toutes faites ou **clonées**) ; studio de clonage
   depuis le micro, un fichier ou une description, normalisé dans la
-  page, voix gardées dans le navigateur, téléchargeables et importables
+  page, voix gardées avec le compte, téléchargeables et importables
   ([Voix](docs/voix.md)) ; modèles de voix et de **transcription**
   directement dans le fil (audio joint ou enregistré au micro).
 - **Outils du proxy** : recherche et lecture web sourcées, exécution de
