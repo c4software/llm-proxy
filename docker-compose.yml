@@ -39,7 +39,7 @@ services:
     # change pas de version. Mise à jour : changer le tag
     # (https://hub.docker.com/r/searxng/searxng/tags). Même image sur
     # ghcr.io/searxng/searxng si Docker Hub limite les téléchargements.
-    image: docker.io/searxng/searxng:2026.10.4-d48c4b555
+    image: docker.io/searxng/2026.11.5-3e95f6cd2
     restart: unless-stopped
     # Pas de `ports:`, volontairement : l'instance n'a pas de limiteur et
     # ne doit être joignable que du proxy (searxng:8080).
