@@ -38,7 +38,7 @@ import time
 from collections import OrderedDict
 
 from ..core import config
-from ..core.settings import log
+from ..core.settings import INCOGNITO, log
 from ..storage import stats
 from . import (  # noqa: F401
     code_execution,
@@ -364,9 +364,13 @@ class Hosted:
                 result, text=result.text[:MAX_RESULT_CHARS] + "\n[truncated]")
         # Le texte d'une erreur est journalisé : sur la surface Anthropic
         # le client n'en reçoit qu'un code, seul le modèle lit le détail.
+        # Incognito : ni arguments (la recherche, l'URL, le code) ni texte
+        # dans les logs — le nom, la taille, la durée et le code seuls.
+        hidden = INCOGNITO.get()
         log.info("outil hébergé %s(%s) → %d car. en %.1fs%s", name,
-                 str(arguments)[:160], len(result.text),
-                 time.monotonic() - started,
-                 f" — {result.error} : {result.text[:200]}"
+                 "incognito" if hidden else str(arguments)[:160],
+                 len(result.text), time.monotonic() - started,
+                 (f" — {result.error}" if hidden
+                  else f" — {result.error} : {result.text[:200]}")
                  if result.error else "")
         return result

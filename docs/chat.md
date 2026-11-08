@@ -53,7 +53,9 @@ proxy n'en garde **rien** au-delà de la réponse :
   ni cache web (recherches, pages, OCR, transcriptions) ;
 - l'outil `memory` est retiré, même déclaré ;
 - un fichier rendu par un outil n'est gardé que le temps de s'afficher :
-  `[files].incognito_ttl`, 900 s par défaut (au plus `[files].ttl`).
+  `[files].incognito_ttl`, 900 s par défaut (au plus `[files].ttl`) ;
+- les logs d'un appel d'outil hébergé n'ont ni ses arguments (recherche,
+  URL, code) ni son texte : le nom, la taille, la durée, le code d'erreur.
 
 Restent les statistiques (des comptes, sans contenu) et le bac
 d'exécution de code du tour, qui expire normalement.

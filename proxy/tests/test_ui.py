@@ -333,10 +333,14 @@ def test_cookie_is_secure_behind_a_tls_reverse_proxy(ui):
     assert "secure" not in r.headers["set-cookie"].lower()
 
 
-def test_incognito_chat_leaves_nothing_behind(ui, monkeypatch):
+def test_incognito_chat_leaves_nothing_behind(ui, monkeypatch, caplog):
     """`X-Incognito: 1` : l'échange d'outils n'est pas rangé dans la
-    mémoire du chat (une requête ordinaire, si) ; la requête suivante,
-    elle, n'est pas incognito."""
+    mémoire du chat (une requête ordinaire, si), ses arguments ne vont pas
+    dans les logs ; la requête suivante, elle, n'est pas incognito."""
+    import logging
+    from llm_proxy.core.settings import log as proxy_log
+    monkeypatch.setattr(proxy_log, "propagate", True)
+    caplog.set_level(logging.INFO)
     login(ui)
     body = {"model": "essai/qwen", "stream": True,
             "messages": [{"role": "user", "content": "Dernière version ?"}],
@@ -346,9 +350,14 @@ def test_incognito_chat_leaves_nothing_behind(ui, monkeypatch):
                        headers={"x-incognito": "1"})
     assert r.status_code == 200 and ui.hosted.runs
     assert len(C.MEMORY) == 0
+    ran = [m for m in caplog.messages if m.startswith("outil hébergé")]
+    assert ran and all("(incognito)" in m for m in ran)
+    caplog.clear()
     ui.replies = search_then_answer()
     assert ui.client.post("/ui/chat/completions", json=body).status_code == 200
     assert len(C.MEMORY) == 1
+    ran = [m for m in caplog.messages if m.startswith("outil hébergé")]
+    assert ran and not any("(incognito)" in m for m in ran)
 
 
 def test_incognito_chat_never_declares_memory(ui, monkeypatch):
