@@ -17,7 +17,14 @@ L'environnement ne sert qu'à deux choses :
   - Dans l'image : `/app/data/config.toml`.
 - **Les secrets** : toute chaîne du TOML peut contenir `${VAR}`. Elle est
   remplacée au chargement par la variable d'environnement. Les clés
-  d'API restent ainsi hors du fichier et hors du dépôt.
+  d'API restent ainsi hors du fichier et hors du dépôt. Une variable
+  absente ou vide devient `""` : le démarrage la nomme dans un
+  avertissement. Sous Docker, une clé ajoutée au `.env` doit aussi être
+  transmise au conteneur (`environment:` du service, dans
+  `docker-compose.yml` ou l'override) ; sinon le backend part sans clé.
+- **Un 401 du backend** (sa clé manque ou est refusée) est rendu au
+  client en **502** `upstream_auth_error`, jamais tel quel : le client
+  le prendrait pour le refus de SA clé (la page web se déconnectait).
 
 `data/config.toml` et `data/stats.db` sont dans `.gitignore`. Le dépôt
 ne garde que l'exemple.

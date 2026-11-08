@@ -252,12 +252,22 @@ def default_tap(status: int, content_type: str):
     return stats.UsageCollector(content_type)
 
 
+def upstream_auth_message(b: Backend) -> str:
+    """Un 401 du backend dit que la clé DU PROXY vers lui manque ou est
+    refusée : jamais relayé tel quel — le client (la page, un SDK) le
+    prendrait pour SA clé refusée et se déconnecterait. 502 à la place."""
+    return (f"backend {b.name} rejected the proxy's credentials (upstream "
+            f"401): its api_key is missing or invalid in the proxy "
+            f"configuration.")
+
+
 async def send_upstream(call: Call, request: Request, path: str,
                         body: bytes) -> httpx2.Response | JSONResponse:
     """Envoie `body` vers `path` du backend de `call` ; rend la réponse
     upstream ouverte en flux, ou — backend injoignable — la réponse
     d'erreur locale, déjà comptée (503 parlant pour un backend local
-    éteint, 502 sinon)."""
+    éteint, 502 sinon — et 502 pour un 401 upstream, voir
+    upstream_auth_message)."""
     b = call.backend
     albert.maybe_log_status()
     req = b.client.build_request(
@@ -280,6 +290,16 @@ async def send_upstream(call: Call, request: Request, path: str,
                               headers={"Retry-After": "30"})
         log.error("backend %s injoignable : %s", b.name, exc)
         return call.error(502, "proxy_error", f"upstream unreachable: {exc}")
+
+    if upstream.status_code == 401:
+        excerpt = (await upstream.aread())[:ERROR_EXCERPT]
+        await upstream.aclose()
+        log.warning("[%s] %s → 401 upstream pour %s (clé du backend "
+                    "absente ou refusée) : %s", b.name, call.endpoint,
+                    call.model_key,
+                    excerpt.decode("utf-8", "replace").replace("\n", " "))
+        return call.error(502, "upstream_auth_error",
+                          upstream_auth_message(b))
 
     if upstream.status_code == 429 and b.quotas:
         log.warning(

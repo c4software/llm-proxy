@@ -46,6 +46,12 @@ def seed_fair_share() -> int:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("configuration : %s", config.CONFIG_PATH)
+    if config.MISSING_VARS:
+        log.warning(
+            "variables d'environnement absentes ou vides, remplacées par "
+            "\"\" dans la configuration : %s (une clé dans .env doit AUSSI "
+            "être transmise au conteneur, `environment:` du compose)",
+            ", ".join(sorted(config.MISSING_VARS)))
     stats.init()
     seeded = await asyncio.to_thread(seed_fair_share)
     log.info("partage équitable : %s par heure glissante par défaut, "

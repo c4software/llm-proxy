@@ -40,10 +40,23 @@ EXAMPLE_PATH = os.path.join(DATA_DIR, "config.example.toml")
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
+# Les «${VAR}» du TOML sans variable d'environnement (ou vide) : remplacés
+# par "" sans bruit au chargement — startup les nomme, une clé de backend
+# absente se lisant sinon comme un 401 de l'upstream.
+MISSING_VARS: set[str] = set()
+
+
+def _var(m: re.Match) -> str:
+    got = os.environ.get(m.group(1), "")
+    if not got:
+        MISSING_VARS.add(m.group(1))
+    return got
+
+
 def _expand(value):
     """Substitue ${VAR} récursivement dans tout l'arbre chargé."""
     if isinstance(value, str):
-        return _VAR.sub(lambda m: os.environ.get(m.group(1), ""), value)
+        return _VAR.sub(_var, value)
     if isinstance(value, dict):
         return {k: _expand(v) for k, v in value.items()}
     if isinstance(value, list):

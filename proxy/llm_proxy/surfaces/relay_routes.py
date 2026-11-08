@@ -16,7 +16,11 @@ from ..upstream.backends import (
 )
 from ..core.httputil import dialect_of, error_response
 from ..core.settings import FORWARD_POST_PATHS, log
-from ..upstream.relaying import clean_headers, response_headers
+from ..upstream.relaying import (
+    clean_headers,
+    response_headers,
+    upstream_auth_message,
+)
 from .endpoints import forward_post
 
 router = APIRouter()
@@ -46,6 +50,11 @@ async def audio_voices(request: Request):
             return error_response(dialect, 503, "backend_offline",
                                   backend_offline_message(backend, exc))
         return error_response(dialect, 502, "proxy_error", f"upstream unreachable: {exc}")
+    if upstream.status_code == 401:
+        log.warning("[%s] /v1/audio/voices → 401 upstream : %s",
+                    backend.name, upstream.text[:300])
+        return error_response(dialect, 502, "upstream_auth_error",
+                              upstream_auth_message(backend))
     return Response(content=upstream.content, status_code=upstream.status_code,
                     headers=response_headers(upstream))
 
