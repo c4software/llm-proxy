@@ -100,6 +100,14 @@ quand Chrome le propose. Il répond **sur l'appareil**, sans le proxy.
   les seuls modèles que déclare `[tools.image_generation].steps`, *auto*
   par défaut (celles du modèle). Un modèle à passes fixes, comme
   Qwen-Image-2.1-Turbo, n'a pas le sélecteur.
+- *Agrandir* (×1,5, ×2…, sous une image ou dans l'image agrandie) : si
+  `[tools.image_generation].upscale_model` est posé, l'image est
+  retouchée par ce modèle à une plus grande taille, avec une consigne
+  fixe. Le modèle la **redessine** : la résolution est réelle, les
+  détails changent un peu. Le résultat arrive dans une nouvelle réponse.
+  Mesuré le 08/11/2026 avec Qwen-Image-2.1-Turbo sur gufo : 1024² vers
+  2048² en 182 s, bascule du modèle de texte comprise ; texte de l'image
+  intact, composition gardée.
 - *Générer encore* (sous la réponse, avec un nombre de 1 à 4) : d'autres
   images avec le **même prompt**, tel qu'envoyé — rien du fil depuis —,
   jointes à la même réponse (et la même image retouchée, si c'en était une).

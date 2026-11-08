@@ -56,3 +56,26 @@ export async function oneImage(conv, body, signal, onUnauthorized) {
   }
   throw new Error("Le modèle n'a pas rendu d'image lisible.");
 }
+
+// La taille d'une image (data URL ou adresse de la page), lue en la
+// chargeant.
+export function naturalSize(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onerror = () => reject(new Error("Image illisible."));
+    img.src = src;
+  });
+}
+
+// La taille demandée pour AGRANDIR une image de `factor` : côtés en
+// multiples de 32 (4096 au plus), surface ramenée sous `maxPixels` en
+// gardant les proportions. null si elle n'est pas plus grande que
+// l'image (déjà à la taille maximale).
+export function upscaleSize(w, h, factor, maxPixels) {
+  let k = factor;
+  if (w * h * k * k > maxPixels) k = Math.sqrt(maxPixels / (w * h));
+  const side = (v) => Math.min(4096, Math.max(32, Math.floor(v * k / 32) * 32));
+  const W = side(w), H = side(h);
+  return W * H > w * h ? `${W}x${H}` : null;
+}

@@ -398,6 +398,16 @@ size = "512x512"
 # défaut ; Qwen-Image-2.1-Turbo : 8 fixes, toute autre valeur refusée.
 steps = {}
 # steps = { "*/Qwen-Image-2.1-heretic" = [10, 20, 30, 40, 60] }
+# « Agrandir » une image dans le chat de la page : une RETOUCHE de l'image
+# par ce modèle PRÉFIXÉ (il doit servir /v1/images/edits), avec la
+# consigne `upscale_prompt`, à `upscale_factors` fois sa taille, surface
+# rendue au plus `upscale_max_pixels`. Le modèle redessine l'image (ce
+# n'est pas un super-résolveur). Vide (défaut) : pas de bouton.
+upscale_model = ""
+# upscale_model = "silentchuck/Qwen-Image-2.1-Turbo-heretic"
+upscale_factors = [1.5, 2]
+upscale_max_pixels = 4194304
+# upscale_prompt = "The same image at a higher resolution. …"
 # Délai (s) de la génération, et d'un téléchargement ; timeout + 2 ×
 # download_timeout remplace [tools].run_timeout pour cet outil.
 timeout = 300

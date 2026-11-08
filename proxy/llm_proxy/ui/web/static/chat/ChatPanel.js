@@ -58,7 +58,7 @@
 import { ChatStore } from "./store.js";
 import { inline, dataUrl, ownImage } from "./history.js";
 import { readAttachment } from "./attachments.js";
-import { imagePrompt, oneImage } from "./images.js";
+import { imagePrompt, oneImage, naturalSize, upscaleSize } from "./images.js";
 import { readStream } from "./stream.js";
 import { partialString } from "../lib/partialjson.js";
 import { availableBrowserModels, browserModel, modelCaps } from "./browser.js";
@@ -1391,6 +1391,45 @@ export const ChatPanel = {
       e.preventDefault();
       zoomGo(e.key === "ArrowLeft" ? -1 : 1);
     });
+    // AGRANDIR une image (`[tools.image_generation].upscale_model`) : une
+    // retouche par ce modèle, consigne fixe, à `factor` fois la taille
+    // (bornée par la surface permise). Le modèle REDESSINE l'image : la
+    // réponse le dit. Sans prompt de suite (m.prompt vide) : ni « Générer
+    // encore » ni « Régénérer » ne la rejouent comme une demande.
+    const upscaleOpt = computed(() => chat.value.image_upscale || null);
+    const upscaleFactor = ref(2);
+    async function upscale(a, factor = upscaleFactor.value) {
+      const up = upscaleOpt.value, c = current.value;
+      if (!up || !c || streaming.value || !ownImage(a.data)) return;
+      zoom.value = null;
+      const msg = { id: uid(), role: "assistant", content: "", reasoning: "",
+                    tools: [], sources: [], attachments: [], image: true, prompt: "",
+                    upscale: true, model: up.model, usage: null, error: "",
+                    started: Date.now(), duration: 0 };
+      c.messages.push(msg);
+      c.updated = Date.now();
+      const live = c.messages[c.messages.length - 1];
+      streaming.value = true;
+      status.value = "";
+      const ctrl = controller = new AbortController();
+      live.want = 1;
+      try {
+        const image = await dataUrl(a.data);
+        const { w, h } = await naturalSize(image);
+        const size = upscaleSize(w, h, factor, up.max_pixels);
+        if (!size) throw new Error(`Déjà à la taille maximale (${w} × ${h}).`);
+        live.content = `*Agrandie ×${factor} : ${w} × ${h} → ${size.replace("x", " × ")}, redessinée par ${up.model}*`;
+        const got = await oneImage(c, { model: up.model, prompt: up.prompt, size, n: 1, image },
+                                   ctrl.signal, () => emit("unauthorized"));
+        const { revised, ...img } = got;
+        live.attachments.push(img);
+      } catch (e) {
+        live.error = e.name === "AbortError" ? "Arrêté." : e.message;
+      } finally {
+        delete live.want;
+        done(c, live, ctrl);
+      }
+    }
     function retouch(a) {
       pending.value = [...pending.value.filter((p) => p.kind !== "image"),
         { kind: "image", name: a.name, type: a.type, size: a.size, data: a.data }];
@@ -1699,7 +1738,7 @@ export const ChatPanel = {
     });
 
     return { chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
-             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, imageSteps,
+             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, imageSteps, upscaleOpt, upscaleFactor, upscale,
              voiceMode, asrMode, rec, toggleRecord, genMode, voiceChoices, newVoice, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
@@ -2029,6 +2068,11 @@ export const ChatPanel = {
                 <a class="link" :href="m.attachments[0].data" :download="m.attachments[0].name">Télécharger</a>
                 <button type="button" class="link" v-if="ownImage(m.attachments[0].data)"
                         :disabled="streaming" @click="retouch(m.attachments[0])">Retoucher</button>
+                <span class="gen-more" v-if="upscaleOpt && ownImage(m.attachments[0].data) && !streaming">
+                  <button type="button" class="link" @click="upscale(m.attachments[0])"
+                          title="Agrandir : le modèle d'agrandissement redessine l'image à une plus grande taille (détails un peu changés)">Agrandir</button>
+                  <select v-model.number="upscaleFactor" aria-label="Facteur d'agrandissement">
+                    <option v-for="f in upscaleOpt.factors" :key="f" :value="f">× {{ f }}</option></select></span>
               </template>
               <span v-else-if="m.image && m.attachments.length > 1">cliquer une image pour la télécharger ou la retoucher</span>
               <span class="gen-more" v-if="m.image && m.prompt && !streaming">
@@ -2036,7 +2080,7 @@ export const ChatPanel = {
                         title="D'autres images avec le même prompt, jointes à cette réponse (sans le fil depuis)">Générer encore</button>
                 <select v-model.number="moreCount" aria-label="Nombre d'images à générer encore">
                   <option v-for="n in 4" :key="n" :value="n">{{ n }}</option></select></span>
-              <button type="button" class="link" v-if="i === current.messages.length - 1"
+              <button type="button" class="link" v-if="i === current.messages.length - 1 && !m.upscale"
                       @click="regenerate">Régénérer</button>
             </div>
           </template>
@@ -2283,6 +2327,12 @@ export const ChatPanel = {
         <a class="btn ghost" :href="zoom.data" :download="zoom.name">Télécharger</a>
         <button type="button" class="btn ghost" v-if="ownImage(zoom.data)"
                 :disabled="streaming" @click="retouch(zoom)">Retoucher</button>
+        <template v-if="upscaleOpt && ownImage(zoom.data)">
+          <select v-model.number="upscaleFactor" :disabled="streaming" aria-label="Facteur d'agrandissement">
+            <option v-for="f in upscaleOpt.factors" :key="f" :value="f">× {{ f }}</option></select>
+          <button type="button" class="btn ghost" :disabled="streaming" @click="upscale(zoom)"
+                  title="Le modèle d'agrandissement redessine l'image à une plus grande taille (détails un peu changés)">Agrandir</button>
+        </template>
         <button type="button" class="btn" @click="zoom = null">Fermer</button>
       </div>
     </div>

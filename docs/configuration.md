@@ -220,6 +220,10 @@ l'origine du backend) : [`[tools.net]`](#toolsnet).
 | `sizes` | `["512x512", "768x768", "1024x1024"]` | Tailles autorisées (`LxH`). Une autre est refusée sans appeler le backend |
 | `size` | `"512x512"` | Taille par défaut. Doit figurer dans `sizes` |
 | `steps` | `{}` | Passes de débruitage proposées par le chat de la page, par modèle : `{ "<motif>" = [passes…] }`, motif sur `<backend>/<modèle>` (`*` = n'importe quoi). Un modèle qu'aucun motif ne couvre n'a pas de choix et ne reçoit jamais `steps` (champ hors API OpenAI, que lit gufo ; Qwen-Image-2.1-Turbo n'accepte que ses 8 passes). Le choix « auto » laisse le défaut du backend |
+| `upscale_model` | `""` | Bouton *Agrandir* du chat de la page : modèle `"<backend>/<modèle>"` qui RETOUCHE l'image à une plus grande taille (`/v1/images/edits`). Il redessine l'image : ce n'est pas un super-résolveur. Vide : pas de bouton |
+| `upscale_factors` | `[1.5, 2]` | Facteurs proposés, tous > 1 |
+| `upscale_max_pixels` | `4194304` | Surface rendue au plus (2048², limite de Qwen-Image-2.1) ; côtés en multiples de 32, 4096 au plus |
+| `upscale_prompt` | consigne anglaise « même image, plus grande, rien de changé » | Consigne envoyée avec l'image |
 | `timeout` | `300` | Secondes pour la requête au backend, chargement du modèle compris |
 | `download_timeout` | `30` | Secondes par téléchargement (image rendue par `url`, image à retoucher). Délai de l'outil : `timeout` + 2 × `download_timeout`, à la place de `[tools].run_timeout` |
 | `max_calls` | `2` | Images par réponse (une par appel), comptées à part de `[tools].max_calls` |

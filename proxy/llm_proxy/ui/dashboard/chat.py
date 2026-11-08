@@ -79,6 +79,14 @@ async def ui_session(request: Request):
             # Les passes proposées par modèle (motif → liste) ; un modèle
             # qu'aucun motif ne couvre n'a pas le choix.
             "image_steps": tools.image_generation.STEPS,
+            # « Agrandir » une image (une retouche à plus grande taille) ;
+            # None : pas de bouton.
+            "image_upscale": {
+                "model": tools.image_generation.UPSCALE_MODEL,
+                "factors": tools.image_generation.UPSCALE_FACTORS,
+                "prompt": tools.image_generation.UPSCALE_PROMPT,
+                "max_pixels": tools.image_generation.UPSCALE_MAX_PIXELS,
+            } if tools.image_generation.UPSCALE_MODEL else None,
             # Les outils de la page refusés à tous ([ui].page_tools_disabled).
             "page_tools_disabled": page_tools.disabled(),
             # Le relais réseau de la VM Linux ([ui].linux_relay).

@@ -116,6 +116,32 @@ if not isinstance(STEPS, dict) or not all(
         f"des motifs de modèle à des listes d'entiers positifs "
         f"(reçu {STEPS!r})")
 
+# « Agrandir » d'une image du chat de la page : une RETOUCHE
+# (/v1/images/edits) de l'image par `upscale_model`, avec une consigne
+# fixe et une taille plus grande. Pas un super-résolveur : le modèle
+# redessine l'image à la nouvelle taille (détails un peu changés, vraie
+# résolution). gufo n'a pas d'upscale (proposition gufo-org/gufo#1066,
+# Real-ESRGAN, ouverte). Vide : pas de bouton. Facteurs proposés (> 1),
+# et surface rendue au plus : 4 Mpx (2048²) pour Qwen-Image-2.1, côtés
+# en multiples de 32, 4096 au plus.
+UPSCALE_MODEL = config.text("tools.image_generation.upscale_model", "").strip()
+UPSCALE_FACTORS = [float(f) for f in config.strings(
+    "tools.image_generation.upscale_factors", ("1.5", "2"))]
+UPSCALE_PROMPT = config.text(
+    "tools.image_generation.upscale_prompt",
+    "The same image at a higher resolution. Keep the composition, the "
+    "subjects, their poses, the colours, the lighting and any text exactly "
+    "as they are; only add fine detail and sharpness.").strip()
+UPSCALE_MAX_PIXELS = config.integer("tools.image_generation.upscale_max_pixels",
+                                    2048 * 2048)
+if UPSCALE_MODEL and (not UPSCALE_FACTORS or min(UPSCALE_FACTORS) <= 1
+                      or not UPSCALE_PROMPT or UPSCALE_MAX_PIXELS < 32 * 32):
+    raise SystemExit(
+        f"{config.CONFIG_PATH} : tools.image_generation.upscale_factors doit "
+        f"lister des facteurs > 1, avec une consigne (upscale_prompt) et une "
+        f"surface (upscale_max_pixels) (reçu {UPSCALE_FACTORS}, "
+        f"{UPSCALE_MAX_PIXELS})")
+
 
 def dimensions(data: bytes) -> str:
     """«LxH» d'un PNG, d'un GIF ou d'un JPEG, lu dans ses octets ; «» si
