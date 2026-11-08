@@ -99,6 +99,23 @@ if SIZE not in SIZES or not all(re.fullmatch(r"[1-9]\d*x[1-9]\d*", s)
         f"{config.CONFIG_PATH} : tools.image_generation.sizes doit lister "
         f"des tailles «LxH» et contenir `size` (reçu {SIZES}, {SIZE!r})")
 
+# Les passes de débruitage (`steps`) proposées par le CHAT de la page,
+# par modèle : { "<motif de <backend>/<modèle>>" = [passes…] }. `steps`
+# n'est pas de l'API Images d'OpenAI (gufo et d'autres le lisent), et
+# aucun backend ne dit lesquelles il accepte : un modèle qu'aucun motif
+# ne couvre n'a pas de choix et ne reçoit jamais `steps`
+# (Qwen-Image-2.1-Turbo, 8 passes fixes, refuse toute autre valeur d'un
+# 400). Sans choix (« auto »), le défaut du backend.
+STEPS = config.get("tools.image_generation.steps", {})
+if not isinstance(STEPS, dict) or not all(
+        isinstance(v, list) and v and all(
+            isinstance(n, int) and not isinstance(n, bool) and n > 0
+            for n in v) for v in STEPS.values()):
+    raise SystemExit(
+        f"{config.CONFIG_PATH} : tools.image_generation.steps doit associer "
+        f"des motifs de modèle à des listes d'entiers positifs "
+        f"(reçu {STEPS!r})")
+
 
 def dimensions(data: bytes) -> str:
     """«LxH» d'un PNG, d'un GIF ou d'un JPEG, lu dans ses octets ; «» si

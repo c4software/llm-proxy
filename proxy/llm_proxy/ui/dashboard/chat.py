@@ -76,6 +76,9 @@ async def ui_session(request: Request):
             "always": always_shown() if chat_tools else [],
             "image_sizes": list(tools.image_generation.SIZES),
             "image_size": tools.image_generation.SIZE,
+            # Les passes proposées par modèle (motif → liste) ; un modèle
+            # qu'aucun motif ne couvre n'a pas le choix.
+            "image_steps": tools.image_generation.STEPS,
             # Les outils de la page refusés à tous ([ui].page_tools_disabled).
             "page_tools_disabled": page_tools.disabled(),
             # Le relais réseau de la VM Linux ([ui].linux_relay).
@@ -194,7 +197,7 @@ DATA_URL = re.compile(r"data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)\Z")
 @router.post("/ui/images/edits")
 async def ui_images_edits(request: Request):
     """La retouche d'une image du chat : un corps JSON (`model`, `prompt`,
-    `image` en data URL, `size`) converti en formulaire /v1/images/edits et
+    `image` en data URL, `size`, `steps`) converti en formulaire /v1/images/edits et
     relayé comme lui. JSON et non formulaire : une page tierce ne peut pas
     l'envoyer (json_only)."""
     if not UI_CHAT:
@@ -224,7 +227,7 @@ async def ui_images_edits(request: Request):
         return error_response("openai", 400, "invalid_request_error",
                               "`image` n'est ni PNG, ni JPEG, ni GIF, ni WebP")
     fields = {"prompt": prompt.strip()}
-    for name in ("size", "n"):
+    for name in ("size", "n", "steps"):
         if payload.get(name) not in (None, ""):
             fields[name] = str(payload[name])
     # Le coût : le prompt, pas les octets de l'image.

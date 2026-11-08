@@ -225,6 +225,7 @@ export const ChatStore = (() => {
       reasoning: base ? (base.reasoning || "auto") : "auto",
       imageSize: base ? base.imageSize : undefined,
       imageCount: base ? base.imageCount || 1 : 1,
+      imageSteps: base ? base.imageSteps || 0 : 0,
       imageAlone: base ? !!base.imageAlone : false,
       incognito, messages: [],
     };

@@ -314,6 +314,19 @@ export const ChatPanel = {
     // Ni conversation ni outils : une image, une lecture, une transcription.
     const genMode = computed(() => imageMode.value || !!voiceMode.value || asrMode.value);
     const imageSizes = computed(() => chat.value.image_sizes || ["512x512"]);
+    // Les passes de débruitage du modèle d'images de la conversation :
+    // celles du premier motif de [tools.image_generation].steps qui couvre
+    // son nom ("*" = n'importe quoi). Aucun motif : pas de choix, et
+    // `steps` jamais envoyé (le défaut du backend ; Turbo n'en accepte
+    // pas d'autre).
+    const stepsOf = (model) => {
+      for (const [pat, list] of Object.entries(chat.value.image_steps || {})) {
+        const re = new RegExp("^" + pat.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
+        if (re.test(model || "")) return list;
+      }
+      return [];
+    };
+    const imageSteps = computed(() => (current.value ? stepsOf(current.value.model) : []));
     // Le modèle d'une nouvelle conversation : celui que le proxy
     // présélectionne ([ui].chat_model), s'il est au catalogue ; sinon le
     // dernier choisi dans ce navigateur, sinon le premier.
@@ -1220,11 +1233,14 @@ export const ChatPanel = {
       const ctrl = controller = new AbortController();
       const size = imageSizes.value.includes(conv.imageSize) ? conv.imageSize
         : (chat.value.image_size || imageSizes.value[0]);
+      // Les passes, seulement si le modèle en propose et qu'un choix est fait.
+      const steps = stepsOf(live.model || conv.model).includes(conv.imageSteps) ? conv.imageSteps : 0;
       const before = live.attachments.length;
       live.want = before + Math.min(Math.max(count, 1), 4);
       try {
         while (live.attachments.length < live.want && !ctrl.signal.aborted) {
           const got = await oneImage(conv, { model: live.model || conv.model, prompt: live.prompt, size, n: 1,
+            ...(steps ? { steps } : {}),
             ...(source ? { image: await dataUrl(source.data) } : {}) }, ctrl.signal, () => emit("unauthorized"));
           const { revised, ...image } = got;
           live.attachments.push(image);
@@ -1660,6 +1676,7 @@ export const ChatPanel = {
       if (!c.model) c.model = defaultModel();
       if (!c.imageSize) c.imageSize = chat.value.image_size;
       if (!c.imageCount) c.imageCount = 1;
+      if (!c.imageSteps) c.imageSteps = 0;
       if (c.imageAlone === undefined) c.imageAlone = false;
       if (!c.reasoning) c.reasoning = "auto";
       // Une carte du navigateur en cours au rechargement : ses boutons
@@ -1682,7 +1699,7 @@ export const ChatPanel = {
     });
 
     return { chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
-             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes,
+             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, imageSteps,
              voiceMode, asrMode, rec, toggleRecord, genMode, voiceChoices, newVoice, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
@@ -2163,6 +2180,13 @@ export const ChatPanel = {
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4"/></svg>
             <select v-model="current.imageSize" :disabled="streaming" aria-label="Taille de l'image">
               <option v-for="z in imageSizes" :key="z" :value="z">{{ z.replace("x", " × ") }}</option>
+            </select>
+          </label>
+          <label class="effort" v-if="imageMode && imageSteps.length" title="Passes de débruitage ; moins, plus rapide et moins fin ; auto : le défaut du modèle">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M10 19V5M15 19v-7M20 19v-4"/></svg>
+            <select v-model.number="current.imageSteps" :disabled="streaming" aria-label="Passes de débruitage">
+              <option :value="0">auto</option>
+              <option v-for="k in imageSteps" :key="k" :value="k">{{ k }} passes</option>
             </select>
           </label>
           <label class="effort" v-if="voiceMode === 'custom' || voiceMode === 'clone'"

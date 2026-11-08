@@ -96,6 +96,10 @@ quand Chrome le propose. Il répond **sur l'appareil**, sans le proxy.
   `/v1/images/edits`.
 - 1 à 4 images par demande, une requête chacune. Tailles :
   `[tools.image_generation].sizes`, `size` par défaut.
+- Passes de débruitage (moins, plus rapide et moins fin) : proposées pour
+  les seuls modèles que déclare `[tools.image_generation].steps`, *auto*
+  par défaut (celles du modèle). Un modèle à passes fixes, comme
+  Qwen-Image-2.1-Turbo, n'a pas le sélecteur.
 - *Générer encore* (sous la réponse, avec un nombre de 1 à 4) : d'autres
   images avec le **même prompt**, tel qu'envoyé — rien du fil depuis —,
   jointes à la même réponse (et la même image retouchée, si c'en était une).

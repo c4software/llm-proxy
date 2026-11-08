@@ -391,6 +391,13 @@ model = ""
 # Tailles proposées au modèle, et celle par défaut (doit être dans la liste).
 sizes = ["512x512", "768x768", "1024x1024"]
 size = "512x512"
+# Passes de débruitage proposées par le chat de la page, par modèle : motif
+# sur "<backend>/<modèle>" ("*" = n'importe quoi) → liste. Un modèle
+# qu'aucun motif ne couvre n'a pas le choix et ne reçoit jamais `steps`
+# (champ hors API OpenAI, lu par gufo). Qwen-Image-2.1 : 2 à 100, 40 par
+# défaut ; Qwen-Image-2.1-Turbo : 8 fixes, toute autre valeur refusée.
+steps = {}
+# steps = { "*/Qwen-Image-2.1-heretic" = [10, 20, 30, 40, 60] }
 # Délai (s) de la génération, et d'un téléchargement ; timeout + 2 ×
 # download_timeout remplace [tools].run_timeout pour cet outil.
 timeout = 300
