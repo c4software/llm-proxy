@@ -1,6 +1,7 @@
 # API OpenAI Responses
 
-Le proxy peut parler l'API Responses d'OpenAI, celle de Codex CLI.
+Le proxy peut parler l'API Responses d'OpenAI, celle de Codex CLI et de l'application Codex
+([réglages du client](tableau-de-bord.md#longlet-configuration)).
 Activez `[responses].enabled = true` dans `config.toml`.
 `POST /v1/responses` est traduit vers `/v1/chat/completions` : aucun
 backend n'a besoin de servir `/v1/responses`.

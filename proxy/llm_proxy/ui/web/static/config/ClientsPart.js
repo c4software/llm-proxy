@@ -1,6 +1,6 @@
 /*
-  Configuration → Clients : on choisit le client (Claude Code, Codex, pi /
-  omp, SDK OpenAI, curl, Open WebUI, tout client OpenAI), le modèle du
+  Configuration → Clients : on choisit le client (Claude Code, Codex CLI
+  ou application, pi / omp, SDK OpenAI, curl, Open WebUI, tout client OpenAI), le modèle du
   catalogue (/ui/models), et s'il prend aussi les outils du proxy par son
   serveur MCP (/mcp). La page produit les fichiers à poser, avec leur
   chemin, et les étapes. La CLÉ n'y figure jamais : elle vit dans un
@@ -33,6 +33,7 @@ export const ClientsPart = {
     const clients = [
       { id: "claude", label: "Claude Code", mcp: true },
       { id: "codex", label: "Codex CLI", mcp: true },
+      { id: "codexapp", label: "Codex (application de bureau)", mcp: true },
       { id: "pi", label: "pi / omp", mcp: true, mcpOnly: true },
       { id: "python", label: "SDK OpenAI (Python)" },
       { id: "curl", label: "curl" },
@@ -67,7 +68,7 @@ export const ClientsPart = {
       }
       const shell = (name, content, note) => files.push({ name, content, note, lang: "sh" });
       if (auth.value && form.client !== "openwebui") {
-        shell("La clé, une fois", KEY_SETUP,
+        shell(form.client === "codexapp" ? "macOS : la clé, une fois" : "La clé, une fois", KEY_SETUP,
           "Saisie masquée, hors de l'historique du shell.");
       }
 
@@ -101,7 +102,9 @@ export const ClientsPart = {
           if (mcp) steps.push("`/mcp` dans Claude Code doit lister le serveur llmproxy.");
           break;
         }
-        case "codex": {
+        case "codex":
+        case "codexapp": {
+          const app = form.client === "codexapp";
           if (!responsesOn.value) warn.push("La surface Responses est désactivée sur ce proxy "
             + "([responses] enabled = false) : Codex ne pourra pas s'y connecter.");
           const ctx = contexts.value[form.model];
@@ -118,14 +121,42 @@ export const ClientsPart = {
               + `# demander et refuserait chaque appel.\ndefault_tools_approval_mode = "approve"\n`
               + `# Transcription, images : jusqu'à 7 min côté proxy.\ntool_timeout_sec = 600\n`;
           }
-          files.push({ name: "~/.codex/config.toml", download: "config.toml", lang: "toml",
-            note: "À fusionner si le fichier existe déjà.", content: toml });
-          if (auth.value) shell("~/.bashrc (ou ~/.zshrc)", exportLine + "\n", "La clé, par l'environnement.");
-          steps.push("Poser config.toml" + (auth.value ? ", exporter la clé, rouvrir le terminal" : "")
-            + ", lancer `codex`.");
-          if (auth.value) steps.push("Codex interactif passe par un démon (`codex app-server`) qui garde "
-            + "l'environnement de son lancement : après un changement de clé, le relancer — "
-            + "`pkill -f 'codex app-server'`, puis `codex`. Sinon : 401 malgré la bonne clé.");
+          files.push({ name: app ? "~/.codex/config.toml (Windows : %USERPROFILE%\\.codex\\config.toml)"
+            : "~/.codex/config.toml", download: "config.toml", lang: "toml",
+            note: "À fusionner si le fichier existe déjà." + (app ? " Le même fichier que Codex CLI : "
+              + "l'application ne lit pas les profils (--profile), d'où model et model_provider en tête." : ""),
+            content: toml });
+          if (!app) {
+            if (auth.value) shell("~/.bashrc (ou ~/.zshrc)", exportLine + "\n", "La clé, par l'environnement.");
+            steps.push("Poser config.toml" + (auth.value ? ", exporter la clé, rouvrir le terminal" : "")
+              + ", lancer `codex`.");
+            if (auth.value) steps.push("Codex interactif passe par un démon (`codex app-server`) qui garde "
+              + "l'environnement de son lancement : après un changement de clé, le relancer — "
+              + "`pkill -f 'codex app-server'`, puis `codex`. Sinon : 401 malgré la bonne clé.");
+          } else {
+            // Une application lancée du Dock ou du menu Démarrer ne lit pas
+            // le profil du shell : la variable doit vivre dans la session.
+            if (auth.value) {
+              shell("macOS : la variable pour les applications",
+                `launchctl setenv ${env} "$(cat ${KEYFILE})"\n`,
+                "Une application ouverte du Dock ne lit pas ~/.zshrc. launchctl ne survit pas "
+                + "au redémarrage : ajouter aussi cette ligne à ~/.zshrc la repose à chaque terminal.");
+              files.push({ name: "Windows : la variable de l'utilisateur (PowerShell)", lang: "powershell",
+                download: "llm-proxy-key.ps1",
+                note: "Saisie masquée, hors de l'historique. Variable d'environnement de l'utilisateur, "
+                  + "lue par toute application ouverte ensuite.",
+                content: `$s = Read-Host "Clé du proxy" -AsSecureString\n`
+                  + `[Environment]::SetEnvironmentVariable(${q(env)}, `
+                  + `[Net.NetworkCredential]::new("", $s).Password, "User")\n` });
+            }
+            steps.push("Poser config.toml" + (auth.value ? ", poser la variable (macOS ou Windows)" : "") + ".",
+              "Quitter complètement Codex (⌘Q, ou « Quitter » dans la zone de notification sous Windows) "
+              + "puis le rouvrir : il ne relit la configuration et l'environnement qu'au lancement.",
+              "L'application prend le modèle et le fournisseur par défaut de config.toml. Une connexion "
+              + "ChatGPT ne servirait qu'aux tâches dans le cloud, qui ne passent pas par le proxy.");
+            if (auth.value) steps.push("Après un changement de clé : reposer la variable, puis quitter et "
+              + "rouvrir Codex (il embarque son propre `codex app-server`). Sinon : 401 malgré la bonne clé.");
+          }
           if (!mcp) steps.push("La recherche web de Codex passe déjà par le proxy, sans MCP.");
           break;
         }

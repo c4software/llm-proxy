@@ -201,6 +201,14 @@ surface visée est désactivée. La clé n'est jamais écrite dans ces
 fichiers ; le bloc *Vérifier* teste `GET /v1/models` avec elle, puis
 `tools/list` si le client prend les outils par MCP.
 
+*Codex (application de bureau)* produit le même `~/.codex/config.toml`
+que Codex CLI. Lancée du Dock ou du menu Démarrer, l'application ne lit
+pas le profil du shell : la page donne donc de quoi poser la variable de
+la clé pour les applications, par `launchctl setenv` sous macOS et par
+une variable d'utilisateur en PowerShell sous Windows. Quitter
+complètement Codex et le rouvrir après chaque changement de
+configuration ou de clé, sinon le proxy répond 401.
+
 **Clés** et **Comptes** : avec les [comptes OIDC](#comptes-oidc)
 seulement.
 
