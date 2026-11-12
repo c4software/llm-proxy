@@ -1,7 +1,7 @@
-fastapi==0.118.0
+fastapi==0.162.5
 uvicorn[standard]==0.37.0
 httpx2==2.13.1
-pypdf==6.19.0
+pypdf==6.21.4
 regex==2026.9.29
 Authlib==1.9.1
 itsdangerous==2.2.0
