@@ -9,6 +9,7 @@
 */
 import { useCopy, download } from "../lib/files.js";
 import { q, envName, KEYFILE, KEY_SETUP, useAccount, useCatalog } from "./shared.js";
+import { catalogState } from "../lib/catalog.js";
 
 const { reactive, computed, watch } = Vue;
 const origin = window.location.origin;
@@ -41,13 +42,43 @@ export const ClientsPart = {
       { id: "generic", label: "Autre client OpenAI" },
     ];
     const form = reactive({
-      client: "claude", model: "", small: "", mcp: true, env: "LLM_PROXY_API_KEY",
+      client: "claude", model: "", small: "", mcp: true, env: "LLM_PROXY_API_KEY", catalog: true,
     });
     watch(models, (ms) => {
       if (!form.model && ms.length) form.model = ms[0];
       if (!form.small && ms.length) form.small = ms[ms.length > 1 ? 1 : 0];
     });
     const client = computed(() => clients.find((c) => c.id === form.client));
+
+    // ── catalogue de Codex ──────────────────────────────────────────────
+    // Sans lui, Codex ne connaît pas les modèles du proxy : ni /model, ni
+    // contexte, ni niveaux de raisonnement. Le fichier remplace le
+    // catalogue intégré ; les instructions de base (obligatoires, ~20 Ko)
+    // sont prises par le script dans le catalogue intégré du Codex du poste
+    // (`codex debug models`, CODEX_HOME vide), à sa version.
+    const CATALOG_FILE = "llm-proxy-models.json";
+    const codexCatalog = (current) => {
+      const chat = catalogState.data.filter((m) => m.chat);
+      const ids = chat.map((m) => m.id).sort();
+      if (current && !ids.includes(current)) ids.unshift(current);
+      const by = Object.fromEntries(chat.map((m) => [m.id, m]));
+      return { models: ids.map((id, i) => {
+        const m = by[id] || {};
+        return {
+          slug: id, display_name: id, description: "Via llm-proxy",
+          // Sans niveau par défaut : rien n'est envoyé tant qu'on n'en
+          // choisit pas un (/model), le backend garde le sien.
+          supported_reasoning_levels: ["low", "medium", "high"]
+            .map((e) => ({ effort: e, description: e })),
+          shell_type: "unified_exec", visibility: "list", supported_in_api: true,
+          priority: i + 1, support_verbosity: false,
+          truncation_policy: { mode: "bytes", limit: 10000 },
+          experimental_supported_tools: [],
+          ...(m.context ? { context_window: m.context, max_context_window: m.context } : {}),
+          input_modalities: m.vision ? ["text", "image"] : ["text"],
+        };
+      }) };
+    };
 
     const clientOut = computed(() => {
       const model = form.model || "<backend>/<modèle>";
@@ -68,7 +99,7 @@ export const ClientsPart = {
       }
       const shell = (name, content, note) => files.push({ name, content, note, lang: "sh" });
       if (auth.value && form.client !== "openwebui") {
-        shell(form.client === "codexapp" ? "macOS : la clé, une fois" : "La clé, une fois", KEY_SETUP,
+        shell(["codex", "codexapp"].includes(form.client) ? "Linux, macOS : la clé, une fois" : "La clé, une fois", KEY_SETUP,
           "Saisie masquée, hors de l'historique du shell.");
       }
 
@@ -108,8 +139,11 @@ export const ClientsPart = {
           if (!responsesOn.value) warn.push("La surface Responses est désactivée sur ce proxy "
             + "([responses] enabled = false) : Codex ne pourra pas s'y connecter.");
           const ctx = contexts.value[form.model];
+          const cat = form.catalog;
           let toml = `model = ${q(model)}\n`
-            + (ctx ? `# Contexte du modèle (catalogue du proxy) : Codex ne le connaît pas.\n`
+            + (cat ? `# Les modèles du proxy pour /model, avec leur contexte (relatif à ~/.codex).\n`
+              + `model_catalog_json = ${q(CATALOG_FILE)}\n`
+              : ctx ? `# Contexte du modèle (catalogue du proxy) : Codex ne le connaît pas.\n`
               + `model_context_window = ${ctx}\n` : "")
             + `model_provider = "llm-proxy"\n\n`
             + `[model_providers.llm-proxy]\nname = "llm-proxy"\nbase_url = ${q(origin + "/v1")}\n`
@@ -121,18 +155,57 @@ export const ClientsPart = {
               + `# demander et refuserait chaque appel.\ndefault_tools_approval_mode = "approve"\n`
               + `# Transcription, images : jusqu'à 7 min côté proxy.\ntool_timeout_sec = 600\n`;
           }
-          files.push({ name: app ? "~/.codex/config.toml (Windows : %USERPROFILE%\\.codex\\config.toml)"
-            : "~/.codex/config.toml", download: "config.toml", lang: "toml",
-            note: "À fusionner si le fichier existe déjà." + (app ? " Le même fichier que Codex CLI : "
+          files.push({ name: "~/.codex/config.toml (Windows : %USERPROFILE%\\.codex\\config.toml)",
+            download: "config.toml", lang: "toml",
+            note: "À fusionner si le fichier existe déjà. Sous Windows : nommé config.toml (pas "
+              + "config.toml.txt), en UTF-8." + (app ? " Le même fichier que Codex CLI : "
               + "l'application ne lit pas les profils (--profile), d'où model et model_provider en tête." : ""),
             content: toml });
+          if (cat) {
+            const json = JSON.stringify(codexCatalog(form.model), null, 1);
+            shell("Le catalogue, Linux, macOS (jq)",
+              `d=$(mktemp -d)\nCODEX_HOME="$d" codex debug models 2>/dev/null > "$d/b.json"\n`
+              + `jq --slurpfile b "$d/b.json" '([$b[0].models[] | select(.base_instructions)][0].base_instructions) as $i\n`
+              + `  | .models |= map(. + {base_instructions: $i})' > ~/.codex/${CATALOG_FILE} <<'EOF'\n`
+              + json + `\nEOF\nrm -rf "$d"\n`,
+              "Les instructions de base sont prises au Codex du poste. Le relancer après une mise "
+              + "à jour de Codex ou un changement des modèles du proxy.");
+            files.push({ name: "Le catalogue, Windows (PowerShell)", lang: "powershell",
+              download: "llm-proxy-catalogue.ps1",
+              note: "Même chose sous Windows ; écrit en UTF-8 sans BOM.",
+              content: `[Console]::OutputEncoding = [Text.UTF8Encoding]::new()\n`
+                + `$d = Join-Path $env:TEMP ("codex-" + [guid]::NewGuid())\n`
+                + `New-Item -ItemType Directory $d | Out-Null\n`
+                + `$env:CODEX_HOME = $d\n$b = (codex debug models 2>$null | Out-String) | ConvertFrom-Json\n`
+                + `Remove-Item Env:CODEX_HOME; Remove-Item -Recurse $d\n`
+                + `$i = ($b.models | Where-Object base_instructions | Select-Object -First 1).base_instructions\n`
+                + `$c = @'\n${json}\n'@ | ConvertFrom-Json\n`
+                + `foreach ($m in $c.models) { $m | Add-Member base_instructions $i }\n`
+                + `[IO.File]::WriteAllText("$env:USERPROFILE\\.codex\\${CATALOG_FILE}", `
+                + `($c | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))\n` });
+          }
+          // Windows : une variable d'utilisateur, lue par les terminaux et
+          // les applications ouverts ensuite (le profil du shell n'existe pas).
+          const winKey = () => files.push({ name: "Windows : la variable de l'utilisateur (PowerShell)",
+            lang: "powershell", download: "llm-proxy-key.ps1",
+            note: "Saisie masquée, hors de l'historique. Variable d'environnement de l'utilisateur, "
+              + "lue par les terminaux et applications ouverts ensuite.",
+            content: `$s = Read-Host "Clé du proxy" -AsSecureString\n`
+              + `[Environment]::SetEnvironmentVariable(${q(env)}, `
+              + `[Net.NetworkCredential]::new("", $s).Password, "User")\n` });
           if (!app) {
-            if (auth.value) shell("~/.bashrc (ou ~/.zshrc)", exportLine + "\n", "La clé, par l'environnement.");
-            steps.push("Poser config.toml" + (auth.value ? ", exporter la clé, rouvrir le terminal" : "")
-              + ", lancer `codex`.");
+            if (auth.value) {
+              shell("~/.bashrc (ou ~/.zshrc)", exportLine + "\n", "La clé, par l'environnement (Linux, macOS).");
+              winKey();
+            }
+            steps.push("Poser config.toml" + (auth.value ? ", poser la clé (profil du shell ou "
+              + "variable Windows), ouvrir un nouveau terminal" : "") + ", lancer `codex`.",
+              "`codex doctor`, section Configuration : config.toml lu (parse ok) et le modèle du proxy "
+              + "avec llm-proxy. Un modèle OpenAI à la place : le fichier n'est pas lu.");
             if (auth.value) steps.push("Codex interactif passe par un démon (`codex app-server`) qui garde "
               + "l'environnement de son lancement : après un changement de clé, le relancer — "
-              + "`pkill -f 'codex app-server'`, puis `codex`. Sinon : 401 malgré la bonne clé.");
+              + "`pkill -f 'codex app-server'` (Windows : `Get-Process codex | Stop-Process`), "
+              + "puis `codex`. Sinon : 401 malgré la bonne clé.");
           } else {
             // Une application lancée du Dock ou du menu Démarrer ne lit pas
             // le profil du shell : la variable doit vivre dans la session.
@@ -141,13 +214,7 @@ export const ClientsPart = {
                 `launchctl setenv ${env} "$(cat ${KEYFILE})"\n`,
                 "Une application ouverte du Dock ne lit pas ~/.zshrc. launchctl ne survit pas "
                 + "au redémarrage : ajouter aussi cette ligne à ~/.zshrc la repose à chaque terminal.");
-              files.push({ name: "Windows : la variable de l'utilisateur (PowerShell)", lang: "powershell",
-                download: "llm-proxy-key.ps1",
-                note: "Saisie masquée, hors de l'historique. Variable d'environnement de l'utilisateur, "
-                  + "lue par toute application ouverte ensuite.",
-                content: `$s = Read-Host "Clé du proxy" -AsSecureString\n`
-                  + `[Environment]::SetEnvironmentVariable(${q(env)}, `
-                  + `[Net.NetworkCredential]::new("", $s).Password, "User")\n` });
+              winKey();
             }
             steps.push("Poser config.toml" + (auth.value ? ", poser la variable (macOS ou Windows)" : "") + ".",
               "Quitter complètement Codex (⌘Q, ou « Quitter » dans la zone de notification sous Windows) "
@@ -157,6 +224,8 @@ export const ClientsPart = {
             if (auth.value) steps.push("Après un changement de clé : reposer la variable, puis quitter et "
               + "rouvrir Codex (il embarque son propre `codex app-server`). Sinon : 401 malgré la bonne clé.");
           }
+          if (cat) steps.push("Le catalogue remplace celui de Codex : /model ne propose plus que les "
+            + "modèles du proxy. Il n'est lu qu'au lancement.");
           if (!mcp) steps.push("La recherche web de Codex passe déjà par le proxy, sans MCP.");
           break;
         }
@@ -266,6 +335,9 @@ export const ClientsPart = {
             <input type="checkbox" v-model="form.mcp">
             <template v-if="client.mcp">les outils du proxy par son serveur MCP</template>
             <template v-else>déclarer la recherche web du proxy</template></label>
+          <label class="check" v-if="['codex', 'codexapp'].includes(form.client)">
+            <input type="checkbox" v-model="form.catalog">
+            le catalogue des modèles du proxy (/model, contexte)</label>
           <label class="field"><span>Variable de la clé</span>
             <input v-model="form.env" spellcheck="false"></label>
           <p class="note" v-if="!auth">Le proxy est ouvert : la clé est libre, la variable vaut
