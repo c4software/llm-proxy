@@ -206,17 +206,18 @@ posée par PowerShell, et renvoie à `codex doctor` pour vérifier que
 `config.toml` est lu : un modèle OpenAI affiché à la place signale un
 fichier ignoré (nommé `config.toml.txt`, ou pas en UTF-8).
 
-Pour Codex (CLI ou application), la case *catalogue* produit aussi
-`~/.codex/llm-proxy-models.json` (`model_catalog_json`). Sans lui, Codex
+Pour Codex (CLI ou application), la case *catalogue* ajoute
+`~/.codex/llm-proxy-models.json`, à télécharger (il n'est pas affiché) (`model_catalog_json`). Sans lui, Codex
 ne connaît pas les modèles du proxy : `/model` ne les propose pas, et il
 ignore leur contexte et leurs niveaux de raisonnement. Le fichier
 remplace le catalogue intégré de Codex. Les modèles viennent du proxy :
 contexte, et images s'ils en lisent ; les niveaux low, medium et high
 sont proposés sans valeur par défaut, donc rien n'est envoyé tant qu'on
-n'en choisit pas. Les instructions de base, obligatoires, sont prises par
-le script (bash et jq, ou PowerShell) au catalogue intégré du Codex du
-poste (`codex debug models`, avec un `CODEX_HOME` vide). Relancer le
-script après une mise à jour de Codex ou un changement des modèles.
+n'en choisit pas. Un court script (bash et jq, ou PowerShell)
+y ajoute sur place les instructions de base, obligatoires, prises au
+catalogue intégré du Codex du poste (`codex debug models`, avec un
+`CODEX_HOME` vide). Relancer le script après une mise à jour de Codex ;
+re-télécharger le fichier quand les modèles du proxy changent.
 
 *Codex (application de bureau)* produit le même `~/.codex/config.toml`
 que Codex CLI. Lancée du Dock ou du menu Démarrer, l'application ne lit

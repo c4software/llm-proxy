@@ -162,27 +162,34 @@ export const ClientsPart = {
               + "l'application ne lit pas les profils (--profile), d'où model et model_provider en tête." : ""),
             content: toml });
           if (cat) {
-            const json = JSON.stringify(codexCatalog(form.model), null, 1);
+            // Le fichier se télécharge (trop long à lire) ; les scripts y
+            // ajoutent sur place les instructions de base du Codex du poste.
+            files.push({ name: `~/.codex/${CATALOG_FILE}`, download: CATALOG_FILE, lang: "json", hide: true,
+              note: `Les ${codexCatalog(form.model).models.length} modèles de conversation du proxy. `
+                + "Le télécharger dans ~/.codex (Windows : %USERPROFILE%\\.codex), puis lancer le "
+                + "script ci-dessous : il y ajoute les instructions de base, sans lesquelles Codex refuse le fichier.",
+              content: JSON.stringify(codexCatalog(form.model), null, 1) + "\n" });
             shell("Le catalogue, Linux, macOS (jq)",
-              `d=$(mktemp -d)\nCODEX_HOME="$d" codex debug models 2>/dev/null > "$d/b.json"\n`
-              + `jq --slurpfile b "$d/b.json" '([$b[0].models[] | select(.base_instructions)][0].base_instructions) as $i\n`
-              + `  | .models |= map(. + {base_instructions: $i})' > ~/.codex/${CATALOG_FILE} <<'EOF'\n`
-              + json + `\nEOF\nrm -rf "$d"\n`,
+              `f=~/.codex/${CATALOG_FILE}; d=$(mktemp -d)\n`
+              + `CODEX_HOME="$d" codex debug models 2>/dev/null > "$d/b.json"\n`
+              + `jq --slurpfile b "$d/b.json" '([$b[0].models[] | select(.base_instructions)][0]`
+              + `.base_instructions) as $i\n  | .models |= map(. + {base_instructions: $i})' "$f" > "$d/c.json" \\\n`
+              + `  && mv "$d/c.json" "$f"; rm -rf "$d"\n`,
               "Les instructions de base sont prises au Codex du poste. Le relancer après une mise "
-              + "à jour de Codex ou un changement des modèles du proxy.");
+              + "à jour de Codex ; re-télécharger le fichier quand les modèles du proxy changent.");
             files.push({ name: "Le catalogue, Windows (PowerShell)", lang: "powershell",
               download: "llm-proxy-catalogue.ps1",
-              note: "Même chose sous Windows ; écrit en UTF-8 sans BOM.",
-              content: `[Console]::OutputEncoding = [Text.UTF8Encoding]::new()\n`
+              note: "Même chose sous Windows ; réécrit en UTF-8 sans BOM.",
+              content: `$f = "$env:USERPROFILE\\.codex\\${CATALOG_FILE}"\n`
+                + `[Console]::OutputEncoding = [Text.UTF8Encoding]::new()\n`
                 + `$d = Join-Path $env:TEMP ("codex-" + [guid]::NewGuid())\n`
                 + `New-Item -ItemType Directory $d | Out-Null\n`
                 + `$env:CODEX_HOME = $d\n$b = (codex debug models 2>$null | Out-String) | ConvertFrom-Json\n`
                 + `Remove-Item Env:CODEX_HOME; Remove-Item -Recurse $d\n`
                 + `$i = ($b.models | Where-Object base_instructions | Select-Object -First 1).base_instructions\n`
-                + `$c = @'\n${json}\n'@ | ConvertFrom-Json\n`
-                + `foreach ($m in $c.models) { $m | Add-Member base_instructions $i }\n`
-                + `[IO.File]::WriteAllText("$env:USERPROFILE\\.codex\\${CATALOG_FILE}", `
-                + `($c | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))\n` });
+                + `$c = Get-Content -Raw -Encoding UTF8 $f | ConvertFrom-Json\n`
+                + `foreach ($m in $c.models) { $m | Add-Member -Force base_instructions $i }\n`
+                + `[IO.File]::WriteAllText($f, ($c | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))\n` });
           }
           // Windows : une variable d'utilisateur, lue par les terminaux et
           // les applications ouverts ensuite (le profil du shell n'existe pas).
@@ -352,12 +359,12 @@ export const ClientsPart = {
           <header class="panel-head">
             <h3>{{ f.name }}</h3>
             <span class="config-actions">
-              <button type="button" class="btn ghost" @click="copy(f)">{{ copied === f.name ? "Copié" : "Copier" }}</button>
+              <button type="button" class="btn ghost" v-if="!f.hide" @click="copy(f)">{{ copied === f.name ? "Copié" : "Copier" }}</button>
               <button type="button" class="btn ghost" @click="download(f)">Télécharger</button>
             </span>
           </header>
           <p class="note" v-if="f.note">{{ f.note }}</p>
-          <pre>{{ f.content }}</pre>
+          <pre v-if="!f.hide">{{ f.content }}</pre>
         </section>
         <section class="panel config-steps" v-if="clientOut.steps.length">
           <div class="panel-head"><h2>Étapes</h2></div>
