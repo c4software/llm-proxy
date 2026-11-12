@@ -169,7 +169,10 @@ export const ClientsPart = {
           }
           files.push({ name: "~/.codex/config.toml (Windows : %USERPROFILE%\\.codex\\config.toml)",
             download: "config.toml", lang: "toml",
-            note: "À fusionner si le fichier existe déjà. Sous Windows : nommé config.toml (pas "
+            note: "À fusionner si le fichier existe déjà : les lignes avant le premier [en-tête] "
+              + "tout en haut du fichier — collées sous une section existante (Codex pour Windows ajoute "
+              + "[windows]), elles en feraient partie et seraient ignorées (codex doctor : "
+              + "« windows.model is ignored »). Sous Windows : nommé config.toml (pas "
               + "config.toml.txt), en UTF-8." + (app ? " Le même fichier que Codex CLI : "
               + "l'application ne lit pas les profils (--profile), d'où model et model_provider en tête." : ""),
             content: toml });

@@ -204,7 +204,9 @@ fichiers ; le bloc *Vérifier* teste `GET /v1/models` avec elle, puis
 *Codex CLI* donne aussi la clé sous Windows, en variable d'utilisateur
 posée par PowerShell, et renvoie à `codex doctor` pour vérifier que
 `config.toml` est lu : un modèle OpenAI affiché à la place signale un
-fichier ignoré (nommé `config.toml.txt`, ou pas en UTF-8).
+fichier ignoré (nommé `config.toml.txt`, ou pas en UTF-8), ou des lignes
+collées sous une section existante (`[windows]`, que Codex pour Windows
+ajoute) : `codex doctor` les dit alors ignorées (`windows.model`).
 
 Pour Codex (CLI ou application), la case *catalogue* ajoute
 `~/.codex/llm-proxy-models.json`, à télécharger (il n'est pas affiché) (`model_catalog_json`). Sans lui, Codex
