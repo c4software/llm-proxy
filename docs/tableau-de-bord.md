@@ -213,11 +213,11 @@ ignore leur contexte et leurs niveaux de raisonnement. Le fichier
 remplace le catalogue intégré de Codex. Les modèles viennent du proxy :
 contexte, et images s'ils en lisent ; les niveaux low, medium et high
 sont proposés sans valeur par défaut, donc rien n'est envoyé tant qu'on
-n'en choisit pas. Un court script (bash et jq, ou PowerShell)
-y ajoute sur place les instructions de base, obligatoires, prises au
-catalogue intégré du Codex du poste (`codex debug models`, avec un
-`CODEX_HOME` vide). Relancer le script après une mise à jour de Codex ;
-re-télécharger le fichier quand les modèles du proxy changent.
+n'en choisit pas. Le fichier est complet, sans commande à lancer : chaque
+modèle y porte les instructions de base que Codex exige, celles de Codex
+CLI 0.167.2 (Apache-2.0), servies par la page
+(`config/codex-base-instructions.txt`). Re-télécharger le fichier quand
+les modèles du proxy changent.
 
 *Codex (application de bureau)* produit le même `~/.codex/config.toml`
 que Codex CLI. Lancée du Dock ou du menu Démarrer, l'application ne lit
