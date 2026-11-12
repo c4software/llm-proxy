@@ -314,19 +314,26 @@ export const ChatPanel = {
     // Ni conversation ni outils : une image, une lecture, une transcription.
     const genMode = computed(() => imageMode.value || !!voiceMode.value || asrMode.value);
     const imageSizes = computed(() => chat.value.image_sizes || ["512x512"]);
-    // Les passes de débruitage du modèle d'images de la conversation :
-    // celles du premier motif de [tools.image_generation].steps qui couvre
-    // son nom ("*" = n'importe quoi). Aucun motif : pas de choix, et
-    // `steps` jamais envoyé (le défaut du backend ; Turbo n'en accepte
-    // pas d'autre).
-    const stepsOf = (model) => {
-      for (const [pat, list] of Object.entries(chat.value.image_steps || {})) {
+    // La liste du premier motif d'une table de [tools.image_generation]
+    // (`steps`, `loras`) qui couvre le nom du modèle ("*" = n'importe
+    // quoi) ; aucun motif : liste vide, pas de choix.
+    const listOf = (table, model) => {
+      for (const [pat, list] of Object.entries(table || {})) {
         const re = new RegExp("^" + pat.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
         if (re.test(model || "")) return list;
       }
       return [];
     };
+    // Les passes de débruitage du modèle d'images de la conversation.
+    // Aucun motif : pas de choix, et `steps` jamais envoyé (le défaut du
+    // backend ; Turbo n'en accepte pas d'autre).
+    const stepsOf = (model) => listOf(chat.value.image_steps, model);
     const imageSteps = computed(() => (current.value ? stepsOf(current.value.model) : []));
+    // Les LoRA du modèle d'images de la conversation (noms enregistrés
+    // côté backend, gufo `--lora`). Aucun motif : pas de choix, et
+    // `loras` jamais envoyé ; « sans » n'envoie rien non plus.
+    const lorasOf = (model) => listOf(chat.value.image_loras, model);
+    const imageLoras = computed(() => (current.value ? lorasOf(current.value.model) : []));
     // Le modèle d'une nouvelle conversation : celui que le proxy
     // présélectionne ([ui].chat_model), s'il est au catalogue ; sinon le
     // dernier choisi dans ce navigateur, sinon le premier.
@@ -1235,12 +1242,15 @@ export const ChatPanel = {
         : (chat.value.image_size || imageSizes.value[0]);
       // Les passes, seulement si le modèle en propose et qu'un choix est fait.
       const steps = stepsOf(live.model || conv.model).includes(conv.imageSteps) ? conv.imageSteps : 0;
+      // Le LoRA, de même (force 1, celle des fiches) ; génération et retouche.
+      const lora = lorasOf(live.model || conv.model).includes(conv.imageLora) ? conv.imageLora : "";
       const before = live.attachments.length;
       live.want = before + Math.min(Math.max(count, 1), 4);
       try {
         while (live.attachments.length < live.want && !ctrl.signal.aborted) {
           const got = await oneImage(conv, { model: live.model || conv.model, prompt: live.prompt, size, n: 1,
             ...(steps ? { steps } : {}),
+            ...(lora ? { loras: [{ name: lora, scale: 1 }] } : {}),
             ...(source ? { image: await dataUrl(source.data) } : {}) }, ctrl.signal, () => emit("unauthorized"));
           const { revised, ...image } = got;
           live.attachments.push(image);
@@ -1716,6 +1726,7 @@ export const ChatPanel = {
       if (!c.imageSize) c.imageSize = chat.value.image_size;
       if (!c.imageCount) c.imageCount = 1;
       if (!c.imageSteps) c.imageSteps = 0;
+      if (!c.imageLora) c.imageLora = "";
       if (c.imageAlone === undefined) c.imageAlone = false;
       if (!c.reasoning) c.reasoning = "auto";
       // Une carte du navigateur en cours au rechargement : ses boutons
@@ -1738,7 +1749,7 @@ export const ChatPanel = {
     });
 
     return { chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
-             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, imageSteps, upscaleOpt, upscaleFactor, upscale,
+             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, imageSteps, imageLoras, upscaleOpt, upscaleFactor, upscale,
              voiceMode, asrMode, rec, toggleRecord, genMode, voiceChoices, newVoice, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
@@ -2231,6 +2242,13 @@ export const ChatPanel = {
             <select v-model.number="current.imageSteps" :disabled="streaming" aria-label="Passes de débruitage">
               <option :value="0">auto</option>
               <option v-for="k in imageSteps" :key="k" :value="k">{{ k }} passes</option>
+            </select>
+          </label>
+          <label class="effort" v-if="imageMode && imageLoras.length" title="LoRA appliqué par le modèle d'images (adaptateur de style ou de contenu) ; sans : le modèle seul">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5-8 4.5-8-4.5zM4 12l8 4.5 8-4.5M4 16.5l8 4.5 8-4.5"/></svg>
+            <select v-model="current.imageLora" :disabled="streaming" aria-label="LoRA">
+              <option value="">sans LoRA</option>
+              <option v-for="k in imageLoras" :key="k" :value="k">{{ k }}</option>
             </select>
           </label>
           <label class="effort" v-if="voiceMode === 'custom' || voiceMode === 'clone'"

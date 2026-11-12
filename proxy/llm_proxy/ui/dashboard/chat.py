@@ -5,6 +5,7 @@ d'elle), les modèles, /ui/chat/completions, les images, la voix, l'usage.
 
 import base64
 import binascii
+import json
 import re
 import httpx2
 from fastapi import Request
@@ -79,6 +80,8 @@ async def ui_session(request: Request):
             # Les passes proposées par modèle (motif → liste) ; un modèle
             # qu'aucun motif ne couvre n'a pas le choix.
             "image_steps": tools.image_generation.STEPS,
+            # Les LoRA proposés par modèle (motif → noms), même règle.
+            "image_loras": tools.image_generation.LORAS,
             # « Agrandir » une image (une retouche à plus grande taille) ;
             # None : pas de bouton.
             "image_upscale": {
@@ -205,7 +208,7 @@ DATA_URL = re.compile(r"data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)\Z")
 @router.post("/ui/images/edits")
 async def ui_images_edits(request: Request):
     """La retouche d'une image du chat : un corps JSON (`model`, `prompt`,
-    `image` en data URL, `size`, `steps`) converti en formulaire /v1/images/edits et
+    `image` en data URL, `size`, `steps`, `loras`) converti en formulaire /v1/images/edits et
     relayé comme lui. JSON et non formulaire : une page tierce ne peut pas
     l'envoyer (json_only)."""
     if not UI_CHAT:
@@ -238,6 +241,9 @@ async def ui_images_edits(request: Request):
     for name in ("size", "n", "steps"):
         if payload.get(name) not in (None, ""):
             fields[name] = str(payload[name])
+    # `loras` : une liste, que gufo lit en texte JSON dans un formulaire.
+    if isinstance(payload.get("loras"), list):
+        fields["loras"] = json.dumps(payload["loras"])
     # Le coût : le prompt, pas les octets de l'image.
     return await _relay_form(request, payload, fields, (
         "image", "image." + kind.split("/")[1], image, kind),

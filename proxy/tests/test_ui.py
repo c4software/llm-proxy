@@ -153,7 +153,7 @@ def test_chat_is_closed_unless_enabled(ui, monkeypatch):
     assert ui.client.get("/ui/session").json()["chat"] == {
         "enabled": False, "model": None, "hosted_tools": False, "tools": [], "always": [],
         "image_sizes": ["512x512", "768x768", "1024x1024"],
-        "image_size": "512x512", "image_steps": {}, "image_upscale": None, "page_tools_disabled": {"families": [], "tools": []},
+        "image_size": "512x512", "image_steps": {}, "image_loras": {}, "image_upscale": None, "page_tools_disabled": {"families": [], "tools": []},
         "linux_relay": False}
     assert not ui.sent
 
@@ -422,6 +422,12 @@ def test_chat_edits_an_attached_image(ui, monkeypatch):
     r = ui.client.post("/ui/images/edits", json={**body, "steps": 20})
     assert r.status_code == 200
     assert b'name="steps"\r\n\r\n20\r\n' in seen[-1][2]
+    assert b'name="loras"' not in seen[-1][2]
+    r = ui.client.post("/ui/images/edits", json={
+        **body, "loras": [{"name": "omni", "scale": 1}]})
+    assert r.status_code == 200
+    assert (b'name="loras"\r\n\r\n[{"name": "omni", "scale": 1}]\r\n'
+            in seen[-1][2])
     assert ui.client.post("/ui/images/edits", json={
         **body, "image": "data:image/png;base64,AAAA"}).status_code == 400
 

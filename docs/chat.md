@@ -102,6 +102,10 @@ quand Chrome le propose. Il répond **sur l'appareil**, sans le proxy.
   les seuls modèles que déclare `[tools.image_generation].steps`, *auto*
   par défaut (celles du modèle). Un modèle à passes fixes, comme
   Qwen-Image-2.1-Turbo, n'a pas le sélecteur.
+- LoRA (adaptateur de style ou de contenu, force 1) : proposés pour les
+  seuls modèles que déclare `[tools.image_generation].loras`, *sans LoRA*
+  par défaut. Appliqué aux générations comme aux retouches, jamais à
+  *Agrandir* (son modèle à part).
 - *Agrandir* (×1,5, ×2…, sous une image ou dans l'image agrandie) : si
   `[tools.image_generation].upscale_model` est posé, l'image est
   retouchée par ce modèle à une plus grande taille, avec une consigne

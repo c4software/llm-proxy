@@ -116,6 +116,24 @@ if not isinstance(STEPS, dict) or not all(
         f"des motifs de modèle à des listes d'entiers positifs "
         f"(reçu {STEPS!r})")
 
+# Les LoRA proposés par le CHAT de la page, par modèle, sur le même
+# principe : { "<motif de <backend>/<modèle>>" = [noms…] }, les noms sous
+# lesquels le backend les a enregistrés (gufo : `--lora NOM=CHEMIN`,
+# gufo-org/gufo#861). `loras` n'est pas de l'API Images d'OpenAI, et gufo
+# ne liste ses adaptateurs (GET /sdapi/v1/loras) qu'une fois le modèle
+# chargé, pas derrière llama-swap : d'où une liste déclarée. Un modèle
+# qu'aucun motif ne couvre n'a pas de choix et ne reçoit jamais `loras`.
+# Sans choix, rien n'est envoyé (les `--lora-default` du backend).
+LORAS = config.get("tools.image_generation.loras", {})
+if not isinstance(LORAS, dict) or not all(
+        isinstance(v, list) and v and all(
+            isinstance(n, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,64}", n)
+            for n in v) for v in LORAS.values()):
+    raise SystemExit(
+        f"{config.CONFIG_PATH} : tools.image_generation.loras doit associer "
+        f"des motifs de modèle à des listes de noms (1 à 64 caractères "
+        f"parmi A-Z a-z 0-9 . _ -) (reçu {LORAS!r})")
+
 # « Agrandir » d'une image du chat de la page : une RETOUCHE
 # (/v1/images/edits) de l'image par `upscale_model`, avec une consigne
 # fixe et une taille plus grande. Pas un super-résolveur : le modèle

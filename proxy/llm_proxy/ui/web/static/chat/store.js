@@ -226,6 +226,7 @@ export const ChatStore = (() => {
       imageSize: base ? base.imageSize : undefined,
       imageCount: base ? base.imageCount || 1 : 1,
       imageSteps: base ? base.imageSteps || 0 : 0,
+      imageLora: base ? base.imageLora || "" : "",
       imageAlone: base ? !!base.imageAlone : false,
       incognito, messages: [],
     };

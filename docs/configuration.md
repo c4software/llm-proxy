@@ -227,6 +227,7 @@ l'origine du backend) : [`[tools.net]`](#toolsnet).
 | `sizes` | `["512x512", "768x768", "1024x1024"]` | Tailles autorisées (`LxH`). Une autre est refusée sans appeler le backend |
 | `size` | `"512x512"` | Taille par défaut. Doit figurer dans `sizes` |
 | `steps` | `{}` | Passes de débruitage proposées par le chat de la page, par modèle : `{ "<motif>" = [passes…] }`, motif sur `<backend>/<modèle>` (`*` = n'importe quoi). Un modèle qu'aucun motif ne couvre n'a pas de choix et ne reçoit jamais `steps` (champ hors API OpenAI, que lit gufo ; Qwen-Image-2.1-Turbo n'accepte que ses 8 passes). Le choix « auto » laisse le défaut du backend |
+| `loras` | `{}` | LoRA proposés par le chat de la page, par modèle : `{ "<motif>" = [noms…] }`, même motif que `steps`, noms sous lesquels le backend les a enregistrés (gufo : `--lora NOM=CHEMIN`, Qwen-Image-2.1). Un modèle qu'aucun motif ne couvre n'a pas de choix et ne reçoit jamais `loras` (champ hors API OpenAI). Choisi : `"loras": [{"name": …, "scale": 1}]`, en génération comme en retouche ; « sans LoRA » n'envoie rien (le défaut du backend) |
 | `upscale_model` | `""` | Bouton *Agrandir* du chat de la page : modèle `"<backend>/<modèle>"` qui RETOUCHE l'image à une plus grande taille (`/v1/images/edits`). Il redessine l'image : ce n'est pas un super-résolveur. Vide : pas de bouton |
 | `upscale_factors` | `[1.5, 2]` | Facteurs proposés, tous > 1 |
 | `upscale_max_pixels` | `4194304` | Surface rendue au plus (2048², limite de Qwen-Image-2.1) ; côtés en multiples de 32, 4096 au plus |
