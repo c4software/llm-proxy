@@ -46,12 +46,10 @@ RUN pacman -Syu --noconfirm --needed --disable-sandbox \
  && rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/*
 
 # Ce qu'Arch tarde à reconstruire, que les scans d'image relevaient :
-# captree (outil de diagnostic de libcap, Go 1.26.1, que rien n'appelle)
-# retiré ; node-gyp réinstallé par npm, pour un undici à jour (celui du
-# paquet d'Arch a des CVE hautes) ; pip et filelock (celui que tire
-# python-pip) au minimum corrigé, qui s'efface dès qu'Arch les rattrape.
-RUN rm -f /usr/bin/captree \
- && npm install -g --no-fund --no-audit node-gyp@latest \
+# node-gyp réinstallé par npm, pour un undici à jour (celui du paquet
+# d'Arch a des CVE hautes) ; pip et filelock (celui que tire python-pip)
+# au minimum corrigé, qui s'efface dès qu'Arch les rattrape.
+RUN npm install -g --no-fund --no-audit node-gyp@latest \
  && npm cache clean --force \
  && pip install --no-cache-dir --break-system-packages --upgrade \
       'pip>=26.3' 'filelock>=4.2.1'
