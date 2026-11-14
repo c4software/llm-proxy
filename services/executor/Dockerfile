@@ -45,6 +45,17 @@ RUN pacman -Syu --noconfirm --needed --disable-sandbox \
  && pacman -Scc --noconfirm --disable-sandbox \
  && rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/*
 
+# Ce qu'Arch tarde à reconstruire, que les scans d'image relevaient :
+# captree (outil de diagnostic de libcap, Go 1.26.1, que rien n'appelle)
+# retiré ; node-gyp réinstallé par npm, pour un undici à jour (celui du
+# paquet d'Arch a des CVE hautes) ; pip et filelock (celui que tire
+# python-pip) au minimum corrigé, qui s'efface dès qu'Arch les rattrape.
+RUN rm -f /usr/bin/captree \
+ && npm install -g --no-fund --no-audit node-gyp@latest \
+ && npm cache clean --force \
+ && pip install --no-cache-dir --break-system-packages --upgrade \
+      'pip>=26.3' 'filelock>=4.2.1'
+
 COPY sandbox/requirements.txt /tmp/requirements.txt
 # Bibliothèques de données dans le Python système (PEP 668, d'où
 # --break-system-packages), bytecode compilé ici : la racine d'un bac est
@@ -95,6 +106,7 @@ ENV PYTHONUNBUFFERED=1 \
 # d'un programme tué par son délai. Ni fuse-overlayfs (magasin `vfs`) ni
 # passt/slirp4netns (un bac n'a pas de réseau).
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
       podman crun uidmap catatonit libcap2-bin \
  && rm -rf /var/lib/apt/lists/* \
@@ -125,7 +137,10 @@ ENV XDG_RUNTIME_DIR=/run/user/10001
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# pip 26.3 au moins : 26.2.2, celui de l'image python, embarque urllib3 2.7.0
+# et msgpack 1.1.2, à CVE hautes.
+RUN pip install --no-cache-dir --upgrade 'pip>=26.3' \
+ && pip install --no-cache-dir -r requirements.txt
 
 # --chown : « root » dans le userns de podman, pour que crun y pose ses
 # points de montage ; le programme d'un bac, uid sans droit, n'y écrit rien.
