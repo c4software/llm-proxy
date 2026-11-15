@@ -376,7 +376,7 @@ html, .thread, .nav-chats ul, .memory-side { scrollbar-gutter: stable; }
   .nav-compact .sidenav { padding: 22px 8px 18px; align-items: center; gap: 14px; }
   .nav-compact .nav-top { flex-direction: column; gap: 14px; }
   .nav-compact .brand { margin: 0; }
-  .nav-compact :is(.brand-name, .nav-item > span, .nav-new > span, .nav-search, .nav-none, .nav-chats ul, .nav-foot) {
+  .nav-compact :is(.brand-name, .nav-item > span, .nav-new > span, .nav-search, .nav-none, .nav-chats ul, .nav-foot, .nav-version) {
     display: none;
   }
   .nav-compact :is(.nav-item, .nav-new) { justify-content: center; padding: 9px; width: 44px; }
@@ -1588,3 +1588,7 @@ button.link.danger { color: var(--err); }
 .setup-tabs .btn.on { border-color: var(--accent); color: var(--accent); }
 .setup-steps { margin: 0; padding: 14px 20px 18px 40px; display: flex; flex-direction: column; gap: 8px;
   font-size: 13.5px; }
+
+/* La version de l'image, en bas du menu. */
+.nav-version { margin-top: 8px; padding: 0 10px; font: 11px ui-monospace, SFMono-Regular, monospace;
+  color: var(--muted); opacity: .75; overflow-wrap: anywhere; }

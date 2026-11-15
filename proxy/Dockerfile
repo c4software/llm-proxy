@@ -88,9 +88,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY proxy/main.py .
 COPY proxy/llm_proxy/ llm_proxy/
 COPY --from=linux /vendor/ llm_proxy/ui/web/static/vendor/
-# Le modèle seul : data/ est un volume, où le proxy crée config.toml
-# s'il est absent.
+# Le modèle documenté seul : data/ est un volume ; sans config.toml, le
+# proxy démarre en mode installation (/ui la génère).
 COPY data/config.example.toml data/
+
+# La version de l'image (le tag, sinon sha-xxxxxxx ; la CI la passe en
+# --build-arg), affichée en bas du menu de /ui. En dernier : elle change
+# à chaque build sans invalider les couches au-dessus.
+ARG VERSION=dev
+ENV LLM_PROXY_VERSION=$VERSION
 
 RUN useradd --create-home --uid 10001 appuser \
  && chown -R appuser:appuser /app/data

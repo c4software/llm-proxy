@@ -116,6 +116,7 @@
         <span>clé <code title="condensé de la clé connectée">{{ session.client }}</code></span>
         <button type="button" class="link" @click="logout">Se déconnecter</button>
       </div>
+      <div class="nav-version" v-if="session.version" title="Version de llm-proxy">llm-proxy {{ session.version }}</div>
     </div>
   </aside>
   <div class="scrim" v-if="navOpen" @click="navOpen = false"></div>

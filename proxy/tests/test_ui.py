@@ -510,3 +510,13 @@ def test_premier_demarrage_sans_configuration(tmp_path, monkeypatch):
     assert client.get("/healthz").status_code == 200
     monkeypatch.setattr(config, "SETUP", False)
     assert client.get("/ui/session").json()["setup"] is False
+
+
+def test_session_donne_la_version_de_l_image(ui, monkeypatch):
+    """La version de l'image (LLM_PROXY_VERSION, posée par le Dockerfile)
+    pour le bas du menu ; hors image, « dev »."""
+    assert login(ui).status_code == 200
+    monkeypatch.delenv("LLM_PROXY_VERSION", raising=False)
+    assert ui.client.get("/ui/session").json()["version"] == "dev"
+    monkeypatch.setenv("LLM_PROXY_VERSION", "v2026.11.15.3")
+    assert ui.client.get("/ui/session").json()["version"] == "v2026.11.15.3"

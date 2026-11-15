@@ -11,7 +11,9 @@ Vue 3 est embarqué.
 
 Un **menu latéral** (tiroir ☰ sous 760 px de large) donne en haut *Chat*
 et la liste des conversations, en bas *Statistiques*, *Configuration*,
-la clé connectée, *Se déconnecter* et le thème (auto, clair, sombre).
+la clé connectée, *Se déconnecter*, le thème (auto, clair, sombre) et,
+en petit, la **version** de l'image (le tag, sinon `sha-xxxxxxx` ;
+`dev` hors image), passée par la CI au build (`LLM_PROXY_VERSION`).
 Une réponse du chat continue pendant qu'on regarde les statistiques.
 Le bouton à côté du logo le passe en **mode compact** : un rail d'icônes
 (libellés en bulles), sans la liste des conversations ni le pied, à

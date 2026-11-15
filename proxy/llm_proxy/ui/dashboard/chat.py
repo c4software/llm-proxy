@@ -6,6 +6,7 @@ d'elle), les modèles, /ui/chat/completions, les images, la voix, l'usage.
 import base64
 import binascii
 import json
+import os
 import re
 import httpx2
 from fastapi import Request
@@ -66,6 +67,9 @@ async def ui_session(request: Request):
     return {
         # Premier démarrage, sans data/config.toml : la page d'installation.
         "setup": config.SETUP,
+        # La version de l'image (Dockerfile, LLM_PROXY_VERSION) ; hors
+        # image, « dev ».
+        "version": os.environ.get("LLM_PROXY_VERSION") or "dev",
         "auth_required": auth_required(),
         "login": ui_login_mode(),
         "account": user,

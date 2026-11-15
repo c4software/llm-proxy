@@ -35,6 +35,11 @@ jobs:
       - name: Étiquettes
         id: tags
         run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "version=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
           {
             echo "list<<EOF"
             echo "$IMAGE:sha-${GITHUB_SHA::7}"
@@ -53,10 +58,13 @@ jobs:
           pull: true
           push: true
           tags: ${{ steps.tags.outputs.list }}
+          # Affichée en bas du menu de /ui (LLM_PROXY_VERSION).
+          build-args: |
+            VERSION=${{ steps.tags.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.description=llm-proxy, proxy OpenAI-compatible
-            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
