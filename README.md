@@ -79,6 +79,16 @@ déclarer ses backends (`[backends.<nom>]`, une URL compatible OpenAI) ;
 l'environnement ne sert qu'aux secrets, injectés par `${VAR}`. Le
 tableau de bord est sur `http://localhost:8000/ui`.
 
+L'image est aussi publiée à chaque version sur
+`ghcr.io/c4software/llm-proxy` (publique) : `image:` dans l'override,
+puis `docker compose pull && docker compose up -d`, sans construction
+([Déploiement](docs/deploiement.md#limage-publiée)).
+
+Pas à pas, avec NVIDIA, AMD et d'autres fournisseurs gratuits branchés
+derrière le proxy, puis OpenCode relié dessus : le TP
+[Monter son propre proxy](https://cours.brosseau.ovh/tp/agentic/proxy.html)
+du cours sur le développement agentique.
+
 ## Documentation
 
 | Sujet | Fichier |
