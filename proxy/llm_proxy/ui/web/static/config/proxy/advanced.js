@@ -9,6 +9,27 @@
 */
 import { csv } from "../shared.js";
 import { TOOL_LIST } from "./form.js";
+import { Markdown } from "../../lib/markdown.js";
+
+// ── le rôle d'un réglage, rendu ─────────────────────────────────────────
+// Les commentaires de config.example.toml sont du Markdown (`code`, gras) ;
+// leurs renvois à la documentation (docs/linux.md, « Le réseau ») ouvrent
+// le fichier sur GitHub, à la section nommée, dans la version qui tourne
+// (le tag de l'image, sinon master).
+const REPO = "https://github.com/c4software/llm-proxy/blob/";
+// L'ancre que GitHub donne à un titre : minuscules, ponctuation retirée
+// (lettres accentuées gardées), espaces → tirets.
+const slug = (title) => title.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "")
+  .trim().replace(/\s/g, "-");
+const DOC_REF = /`?((?:docs|bench)\/[\w.-]+\.md|README\.md)`?(?:,\s*«\s*([^»]+?)\s*»)?/g;
+export function docHtml(text, version) {
+  const ref = /^v\d/.test(version || "") ? version : "master";
+  const md = String(text || "").replace(DOC_REF, (_, file, section) => {
+    const url = REPO + ref + "/" + file + (section ? "#" + encodeURIComponent(slug(section)) : "");
+    return `[${file}${section ? `, « ${section} »` : ""}](${url})`;
+  });
+  return Markdown.render(md);
+}
 
 const FORM_FLAT = new Set(["proxy.log_level", "proxy.api_keys", "proxy.exempt_paths",
   "fair_share.tokens_per_hour", "anthropic.enabled", "anthropic.model_map.default",

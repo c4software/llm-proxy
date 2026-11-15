@@ -69,3 +69,28 @@ def test_la_page_recoit_les_descriptions(conf):
     assert docs["backends.local.timeout"].startswith("délai (s) d'une requête")
     assert docs["tools.mcp.notes.url"].startswith("Adresse de configuration")
     assert "ui.linux_relay" in docs
+
+
+def test_les_renvois_a_la_documentation_existent():
+    """« docs/linux.md, « Le réseau » » devient dans la page un lien vers
+    GitHub, à l'ancre de la section : le fichier et le titre doivent
+    exister."""
+    import os
+    import re
+    root = os.path.dirname(os.path.dirname(config.EXAMPLE_PATH))
+    with open(config.EXAMPLE_PATH, encoding="utf-8") as fh:
+        text = fh.read()
+    refs = re.findall(r"((?:docs|bench)/[\w.-]+\.md|README\.md)`?"
+                      r"(?:,\s*«\s*([^»]+?)\s*»)?", text)
+    assert refs
+    broken = []
+    for name, section in refs:
+        path = os.path.join(root, name)
+        if not os.path.exists(path):
+            broken.append(name)
+            continue
+        with open(path, encoding="utf-8") as fh:
+            titles = {re.sub(r"^#+\s*", "", line).strip() for line in fh if line.startswith("#")}
+        if section and section not in titles:
+            broken.append(f"{name}, « {section} »")
+    assert broken == []

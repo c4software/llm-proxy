@@ -280,7 +280,11 @@ OIDC.
   d'une clé, celui au-dessus d'une table pour ses clés sans commentaire,
   et pour les backends la liste « Champs », un champ par ligne
   (`#   nom — rôle`). Un test refuse un réglage lu par le proxy sans
-  description.
+  description. Le texte est rendu en Markdown ; un renvoi
+  `docs/….md` (suivi au besoin de `, « Titre »`) ouvre le fichier sur
+  GitHub, à la section, dans la version qui tourne (son tag, sinon
+  `master`). Un test vérifie que chaque fichier et chaque titre cités
+  existent.
 - **Fichier complet** : le `data/config.toml` résultant, défauts suivis
   de `# défaut`, `${VAR}` gardés, secrets en clair masqués. Édité à la
   main, il n'est plus écrasé par les sections (*Réappliquer les

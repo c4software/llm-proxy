@@ -16,15 +16,17 @@ import { call } from "../lib/http.js";
 import { useCopy, download } from "../lib/files.js";
 import { randomKey, useCatalog } from "./shared.js";
 import { TOOL_LIST, newForm, prefillForm, buildProxy } from "./proxy/form.js";
-import { advancedRows, parseAdv } from "./proxy/advanced.js";
+import { advancedRows, parseAdv, docHtml } from "./proxy/advanced.js";
 import { PROVIDERS, providerBackend, buildOverride } from "./proxy/providers.js";
 
 const { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } = Vue;
 
 export const ProxyPart = {
   props: { session: { type: Object, required: true } },
-  setup() {
+  setup(props) {
     const { modelChoices } = useCatalog();
+    // Le rôle d'un réglage, en HTML (Markdown, renvois vers GitHub).
+    const doc = (text) => docHtml(text, props.session && props.session.version);
     const { copied, copy } = useCopy();
     const px = reactive(newForm());
     // ── la configuration complète : UN fichier ───────────────────────────
@@ -197,7 +199,7 @@ export const ProxyPart = {
     return { settings, checkSettings, settingsFile, edited, resetProxy, changes, showWarn,
              advanced, advFilter, advGroups, advChanged, advError, SECTIONS, activeSection,
              goTo, TOOL_LIST, px, modelChoices, addBackend, addKey, randomKey, proxyOut,
-             PROVIDERS, provider, usedNames, addProvider, hostFiles, copied, copy, download };
+             PROVIDERS, provider, usedNames, addProvider, hostFiles, doc, copied, copy, download };
   },
   template: `
     <div class="proxy-layout">
@@ -387,7 +389,7 @@ export const ProxyPart = {
             en vigueur (« défaut » : le fichier ne le dit pas, le proxy le prend d'office).</p>
           <div class="adv-group" v-for="g in advGroups" :key="g.name">
             <h3>[{{ g.name }}]</h3>
-            <p class="adv-group-doc" v-if="g.doc">{{ g.doc }}</p>
+            <div class="adv-group-doc md" v-if="g.doc" v-html="doc(g.doc)"></div>
             <div class="adv-row" v-for="row in g.rows" :key="JSON.stringify(row.path)"
                  :class="{ changed: advChanged(row) }">
               <label class="adv-key mono" :for="'adv-' + row.path.join('.')">{{ row.key }}</label>
@@ -402,7 +404,7 @@ export const ProxyPart = {
                 <span class="tag" v-if="row.isDefault && !advChanged(row)">défaut</span>
                 <span class="tag changed" v-if="advChanged(row)">modifié</span>
               </span>
-              <p class="adv-doc" v-if="row.doc && row.doc !== g.doc">{{ row.doc }}</p>
+              <div class="adv-doc md" v-if="row.doc && row.doc !== g.doc" v-html="doc(row.doc)"></div>
             </div>
           </div>
           <p class="note adv-intro" v-if="!advGroups.length">{{ advFilter ? "Aucun réglage ne correspond." : "Chargement…" }}</p>
