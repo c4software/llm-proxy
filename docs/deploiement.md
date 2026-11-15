@@ -46,6 +46,25 @@ l'activer :
 Détail des deux fichiers :
 [Le compose de base et son override](execution-de-code.md#le-compose-de-base-et-son-override).
 
+### L'image publiée
+
+Chaque tag `v*` publie l'image du proxy sur
+`ghcr.io/c4software/llm-proxy`, avec trois étiquettes : le tag
+(`v2026.11.14.1`), `latest` et `sha-xxxxxxx`. C'est le workflow
+`.github/workflows/proxy.yml`. Pour l'utiliser au lieu de construire sur
+place, poser `image:` dans l'override (bloc 2 de l'exemple), puis :
+
+```bash
+git pull                    # compose et documentation
+docker compose pull albert-proxy && docker compose up -d albert-proxy
+```
+
+Revenir à une version précédente : mettre son étiquette dans `image:`
+(`ghcr.io/c4software/llm-proxy:v2026.11.12.6`) et relancer les deux
+commandes. Si le paquet est privé, `docker login ghcr.io` sur la machine,
+avec un jeton qui a `read:packages`. `docker compose up -d --build`
+reconstruit toujours sur place, par exemple pour une version modifiée.
+
 ## Coolify
 
 1. Nouvelle ressource → Dockerfile, pointée sur ce dépôt.

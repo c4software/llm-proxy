@@ -129,6 +129,11 @@ services:
   #
   # albert-proxy:
   #   container_name: llm-proxy
+  #   # Image de la CI (tag v*, .github/workflows/proxy.yml) au lieu de la
+  #   # construire : `docker compose pull albert-proxy && docker compose up
+  #   # -d albert-proxy`. Une version précise pour revenir en arrière.
+  #   image: ghcr.io/c4software/llm-proxy:latest    # ou :v2026.11.14.1
+  #   pull_policy: always   # `up -d` seul va chercher la dernière `latest`
   #   # Derrière un reverse proxy du même hôte : plus de port publié.
   #   ports: !reset []
   #   # Un backend joint par un nom que le DNS du conteneur ne connaît pas.

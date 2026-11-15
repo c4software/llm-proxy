@@ -1,0 +1,62 @@
+# Image du proxy (proxy/Dockerfile, contexte à la racine), publiée à chaque
+# tag de version. Un tag = une image figée : revenir en arrière, c'est
+# changer l'étiquette, sans rebuild.
+# Sur la machine (override : `image: ghcr.io/…/llm-proxy:<tag>` ou `latest`) :
+#   docker compose pull albert-proxy && docker compose up -d albert-proxy
+name: Image du proxy
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:      # lancé sur un tag : mêmes étiquettes ; sinon sha seul
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/llm-proxy
+
+concurrency:
+  group: proxy-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Construire et publier (amd64)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Étiquettes
+        id: tags
+        run: |
+          {
+            echo "list<<EOF"
+            echo "$IMAGE:sha-${GITHUB_SHA::7}"
+            if [ "$GITHUB_REF_TYPE" = tag ]; then
+              echo "$IMAGE:$GITHUB_REF_NAME"
+              echo "$IMAGE:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Construire et publier
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: proxy/Dockerfile
+          platforms: linux/amd64
+          pull: true
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=llm-proxy, proxy OpenAI-compatible
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.sha }}
