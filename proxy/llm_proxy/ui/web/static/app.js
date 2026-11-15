@@ -28,6 +28,7 @@ const Loading = { template: `<div class="boot" role="status"><span class="spinne
 const lazy = (load) => defineAsyncComponent({ loader: load, loadingComponent: Loading, delay: 150 });
 const ConfigPanel = lazy(() => import("./config/ConfigPanel.js").then((m) => m.ConfigPanel));
 const StatsView = lazy(() => import("./stats/StatsView.js").then((m) => m.StatsView));
+const SetupPanel = lazy(() => import("./config/SetupPanel.js").then((m) => m.SetupPanel));
 const REFRESH = 5000;
 const STORE_VIEW = "llm-proxy-view";
 
@@ -99,6 +100,8 @@ createApp({
     const authLabel = ref("");
     // Un compte OIDC en attente ou bloqué : son état, et rien d'autre.
     const inactive = ref(null);
+    // Premier démarrage, sans configuration : la page d'installation seule.
+    const setup = ref(false);
 
     async function loadSession() {
       try {
@@ -107,6 +110,8 @@ createApp({
         if (!r.ok) throw new Error("HTTP " + r.status);
         const s = await r.json();
         needLogin.value = false;
+        setup.value = !!s.setup;
+        if (s.setup) { session.value = null; return; }
         if (s.account && !["admin", "user"].includes(s.account.role)) {
           inactive.value = s.account;
           session.value = null;
@@ -200,7 +205,8 @@ createApp({
         history.replaceState(null, "", location.pathname + location.hash);
       }
       await loadSession();
-      loadHealth();
+      // Installation : aucun backend à sonder.
+      if (!setup.value) loadHealth();
       // /ui/health relu de temps en temps : le cache web bouge.
       timer = setInterval(() => { if (!document.hidden && session.value) loadHealth(); }, 6 * REFRESH);
       window.addEventListener("keydown", onKey);
@@ -213,10 +219,11 @@ createApp({
     return { views, view, visited, setView, navOpen, navCompact, chats, chatState, chatList, moreRef, openChat,
              newChat, session, needLogin, loginKey, loginError,
              loginBusy, login, logout, onUnauthorized, authMode, authLabel,
-             inactive, loadSession, health, theme, themeLabel, cycleTheme };
+             inactive, setup, loadSession, health, theme, themeLabel, cycleTheme };
   },
 }).component("memory-panel", MemoryPanel)
   .component("chat-panel", ChatPanel)
   .component("config-panel", ConfigPanel)
   .component("stats-view", StatsView)
+  .component("setup-panel", SetupPanel)
   .mount("#app");

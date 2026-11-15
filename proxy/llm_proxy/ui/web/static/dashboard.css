@@ -1576,3 +1576,15 @@ button.link.danger { color: var(--err); }
 .ctx-legend .part-free { background: var(--track); border: 1px solid var(--line); }
 .part-other { background: repeating-linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 4px); }
 .part-hosted { background: #7cc36a; }
+
+/* ── installation (premier démarrage, config/SetupPanel.js) ─────────── */
+.setup { display: flex; flex-direction: column; gap: 16px; }
+.setup-intro { font-size: 13.5px; color: var(--muted); margin: 0; max-width: 80ch; }
+.setup-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 760px) { .setup-form { grid-template-columns: 1fr; } }
+.setup-form .config-fields .btn { align-self: flex-start; }
+.setup-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.setup-tabs .btn { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12.5px; }
+.setup-tabs .btn.on { border-color: var(--accent); color: var(--accent); }
+.setup-steps { margin: 0; padding: 14px 20px 18px 40px; display: flex; flex-direction: column; gap: 8px;
+  font-size: 13.5px; }

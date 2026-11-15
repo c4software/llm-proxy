@@ -78,7 +78,7 @@ Une requête suit toujours le même chemin.
 |---|---|
 | `docker-compose.yml` | La pile de base, versionnée : le proxy et SearXNG |
 | `docker-compose.override.example.yml` | Modèle de `docker-compose.override.yml` (non versionné, fusionné par Compose) : l'exécuteur et son réseau interne, les adaptations à la machine. Voir [Le compose de base et son override](execution-de-code.md#le-compose-de-base-et-son-override) |
-| `data/config.example.toml` | Modèle de configuration documenté, copié en `data/config.toml` au premier démarrage |
+| `data/config.example.toml` | Modèle de configuration documenté : chaque réglage, sa valeur par défaut |
 | `docs/outils.md` | Le contrat des outils hébergés, et comment en écrire un |
 | `services/executor/` | L'exécuteur de code : `entrypoint.sh`, `containers/` (podman sans root), `executor/` (`sandbox.py` : un bac par conversation, `server.py` : l'API, `validate.py`), `sandbox/` (contenu d'un bac), `tests/` (faux podman) |
 | `services/searxng/settings.yml` | Réglages de SearXNG : ses défauts plus le format JSON. Monté en lecture seule |
@@ -109,7 +109,7 @@ partie qui l'a importé.
 
 | Fichier | Rôle |
 |---|---|
-| `core/config.py` | Lecture de `data/config.toml` : `${VAR}`, accès typés, création depuis l'exemple |
+| `core/config.py` | Lecture de `data/config.toml` : `${VAR}`, accès typés ; absent, le mode installation (`SETUP`) |
 | `core/settings.py` | La table `[proxy]` en constantes typées |
 | `core/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON |
 | `core/multipart.py` | Champ `model` d'un corps multipart : lu pour router, préfixe retiré |

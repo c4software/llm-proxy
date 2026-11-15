@@ -8,9 +8,11 @@ source unique de vérité. L'environnement ne porte que deux choses :
     d'API restent ainsi hors du fichier (donc hors du dépôt) tandis que
     la structure, elle, est versionnable.
 
-Au premier démarrage, si data/config.toml n'existe pas, il est créé à
-partir de data/config.example.toml : le conteneur démarre sur un volume
-vide sans intervention.
+Au premier démarrage, si data/config.toml n'existe pas, le proxy démarre
+SANS configuration (SETUP) : aucun backend, aucune clé, et /ui affiche
+la page d'installation, qui génère config.toml, .env et l'override.
+Rien n'est écrit : le fichier posé, un redémarrage quitte ce mode.
+data/config.example.toml reste la référence documentée de chaque réglage.
 
 Ce module ne connaît ni FastAPI, ni httpx2, ni les autres modules du
 proxy : il est importé par tous, il n'importe personne.
@@ -18,7 +20,6 @@ proxy : il est importé par tous, il n'importe personne.
 
 import os
 import re
-import shutil
 import sys
 import tomllib
 
@@ -64,22 +65,18 @@ def _expand(value):
     return value
 
 
-def _bootstrap(path: str) -> None:
-    """Config absente : on installe l'exemple documenté à sa place."""
-    if not os.path.exists(EXAMPLE_PATH):
-        raise SystemExit(
-            f"configuration introuvable : {path} (et aucun modèle "
-            f"{EXAMPLE_PATH} pour l'initialiser)"
-        )
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    shutil.copyfile(EXAMPLE_PATH, path)
-    print(f"configuration absente : {path} créé depuis "
-          f"{os.path.basename(EXAMPLE_PATH)}", file=sys.stderr)
+# Premier démarrage : pas de fichier de configuration (voir plus haut).
+SETUP = False
 
 
 def load(path: str = CONFIG_PATH) -> dict:
+    global SETUP
     if not os.path.exists(path):
-        _bootstrap(path)
+        SETUP = True
+        print(f"configuration absente : {path} — premier démarrage, la page "
+              f"/ui génère la configuration à poser là, puis redémarrer",
+              file=sys.stderr)
+        return {}
     try:
         with open(path, "rb") as fh:
             raw = tomllib.load(fh)

@@ -8,7 +8,11 @@ ligne est `data/config.example.toml`.
 ## Le fichier et les secrets
 
 Toute la configuration vit dans `data/config.toml`. Au premier démarrage,
-le proxy le crée à partir de `data/config.example.toml`.
+sans ce fichier, le proxy démarre sans configuration : l'API répond 503
+(`setup_required`) et `/ui` affiche la page d'installation, qui génère
+`data/config.toml`, le `.env` et le `docker-compose.override.yml`. Le
+fichier posé, un redémarrage quitte ce mode. Rien n'est écrit par le
+proxy ; `data/config.example.toml` décrit chaque réglage.
 
 L'environnement ne sert qu'à deux choses :
 

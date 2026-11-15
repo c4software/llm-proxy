@@ -11,6 +11,7 @@ import httpx2
 from fastapi import Request
 from ... import tools
 from ...access import accounts, fairshare
+from ...core import config
 from ...core.settings import INCOGNITO
 from ...storage import files, stats
 from ...surfaces import chat_api, relay_routes
@@ -63,6 +64,8 @@ async def ui_session(request: Request):
         return {"auth_required": True, "login": "oidc", "account": user,
                 "client": None, "chat": {"enabled": False}, "memory": False}
     return {
+        # Premier démarrage, sans data/config.toml : la page d'installation.
+        "setup": config.SETUP,
         "auth_required": auth_required(),
         "login": ui_login_mode(),
         "account": user,

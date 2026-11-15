@@ -17,6 +17,7 @@ import { useCopy, download } from "../lib/files.js";
 import { randomKey, useCatalog } from "./shared.js";
 import { TOOL_LIST, newForm, prefillForm, buildProxy } from "./proxy/form.js";
 import { advancedRows, parseAdv } from "./proxy/advanced.js";
+import { PROVIDERS, providerBackend, buildOverride } from "./proxy/providers.js";
 
 const { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } = Vue;
 
@@ -67,9 +68,29 @@ export const ProxyPart = {
 
     const addBackend = () => px.backends.push({ name: "", url: "http://", key: false,
       quotas: false, images: false, toolChoice: "", maxTokens: "", fairShare: true });
+    // Un fournisseur connu : nom, URL et variable de la clé remplis. Le
+    // menu revient à son libellé, prêt pour le suivant.
+    const provider = ref("");
+    const usedNames = computed(() => new Set(px.backends.map((b) => String(b.name || "").trim())));
+    function addProvider() {
+      const p = PROVIDERS.find((x) => x.id === provider.value);
+      provider.value = "";
+      if (p && !usedNames.value.has(p.id)) px.backends.push(providerBackend(p));
+    }
     const addKey = () => px.keys.push({ name: "PROXY_API_KEY_" + (px.keys.length + 1), value: randomKey() });
 
     const proxyOut = computed(() => buildProxy(px));
+    // Les fichiers à poser à côté du compose : le .env du formulaire, puis
+    // l'override, tiré du fichier complet (une ${VAR} ajoutée à la main ou
+    // par Avancé y figure aussi).
+    const hostFiles = computed(() => [
+      { ...proxyOut.value.files[0], section: "env" },
+      { name: "docker-compose.override.yml", download: "docker-compose.override.yml",
+        section: "override", content: buildOverride(settings.text),
+        note: "Le service du proxy : l'image publiée et les variables que le docker-compose.yml "
+          + "ne transmet pas. Un override existe déjà : y fusionner ces lignes. Puis "
+          + "docker compose pull albert-proxy && docker compose up -d albert-proxy." },
+    ]);
 
     // Le formulaire change → le fichier complet se recalcule (un instant
     // après la dernière frappe), sauf s'il a été modifié à la main.
@@ -141,6 +162,7 @@ export const ProxyPart = {
       { id: "partage", label: "Partage équitable" }, { id: "comptes", label: "Comptes (OIDC)" },
       { id: "divers", label: "Divers" }, { id: "avance", label: "Avancé" },
       { id: "fichier", label: "Fichier complet", sep: true }, { id: "env", label: ".env" },
+      { id: "override", label: "Override Docker" },
     ];
     const activeSection = ref("acces");
     let observer = null;
@@ -172,7 +194,7 @@ export const ProxyPart = {
     return { settings, checkSettings, settingsFile, edited, resetProxy, changes, showWarn,
              advanced, advFilter, advGroups, advChanged, advError, SECTIONS, activeSection,
              goTo, TOOL_LIST, px, modelChoices, addBackend, addKey, randomKey, proxyOut,
-             copied, copy, download };
+             PROVIDERS, provider, usedNames, addProvider, hostFiles, copied, copy, download };
   },
   template: `
     <div class="proxy-layout">
@@ -256,7 +278,15 @@ export const ProxyPart = {
                   <input type="checkbox" v-model="b.fairShare"> partage équitable</label>
               </div>
             </div>
-            <button type="button" class="btn ghost" @click="addBackend">Ajouter un backend</button>
+            <div class="row">
+              <button type="button" class="btn ghost" @click="addBackend">Ajouter un backend</button>
+              <select v-model="provider" @change="addProvider" aria-label="Ajouter un fournisseur connu">
+                <option value="">Ajouter un fournisseur connu…</option>
+                <option v-for="p in PROVIDERS" :key="p.id" :value="p.id" :disabled="usedNames.has(p.id)">{{ p.label }} — {{ p.note }}{{ usedNames.has(p.id) ? " (déjà là)" : "" }}</option>
+              </select>
+            </div>
+            <p class="note">Un fournisseur connu remplit le nom, l'URL et la variable de sa clé : la valeur
+              va dans le .env, et l'override la transmet au conteneur.</p>
           </div>
         </section>
         <section class="panel proxy-section" id="px-surfaces" data-section="surfaces">
@@ -385,8 +415,8 @@ export const ProxyPart = {
           <textarea v-model="settings.text" spellcheck="false" aria-label="config.toml"
                     :placeholder="settings.loaded ? '' : 'Chargement…'"></textarea>
         </section>
-        <section class="panel proxy-section config-file" id="px-env" data-section="env"
-                 v-for="f in proxyOut.files" :key="f.name">
+        <section class="panel proxy-section config-file" :id="'px-' + f.section" :data-section="f.section"
+                 v-for="f in hostFiles" :key="f.name">
           <header class="panel-head">
             <h2>{{ f.name }}</h2>
             <span class="config-actions">

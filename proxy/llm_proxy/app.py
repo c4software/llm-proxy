@@ -22,8 +22,11 @@ spécifique à Albert, dans albert.py.
 
 import mimetypes
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
+
+from .core import config
+from .core.httputil import error_response
 
 from .access import auth
 from .access.auth import UISession
@@ -52,6 +55,21 @@ mimetypes.add_type("application/manifest+json", ".webmanifest")
 # lui (ajoutée après, donc exécutée avant : la session y est déjà lue).
 app.middleware("http")(auth.require_proxy_key)
 app.add_middleware(UISession)
+
+
+# Premier démarrage sans data/config.toml (config.SETUP) : seule la page
+# (et /healthz) répond ; l'API attend une configuration plutôt que de
+# relayer vers le backend par défaut. Ajouté en dernier : exécuté avant
+# l'auth, qui n'a encore rien à vérifier.
+@app.middleware("http")
+async def setup_gate(request: Request, call_next):
+    path = request.url.path
+    if config.SETUP and not (path == "/" or path == "/healthz" or path == "/ui"
+                             or path.startswith("/ui/")):
+        return error_response("openai", 503, "setup_required",
+                              "proxy sans configuration : ouvrir /ui pour la générer, "
+                              f"la poser dans {config.CONFIG_PATH}, puis redémarrer")
+    return await call_next(request)
 
 # Les routes des modules, le relais (son catch-all) EN DERNIER, qui sinon
 # les prendrait toutes.

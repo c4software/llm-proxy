@@ -188,6 +188,25 @@ détaillé (`ui_login`). `GET /ui/session` ajoute `account` (identifiant,
 e-mail, nom, rôle). Le journal note l'activation des comptes et chaque
 connexion.
 
+## L'installation
+
+Au premier démarrage, sans `data/config.toml`, la page n'affiche que
+l'**installation** (`/ui/session` → `setup`), et l'API répond 503
+`setup_required`. On y coche ses fournisseurs (les mêmes que dans
+*Ajouter un fournisseur connu*, plus bas) et ses options : une deuxième
+clé, le chat, Claude Code et Codex, le partage équitable, le modèle par
+défaut. Elle donne trois fichiers, avec *Copier* et *Télécharger* :
+
+- **`.env`** : la clé du proxy tirée au hasard dans le navigateur, les
+  variables des fournisseurs à compléter, `SEARXNG_SECRET`, `PUID` et
+  `PGID` ;
+- **`data/config.toml`** ;
+- **`docker-compose.override.yml`** : l'image publiée et les variables
+  à transmettre au conteneur.
+
+Rien n'est écrit sur le proxy. Les fichiers posés, `docker compose up
+-d` le redémarre, et la page demande alors la clé du `.env`.
+
 ## L'onglet Configuration
 
 L'onglet <kbd>#config</kbd> regroupe des **générateurs** qui tournent
@@ -234,7 +253,18 @@ seulement.
 
 **Proxy** : toute la configuration, en sections (Accès, Backends,
 Surfaces, Outils, Partage équitable, Comptes, Divers, Avancé, Fichier
-complet, `.env`). Réservé aux admins avec les comptes OIDC.
+complet, `.env`, Override Docker). Réservé aux admins avec les comptes
+OIDC.
+
+- **Backends** : *Ajouter un fournisseur connu* remplit le nom, l'URL
+  et la variable de la clé (NVIDIA, AMD Token Lab, Groq, Mistral,
+  OpenRouter, OpenCode Go, Albert), les mêmes que le
+  [TP du cours](https://cours.brosseau.ovh/tp/agentic/proxy.html).
+- **Override Docker** : le `docker-compose.override.yml` du service
+  `albert-proxy`, avec l'[image publiée](deploiement.md#limage-publiée)
+  et chaque `${VAR}` du fichier complet que le `docker-compose.yml` ne
+  transmet pas déjà. Sans elle, la variable reste dans le `.env` et le
+  backend part sans clé.
 
 - Les **sections** partent de la configuration en vigueur (`GET
   /ui/config`). Un changement ne modifie que sa ligne du fichier

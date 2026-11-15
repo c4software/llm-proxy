@@ -15,9 +15,14 @@ docker compose up -d --build
 [outils hébergés](outils-heberges.md). Générez-la avec `openssl rand -hex 32`.
 Sans elle, `docker compose` avertit mais démarre.
 
+Au premier démarrage, sans `data/config.toml`, la page
+`http://localhost:8000/ui` est celle de l'**installation** : elle génère
+`.env`, `data/config.toml` et `docker-compose.override.yml` d'après les
+fournisseurs cochés. Les poser, compléter les clés dans le `.env`, puis
+`docker compose up -d`.
+
 `./data` est monté comme volume. Il porte la configuration
-(`config.toml`, créée au premier démarrage depuis l'exemple) et les
-bases, dont `stats.db`. Elles survivent aux redémarrages et aux
+(`config.toml`) et les bases, dont `stats.db`. Elles survivent aux redémarrages et aux
 reconstructions d'image.
 
 ### L'override local

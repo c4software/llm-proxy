@@ -46,6 +46,9 @@ def seed_fair_share() -> int:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("configuration : %s", config.CONFIG_PATH)
+    if config.SETUP:
+        log.warning("PREMIER DÉMARRAGE : %s absent — API fermée (503), /ui génère "
+                    "la configuration ; la poser là puis redémarrer", config.CONFIG_PATH)
     if config.MISSING_VARS:
         log.warning(
             "variables d'environnement absentes ou vides, remplacées par "

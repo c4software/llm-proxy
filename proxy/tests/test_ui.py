@@ -491,3 +491,22 @@ def test_the_page_reads_the_detail_under_its_session(ui):
 
 def test_an_open_proxy_shows_its_health(proxy):
     assert "backends" in proxy.client.get("/healthz").json()
+
+
+def test_premier_demarrage_sans_configuration(tmp_path, monkeypatch):
+    """Sans data/config.toml : rien n'est créé, config.SETUP, la page le
+    sait (/ui/session) et l'API répond 503 setup_required."""
+    from fastapi.testclient import TestClient
+    from llm_proxy import app as app_module
+    from llm_proxy.core import config
+    path = tmp_path / "config.toml"
+    monkeypatch.setattr(config, "SETUP", False)
+    assert config.load(str(path)) == {} and config.SETUP is True
+    assert not path.exists()
+    client = TestClient(app_module.app)
+    assert client.get("/ui/session").json()["setup"] is True
+    r = client.get("/v1/models")
+    assert r.status_code == 503 and r.json()["error"]["type"] == "setup_required"
+    assert client.get("/healthz").status_code == 200
+    monkeypatch.setattr(config, "SETUP", False)
+    assert client.get("/ui/session").json()["setup"] is False
