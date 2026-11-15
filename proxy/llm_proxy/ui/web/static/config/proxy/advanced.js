@@ -2,8 +2,10 @@
   La section « Avancé » de Configuration → Proxy, sans Vue : chaque
   réglage que les autres sections ne couvrent pas (formCovers), généré
   depuis la configuration en vigueur — une ligne par réglage, éditable
-  selon son type (case, nombre, texte, liste, JSON). Ce qui change part
-  au proxy en `overrides` ({path, value}) avec le formulaire.
+  selon son type (case, nombre, texte, liste, JSON), avec son rôle (`docs`
+  de GET /ui/config : les commentaires de data/config.example.toml). Ce
+  qui change part au proxy en `overrides` ({path, value}) avec le
+  formulaire.
 */
 import { csv } from "../shared.js";
 import { TOOL_LIST } from "./form.js";
@@ -35,7 +37,7 @@ const kindOf = (v) => typeof v === "boolean" ? "bool" : typeof v === "number" ? 
 const asText = (v, kind) => kind === "list" ? v.join(", ")
   : kind === "json" ? JSON.stringify(v) : v;
 
-export function advancedRows(values, defaultPaths) {
+export function advancedRows(values, defaultPaths, docs = {}) {
   const rows = [];
   const defaults = new Set(defaultPaths);
   const walk = (node, path) => {
@@ -45,7 +47,8 @@ export function advancedRows(values, defaultPaths) {
       if (formCovers(p)) continue;
       const kind = kindOf(v);
       rows.push({ path: p, group: path.join(".") || "(racine)", key: k, kind, orig: v,
-                  value: asText(v, kind), isDefault: defaults.has(p.join(".")), error: "" });
+                  value: asText(v, kind), isDefault: defaults.has(p.join(".")), error: "",
+                  doc: docs[p.join(".")] || "" });
     }
   };
   walk(values || {}, []);

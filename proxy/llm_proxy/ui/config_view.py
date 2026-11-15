@@ -26,7 +26,7 @@ import tomllib
 from fastapi import APIRouter, Request
 
 from ..access import oidc
-from ..core import config
+from ..core import config, config_docs
 from ..core.httputil import error_response, parse_json
 from .dashboard import admin_only
 
@@ -242,6 +242,22 @@ def merged(partial: dict, overrides: list | None = None) -> tuple[dict, set[str]
     return tree, {d for d in defaults if d not in touched}
 
 
+def docs(tree: dict) -> dict[str, str]:
+    """La description de chaque table et de chaque réglage de l'arbre
+    (config_docs : les commentaires de data/config.example.toml)."""
+    out: dict[str, str] = {}
+
+    def walk(node: dict, path: tuple[str, ...]):
+        for k, v in node.items():
+            p = path + (k,)
+            if (doc := config_docs.describe(".".join(p))):
+                out[".".join(p)] = doc
+            if isinstance(v, dict):
+                walk(v, p)
+    walk(tree, ())
+    return out
+
+
 @router.get("/ui/config")
 async def ui_config(request: Request):
     if (bad := forbidden(request)) is not None:
@@ -249,7 +265,9 @@ async def ui_config(request: Request):
     tree, defaults = effective()
     return {"path": config.CONFIG_PATH, "toml": dumps(tree, defaults),
             "defaults": len(defaults), "values": tree,
-            "default_paths": sorted(defaults)}
+            "default_paths": sorted(defaults),
+            # Le rôle de chaque réglage, pour la section Avancé.
+            "docs": docs(tree)}
 
 
 @router.post("/ui/config/merge")

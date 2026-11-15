@@ -464,7 +464,9 @@ Pour un outil du dépôt :
    (`config.flag`, `config.text`…) et finit par `TOOL = MonOutil()`.
 3. `register(mon_outil.TOOL)` dans `proxy/llm_proxy/tools/__init__.py`.
    L'ordre du registre est l'ordre de présentation.
-4. Une table `[tools.<nom>]` commentée dans `data/config.example.toml`, et
+4. Une table `[tools.<nom>]` commentée dans `data/config.example.toml`
+   (un commentaire au-dessus de chaque clé : c'est le rôle affiché par
+   Configuration → Proxy, Avancé, et `test_config_docs.py` l'exige), et
    sa section dans `docs/outils-heberges.md` (ou `docs/configuration.md`).
 5. Une liaison, si un protocole a un nom pour lui.
 

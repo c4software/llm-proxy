@@ -463,6 +463,10 @@ chat = false
 # Modèle présélectionné (<backend>/<modèle>) ; vide = dernier choisi, sinon
 # premier du catalogue.
 chat_model = ""
+# Voix clonées gardées par compte (ou par clé), et taille max (octets) d'un
+# échantillon WAV de voix.
+voices_max = 100
+voice_max_bytes = 10000000
 # Historique des conversations du compte (jamais les incognito).
 conversations_database = "conversations.db"
 # Outils de la PAGE (exécutés par le navigateur) refusés à TOUS les comptes :
@@ -597,8 +601,14 @@ models = ["openweight-large", "gpt-oss"]
 # Le NOM de la table est le PRÉFIXE de routage («albert/…» → [backends.albert],
 # préfixe retiré avant transfert). Modèle sans préfixe connu → 400.
 #
-# Champs :
-#   url (requis), api_key, verify_ssl (true), timeout, meta_timeout ;
+# Champs (un par ligne : la page Configuration → Proxy les reprend) :
+#   url — l'adresse compatible OpenAI, sans /v1 (requis) ;
+#   api_key — la clé du backend, en «${VAR}» du .env ; absente, le
+#     proxy transmet l'Authorization du client ;
+#   verify_ssl — vérifier le certificat HTTPS (true) ;
+#   timeout — délai (s) d'une requête ([proxy].upstream_timeout par défaut) ;
+#   meta_timeout — délai (s) de /v1/models et des appels de service
+#     ([proxy].meta_timeout par défaut) ;
 #   quotas — limiteur Albert (false) ;
 #   connect_timeout — s, poignée de main TCP (15 avec quotas, 1 sinon :
 #     un backend local éteint → 503 backend_offline vite) ;

@@ -1066,6 +1066,11 @@ a.btn { display: inline-block; text-decoration: none; }
   gap: 10px; align-items: center; padding: 3px 0;
 }
 .adv-row.changed .adv-key { color: var(--accent); }
+/* Le rôle du réglage (commentaires de data/config.example.toml), sous sa
+   ligne ; celui de la table, sous son titre. */
+.adv-doc { grid-column: 1 / -1; margin: -1px 0 6px; font-size: 12px; line-height: 1.45;
+  color: var(--muted); max-width: 96ch; }
+.adv-group-doc { margin: -2px 0 8px; font-size: 12px; line-height: 1.45; color: var(--muted); max-width: 96ch; }
 .adv-key { font: 12.5px ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
 .adv-val { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .adv-val input:not([type=checkbox]) {

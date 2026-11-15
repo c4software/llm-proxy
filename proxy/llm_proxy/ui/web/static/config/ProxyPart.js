@@ -32,7 +32,7 @@ export const ProxyPart = {
     // /ui/config/merge) ; `text` : ce qu'affiche la page — `generated`, tant
     // qu'on ne l'a pas modifié à la main.
     const settings = reactive({ loaded: false, path: "", defaults: 0, values: null,
-                                defaultPaths: [], original: "",
+                                defaultPaths: [], docs: {}, original: "",
                                 generated: "", text: "", error: "", check: null, checking: false });
     async function loadSettings() {
       settings.error = "";
@@ -41,6 +41,7 @@ export const ProxyPart = {
         const r = await call("GET", "/ui/config");
         Object.assign(settings, { loaded: true, path: r.path, defaults: r.defaults,
                                   values: r.values, defaultPaths: r.default_paths || [],
+                                  docs: r.docs || {},
                                   original: r.toml, generated: r.toml, text: r.toml });
         loadAdvanced();
         if (!prefilled.value) prefill();
@@ -124,7 +125,7 @@ export const ProxyPart = {
     const advanced = ref([]);        // [{path, group, key, kind, orig, value, isDefault}]
     const advFilter = ref("");
     function loadAdvanced() {
-      advanced.value = advancedRows(settings.values, settings.defaultPaths);
+      advanced.value = advancedRows(settings.values, settings.defaultPaths, settings.docs);
     }
     const advError = (row) => parseAdv(row).error || "";
     const backendNames = computed(() => new Set(px.backends.map((b) => String(b.name || "").trim())));
@@ -135,16 +136,18 @@ export const ProxyPart = {
       if (row.path[0] === "backends" && !backendNames.value.has(row.path[1])) return [];
       return [{ path: row.path, value }];
     }));
+    // Le filtre cherche dans le chemin ET dans la description (« relais »
+    // trouve linux_relay).
     const advGroups = computed(() => {
       const f = advFilter.value.trim().toLowerCase();
       const groups = new Map();
       for (const row of advanced.value) {
-        if (f && !row.path.join(".").toLowerCase().includes(f)) continue;
+        if (f && !(row.path.join(".") + " " + row.doc).toLowerCase().includes(f)) continue;
         if (!groups.has(row.group)) groups.set(row.group, []);
         groups.get(row.group).push(row);
       }
       return [...groups].sort(([x], [y]) => x.localeCompare(y))
-        .map(([name, rows]) => ({ name, rows }));
+        .map(([name, rows]) => ({ name, rows, doc: settings.docs[name] || "" }));
     });
     const advChanged = (row) => {
       const { value, error } = parseAdv(row);
@@ -378,12 +381,13 @@ export const ProxyPart = {
         </section>
         <section class="panel proxy-section" id="px-avance" data-section="avance">
           <div class="panel-head"><h2>Avancé</h2>
-            <input class="adv-filter" v-model="advFilter" type="search" placeholder="Filtrer (ex. timeout, quotas)"
+            <input class="adv-filter" v-model="advFilter" type="search" placeholder="Filtrer (ex. timeout, relais)"
                    aria-label="Filtrer les réglages avancés" spellcheck="false"></div>
           <p class="note adv-intro">Chaque réglage que les sections ci-dessus ne couvrent pas, à sa valeur
             en vigueur (« défaut » : le fichier ne le dit pas, le proxy le prend d'office).</p>
           <div class="adv-group" v-for="g in advGroups" :key="g.name">
             <h3>[{{ g.name }}]</h3>
+            <p class="adv-group-doc" v-if="g.doc">{{ g.doc }}</p>
             <div class="adv-row" v-for="row in g.rows" :key="JSON.stringify(row.path)"
                  :class="{ changed: advChanged(row) }">
               <label class="adv-key mono" :for="'adv-' + row.path.join('.')">{{ row.key }}</label>
@@ -398,6 +402,7 @@ export const ProxyPart = {
                 <span class="tag" v-if="row.isDefault && !advChanged(row)">défaut</span>
                 <span class="tag changed" v-if="advChanged(row)">modifié</span>
               </span>
+              <p class="adv-doc" v-if="row.doc && row.doc !== g.doc">{{ row.doc }}</p>
             </div>
           </div>
           <p class="note adv-intro" v-if="!advGroups.length">{{ advFilter ? "Aucun réglage ne correspond." : "Chargement…" }}</p>

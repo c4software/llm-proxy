@@ -272,8 +272,15 @@ OIDC.
   /ui/config`). Un changement ne modifie que sa ligne du fichier
   (`POST /ui/config/merge`) ; un backend retiré en disparaît.
 - **Avancé** : chaque autre réglage (délais, `[quotas]`, `model_map`,
-  serveurs MCP…), éditable, marqué *défaut* ou *modifié*, avec un
-  filtre.
+  serveurs MCP…), éditable, marqué *défaut* ou *modifié*, avec son
+  **rôle** en dessous et celui de sa table sous le titre. Le filtre
+  cherche dans le nom et dans le rôle (« relais » trouve
+  `linux_relay`). Les rôles sont les commentaires de
+  `data/config.example.toml` (`core/config_docs.py`) : le bloc au-dessus
+  d'une clé, celui au-dessus d'une table pour ses clés sans commentaire,
+  et pour les backends la liste « Champs », un champ par ligne
+  (`#   nom — rôle`). Un test refuse un réglage lu par le proxy sans
+  description.
 - **Fichier complet** : le `data/config.toml` résultant, défauts suivis
   de `# défaut`, `${VAR}` gardés, secrets en clair masqués. Édité à la
   main, il n'est plus écrasé par les sections (*Réappliquer les
