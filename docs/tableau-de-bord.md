@@ -250,6 +250,22 @@ une variable d'utilisateur en PowerShell sous Windows. Quitter
 complètement Codex et le rouvrir après chaque changement de
 configuration ou de clé, sinon le proxy répond 401.
 
+*pi / omp* et *OpenCode* lisent le catalogue du proxy par une extension
+TypeScript, `llm-proxy.ts`, que la page affiche avec *Copier* et
+*Télécharger*. Elles font partie des sources du proxy, servies par la
+page à côté de son module (`config/pi-llm-proxy.ts`,
+`config/opencode-llm-proxy.ts`) :
+
+- **pi / omp** : `~/.pi/agent/extensions/` et `~/.omp/agent/extensions/`,
+  le même fichier ; il enregistre les modèles du proxy sous le provider
+  `albert`. Les outils passent par un `mcp.json` propre à chaque client ;
+- **OpenCode** (2.x) : `~/.config/opencode/plugins/`, chargé d'office ;
+  il déclare le provider `llmproxy` (modèles relus toutes les 5 min) et le
+  serveur MCP du proxy, et retire `websearch` et `webfetch` d'OpenCode.
+
+Les deux lisent `LLM_PROXY_URL` et `LLM_PROXY_API_KEY` dans
+l'environnement : rien n'est écrit en dur dans les fichiers.
+
 **Clés** et **Comptes** : avec les [comptes OIDC](#comptes-oidc)
 seulement.
 

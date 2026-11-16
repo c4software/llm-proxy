@@ -1,6 +1,6 @@
 /*
   Configuration → Clients : on choisit le client (Claude Code, Codex CLI
-  ou application, pi / omp, SDK OpenAI, curl, Open WebUI, tout client OpenAI), le modèle du
+  ou application, pi / omp, OpenCode, SDK OpenAI, curl, Open WebUI, tout client OpenAI), le modèle du
   catalogue (/ui/models), et s'il prend aussi les outils du proxy par son
   serveur MCP (/mcp). La page produit les fichiers à poser, avec leur
   chemin, et les étapes. La CLÉ n'y figure jamais : elle vit dans un
@@ -35,7 +35,9 @@ export const ClientsPart = {
       { id: "claude", label: "Claude Code", mcp: true },
       { id: "codex", label: "Codex CLI", mcp: true },
       { id: "codexapp", label: "Codex (application de bureau)", mcp: true },
-      { id: "pi", label: "pi / omp", mcp: true, mcpOnly: true },
+      { id: "pi", label: "pi / omp", mcp: true },
+      // Le plugin déclare lui-même le serveur MCP du proxy : pas de case.
+      { id: "opencode", label: "OpenCode", mcp: true, mcpFixed: true },
       { id: "python", label: "SDK OpenAI (Python)" },
       { id: "curl", label: "curl" },
       { id: "openwebui", label: "Open WebUI" },
@@ -49,6 +51,29 @@ export const ClientsPart = {
       if (!form.small && ms.length) form.small = ms[ms.length > 1 ? 1 : 0];
     });
     const client = computed(() => clients.find((c) => c.id === form.client));
+
+    // ── extensions des postes ───────────────────────────────────────────
+    // pi, omp et OpenCode lisent le catalogue du proxy par une extension
+    // TypeScript, servie par la page à côté de ce module (copies de celles
+    // du dépôt dotarchy), lue une fois quand le client est choisi.
+    const EXTENSIONS = { pi: ["pi-llm-proxy.ts"], opencode: ["opencode-llm-proxy.ts"] };
+    const remote = reactive({});  // fichier → { text, error }
+    watch(() => form.client, (c) => {
+      for (const path of EXTENSIONS[c] || []) {
+        if (remote[path] && !remote[path].error) continue;
+        remote[path] = { text: "", error: "" };
+        fetch(new URL("./" + path, import.meta.url))
+          .then((r) => (r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))))
+          .then((t) => { remote[path] = { text: t, error: "" }; },
+                (e) => { remote[path] = { text: "", error: e.message }; });
+      }
+    }, { immediate: true });
+    const extFile = (path, name, note) => {
+      const r = remote[path] || {};
+      return { name, download: "llm-proxy.ts", lang: "typescript",
+        note: r.error ? `Extension illisible (${r.error}).` : r.text ? note : "Lecture en cours…",
+        content: r.text || "" };
+    };
 
     // ── catalogue de Codex ──────────────────────────────────────────────
     // Sans lui, Codex ne connaît pas les modèles du proxy : ni /model, ni
@@ -104,7 +129,7 @@ export const ClientsPart = {
       const files = [];
       const steps = [];
       const warn = [];
-      const mcp = client.value.mcp && form.mcp;
+      const mcp = client.value.mcp && (client.value.mcpFixed || form.mcp);
       if (mcp && !mcpOn.value) {
         warn.push("Le serveur MCP du proxy est désactivé ([mcp_server] enabled = false) : "
           + "les outils ne seront pas joignables.");
@@ -249,14 +274,37 @@ export const ClientsPart = {
           shell("~/.bashrc (ou ~/.zshrc)",
             `export LLM_PROXY_URL=${origin}\n${exportLine}\n`
             + (env !== "LLM_PROXY_API_KEY" ? `export LLM_PROXY_API_KEY="$${env}"\n` : ""),
-            "Lus par l'extension llm-proxy.ts (dépôt llmsetup) et par l'en-tête du mcp.json ; "
+            "Lus par l'extension llm-proxy.ts ci-dessous et par l'en-tête du mcp.json ; "
             + "pi refuse un en-tête dont la variable n'est pas définie.");
+          files.push(extFile("pi-llm-proxy.ts",
+            "~/.pi/agent/extensions/llm-proxy.ts et ~/.omp/agent/extensions/llm-proxy.ts",
+            "L'extension du provider : lit GET /v1/models du proxy au démarrage "
+            + "et enregistre ses modèles sous le nom albert. Le même fichier pour pi et omp."));
           shell("Lancer", `pi --model albert/${model}\n`,
             "Avec l'extension llm-proxy.ts, les modèles se nomment albert/<backend>/<modèle>.");
-          steps.push("Copier llm-proxy.ts (dépôt llmsetup, tools/) dans ~/.pi/agent/extensions/ "
-            + "et ~/.omp/agent/extensions/.");
+          steps.push("Poser llm-proxy.ts dans ~/.pi/agent/extensions/ et ~/.omp/agent/extensions/"
+            + (mcp ? ", et chaque mcp.json à côté" : "") + ", ajouter les lignes au profil du shell, "
+            + "rouvrir le terminal.");
           if (mcp) steps.push("Les outils apparaissent comme mcp__llmproxy__web_search (pi) "
             + "ou mcp__llmproxy_web_search (omp).");
+          break;
+        }
+        case "opencode": {
+          files.push(extFile("opencode-llm-proxy.ts", "~/.config/opencode/plugins/llm-proxy.ts",
+            "Le plugin (OpenCode 2.x) : un provider llmproxy dont les modèles sont lus "
+            + "sur GET /v1/models du proxy (au démarrage, puis toutes les 5 min), et le serveur MCP du "
+            + "proxy. Il retire les outils websearch et webfetch d'OpenCode : la recherche est celle du proxy."));
+          shell("~/.bashrc (ou ~/.zshrc)",
+            `export LLM_PROXY_URL=${origin}\n${exportLine}\n`
+            + (env !== "LLM_PROXY_API_KEY" ? `export LLM_PROXY_API_KEY="$${env}"\n` : ""),
+            "Lus par le plugin, pour le provider et pour le serveur MCP.");
+          shell("Lancer", `opencode --model llmproxy/${model}\n`,
+            "Avec le plugin, les modèles se nomment llmproxy/<backend>/<modèle>.");
+          steps.push("Poser llm-proxy.ts dans ~/.config/opencode/plugins/ (chargé d'office), ajouter "
+            + "les lignes au profil du shell, rouvrir le terminal.",
+            "Proxy injoignable au démarrage : aucun modèle llmproxy (le plugin l'écrit sur la console), "
+            + "relancer OpenCode une fois le proxy joignable.",
+            "Les outils du proxy apparaissent sous le serveur MCP llmproxy.");
           break;
         }
         case "python": {
@@ -333,7 +381,7 @@ export const ClientsPart = {
               <option value="">— aucun —</option>
               <option v-for="m in models" :key="m" :value="m">{{ m }}</option></select>
             <input v-else v-model="form.small" spellcheck="false"></label>
-          <label class="check" v-if="client.mcp || ['python', 'curl'].includes(form.client)">
+          <label class="check" v-if="(client.mcp && !client.mcpFixed) || ['python', 'curl'].includes(form.client)">
             <input type="checkbox" v-model="form.mcp">
             <template v-if="client.mcp">les outils du proxy par son serveur MCP</template>
             <template v-else>déclarer la recherche web du proxy</template></label>
@@ -354,7 +402,7 @@ export const ClientsPart = {
           <header class="panel-head">
             <h3>{{ f.name }}</h3>
             <span class="config-actions">
-              <button type="button" class="btn ghost" v-if="!f.hide" @click="copy(f)">{{ copied === f.name ? "Copié" : "Copier" }}</button>
+              <button type="button" class="btn ghost" v-if="!f.hide" :disabled="!f.content" @click="copy(f)">{{ copied === f.name ? "Copié" : "Copier" }}</button>
               <button type="button" class="btn ghost" :disabled="!f.content" @click="download(f)">Télécharger</button>
             </span>
           </header>
