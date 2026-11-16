@@ -258,13 +258,20 @@ page à côté de son module (`config/pi-llm-proxy.ts`,
 
 - **pi / omp** : `~/.pi/agent/extensions/` et `~/.omp/agent/extensions/`,
   le même fichier ; il enregistre les modèles du proxy sous le provider
-  `albert`. Les outils passent par un `mcp.json` propre à chaque client ;
+  `llmproxy`, comme le plugin d'OpenCode. Les outils passent par un `mcp.json` propre à chaque client ;
 - **OpenCode** (2.x) : `~/.config/opencode/plugins/`, chargé d'office ;
   il déclare le provider `llmproxy` (modèles relus toutes les 5 min) et le
   serveur MCP du proxy, et retire `websearch` et `webfetch` d'OpenCode.
 
 Les deux lisent `LLM_PROXY_URL` et `LLM_PROXY_API_KEY` dans
 l'environnement : rien n'est écrit en dur dans les fichiers.
+Sous Windows, sans profil du shell, la page les pose en variables
+d'utilisateur par PowerShell (clé en saisie masquée). Si `/model` ne
+propose aucun modèle `llmproxy`, `omp models llmproxy` (ou `pi
+--list-models llmproxy`) affiche l'erreur de l'extension, que
+l'interface ne montre pas : adresse injoignable (`ECONNREFUSED`, nom
+d'hôte inconnu) ou clé refusée (`HTTP 401`). Aucune erreur affichée :
+l'extension n'est pas chargée, elle n'est pas dans le bon dossier.
 
 Les postes les prennent ici aussi, sur la branche `master` :
 `https://raw.githubusercontent.com/c4software/llm-proxy/master/proxy/llm_proxy/ui/web/static/config/<fichier>`

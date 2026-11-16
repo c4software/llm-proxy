@@ -136,8 +136,24 @@ export const ClientsPart = {
           + "les outils ne seront pas joignables.");
       }
       const shell = (name, content, note) => files.push({ name, content, note, lang: "sh" });
+      // pi, omp et OpenCode sous Windows : pas de profil du shell, l'adresse
+      // et la clé en variables de l'utilisateur, lues par l'extension (et
+      // par l'en-tête du mcp.json de pi / omp).
+      const winProxyVars = (forWhat) => {
+        const set = (name, value) => `[Environment]::SetEnvironmentVariable(${q(name)}, ${value}, "User")\n`;
+        files.push({ name: "Windows : les variables de l'utilisateur (PowerShell)", lang: "powershell",
+          download: "llm-proxy-env.ps1",
+          note: "L'adresse du proxy et la clé, " + forWhat + " Saisie masquée, hors de l'historique. "
+            + "Lues par les terminaux ouverts ensuite.",
+          content: set("LLM_PROXY_URL", q(origin))
+            + (auth.value
+              ? `$s = Read-Host "Clé du proxy" -AsSecureString\n`
+                + `$k = [Net.NetworkCredential]::new("", $s).Password\n`
+                + set("LLM_PROXY_API_KEY", "$k") + (env !== "LLM_PROXY_API_KEY" ? set(env, "$k") : "")
+              : set("LLM_PROXY_API_KEY", q("unused")) + (env !== "LLM_PROXY_API_KEY" ? set(env, q("unused")) : "")) });
+      };
       if (auth.value && form.client !== "openwebui") {
-        shell(["codex", "codexapp"].includes(form.client) ? "Linux, macOS : la clé, une fois" : "La clé, une fois", KEY_SETUP,
+        shell(["codex", "codexapp", "pi", "opencode"].includes(form.client) ? "Linux, macOS : la clé, une fois" : "La clé, une fois", KEY_SETUP,
           "Saisie masquée, hors de l'historique du shell.");
       }
 
@@ -275,17 +291,23 @@ export const ClientsPart = {
           shell("~/.bashrc (ou ~/.zshrc)",
             `export LLM_PROXY_URL=${origin}\n${exportLine}\n`
             + (env !== "LLM_PROXY_API_KEY" ? `export LLM_PROXY_API_KEY="$${env}"\n` : ""),
-            "Lus par l'extension llm-proxy.ts ci-dessous et par l'en-tête du mcp.json ; "
+            "Linux, macOS. Lus par l'extension llm-proxy.ts ci-dessous et par l'en-tête du mcp.json ; "
             + "pi refuse un en-tête dont la variable n'est pas définie.");
+          winProxyVars("pour l'extension et le mcp.json.");
           files.push(extFile("pi-llm-proxy.ts",
             "~/.pi/agent/extensions/llm-proxy.ts et ~/.omp/agent/extensions/llm-proxy.ts",
             "L'extension du provider : lit GET /v1/models du proxy au démarrage "
-            + "et enregistre ses modèles sous le nom albert. Le même fichier pour pi et omp."));
-          shell("Lancer", `pi --model albert/${model}\n`,
-            "Avec l'extension llm-proxy.ts, les modèles se nomment albert/<backend>/<modèle>.");
+            + "et enregistre ses modèles sous le provider llmproxy. Le même fichier pour pi et omp "
+            + "(Windows : %USERPROFILE%\\.pi\\agent\\extensions et %USERPROFILE%\\.omp\\agent\\extensions)."));
+          shell("Lancer", `pi --model llmproxy/${model}\n`,
+            "Avec l'extension llm-proxy.ts, les modèles se nomment llmproxy/<backend>/<modèle>.");
           steps.push("Poser llm-proxy.ts dans ~/.pi/agent/extensions/ et ~/.omp/agent/extensions/"
-            + (mcp ? ", et chaque mcp.json à côté" : "") + ", ajouter les lignes au profil du shell, "
-            + "rouvrir le terminal.");
+            + (mcp ? ", et chaque mcp.json à côté" : "") + ", ajouter les lignes au profil du shell "
+            + "(Windows : lancer le bloc PowerShell), rouvrir le terminal.",
+            "Rien dans /model : `omp models llmproxy` (ou `pi --list-models llmproxy`) affiche l'erreur "
+            + "de l'extension, que l'interface ne montre pas — adresse injoignable (ECONNREFUSED, nom "
+            + "d'hôte inconnu) ou clé refusée (HTTP 401). Sans aucune erreur : l'extension n'est pas "
+            + "chargée (mauvais dossier).");
           if (mcp) steps.push("Les outils apparaissent comme mcp__llmproxy__web_search (pi) "
             + "ou mcp__llmproxy_web_search (omp).");
           break;
@@ -298,11 +320,13 @@ export const ClientsPart = {
           shell("~/.bashrc (ou ~/.zshrc)",
             `export LLM_PROXY_URL=${origin}\n${exportLine}\n`
             + (env !== "LLM_PROXY_API_KEY" ? `export LLM_PROXY_API_KEY="$${env}"\n` : ""),
-            "Lus par le plugin, pour le provider et pour le serveur MCP.");
+            "Linux, macOS. Lus par le plugin, pour le provider et pour le serveur MCP.");
+          winProxyVars("pour le plugin.");
           shell("Lancer", `opencode --model llmproxy/${model}\n`,
             "Avec le plugin, les modèles se nomment llmproxy/<backend>/<modèle>.");
-          steps.push("Poser llm-proxy.ts dans ~/.config/opencode/plugins/ (chargé d'office), ajouter "
-            + "les lignes au profil du shell, rouvrir le terminal.",
+          steps.push("Poser llm-proxy.ts dans ~/.config/opencode/plugins/ (chargé d'office ; Windows : "
+            + "%USERPROFILE%\\.config\\opencode\\plugins), ajouter les lignes au profil du shell "
+            + "(Windows : lancer le bloc PowerShell), rouvrir le terminal.",
             "Proxy injoignable au démarrage : aucun modèle llmproxy (le plugin l'écrit sur la console), "
             + "relancer OpenCode une fois le proxy joignable.",
             "Les outils du proxy apparaissent sous le serveur MCP llmproxy.");

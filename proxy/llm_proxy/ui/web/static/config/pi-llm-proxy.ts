@@ -7,11 +7,11 @@ import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-codin
 const ENDPOINT = (process.env.LLM_PROXY_URL ?? "http://llmproxy").replace(/\/+$/, "");
 const API_KEY = process.env.LLM_PROXY_API_KEY ?? process.env.LLM_PROXY_KEY ?? "unused";
 
-// Albert n'expose pas de cap de génération : on plafonne nous-mêmes.
+// Le catalogue ne donne pas de plafond de génération : on plafonne nous-mêmes.
 const DEFAULT_MAX_TOKENS = 16384;
 const DEFAULT_CONTEXT = 128000;
 
-interface AlbertModel {
+interface ProxyModel {
   id: string;
   type?: string;
   aliases?: string[];
@@ -54,7 +54,7 @@ export default async function (pi: ExtensionAPI) {
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const payload = (await res.json()) as { data: AlbertModel[] };
+    const payload = (await res.json()) as { data: ProxyModel[] };
 
     models = payload.data
       // seuls les text-generation acceptent /v1/chat/completions
@@ -73,19 +73,19 @@ export default async function (pi: ExtensionAPI) {
       })
       .sort((a, b) => a.id.localeCompare(b.id));
   } catch (err) {
-    // Albert injoignable ou clé expirée : on n'enregistre rien plutôt que
+    // Proxy injoignable ou clé expirée : on n'enregistre rien plutôt que
     // de bloquer le démarrage
-    console.error(`[albert] découverte impossible : ${err}`);
+    console.error(`[llmproxy] découverte impossible : ${err}`);
     return;
   }
 
   if (models.length === 0) {
-    console.error("[albert] aucun modèle text-generation exposé");
+    console.error("[llmproxy] aucun modèle exposé");
     return;
   }
 
-  pi.registerProvider("albert", {
-    name: "Albert API (DINUM)",
+  pi.registerProvider("llmproxy", {
+    name: "llm-proxy",
     baseUrl: `${ENDPOINT}/v1`,
     apiKey: API_KEY,
     api: "openai-completions",
@@ -93,7 +93,7 @@ export default async function (pi: ExtensionAPI) {
       id: m.id,
       name: m.id,
       input: ["text"],
-      // Albert facture en unités de budget par million de tokens.
+      // Coûts du catalogue (par million de tokens), quand le backend en donne.
       cost: {
         input: m.costs.input,
         output: m.costs.output,
