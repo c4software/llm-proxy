@@ -70,7 +70,8 @@ export const ClientsPart = {
     }, { immediate: true });
     const extFile = (path, name, note) => {
       const r = remote[path] || {};
-      return { name, download: "llm-proxy.ts", lang: "typescript",
+      // Replié : une centaine de lignes, qu'on copie ou télécharge.
+      return { name, download: "llm-proxy.ts", lang: "typescript", collapse: true,
         note: r.error ? `Extension illisible (${r.error}).` : r.text ? note : "Lecture en cours…",
         content: r.text || "" };
     };
@@ -407,7 +408,11 @@ export const ClientsPart = {
             </span>
           </header>
           <p class="note" v-if="f.note">{{ f.note }}</p>
-          <pre v-if="!f.hide">{{ f.content }}</pre>
+          <details class="config-collapse" v-if="f.collapse && f.content">
+            <summary>Afficher le fichier ({{ f.content.split("\\n").length - 1 }} lignes)</summary>
+            <pre>{{ f.content }}</pre>
+          </details>
+          <pre v-else-if="!f.hide && !f.collapse">{{ f.content }}</pre>
         </section>
         <section class="panel config-steps" v-if="clientOut.steps.length">
           <div class="panel-head"><h2>Étapes</h2></div>

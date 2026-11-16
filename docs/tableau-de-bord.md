@@ -251,8 +251,8 @@ complètement Codex et le rouvrir après chaque changement de
 configuration ou de clé, sinon le proxy répond 401.
 
 *pi / omp* et *OpenCode* lisent le catalogue du proxy par une extension
-TypeScript, `llm-proxy.ts`, que la page affiche avec *Copier* et
-*Télécharger*. Elles font partie des sources du proxy, servies par la
+TypeScript, `llm-proxy.ts`, que la page donne avec *Copier* et
+*Télécharger*, son contenu replié (*Afficher le fichier*). Elles font partie des sources du proxy, servies par la
 page à côté de son module (`config/pi-llm-proxy.ts`,
 `config/opencode-llm-proxy.ts`) :
 
@@ -265,6 +265,10 @@ page à côté de son module (`config/pi-llm-proxy.ts`,
 
 Les deux lisent `LLM_PROXY_URL` et `LLM_PROXY_API_KEY` dans
 l'environnement : rien n'est écrit en dur dans les fichiers.
+
+Les postes les prennent ici aussi, sur la branche `master` :
+`https://raw.githubusercontent.com/c4software/llm-proxy/master/proxy/llm_proxy/ui/web/static/config/<fichier>`
+(le `setup.sh` de dotarchy, `dotarchy-sync` de dev-box).
 
 **Clés** et **Comptes** : avec les [comptes OIDC](#comptes-oidc)
 seulement.
