@@ -56,3 +56,35 @@ def test_silence_kept_then_retried(monkeypatch):
     assert stale is None
     assert [e["id"] for e in fresh] == ["cat/m1"]
     assert b.calls == 2
+
+
+def test_architecture_a_la_forme_d_openrouter():
+    """Chaque entrée porte `architecture` (forme d'OpenRouter et de
+    llama.cpp) : celle du backend telle quelle, sinon déduite du type —
+    le cas d'Albert, qui n'a que `type` ; un motif de model_types la
+    fait déduire aussi."""
+    b = backends.Backend("cat", {"url": "http://cat.test", "api_key": "k",
+                                 "model_types": {"forcé": "text-to-image"}})
+    data = [
+        {"id": "vl", "type": "image-text-to-text"},                       # Albert
+        {"id": "emb", "type": "text-embeddings-inference"},
+        {"id": "whisper", "type": "automatic-speech-recognition"},
+        {"id": "brut"},                                                    # llama-swap
+        {"id": "lcpp", "architecture": {"input_modalities": ["text", "image", "audio"],
+                                        "output_modalities": ["text"]}},  # llama.cpp
+        {"id": "forcé", "architecture": {"input_modalities": ["text"],
+                                         "output_modalities": ["text"]}},
+    ]
+
+    async def handler(request):
+        return httpx.Response(200, json={"data": data})
+    b.client = httpx.AsyncClient(base_url=b.url, transport=httpx.MockTransport(handler))
+    got = {e["id"]: e["architecture"] for e in asyncio.run(catalog.fetch_models(b))}
+    assert got["cat/vl"] == {"modality": "text+image->text",
+                             "input_modalities": ["text", "image"], "output_modalities": ["text"]}
+    assert got["cat/emb"]["output_modalities"] == ["embeddings"]
+    assert got["cat/whisper"]["input_modalities"] == ["audio"]
+    assert got["cat/brut"]["modality"] == "text->text"
+    assert got["cat/lcpp"]["input_modalities"] == ["text", "image", "audio"]
+    assert got["cat/forcé"] == {"modality": "text->image",
+                                "input_modalities": ["text"], "output_modalities": ["image"]}

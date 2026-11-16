@@ -1,7 +1,9 @@
 """
 Le catalogue des modèles : ce que chaque backend annonce (/v1/models,
 préfixé par son nom), le TYPE de chaque modèle (conversation, image,
-voix, OCR, embeddings…), sa fenêtre de contexte, et s'il lit les images.
+voix, OCR, embeddings…), ses MODALITÉS (`architecture`, à la forme
+d'OpenRouter et de llama.cpp), sa fenêtre de contexte, et s'il lit les
+images.
 Sert GET /v1/models, le sélecteur de la page et les outils qui visent un
 modèle spécialisé.
 """
@@ -86,6 +88,44 @@ def _converses(b: Backend, model: str) -> bool:
     de conversation sait appeler des outils."""
     plain = model.lower().removeprefix(b.name + "/")
     return b.model_types.get(plain, "text-generation") in CHAT_TYPES
+
+
+# Les modalités d'entrée et de sortie de chaque type, pour un backend qui
+# ne les donne pas (Albert n'a que `type`, llama-swap rien) : la forme
+# `architecture` d'OpenRouter et de llama.cpp, que les clients lisent
+# (pi, omp, OpenCode : ce qui va dans `input`).
+_TYPE_MODALITIES = {
+    "text-generation": (["text"], ["text"]),
+    "image-text-to-text": (["text", "image"], ["text"]),
+    "text-to-image": (["text"], ["image"]),
+    "text-to-speech": (["text"], ["audio"]),
+    "automatic-speech-recognition": (["audio"], ["text"]),
+    "text-embeddings-inference": (["text"], ["embeddings"]),
+    "text-classification": (["text"], ["text"]),
+}
+
+
+def _overridden(m: dict, b: Backend | None) -> bool:
+    """Un motif de [backends.<nom>.model_types] vise-t-il ce modèle ?"""
+    name = str(m.get("id") or "").lower()
+    return any(fnmatch.fnmatchcase(name, p) for p in (b.type_overrides if b is not None else ()))
+
+
+def _architecture(m: dict, kind: str, b: Backend | None = None) -> dict:
+    """`architecture` d'une entrée /v1/models : celle du backend telle
+    quelle s'il en donne une (llama.cpp, OpenRouter), sinon déduite du
+    type (Albert, llama-swap) ; déduite aussi quand
+    [backends.<nom>.model_types] a tranché le type."""
+    arch = m.get("architecture")
+    if isinstance(arch, dict) and not _overridden(m, b):
+        inp, out = arch.get("input_modalities"), arch.get("output_modalities")
+        if isinstance(inp, list) and isinstance(out, list) and inp and out:
+            inp, out = [str(x) for x in inp], [str(x) for x in out]
+            return {"modality": "+".join(inp) + "->" + "+".join(out),
+                    "input_modalities": inp, "output_modalities": out}
+    inp, out = _TYPE_MODALITIES.get(kind, (["text"], ["text"]))
+    return {"modality": "+".join(inp) + "->" + "+".join(out),
+            "input_modalities": list(inp), "output_modalities": list(out)}
 
 
 def _model_type(m: dict, b: Backend | None = None) -> str:
@@ -194,6 +234,7 @@ async def _read_models(b: Backend, headers: dict) -> list | None:
                 "created": m.get("created") or 0,
                 "owned_by": m.get("owned_by") or b.name,
                 "type": kind,
+                "architecture": _architecture(m, kind, b),
                 "costs": costs if isinstance(costs, dict)
                 else {"prompt_tokens": 0.0, "completion_tokens": 0.0},
                 "max_context_length": _model_max_context(m),

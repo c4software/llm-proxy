@@ -14,6 +14,8 @@ const DEFAULT_CONTEXT = 128000;
 interface ProxyModel {
   id: string;
   type?: string;
+  // Forme d'OpenRouter et de llama.cpp, que le proxy donne à chaque modèle.
+  architecture?: { input_modalities?: string[]; output_modalities?: string[] };
   aliases?: string[];
   max_context_length?: number | null;
   owned_by?: string;
@@ -21,6 +23,7 @@ interface ProxyModel {
 }
 
 interface ModelInfo {
+  input: ("text" | "image")[];
   id: string;
   contextWindow: number;
   maxTokens: number;
@@ -63,6 +66,10 @@ export default async function (pi: ExtensionAPI) {
         const contextWindow = num(m.max_context_length, DEFAULT_CONTEXT);
         return {
           id: m.id,
+          // Les modalités d'entrée du proxy, telles quelles : pi n'en
+          // connaît que deux (texte, image).
+          input: (m.architecture?.input_modalities ?? ["text"])
+            .filter((x): x is "text" | "image" => x === "text" || x === "image"),
           contextWindow,
           maxTokens: Math.min(DEFAULT_MAX_TOKENS, contextWindow),
           costs: {
@@ -92,7 +99,7 @@ export default async function (pi: ExtensionAPI) {
     models: models.map((m) => ({
       id: m.id,
       name: m.id,
-      input: ["text"],
+      input: m.input.length ? m.input : ["text"],
       // Coûts du catalogue (par million de tokens), quand le backend en donne.
       cost: {
         input: m.costs.input,

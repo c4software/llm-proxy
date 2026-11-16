@@ -15,7 +15,13 @@ détaille.
   préfixe les ids et uniformise les entrées (type, coûts,
   `max_context_length` tiré du `--ctx-size` ou du `n_ctx_train` de
   llama.cpp). Les noms rendus sont routables. Rien d'interne n'est publié
-  (chemins `.gguf`, arguments).
+  (chemins `.gguf`, arguments). Chaque modèle porte aussi ses modalités à
+  la forme d'OpenRouter et de llama.cpp (`architecture` : `modality`,
+  `input_modalities`, `output_modalities`) : celles du backend telles
+  quelles, sinon déduites du `type` (Albert, llama-swap) —
+  `image-text-to-text` donne `text+image->text`. Les clients s'en servent
+  pour savoir si un modèle lit les images (extensions de pi, omp,
+  OpenCode).
 - **Limiteur de quotas** (`quotas = true`, Albert) : retarde les requêtes
   pour rester sous les limites minute et jour du compte, lues sur
   `/v1/me/info`. Au-delà de `quotas.max_queue_seconds` : 429 local avec

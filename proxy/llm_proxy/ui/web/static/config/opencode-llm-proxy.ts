@@ -30,6 +30,8 @@ const HORS_CHAT = /ocr/i
 interface ProxyModel {
   id: string
   type?: string
+  // Forme d'OpenRouter et de llama.cpp, que le proxy donne à chaque modèle.
+  architecture?: { input_modalities?: string[]; output_modalities?: string[] }
   max_context_length?: number | null
 }
 
@@ -56,8 +58,9 @@ async function discover(): Promise<Model.Info[]> {
         name: m.id,
         capabilities: {
           tools: true,
-          input: m.type === "image-text-to-text" ? ["text", "image"] : ["text"],
-          output: ["text"],
+          // Les modalités du proxy, telles quelles.
+          input: m.architecture?.input_modalities ?? ["text"],
+          output: m.architecture?.output_modalities ?? ["text"],
         },
         limit: { context, output: Math.min(MAX_OUTPUT, context) },
       }
