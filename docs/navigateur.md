@@ -500,7 +500,6 @@ class GetLocation extends PageTool {
 | `keptView(k)`, `keptAct(k, action, ctx)` | une carte **durable**, laissée sous la réponse par un `run` qui rend `{result, keep}` (`keep` : une carte, ou une liste) : ce qu'elle montre, et ses boutons, rejouables à volonté (rien ne part plus au modèle) | aucune |
 | `keptComponent` (dans `super`) | un composant Vue de carte durable, à la place de `keptView` ; avec un `slot`, la carte se place **dans le texte** de la réponse (`![titre](chart:<slot>)`), sinon en tête | gabarit commun, sous la réponse |
 | `summary(args)` | la ligne de la puce de l'appel dans le fil | vide |
-| `historic(call)` | ce que l'historique rejoue au modèle d'un appel d'une réponse **passée** (`{arguments, result}`) : un outil y raccourcit ce qui est périmé — `show_artifact` et `read_artifact` n'y rejouent pas le contenu d'une ancienne version | tel quel |
 | `fileContent(ref)` | le contenu, relu au clic, d'un fichier produit avec `source: {tool, ref}` | aucun |
 | `forget(convId)` | la conversation est supprimée : effacer ce que l'outil garde pour elle | rien |
 
@@ -524,12 +523,40 @@ ses composables une fois, dans une portée qui vit autant que la page
 | `on` | cochée d'office dans une conversation neuve |
 | `fixed` | toujours active, hors du menu (questions, fichiers, artifacts, dossier) |
 | `available()` | ce navigateur sait-il la faire ? |
-| `enabled(ctx)` | active pour ce tour ? (le dossier : s'il est ouvert) |
-| `guidance(ctx)` | une consigne ajoutée au **prompt système** quand la famille est active |
+| `enabled(ctx)` | active pour ce tour ? Un choix de l'utilisateur (le dossier : s'il l'a ouvert), jamais l'état de la conversation |
+| `guidance(ctx)` | une consigne ajoutée au **prompt système** quand la famille est active ; **figée**, elle ne dépend pas de l'état |
+| `state(ctx)` | l'état du moment (les artifacts et leur version, le dossier ouvert, le réseau de la VM), joint au message de l'utilisateur du tour quand il a changé |
 | `tools` | ses outils (`new GetLocation()`…) |
 
 Le module exporte `FAMILIES`, et s'inscrit **une fois** dans la liste
 `MODULES` de `tools/index.js`.
+
+### L'historique, en ajout seul
+
+Une requête commence exactement comme la précédente : mêmes outils, même
+prompt système, messages passés tels qu'ils ont été envoyés ; elle ajoute
+à la fin. Les caches de préfixe des backends (llama.cpp, gufo, Anthropic)
+et la réflexion signée d'Anthropic ne servent que ce début identique.
+
+- Le prompt système (le sien, un résumé, les `guidance`) ne change pas
+  d'un tour à l'autre.
+- Les outils ne changent qu'au gré de l'utilisateur (menu Outils, dossier
+  ouvert) : ceux du débogage des artifacts sont toujours déclarés, et
+  répondent quand ils n'ont rien à faire.
+- L'état des outils (`state`) est fixé sur le message de l'utilisateur au
+  moment où il l'envoie (`state` dans la conversation), et joint à ce
+  message s'il diffère du précédent (« [État du moment, ajouté par la
+  page] ») : rejoué à l'identique ensuite.
+- Un appel passé est rejoué tel qu'il a été vu, même si son contenu est
+  périmé depuis (un artifact retouché, un fichier réécrit) : la consigne
+  dit que seule compte la version actuelle (`read_artifact`,
+  `shell_read`). Le résumé (compactage) reste le moyen de réduire.
+
+Mesuré sur une conversation avec un artifact (Claude Haiku 5.5, la page
+puis deux retouches) : la première requête de chaque nouveau tour lisait
+0 % de son prompt dans le cache (la liste des artifacts changeait le
+prompt système, l'historique raccourcissait les anciens contenus), elle
+en lit 98 %.
 
 ### Les garde-fous
 

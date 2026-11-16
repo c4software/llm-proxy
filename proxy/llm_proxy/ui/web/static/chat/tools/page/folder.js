@@ -198,9 +198,13 @@ class FolderEdit extends FolderWriting {
 
 export const FAMILIES = [defineFamily({
   key: FAMILY.FOLDER, label: "Dossier ouvert", hint: "lire, chercher, écrire avec accord", fixed: true,
+  // Ouvrir un dossier est un choix de l'utilisateur : ses outils arrivent
+  // alors. Son nom et son nombre de fichiers (qui change à chaque
+  // écriture) : l'état, joint au tour.
   enabled: (ctx) => !!ctx.ws,
-  guidance: (ctx) => `Un dossier est ouvert dans le chat : « ${ctx.ws.name} » (${ctx.ws.count} fichiers). `
-    + "Le parcourir avec folder_list, folder_read et folder_search plutôt que de supposer son "
-    + "contenu ; toute écriture (folder_write, folder_edit) passe par l'accord de l'utilisateur.",
+  guidance: () => "Un dossier de l'utilisateur est ouvert dans le chat. Le parcourir avec "
+    + "folder_list, folder_read et folder_search plutôt que de supposer son contenu ; toute écriture "
+    + "(folder_write, folder_edit) passe par l'accord de l'utilisateur.",
+  state: (ctx) => `Dossier ouvert : « ${ctx.ws.name} » (${ctx.ws.count} fichiers).`,
   tools: [new FolderList(), new FolderRead(), new FolderSearch(), new FolderWrite(), new FolderEdit()],
 })];

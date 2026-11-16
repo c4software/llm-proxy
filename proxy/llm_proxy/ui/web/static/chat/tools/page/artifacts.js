@@ -41,10 +41,6 @@ import { debugOn } from "../../artifacts.js";
 const MAX_ARTIFACT = 5e5;      // caractères d'un artifact
 const TYPES = ["html", "markdown", "svg", "mermaid", "code"];
 
-// Ce que l'historique garde du contenu d'une version passée.
-/** @param {number} chars */
-const stale = (chars) => `[contenu d'une version passée (${chars} caractères), non rejoué : read_artifact rend la version actuelle]`;
-
 // L'identifiant d'un artifact : minuscules, sans accents, des tirets.
 const slug = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "artifact";
@@ -158,16 +154,6 @@ class ShowArtifact extends PageTool {
   /** @override @param {any} a */
   summary(a) { return [a.title, a.type].filter(Boolean).join(" · "); }
 
-  // Une réponse passée : son contenu n'est plus la version actuelle (des
-  // versions et des retouches ont pu suivre) — il n'est pas rejoué.
-  /** @override @param {{arguments: string, result: string}} call */
-  historic(call) {
-    let a;
-    try { a = JSON.parse(call.arguments); } catch { return call; }
-    if (typeof a.content !== "string") return call;
-    a.content = stale(a.content.length);
-    return { arguments: JSON.stringify(a), result: call.result };
-  }
 }
 
 class EditArtifact extends PageTool {
@@ -232,13 +218,6 @@ class ReadArtifact extends PageTool {
 
   /** @override @param {any} a */
   summary(a) { return [a.id, a.start_line ? `lignes ${a.start_line}–${a.end_line || "…"}` : ""].filter(Boolean).join(" · "); }
-
-  /** @override @param {{arguments: string, result: string}} call */
-  historic(call) {
-    const head = call.result.split("\n")[0];
-    return { arguments: call.arguments, result: call.result.startsWith("Artifact « ")
-      ? head + "\n" + stale(call.result.length - head.length - 1) : call.result };
-  }
 }
 
 class GrepArtifact extends PageTool {
@@ -265,14 +244,6 @@ class GrepArtifact extends PageTool {
 
   /** @override @param {any} a */
   summary(a) { return [a.id, a.pattern].filter(Boolean).join(" · "); }
-
-  // Une recherche passée : ses numéros de ligne ont pu changer depuis.
-  /** @override @param {{arguments: string, result: string}} call */
-  historic(call) {
-    const head = call.result.split("\n")[0];
-    return { arguments: call.arguments, result: call.result.includes("\n")
-      ? head + "\n[lignes d'une version passée, non rejouées : relancer grep_artifact sur la version actuelle]" : call.result };
-  }
 }
 
 // ── déboguer la page affichée ───────────────────────────────────────────
@@ -438,35 +409,42 @@ class RunInArtifact extends PageTool {
 
 export const FAMILIES = [defineFamily({
   key: FAMILY.ARTIFACTS, label: "Artifacts", hint: "le panneau latéral", fixed: true,
-  // Les artifacts de la conversation, et comment les modifier : l'historique
-  // ne rejoue pas leurs anciens contenus (historic).
-  guidance: (ctx) => {
+  // Comment les modifier : figé, au prompt système. Leur liste, et leur
+  // version : l'état, joint au tour (l'historique garde les anciens
+  // contenus tels qu'ils ont été vus ; la version actuelle, c'est celle-ci).
+  guidance: () => "Pour modifier un artifact déjà affiché : grep_artifact pour trouver le passage, "
+    + "read_artifact sur ses lignes (start_line, end_line) pour en avoir le texte exact, puis "
+    + "edit_artifact ; ne pas le relire en entier sans besoin. Un contenu d'artifact plus ancien dans "
+    + "la conversation peut être périmé : seule compte la version actuelle (read_artifact). "
+    + "show_artifact seulement pour un nouvel artifact, ou une refonte que l'utilisateur demande.",
+  state: (ctx) => {
     const arts = artifactsOf(ctx.conv);
     if (!arts.length) return "";
-    const list = arts.map((a) => {
+    return "Artifacts de la conversation : " + arts.map((a) => {
       const v = a.versions[a.versions.length - 1];
       return `« ${a.id} » (${v.type}, version ${a.versions.length}, ${v.content.length} caractères)`;
-    }).join(", ");
-    return `Artifacts de la conversation : ${list}. Pour en modifier un : grep_artifact pour trouver `
-      + "le passage, read_artifact sur ses lignes (start_line, end_line) pour en avoir le texte exact, "
-      + "puis edit_artifact ; ne pas le relire en entier sans besoin. show_artifact seulement pour un "
-      + "nouvel artifact, ou une refonte que l'utilisateur demande.";
+    }).join(", ") + ".";
   },
   tools: [new ShowArtifact(), new EditArtifact(), new ReadArtifact(), new GrepArtifact()],
 }), defineFamily({
   key: FAMILY.ARTIFACT_DEBUG_OFFER, label: "Proposer le débogage", hint: "une carte pour le rétablir", fixed: true,
-  enabled: (ctx) => artifactsOf(ctx.conv).some((a) => !debugOn(a)),
-  guidance: (ctx) => `Débogage coupé par l'utilisateur pour : ${artifactsOf(ctx.conv).filter((a) => !debugOn(a)).map((a) => `« ${a.id} »`).join(", ")}. `
-    + "S'il signale qu'un de ces artifacts ne marche pas (un bouton sans effet, une page blanche, "
-    + "une erreur) : proposer de rétablir le débogage avec request_artifact_debug plutôt que de "
-    + "deviner la cause.",
+  // Toujours déclarée (les outils ne changent pas d'un tour à l'autre) :
+  // request_artifact_debug répond lui-même si le débogage est déjà actif.
+  guidance: () => "Si l'utilisateur signale qu'un artifact au débogage coupé ne marche pas (un "
+    + "bouton sans effet, une page blanche, une erreur) : proposer de rétablir le débogage avec "
+    + "request_artifact_debug plutôt que de deviner la cause.",
+  state: (ctx) => {
+    const off = artifactsOf(ctx.conv).filter((a) => !debugOn(a));
+    return off.length ? `Débogage coupé par l'utilisateur pour : ${off.map((a) => `« ${a.id} »`).join(", ")}.` : "";
+  },
   tools: [new RequestArtifactDebug()],
 }), defineFamily({
   key: FAMILY.ARTIFACT_DEBUG, label: "Déboguer un artifact", hint: "tester la page affichée", fixed: true,
-  enabled: (ctx) => artifactsOf(ctx.conv).some(debugOn),
-  guidance: (ctx) => `Débogage actif pour : ${artifactsOf(ctx.conv).filter(debugOn).map((a) => `« ${a.id} »`).join(", ")}. `
-    + "Quand un de ces artifacts ne marche pas, ne pas deviner : l'inspecter (inspect_artifact : "
+  // Toujours déclarée : inspect_artifact et run_in_artifact refusent un
+  // artifact au débogage coupé (target), en renvoyant à request_artifact_debug.
+  guidance: () => "Quand un artifact ne marche pas, ne pas deviner : l'inspecter (inspect_artifact : "
     + "console, erreurs, page), reproduire le problème (run_in_artifact), corriger (edit_artifact), "
-    + "puis revérifier de la même façon.",
+    + "puis revérifier de la même façon. Le débogage est actif par défaut ; l'utilisateur peut le "
+    + "couper pour un artifact.",
   tools: [new InspectArtifact(), new RunInArtifact()],
 })];

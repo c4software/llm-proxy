@@ -22,8 +22,18 @@
 
   CE QUE LE MODÈLE LIT d'un outil : `description`, les `description` de
   ses paramètres, le `guidance` de sa famille quand elle est active (au
-  prompt système), et le texte de ses résultats — une erreur commence
-  par « Error: » (failure), le modèle s'adapte.
+  prompt système, FIGÉ), le `state` de sa famille (l'état du moment, joint
+  au message de l'utilisateur du tour), et le texte de ses résultats —
+  une erreur commence par « Error: » (failure), le modèle s'adapte.
+
+  L'HISTORIQUE EST EN AJOUT SEUL : une requête commence exactement comme
+  la précédente (outils, prompt système, messages passés tels quels), et
+  ajoute à la fin. Les caches de préfixe des backends (llama.cpp, gufo,
+  Anthropic) et la réflexion signée d'Anthropic ne servent que le début
+  identique. D'où : un `guidance` ne dépend pas de l'état (liste
+  d'artifacts, nom d'un dossier, réseau de la VM : c'est `state`), une
+  famille `fixed` ne s'allume pas selon l'état (ses outils répondent
+  « rien à faire »), et un appel passé est rejoué tel qu'il a été vu.
 */
 
 // Les noms des outils : celui de la fonction présentée au modèle. Un nom
@@ -265,14 +275,6 @@ export class PageTool {
    * @returns {string | null | Promise<string | null>} */
   keptAct(k, action, ctx) { throw new Error(`${this.name} : pas de carte durable`); }
 
-  /** Ce que l'HISTORIQUE rejoue au modèle d'un appel d'une réponse
-   * PASSÉE ({arguments, result}, en texte) : par défaut, tel quel ; un
-   * outil y raccourcit ce qui est périmé (le contenu d'un artifact,
-   * remplacé depuis). Le tour en cours rejoue toujours tout.
-   * @param {{name: string, arguments: string, result: string}} call
-   * @returns {{arguments: string, result: string}} */
-  historic(call) { return { arguments: call.arguments, result: call.result }; }
-
   /** La ligne que la puce de l'appel montre.
    * @param {any} args @returns {string} */
   summary(args) { return ""; }
@@ -314,12 +316,17 @@ export const MEMBERS = Object.freeze(new Set([
  * @property {boolean} [on]            cochée d'office dans une conversation neuve
  * @property {boolean} [fixed]         toujours active, hors du menu
  * @property {() => boolean} [available]   ce navigateur sait-il la faire ?
- * @property {(ctx: Ctx) => boolean} [enabled] active pour CE tour ? (le dossier : s'il est ouvert)
- * @property {(ctx: Ctx) => string} [guidance] une consigne ajoutée au prompt système quand elle est active
+ * @property {(ctx: Ctx) => boolean} [enabled] active pour CE tour ? Un choix de l'utilisateur
+ *   (le dossier : s'il l'a ouvert), jamais l'état de la conversation : les outils changeraient
+ * @property {(ctx: Ctx) => string} [guidance] une consigne ajoutée au prompt système quand elle
+ *   est active ; FIGÉE (ne dépend pas de l'état : le prompt système resterait différent à chaque tour)
+ * @property {(ctx: Ctx) => string} [state] l'état du moment (les artifacts, le dossier ouvert…),
+ *   joint au message de l'utilisateur du tour quand il a changé depuis le précédent
  */
 /** @typedef {Readonly<Required<FamilyDef>>} Family */
 
-const FAMILY_KEYS = ["key", "label", "hint", "tools", "on", "fixed", "available", "enabled", "guidance"];
+const FAMILY_KEYS = ["key", "label", "hint", "tools", "on", "fixed", "available", "enabled", "guidance",
+                     "state"];
 
 /** @param {FamilyDef} def @returns {Family} */
 export function defineFamily(def) {
@@ -327,7 +334,7 @@ export function defineFamily(def) {
     if (!FAMILY_KEYS.includes(k)) throw new Error(`famille « ${def.key} » : membre inconnu « ${k} »`);
   }
   return Object.freeze({ on: false, fixed: false, available: () => true, enabled: () => true,
-                         guidance: () => "", ...def });
+                         guidance: () => "", state: () => "", ...def });
 }
 
 // ── ce que partagent les outils ─────────────────────────────────────────

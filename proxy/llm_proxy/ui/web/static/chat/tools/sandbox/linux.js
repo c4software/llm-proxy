@@ -121,14 +121,6 @@ const PATH = { type: "string", description: "Le chemin du fichier : absolu, ou r
 const wrap = async (/** @type {() => Promise<string>} */ f) => {
   try { return await f(); } catch (e) { return failure(`VM Linux : ${e.message}.`); }
 };
-// Ce que l'historique garde d'une lecture ou d'une recherche passée : le
-// fichier a pu changer depuis.
-/** @param {{arguments: string, result: string}} call @param {string} again */
-const staleCall = (call, again) => {
-  const head = call.result.split("\n")[0];
-  return { arguments: call.arguments, result: call.result.includes("\n") && !call.result.startsWith("Error")
-    ? head + `\n[contenu d'un appel passé, non rejoué : ${again}]` : call.result };
-};
 
 class ShellRead extends PageTool {
   constructor() {
@@ -166,9 +158,6 @@ class ShellRead extends PageTool {
 
   /** @override @param {any} a */
   summary(a) { return [a.path, a.start_line ? `lignes ${a.start_line}–${a.end_line || "…"}` : ""].filter(Boolean).join(" · "); }
-
-  /** @override @param {{arguments: string, result: string}} call */
-  historic(call) { return staleCall(call, "shell_read rend le fichier actuel"); }
 }
 
 class ShellGrep extends PageTool {
@@ -219,9 +208,6 @@ class ShellGrep extends PageTool {
 
   /** @override @param {any} a */
   summary(a) { return [a.path, a.pattern].filter(Boolean).join(" · "); }
-
-  /** @override @param {{arguments: string, result: string}} call */
-  historic(call) { return staleCall(call, "relancer shell_grep sur les fichiers actuels"); }
 }
 
 class ShellEdit extends PageTool {
@@ -295,39 +281,32 @@ class ShellWrite extends PageTool {
 
   /** @override @param {any} a */
   summary(a) { return a.path || ""; }
-
-  // Une écriture passée : son contenu n'est plus forcément celui du fichier.
-  /** @override @param {{arguments: string, result: string}} call */
-  historic(call) {
-    let a;
-    try { a = JSON.parse(call.arguments); } catch { return call; }
-    if (typeof a.content !== "string") return call;
-    a.content = `[contenu écrit par un appel passé (${a.content.length} caractères), non rejoué : shell_read rend le fichier actuel]`;
-    return { arguments: JSON.stringify(a), result: call.result };
-  }
 }
 
 export const FAMILIES = [defineFamily({
   key: FAMILY.LINUX, label: "Linux",
   hint: "Une VM Linux en WASM (Alpine : bash, python3, git, outils GNU…), sans réseau, partagée avec le panneau Terminal",
   available: () => typeof WebAssembly === "object" && typeof Worker === "function",
-  guidance: (ctx) => "run_shell exécute du bash dans une VM Linux du navigateur. Ne "
+  guidance: () => "run_shell exécute du bash dans une VM Linux du navigateur. Ne "
     + "s'en servir que si la demande exige d'exécuter quelque chose : lancer ou tester un script "
     + "shell ou Python (bibliothèque standard seulement), traiter des fichiers déjà dans la VM. "
     + "Pas pour rédiger une réponse, des notes, un tableau ou un document : répondre directement, "
     + "ou passer par un artifact. /work est gardé avec la "
     + "conversation ; l'utilisateur voit la même machine dans le panneau Terminal. Pour modifier "
     + "un fichier de la VM : shell_grep (où ?), shell_read sur ses lignes, shell_edit — plutôt que "
-    + "sed ou un heredoc dans run_shell ; shell_write pour un fichier neuf."
-    + (ctx && ctx.conv && ctx.conv.linuxNetwork
-      ? linux.vm.relay
-        ? " L'utilisateur a OUVERT le réseau de la VM : un vrai accès à Internet (https, apk add, "
-          + "pip install, git clone, ssh), sauf vers les réseaux privés."
-        : " L'utilisateur a OUVERT le réseau de la VM : des requêtes web seulement, en écrivant les "
-          + "adresses en http:// (le navigateur les fait en https), vers les sites qui permettent CORS "
-          + "(API publiques, pypi.org/pypi/<paquet>/json, raw.githubusercontent.com, api.github.com…) ; "
-          + "pas de https:// direct, ni ssh, ni apk, ni pip install."
-      : " La VM n'a pas de réseau (l'utilisateur peut l'ouvrir dans le panneau Terminal).")
+    + "sed ou un heredoc dans run_shell ; shell_write pour un fichier neuf. Un contenu de fichier "
+    + "plus ancien dans la conversation peut être périmé : shell_read rend le fichier actuel.",
+  // Le réseau, que l'utilisateur ouvre ou ferme dans le panneau Terminal :
+  // l'état, joint au tour (le prompt système reste figé).
+  state: (ctx) => (ctx && ctx.conv && ctx.conv.linuxNetwork
+    ? linux.vm.relay
+      ? "Réseau de la VM Linux OUVERT par l'utilisateur : un vrai accès à Internet (https, apk add, "
+        + "pip install, git clone, ssh), sauf vers les réseaux privés."
+      : "Réseau de la VM Linux OUVERT par l'utilisateur : des requêtes web seulement, en écrivant les "
+        + "adresses en http:// (le navigateur les fait en https), vers les sites qui permettent CORS "
+        + "(API publiques, pypi.org/pypi/<paquet>/json, raw.githubusercontent.com, api.github.com…) ; "
+        + "pas de https:// direct, ni ssh, ni apk, ni pip install."
+    : "La VM Linux n'a pas de réseau (l'utilisateur peut l'ouvrir dans le panneau Terminal).")
     + (ctx && ctx.conv && linux.visible(ctx.conv)
       ? " Le panneau Terminal est OUVERT : ce que run_shell exécute y est tapé, sous les yeux de "
         + "l'utilisateur. Pour un programme qui ne s'arrête pas seul (serveur, boucle), donner un "

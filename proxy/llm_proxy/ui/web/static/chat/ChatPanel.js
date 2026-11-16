@@ -500,14 +500,17 @@ export const ChatPanel = {
     const queue = computed(() => (current.value && current.value.queue) || []);
 
     // Le message tel que l'API le veut : texte seul, ou parties (texte,
-    // fichiers texte, images) quand il y a des pièces jointes.
-    function apiContent(m) {
+    // fichiers texte, images) quand il y a des pièces jointes. `state` :
+    // l'état du moment des outils (artifacts, dossier, réseau de la VM),
+    // joint quand il a changé depuis le tour précédent.
+    function apiContent(m, state = "") {
       const files = (m.attachments || []).filter((a) => a.kind === "text");
       const images = (m.attachments || []).filter((a) => a.kind === "image" && a.data);
       let text = m.content || "";
       for (const f of files) {
         text += `\n\n<file name="${f.name.replace(/"/g, "'")}">\n${f.data}\n</file>`;
       }
+      if (state) text += `\n\n[État du moment, ajouté par la page]\n${state}`;
       if (!images.length) return text;
       return [
         ...(text ? [{ type: "text", text }] : []),
@@ -516,24 +519,35 @@ export const ChatPanel = {
     }
 
     // `guidance` : les consignes des outils actifs (tools.guidance), à la
-    // suite du prompt système de la conversation.
+    // suite du prompt système de la conversation — figées.
     // Après un RÉSUMÉ (compact.js) : lui, au prompt système, et ce qui le
     // suit — pas ce qui le précède.
+    // EN AJOUT SEUL (tools/contract.js) : une requête commence exactement
+    // comme la précédente — même prompt système, messages passés tels
+    // qu'ils ont été envoyés. L'état des outils, qui change, est gardé sur
+    // le message de l'utilisateur de son tour (`m.state`, fixé à l'envoi)
+    // et joint quand il diffère du précédent : rejoué à l'identique ensuite.
     function apiMessages(conv, upto, guidance = "") {
       const out = [];
       const from = Compact.start(conv, upto);
       const summary = from ? Compact.preamble(conv.messages[from - 1]) : "";
       const system = [conv.system.trim(), summary, guidance].filter(Boolean).join("\n\n");
       if (system) out.push({ role: "system", content: system });
+      let shown = "";
       for (const m of conv.messages.slice(from, upto)) {
         if (m.role === "summary") continue;
-        if (m.role === "user") out.push({ role: "user", content: apiContent(m) });
+        if (m.role === "user") {
+          const now = typeof m.state === "string" ? m.state : shown;
+          const joined = now === shown ? "" : now || "Rien de particulier (plus d'artifact, de dossier ouvert…).";
+          shown = now;
+          out.push({ role: "user", content: apiContent(m, joined) });
+        }
         // Une réponse en erreur ou vide n'est pas renvoyée : le modèle ne
         // l'a jamais écrite.
         else if ((m.steps || []).length) {
           // Une réponse qui a lu le dossier : ses appels et leurs résultats,
           // puis son dernier texte — le modèle retrouve ce qu'il a lu.
-          out.push(...tools.stepMessages(m.steps, { past: true }));
+          out.push(...tools.stepMessages(m.steps));
           if (m.final) out.push({ role: "assistant", content: m.final });
         }
         else if (m.content) out.push({ role: "assistant", content: m.content });
@@ -557,7 +571,8 @@ export const ChatPanel = {
       const families = conv.device || defaultDevice();
       const page = tools.specs(ctx, families)
         .filter((t) => !can.pageTools || can.pageTools.includes(t.function.name));
-      return { hosted, page, guidance: tools.guidance(ctx, families) };
+      return { hosted, page, guidance: tools.guidance(ctx, families),
+               state: tools.state(ctx, families) };
     }
 
     // Ce qui part au modèle sans être dans le fil, pour le PROCHAIN
@@ -728,8 +743,13 @@ export const ChatPanel = {
       if (["low", "medium", "high"].includes(effort)) body.reasoning_effort = effort;
       else if (effort === "none") body.chat_template_kwargs = { enable_thinking: false };
       const ctx = toolCtx(conv, live);
-      const { hosted, page, guidance } = requestTools(conv, ctx);
+      const { hosted, page, guidance, state } = requestTools(conv, ctx);
       body.tools = [...hosted.map((type) => ({ type })), ...page];
+      // L'état des outils au moment où l'utilisateur envoie son message :
+      // fixé une fois (une reprise, une régénération le gardent), pour que
+      // les tours suivants rejouent ce message à l'identique.
+      const question = conv.messages[upto - 1];
+      if (question && question.role === "user" && typeof question.state !== "string") question.state = state;
       let paused = false;
       try {
         for (;;) {

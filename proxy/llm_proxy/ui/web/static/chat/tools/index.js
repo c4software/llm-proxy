@@ -174,9 +174,14 @@ function active(ctx, keys) {
 export const specs = (ctx, keys) => active(ctx, keys)
   .flatMap((f) => f.tools.filter((t) => !OFF.tools.has(t.name)).map((t) => t.spec));
 
-/** Les consignes des familles actives, pour le prompt système.
+/** Les consignes des familles actives, pour le prompt système (figées).
  * @param {Ctx} ctx @param {string[]} keys */
 export const guidance = (ctx, keys) => active(ctx, keys).map((f) => f.guidance(ctx)).filter(Boolean).join("\n\n");
+
+/** L'état du moment des familles actives (les artifacts, le dossier
+ * ouvert…), joint au message de l'utilisateur du tour.
+ * @param {Ctx} ctx @param {string[]} keys */
+export const state = (ctx, keys) => active(ctx, keys).map((f) => f.state(ctx)).filter(Boolean).join("\n");
 
 // ── les appels ──────────────────────────────────────────────────────────
 
@@ -290,16 +295,15 @@ export async function fileContent(f) {
 /** Ce qu'une réponse a fait avec les outils, pour l'historique renvoyé au
  * modèle : chaque étape, un message assistant à `tool_calls` puis un
  * message `tool` par appel ; une image rendue par un outil suit, dans un
- * message de l'utilisateur (tous les backends le lisent). `past` : une
- * réponse passée — chaque outil y raccourcit ce qui est périmé (historic).
- * @param {any[]} steps @param {{past?: boolean}} [opts] */
-export function stepMessages(steps, { past = false } = {}) {
+ * message de l'utilisateur (tous les backends le lisent). Rejoué tel
+ * qu'il a été vu, réponse en cours ou passée : l'historique est en ajout
+ * seul (contract.js) ; un contenu périmé depuis, la version actuelle le
+ * dit (`state`, read_artifact, shell_read).
+ * @param {any[]} steps */
+export function stepMessages(steps) {
   const out = [];
   for (const step of steps || []) {
-    const calls = step.calls.map((c) => {
-      const t = past ? TOOLS.get(c.name) : null;
-      return t ? { ...c, ...t.historic({ name: c.name, arguments: c.arguments || "{}", result: c.result || "" }) } : c;
-    });
+    const calls = step.calls;
     out.push({ role: "assistant", content: step.content || null,
       tool_calls: calls.map((c) => ({ id: c.id, type: "function",
         function: { name: c.name, arguments: c.arguments || "{}" } })) });
