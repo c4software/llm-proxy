@@ -288,7 +288,10 @@ OIDC.
 - **Backends** : *Ajouter un fournisseur connu* remplit le nom, l'URL
   et la variable de la clé (NVIDIA, AMD Token Lab, Groq, Mistral,
   OpenRouter, OpenCode Go, Albert), les mêmes que le
-  [TP du cours](https://cours.brosseau.ovh/tp/agentic/proxy.html).
+  [TP du cours](https://cours.brosseau.ovh/tp/agentic/proxy.html), et
+  Anthropic, en [backend natif](configuration.md#backend-anthropic)
+  (`api = "anthropic"`). Le *protocole* de chaque backend (OpenAI ou
+  Anthropic) se choisit sur sa ligne.
 - **Override Docker** : le `docker-compose.override.yml` du service
   `albert-proxy`, avec l'[image publiée](deploiement.md#limage-publiée)
   et chaque `${VAR}` du fichier complet que le `docker-compose.yml` ne

@@ -18,6 +18,7 @@ from .. import tools
 from ..core.httputil import anthropic_disabled, dialect_of, error_response
 from ..core.settings import CATALOG_TTL, log
 from ..surfaces import anthropic_api, chat_api
+from . import anthropic
 from .backends import Backend, BACKENDS
 from .relaying import clean_headers
 
@@ -208,13 +209,16 @@ async def fetch_models(b: Backend, request: Request | None = None) -> list | Non
 
 async def _read_models(b: Backend, headers: dict) -> list | None:
     try:
-        r = await b.client.get(
-            "/v1/models", headers=headers, timeout=b.meta_timeout,
-        )
-        if r.status_code != 200:
-            log.warning("/v1/models %s → %d", b.name, r.status_code)
-            return None
-        data = r.json().get("data") or []
+        if b.api == "anthropic":
+            data = await anthropic.read_models(b, headers)
+        else:
+            r = await b.client.get(
+                "/v1/models", headers=headers, timeout=b.meta_timeout,
+            )
+            if r.status_code != 200:
+                log.warning("/v1/models %s → %d", b.name, r.status_code)
+                return None
+            data = r.json().get("data") or []
     except Exception as exc:
         log.warning("/v1/models %s injoignable : %s", b.name, exc)
         return None

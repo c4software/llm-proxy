@@ -70,7 +70,7 @@ export const ProxyPart = {
     }
 
     const addBackend = () => px.backends.push({ name: "", url: "http://", key: false,
-      quotas: false, images: false, toolChoice: "", maxTokens: "", fairShare: true });
+      api: "openai", quotas: false, images: false, toolChoice: "", maxTokens: "", fairShare: true });
     // Un fournisseur connu : nom, URL et variable de la clé remplis. Le
     // menu revient à son libellé, prêt pour le suivant.
     const provider = ref("");
@@ -270,6 +270,9 @@ export const ProxyPart = {
                 <button type="button" class="icon danger" title="Retirer" @click="px.backends.splice(i, 1)">×</button>
               </div>
               <div class="row checks">
+                <span class="check">protocole
+                  <select v-model="b.api" aria-label="protocole du backend">
+                    <option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></span>
                 <label class="check"><input type="checkbox" v-model="b.key"> clé d'API</label>
                 <label class="check"><input type="checkbox" v-model="b.quotas"> quotas (Albert)</label>
                 <label class="check"><input type="checkbox" v-model="b.images"> images</label>

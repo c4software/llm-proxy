@@ -1,7 +1,8 @@
 /*
   Les fournisseurs connus : la page d'installation (SetupPanel.js) et
   Configuration → Proxy, section Backends. Un choix remplit le nom
-  (préfixe des modèles), l'URL compatible OpenAI et la variable de la clé ;
+  (préfixe des modèles), l'URL, la variable de la clé et le protocole
+  (`api`, OpenAI par défaut) ;
   `model` : un modèle de départ, pour le modèle par défaut de l'installation.
 */
 export const PROVIDERS = [
@@ -23,6 +24,9 @@ export const PROVIDERS = [
   { id: "go", label: "OpenCode Go", note: "abonnement",
     url: "https://opencode.ai/inference/go/openai", keyVar: "OPENCODE_GO_API_KEY",
     model: "go/glm-5.3-flash" },
+  { id: "claude", label: "Anthropic (Claude)", note: "payant, crédit d'API",
+    url: "https://api.anthropic.com", keyVar: "ANTHROPIC_API_KEY", api: "anthropic",
+    model: "claude/claude-opus-5-5" },
   // Son défaut tool_choice « none » casse les outils : « auto » injecté.
   { id: "albert", label: "Albert (API de l'État)", note: "quotas",
     url: "https://albert.api.etalab.gouv.fr", keyVar: "ALBERT_API_KEY",
@@ -31,7 +35,8 @@ export const PROVIDERS = [
 
 // Une ligne du formulaire Backends, préremplie pour ce fournisseur.
 export const providerBackend = (p) => ({
-  name: p.id, url: p.url, key: true, keyVar: p.keyVar, quotas: !!p.quotas, images: false,
+  name: p.id, url: p.url, key: true, keyVar: p.keyVar, quotas: !!p.quotas,
+  api: p.api || "openai", images: p.api === "anthropic",
   toolChoice: p.toolChoice || "", maxTokens: "", fairShare: true,
 });
 

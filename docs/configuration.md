@@ -52,18 +52,56 @@ url = "http://bigchuck:8009"
 | Champ | Défaut | Rôle |
 |---|---|---|
 | `url` | *(requis)* | Base du backend |
+| `api` | `"openai"` | Protocole du backend : `"openai"` (`/v1/chat/completions`) ou `"anthropic"` (`/v1/messages`). Voir [Backend Anthropic](#backend-anthropic) |
 | `api_key` | *(aucune)* | La clé du backend, et le seul endroit où elle vit (clé Albert, `--api-key` de llama-server). Si définie, elle remplace l'`Authorization` du client |
 | `quotas` | `false` | Active le limiteur Albert (fenêtres minute et jour, `/v1/me/info`). Voir [`[quotas]`](#quotas) |
 | `timeout` | `proxy.upstream_timeout` | Secondes, pour la génération |
 | `meta_timeout` | `proxy.meta_timeout` | Secondes, pour `/v1/models`, `/v1/me/info`, `tokenize_path` |
-| `connect_timeout` | `1` sans quota, `15` avec | Poignée de main TCP seule. Un backend local éteint échoue en 1 s ; un hôte vivant répond bien avant, même occupé |
+| `connect_timeout` | `1` sans quota, `15` avec quotas ou `api = "anthropic"` | Poignée de main TCP seule. Un backend local éteint échoue en 1 s ; un hôte vivant répond bien avant, même occupé |
 | `verify_ssl` | `true` | `false` pour un certificat auto-signé |
 | `force_tool_choice` | *(aucune injection)* | Injecte `tool_choice` quand `tools` est présent sans lui. `true` → `proxy.tool_choice` ; `"auto"`, `"required"`… → cette valeur. Exception : sans aucune table `[backends]`, Albert par défaut avec `"auto"` |
 | `max_tokens` | `0` (aucun) | Plafond : le `max_tokens` / `max_completion_tokens` du client y est ramené. Jamais augmenté ni ajouté |
-| `images` | `false` | Les modèles multimodaux du backend reçoivent les `image_url` d'un client Anthropic. Sinon, texte de remplacement |
+| `images` | `false` (`true` avec `api = "anthropic"`) | Les modèles multimodaux du backend reçoivent les `image_url` d'un client Anthropic. Sinon, texte de remplacement |
 | `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact. llama.cpp : `"/tokenize"` |
 | `fair_share` | `true` | Le backend relève du [partage équitable](tableau-de-bord.md#partage-équitable). `false` : ses requêtes ne comptent dans la part de personne et n'attendent jamais |
 | `model_types` | `{}` | Type imposé à des modèles, par motif (`"*-vision-*" = "image-text-to-text"`). Sinon : le catalogue du backend, ou à défaut (llama-swap) le nom du modèle (`image`, `tts`, `asr`, `embed`…). Décide de ce qui est proposé à un client de chat et de qui reçoit les images |
+
+### Backend Anthropic
+
+```toml
+[backends.claude]
+url = "https://api.anthropic.com"
+api_key = "${ANTHROPIC_API_KEY}"
+api = "anthropic"
+```
+
+Les modèles se nomment `claude/claude-opus-5-5`. Le reste du proxy parle
+toujours chat/completions : la requête est traduite en Messages au départ,
+la réponse (JSON ou flux) retraduite à l'arrivée. Toutes les surfaces
+passent par là, la surface Anthropic comprise (Claude Code : Messages →
+chat/completions → Messages, outils hébergés du proxy actifs).
+
+- **Clé** en `x-api-key`, avec `anthropic-version`.
+- **Catalogue** lu sur `/v1/models` d'Anthropic : contexte
+  (`max_input_tokens`), images, sortie maximale (le `max_tokens` par défaut,
+  borné à 32 000).
+- **Cache de prompt** demandé à chaque requête (`cache_control`
+  automatique) : un agent relit son historique au tarif du cache. Les
+  tokens lus du cache sont comptés (`cached_tokens`).
+- **Réflexion** : sur les modèles à réflexion adaptative, demandée en
+  résumé et rendue en `reasoning_content`. Ses blocs signés sont gardés en
+  mémoire (4 096 tours, perdus au redémarrage) et rejoués avec les appels
+  d'outils qui les suivent, que le client ne renvoie pas.
+- **`reasoning_effort`** → `output_config.effort`, si le modèle prend ce
+  niveau (`minimal` et `none` → `low`).
+- **Retirés** : `temperature`, `top_p`, `top_k` (refusés par les modèles
+  récents), `logprobs`, `seed`, `n`… Les messages système et développeur
+  sont remontés en tête.
+- **Outils** : `tool_choice` `"required"` ou nommé devient `any` / `tool`,
+  que Opus 5.5, Sonnet 5.5 et Fable 5.1+ refusent (400). `force_tool_choice`
+  est à laisser absent.
+- **Seul `/v1/chat/completions`** : embeddings, voix, images → 404. L'OCR
+  et la transcription visent un modèle d'un autre backend.
 
 **Tout modèle doit être préfixé.** Un préfixe inconnu donne `400
 unknown_backend_prefix`. Seules les requêtes sans champ `model` (endpoints

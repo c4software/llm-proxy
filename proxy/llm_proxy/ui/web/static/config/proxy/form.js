@@ -61,7 +61,8 @@ export function prefillForm(px, c) {
   px.exempt = g("proxy.exempt_paths", []).join(", ");
   px.backends = Object.entries(g("backends", {})).map(([name, b]) => ({
     name, url: b.url || "", key: !!b.api_key, keyVar: varOf(b.api_key), quotas: !!b.quotas,
-    images: !!b.images, toolChoice: typeof b.force_tool_choice === "string" ? b.force_tool_choice : "",
+    api: b.api === "anthropic" ? "anthropic" : "openai",
+    images: b.images === undefined ? b.api === "anthropic" : !!b.images, toolChoice: typeof b.force_tool_choice === "string" ? b.force_tool_choice : "",
     maxTokens: b.max_tokens || "", fairShare: b.fair_share !== false,
   }));
   px.fairShare = g("fair_share.tokens_per_hour", 0);
@@ -180,8 +181,10 @@ export function buildProxy(px) {
       L.push(`api_key = "\${${v}}"`);
       env.push(`${v}=`);
     }
+    if (b.api === "anthropic") L.push('api = "anthropic"');
     if (b.quotas) L.push("quotas = true");
-    if (b.images) L.push("images = true");
+    // Anthropic : images par défaut, seul leur retrait s'écrit.
+    if (b.api === "anthropic" ? !b.images : b.images) L.push(`images = ${!!b.images}`);
     if (b.toolChoice) L.push(`force_tool_choice = ${q(b.toolChoice)}`);
     if (Number(b.maxTokens) > 0) L.push(`max_tokens = ${Number(b.maxTokens)}`);
     if (!b.fairShare) L.push("fair_share = false");

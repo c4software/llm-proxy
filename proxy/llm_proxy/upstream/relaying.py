@@ -10,6 +10,7 @@ backend (les tests le remplacent).
 """
 
 import asyncio
+import json
 import time
 
 import httpx2
@@ -22,7 +23,7 @@ from ..core.httputil import error_response
 from ..core.settings import HOP_BY_HOP, is_exempt, log
 from ..storage import stats
 from ..surfaces import anthropic_api
-from . import albert
+from . import albert, anthropic
 from .backends import Backend, backend_offline_message
 
 
@@ -270,15 +271,22 @@ async def send_upstream(call: Call, request: Request, path: str,
     upstream_auth_message)."""
     b = call.backend
     albert.maybe_log_status()
-    req = b.client.build_request(
-        request.method,
-        f"/{path}",
-        content=body or None,
-        headers=clean_headers(request, b.api_key),
-        # Un client Anthropic ajoute «?beta=true» et consorts à SES URLs :
-        # sans sens pour l'upstream.
-        params=request.query_params if call.dialect == "openai" else None,
-    )
+    stream = False
+    if b.api == "anthropic":
+        req = await _anthropic_request(call, path, body)
+        if isinstance(req, JSONResponse):
+            return req
+        req, stream = req
+    else:
+        req = b.client.build_request(
+            request.method,
+            f"/{path}",
+            content=body or None,
+            headers=clean_headers(request, b.api_key),
+            # Un client Anthropic ajoute «?beta=true» et consorts à SES URLs :
+            # sans sens pour l'upstream.
+            params=request.query_params if call.dialect == "openai" else None,
+        )
     try:
         upstream = await b.client.send(req, stream=True)
     except httpx2.RequestError as exc:
@@ -301,6 +309,8 @@ async def send_upstream(call: Call, request: Request, path: str,
         return call.error(502, "upstream_auth_error",
                           upstream_auth_message(b))
 
+    if b.api == "anthropic":
+        upstream = anthropic.Upstream(upstream, stream)
     if upstream.status_code == 429 and b.quotas:
         log.warning(
             "429 reçu d'Albert malgré le limiteur — comparer /healthz avec "
@@ -308,6 +318,30 @@ async def send_upstream(call: Call, request: Request, path: str,
             "(fixer via ROUTER_MODELS)"
         )
     return upstream
+
+
+async def _anthropic_request(call: Call, path: str, body: bytes):
+    """La requête Messages d'un appel chat/completions vers un backend
+    Anthropic : (requête, en flux ?), ou l'erreur locale déjà comptée —
+    seul chat/completions se traduit."""
+    b = call.backend
+    if path.strip("/") != "v1/chat/completions":
+        return call.error(404, "not_supported",
+                          f"backend «{b.name}» (Anthropic) : seul "
+                          "/v1/chat/completions est pris en charge")
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return call.error(400, "invalid_request_error", "corps JSON attendu")
+    model = str(payload.get("model") or "").lower()
+    if not b.model_caps:
+        from .catalog import fetch_models   # import circulaire sinon
+        await fetch_models(b)
+    out = anthropic.to_messages(payload, b.model_caps.get(model),
+                                b.model_max_out.get(model))
+    return b.client.build_request(
+        "POST", "/v1/messages", headers=b.auth_headers(),
+        content=json.dumps(out, ensure_ascii=False).encode()), bool(out.get("stream"))
 
 
 # Corps d'une réponse d'erreur upstream retenu pour le log : assez pour

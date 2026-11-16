@@ -64,6 +64,7 @@ export const SetupPanel = {
       for (const p of active.value) {
         L.push("", `# Les modèles ${p.id}/…`, `[backends.${p.id}]`, `url = ${q(p.url)}`,
                `api_key = "\${${p.keyVar}}"`);
+        if (p.api) L.push(`api = ${q(p.api)}`);
         if (p.quotas) L.push("quotas = true");
         if (p.toolChoice) L.push(`force_tool_choice = ${q(p.toolChoice)}`);
       }

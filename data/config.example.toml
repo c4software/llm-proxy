@@ -602,7 +602,10 @@ models = ["openweight-large", "gpt-oss"]
 # préfixe retiré avant transfert). Modèle sans préfixe connu → 400.
 #
 # Champs (un par ligne : la page Configuration → Proxy les reprend) :
-#   url — l'adresse compatible OpenAI, sans /v1 (requis) ;
+#   url — l'adresse du backend, sans /v1 (requis) ;
+#   api — son protocole : "openai" (chat/completions, défaut) ou
+#     "anthropic" (Messages : clé en x-api-key, cache de prompt, réflexion et
+#     effort traduits ; seul /v1/chat/completions y passe) ;
 #   api_key — la clé du backend, en «${VAR}» du .env ; absente, le
 #     proxy transmet l'Authorization du client ;
 #   verify_ssl — vérifier le certificat HTTPS (true) ;
@@ -610,14 +613,15 @@ models = ["openweight-large", "gpt-oss"]
 #   meta_timeout — délai (s) de /v1/models et des appels de service
 #     ([proxy].meta_timeout par défaut) ;
 #   quotas — limiteur Albert (false) ;
-#   connect_timeout — s, poignée de main TCP (15 avec quotas, 1 sinon :
+#   connect_timeout — s, poignée de main TCP (15 avec quotas ou Anthropic, 1 sinon :
 #     un backend local éteint → 503 backend_offline vite) ;
 #   force_tool_choice — `tool_choice` injecté si `tools` sans lui : absent/
 #     false = rien (défaut), true = [proxy].tool_choice, ou une valeur
 #     ("auto"…). Seul Albert en a besoin (son défaut «none» casse les outils) ;
 #   max_tokens — plafond de la valeur du client (0/absent = aucun) ;
 #   images — transmet les images aux modèles multimodaux du catalogue
-#     (false : remplacées par un texte) ;
+#     (false : remplacées par un texte ; true par défaut avec api =
+#     "anthropic") ;
 #   tokenize_path — count_tokens exact (llama.cpp : "/tokenize") ; absent =
 #     estimation à 4 caractères/token ;
 #   fair_share — compté au partage équitable (true) ;
@@ -633,6 +637,12 @@ api_key = "${ALBERT_API_KEY}"
 quotas = true
 force_tool_choice = "auto"
 # max_tokens = 8192
+
+# Anthropic, en natif (Messages) : « claude/claude-opus-5-5 ».
+# [backends.claude]
+# url = "https://api.anthropic.com"
+# api_key = "${ANTHROPIC_API_KEY}"
+# api = "anthropic"
 
 # Backend local llama.cpp : sans quota, contacté à la demande seulement.
 [backends.bigchuck]

@@ -56,7 +56,8 @@ url = "http://x"
 
 
 def test_noms_libres_et_alias():
-    assert D.describe("backends.nimporte.url").startswith("l'adresse compatible OpenAI")
+    assert D.describe("backends.nimporte.url").startswith("l'adresse du backend")
+    assert D.describe("backends.nimporte.api").startswith("son protocole")
     assert D.describe("tools.mcp.monserveur.url").startswith("Adresse de configuration")
     assert D.describe("tools.mcp.timeout").startswith("Délai")
     assert D.describe("tools.web_fetch.allow_private").startswith(

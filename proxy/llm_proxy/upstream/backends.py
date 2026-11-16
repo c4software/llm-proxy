@@ -1,7 +1,8 @@
 """
-Les backends OpenAI-compatibles : leur déclaration ([backends.<nom>] du
-TOML), leur client HTTP, et le ROUTAGE — c'est-à-dire la seule règle qui
-compte ici, le PRÉFIXE du modèle désigne le backend.
+Les backends : leur déclaration ([backends.<nom>] du TOML), leur client
+HTTP, et le ROUTAGE — c'est-à-dire la seule règle qui compte ici, le
+PRÉFIXE du modèle désigne le backend. Un backend parle chat/completions
+(OpenAI, le défaut) ou Messages (`api = "anthropic"`, voir anthropic.py).
 
 « albert/openweight-large » part vers [backends.albert], « bigchuck/qwen3 »
 vers [backends.bigchuck], préfixe retiré avant transfert. Tout modèle doit
@@ -16,7 +17,7 @@ import httpx2
 
 from ..core import config
 from ..core.settings import META_TIMEOUT, TIMEOUT, TOOL_CHOICE, log
-from . import albert
+from . import albert, anthropic
 
 
 class Backend:
@@ -31,6 +32,12 @@ class Backend:
         if not self.url:
             raise SystemExit(f"backends.{name} : champ 'url' manquant")
         self.api_key = str(cfg.get("api_key", "") or "")
+        # Le protocole du backend : « openai » (chat/completions, le
+        # défaut) ou « anthropic » (Messages, traduit par anthropic.py).
+        self.api = str(cfg.get("api", "openai") or "openai").strip().lower()
+        if self.api not in ("openai", "anthropic"):
+            raise SystemExit(f"backends.{name} : api = {self.api!r} inconnu "
+                             "(attendu : \"openai\" ou \"anthropic\")")
         self.verify_ssl = bool(cfg.get("verify_ssl", True))
         self.quotas = bool(cfg.get("quotas", False))
         self.timeout = float(cfg.get("timeout", TIMEOUT))
@@ -40,7 +47,7 @@ class Backend:
         # backend local, souvent ÉTEINT, pour échouer vite. Plus large
         # vers l'Internet.
         self.connect_timeout = float(cfg.get(
-            "connect_timeout", 15.0 if self.quotas else 1.0))
+            "connect_timeout", 15.0 if self.quotas or self.api == "anthropic" else 1.0))
         # Injection de `tool_choice` : DÉSACTIVÉE PAR DÉFAUT. Le
         # correctif ne vaut que pour les backends dont le schéma a
         # "none" pour défaut (Albert) ; ailleurs il peut nuire :
@@ -55,7 +62,9 @@ class Backend:
         # Le backend accepte les images (`image_url`) — pour les modèles
         # que son catalogue déclare multimodaux ; un modèle texte seul y
         # reçoit un texte de remplacement. false = jamais d'image.
-        self.images = bool(cfg.get("images", False))
+        # Anthropic : tous ses modèles de conversation lisent les images
+        # (le catalogue le dit modèle par modèle).
+        self.images = bool(cfg.get("images", self.api == "anthropic"))
         # Le partage équitable (fairshare.py) compte-t-il ce backend ?
         # Faux : ses requêtes ne pèsent sur la part de personne et n'y
         # attendent jamais.
@@ -74,6 +83,10 @@ class Backend:
         # images — un backend llama.cpp en sert de toutes sortes, et
         # envoyer une image à un modèle texte seul est un 500 assuré.
         self.model_types: dict[str, str] = {}
+        # Backend Anthropic : les `capabilities` (réflexion, effort) et la
+        # sortie maximale de chaque modèle, lues avec le catalogue.
+        self.model_caps: dict[str, dict] = {}
+        self.model_max_out: dict[str, int] = {}
         # Type imposé pour des modèles de CE backend, par motif (jokers
         # shell, casse ignorée) : pour un catalogue qui ne dit pas ce que
         # sont ses modèles (llama-swap) et dont le nom trompe la déduction.
@@ -93,6 +106,8 @@ class Backend:
         return str(value)
 
     def auth_headers(self) -> dict:
+        if self.api == "anthropic":
+            return anthropic.headers(self.api_key)
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
 

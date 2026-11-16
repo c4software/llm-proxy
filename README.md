@@ -76,7 +76,7 @@ capture.
 La configuration vit dans un seul fichier, `data/config.toml`. Au
 premier démarrage, sans lui, `http://localhost:8000/ui` affiche la page
 d'**installation** : cocher ses fournisseurs (NVIDIA, AMD, Groq,
-Mistral, OpenRouter, OpenCode Go, Albert) et ses options, et elle donne
+Mistral, OpenRouter, OpenCode Go, Anthropic, Albert) et ses options, et elle donne
 le `.env`, `data/config.toml` et le `docker-compose.override.yml` à
 poser avant de redémarrer. En attendant, l'API répond 503. Chaque
 réglage est décrit dans `data/config.example.toml` ; l'environnement ne
