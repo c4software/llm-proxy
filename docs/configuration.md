@@ -89,20 +89,24 @@ chat/completions → Messages, outils hébergés du proxy actifs).
   automatique) : un agent relit son historique au tarif du cache. Les
   tokens lus du cache sont comptés (`cached_tokens`).
 - **Réflexion** : sur les modèles à réflexion adaptative, demandée en
-  résumé et rendue en `reasoning_content`. Ses blocs signés sont gardés en
-  mémoire (4 096 tours, perdus au redémarrage) et rejoués avec les appels
-  d'outils qui les suivent, que le client ne renvoie pas. Un bloc est lié à
+  résumé et rendue en `reasoning_content`. Un tour qui appelle des outils
+  est gardé en mémoire tel qu'Anthropic l'a rendu (4 096 tours, perdus au
+  redémarrage) : quand le client le renvoie inchangé, il est rejoué tel
+  quel, réflexion signée comprise et dans son ordre (une réflexion
+  déplacée serait écartée). Un bloc est lié à
   la conversation qui l'a produit : si le système ou les outils ont changé
   depuis, Anthropic l'écarte (`drop_block`, bêta
   `thinking-binding-controls-2026-08-01`) au lieu de refuser la requête.
 - **`reasoning_effort`** → `output_config.effort`, si le modèle prend ce
-  niveau (`minimal` et `none` → `low`).
+  niveau (`minimal` et `none` → `low`) ; à défaut, celui de
+  `chat_template_kwargs` (pi, omp), et `enable_thinking: false` → `low`
+  (la réflexion ne se coupe pas sur les modèles récents).
 - **Retirés** : `temperature`, `top_p`, `top_k` (refusés par les modèles
   récents), `logprobs`, `seed`, `n`… Les messages système et développeur
   sont remontés en tête.
-- **Outils** : `tool_choice` `"required"` ou nommé devient `any` / `tool`,
-  que Opus 5.5, Sonnet 5.5 et Fable 5.1+ refusent (400). `force_tool_choice`
-  est à laisser absent.
+- **Outils** : un `tool_choice` qui force l'appel (`"required"`, une
+  fonction nommée) devient `auto`, l'appel restant au choix du modèle :
+  Opus 5.5, Sonnet 5.5 et Fable 5.1+ refusent de le forcer (400).
 - **Seul `/v1/chat/completions`** : embeddings, voix, images → 404. L'OCR
   et la transcription visent un modèle d'un autre backend.
 

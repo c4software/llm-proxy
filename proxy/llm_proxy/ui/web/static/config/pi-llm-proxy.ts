@@ -2,10 +2,10 @@ import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-codin
 
 // Adresse et clé du proxy lues dans l'environnement (LLM_PROXY_URL,
 // LLM_PROXY_API_KEY ; LLM_PROXY_KEY accepté aussi, comme dans gufo-media.ts et
-// le mcp.json voisin) : rien en dur dans le dépôt. Défauts : le proxy du
-// réseau local, ouvert.
-const ENDPOINT = (process.env.LLM_PROXY_URL ?? "http://llmproxy").replace(/\/+$/, "");
-const API_KEY = process.env.LLM_PROXY_API_KEY ?? process.env.LLM_PROXY_KEY ?? "unused";
+// le mcp.json voisin ; une variable vide compte comme absente) : rien en dur
+// dans le dépôt. Défauts : le proxy du réseau local, ouvert.
+const ENDPOINT = (process.env.LLM_PROXY_URL || "http://llmproxy").replace(/\/+$/, "");
+const API_KEY = process.env.LLM_PROXY_API_KEY || process.env.LLM_PROXY_KEY || "unused";
 
 // Le catalogue ne donne pas de plafond de génération : on plafonne nous-mêmes.
 const DEFAULT_MAX_TOKENS = 16384;

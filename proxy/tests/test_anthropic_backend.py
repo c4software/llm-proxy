@@ -53,7 +53,7 @@ def claude(monkeypatch):
                  handler)
     monkeypatch.setattr(auth, "PROXY_API_KEYS", [])
     catalog.forget()
-    anthropic._THINKING.clear()
+    anthropic._TURNS.clear()
     env.client = TestClient(app.app)
     yield env
     catalog.forget()
@@ -91,7 +91,8 @@ def test_requete_traduite():
     assert body["cache_control"] == {"type": "ephemeral"}
     assert "temperature" not in body and "top_p" not in body
     assert body["stop_sequences"] == ["FIN"]
-    assert body["tool_choice"] == {"type": "any", "disable_parallel_tool_use": True}
+    # Forcer un appel : refusé (400) par les modèles récents, ramené à auto.
+    assert body["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
     assert body["tools"][0]["input_schema"]["properties"] == {"p": {"type": "string"}}
     assert body["output_config"] == {"effort": "high"}
     assert body["thinking"] == {"type": "adaptive", "display": "summarized",
@@ -233,7 +234,12 @@ def test_flux(claude):
     assert [d["choices"][0]["finish_reason"] for d in docs if d["choices"]][-1] == "tool_calls"
     assert docs[-1]["usage"]["prompt_tokens"] == 10
     assert docs[-1]["usage"]["completion_tokens"] == 12
-    assert anthropic._THINKING["toolu_9"][0]["signature"] == "s"
+    # Le tour gardé tel qu'Anthropic l'a rendu : réflexion signée, texte,
+    # appel avec ses arguments recollés, dans l'ordre.
+    turn = anthropic._TURNS["toolu_9"]
+    assert [b["type"] for b in turn] == ["thinking", "text", "tool_use"]
+    assert turn[0]["signature"] == "s" and turn[1]["text"] == "Bonjour"
+    assert turn[2]["input"] == {"p": "b"}
 
 
 def test_erreur_a_la_forme_openai(claude):
@@ -284,3 +290,49 @@ def test_surface_messages_double_traduction(claude, monkeypatch):
     assert sent["system"].startswith("Tu es un agent.")
     assert sent["max_tokens"] == 1000
     assert sent["tools"][0]["name"] == "Read"
+
+
+def test_tour_rejoue_dans_son_ordre():
+    """Un tour revenu inchangé est rejoué tel qu'Anthropic l'a rendu, même
+    si sa réflexion suit son texte : réordonnée, Anthropic l'écarterait.
+    Modifié par le client, il retombe sur réflexion en tête."""
+    anthropic._TURNS.clear()
+    original = [{"type": "text", "text": "Je regarde."},
+                {"type": "thinking", "thinking": "Il faut lire a.", "signature": "sig"},
+                {"type": "tool_use", "id": "toolu_7", "name": "lire", "input": {"p": "a"}}]
+    doc = anthropic.from_message({"id": "m", "content": original, "stop_reason": "tool_use",
+                                  "usage": {"input_tokens": 1, "output_tokens": 1}})
+    msg = doc["choices"][0]["message"]
+    replay = anthropic._assistant_blocks(msg)
+    assert replay == original
+    changed = dict(msg, content="Autre texte")
+    blocks = anthropic._assistant_blocks(changed)
+    assert [b["type"] for b in blocks] == ["thinking", "text", "tool_use"]
+    assert blocks[1]["text"] == "Autre texte"
+
+
+def test_effort_de_pi_et_non_de_la_page():
+    """L'effort passé au gabarit (chat_template_kwargs, pi / omp) est lu ;
+    « sans réflexion » devient l'effort le plus bas."""
+    msgs = [{"role": "user", "content": "x"}]
+    body = anthropic.to_messages({"model": "m", "messages": msgs,
+                                  "chat_template_kwargs": {"reasoning_effort": "high"}}, CAPS)
+    assert body["output_config"] == {"effort": "high"}
+    body = anthropic.to_messages({"model": "m", "messages": msgs,
+                                  "chat_template_kwargs": {"enable_thinking": False}}, CAPS)
+    assert body["output_config"] == {"effort": "low"}
+
+
+def test_flux_en_crlf():
+    """Un flux Messages en CRLF (une passerelle), coupé au milieu d'une
+    paire \\r\\n : traduit comme en LF."""
+    raw = sse({"type": "message_start", "message": {"id": "m", "model": "x", "usage": {}}},
+              {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+              {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "salut"}},
+              {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}},
+              {"type": "message_stop"}).replace(b"\n", b"\r\n")
+    t = anthropic.StreamTranslator()
+    out = b"".join(t.feed(raw[i:i + 7]) for i in range(0, len(raw), 7))
+    docs = [json.loads(x[6:]) for x in out.decode().split("\n") if x.startswith("data: {")]
+    assert "".join(c["delta"].get("content") or "" for d in docs for c in d["choices"]) == "salut"
+    assert out.endswith(b"data: [DONE]\n\n")

@@ -156,3 +156,16 @@ def test_the_advanced_section_sets_any_setting(conf):
     assert "retention_days = 30\n" in r["toml"]
     assert conf.client.post("/ui/config/merge", json={
         "toml": "", "overrides": [{"path": "stats.x", "value": 1}]}).status_code == 400
+
+
+def test_the_protocol_goes_back_to_openai(conf, tmp_path, monkeypatch):
+    """Un backend repassé d'Anthropic à OpenAI dans le formulaire (qui
+    n'écrit `api` que pour Anthropic) perd son `api = "anthropic"`."""
+    path = tmp_path / "anthropic.toml"
+    path.write_text('[backends.claude]\nurl = "https://api.anthropic.com"\napi = "anthropic"\n')
+    monkeypatch.setattr(config, "CONFIG_PATH", str(path))
+    r = conf.client.post("/ui/config/merge", json={"toml": """
+[backends.claude]
+url = "https://api.anthropic.com"
+"""}).json()
+    assert "api" not in tomllib.loads(r["toml"])["backends"]["claude"]

@@ -24,6 +24,7 @@ Paramètres d'échantillonnage (`temperature`, `top_p`, `top_k`) retirés :
 les modèles récents refusent toute valeur autre que celle par défaut.
 """
 
+import copy
 import json
 import time
 import uuid
@@ -59,22 +60,28 @@ def headers(api_key: str) -> dict:
     return h
 
 
-# ── la réflexion à rejouer ──────────────────────────────────────────────
+# ── les tours à rejouer ─────────────────────────────────────────────────
 # Un tour qui appelle des outils doit être rejoué AVEC ses blocs de
-# réflexion signés ; le client chat/completions ne les garde pas. Le proxy
-# les garde, indexés par l'id du premier appel d'outil du tour. Mémoire
-# bornée, perdue au redémarrage (la requête passe alors sans eux).
-_THINKING: "OrderedDict[str, list]" = OrderedDict()
-_THINKING_MAX = 4096
+# réflexion signés, et DANS SON ORDRE : une réflexion déplacée (après le
+# texte qui la suivait…) est écartée par Anthropic (vérifié contre l'API).
+# Le client chat/completions ne garde ni l'une ni l'autre : le proxy garde
+# le contenu complet du tour, tel qu'Anthropic l'a rendu, indexé par l'id
+# de son premier appel d'outil. Mémoire bornée, perdue au redémarrage (la
+# requête passe alors sans réflexion).
+_TURNS: "OrderedDict[str, list]" = OrderedDict()
+_TURNS_MAX = 4096
 
 
-def _remember(tool_id: str, blocks: list) -> None:
-    if not tool_id or not blocks:
+def _remember(blocks: list) -> None:
+    """Garde le contenu d'un tour qui a appelé des outils."""
+    calls = [b for b in blocks if b.get("type") == "tool_use" and b.get("id")]
+    if not calls:
         return
-    _THINKING[tool_id] = blocks
-    _THINKING.move_to_end(tool_id)
-    while len(_THINKING) > _THINKING_MAX:
-        _THINKING.popitem(last=False)
+    key = calls[0]["id"]
+    _TURNS[key] = blocks
+    _TURNS.move_to_end(key)
+    while len(_TURNS) > _TURNS_MAX:
+        _TURNS.popitem(last=False)
 
 
 def _safe_id(value) -> str:
@@ -129,23 +136,39 @@ def _user_blocks(content) -> list:
 
 
 def _assistant_blocks(msg: dict) -> list:
-    blocks = []
+    """Le tour de l'assistant. Rendu par Anthropic et revenu inchangé
+    (mêmes appels, même texte) : son contenu d'origine, réflexion et ordre
+    compris. Sinon (tour d'un autre modèle, modifié par le client) : sa
+    réflexion connue en tête, puis le texte et les appels."""
     calls = [c for c in msg.get("tool_calls") or [] if isinstance(c, dict)]
-    if calls:
-        blocks += _THINKING.get(_safe_id(calls[0].get("id")), [])
-    text = _text(msg.get("content"))
-    if text.strip():
-        blocks.append({"type": "text", "text": text})
+    uses = []
     for c in calls:
         fn = c.get("function") or {}
         try:
             args = json.loads(fn.get("arguments") or "{}")
         except (TypeError, ValueError):
             args = {}
-        blocks.append({"type": "tool_use", "id": _safe_id(c.get("id")),
-                       "name": str(fn.get("name") or ""),
-                       "input": args if isinstance(args, dict) else {"value": args}})
-    return blocks
+        uses.append({"type": "tool_use", "id": _safe_id(c.get("id")),
+                     "name": str(fn.get("name") or ""),
+                     "input": args if isinstance(args, dict) else {"value": args}})
+    text = _text(msg.get("content"))
+    turn = _TURNS.get(uses[0]["id"]) if uses else None
+    if turn is not None and _same(turn, text, uses):
+        return copy.deepcopy(turn)
+    blocks = [copy.deepcopy(b) for b in turn or ()
+              if b.get("type") in ("thinking", "redacted_thinking")]
+    if text.strip():
+        blocks.append({"type": "text", "text": text})
+    return blocks + uses
+
+
+def _same(turn: list, text: str, uses: list) -> bool:
+    """Le tour d'origine est-il celui que le client renvoie ?"""
+    mine = [(u["id"], u["name"], u["input"]) for u in uses]
+    theirs = [(b.get("id"), b.get("name"), b.get("input") or {})
+              for b in turn if b.get("type") == "tool_use"]
+    said = "".join(b.get("text") or "" for b in turn if b.get("type") == "text")
+    return mine == theirs and said.strip() == text.strip()
 
 
 def _tool_result(msg: dict) -> dict:
@@ -193,17 +216,15 @@ def _messages(chat: list) -> tuple[str, list]:
 
 
 def _tool_choice(choice, parallel) -> dict | None:
+    """`tool_choice` d'OpenAI → celui d'Anthropic. Forcer un appel
+    (« required », une fonction nommée → `any`, `tool`) est refusé (400)
+    par les modèles récents (Opus 5.5, Sonnet 5.5, Fable 5.1 et après) :
+    ramené à `auto`, l'appel reste au choix du modèle."""
     out = None
-    if choice == "auto":
+    if choice in ("auto", "required") or isinstance(choice, dict):
         out = {"type": "auto"}
     elif choice == "none":
         out = {"type": "none"}
-    elif choice == "required":
-        out = {"type": "any"}
-    elif isinstance(choice, dict):
-        name = (choice.get("function") or {}).get("name")
-        if name:
-            out = {"type": "tool", "name": name}
     if parallel is False:
         out = (out or {"type": "auto"})
         if out["type"] != "none":
@@ -252,8 +273,16 @@ def to_messages(payload: dict, caps: dict | None = None,
         if choice:
             body["tool_choice"] = choice
     output = {}
-    effort = str(payload.get("reasoning_effort") or "").lower()
-    effort = {"minimal": "low", "none": "low"}.get(effort, effort)
+    # L'effort : `reasoning_effort`, ou celui que les clients de llama.cpp
+    # passent au gabarit (`chat_template_kwargs` : pi, omp ; « non » de la
+    # page). La réflexion ne se coupe pas sur les modèles récents :
+    # « sans » devient l'effort le plus bas.
+    kwargs = payload.get("chat_template_kwargs")
+    kwargs = kwargs if isinstance(kwargs, dict) else {}
+    effort = str(payload.get("reasoning_effort") or kwargs.get("reasoning_effort") or "").lower()
+    if not effort and kwargs.get("enable_thinking") is False:
+        effort = "none"
+    effort = {"minimal": "low", "none": "low", "off": "low"}.get(effort, effort)
     supported = caps.get("effort") if isinstance(caps.get("effort"), dict) else {}
     if effort in EFFORTS and (supported.get(effort) or {}).get("supported"):
         output["effort"] = effort
@@ -287,24 +316,20 @@ def _usage(u: dict) -> dict:
 
 def from_message(msg: dict) -> dict:
     """Une réponse Messages complète → chat.completion."""
-    text, reasoning, calls, thinking = [], [], [], []
+    text, reasoning, calls = [], [], []
     for b in msg.get("content") or []:
         kind = b.get("type")
         if kind == "text":
             text.append(b.get("text") or "")
         elif kind == "thinking":
-            thinking.append(b)
             if b.get("thinking"):
                 reasoning.append(b["thinking"])
-        elif kind == "redacted_thinking":
-            thinking.append(b)
         elif kind == "tool_use":
             calls.append({"id": b.get("id"), "type": "function",
                           "function": {"name": b.get("name"),
                                        "arguments": json.dumps(b.get("input") or {},
                                                                ensure_ascii=False)}})
-    if calls:
-        _remember(calls[0]["id"], thinking)
+    _remember(list(msg.get("content") or []))
     message = {"role": "assistant", "content": "".join(text) or None}
     if reasoning:
         message["reasoning_content"] = "\n\n".join(reasoning)
@@ -349,14 +374,18 @@ class StreamTranslator:
                       "object": "chat.completion.chunk",
                       "created": int(time.time()), "model": None}
         self._usage: dict = {}
-        self._kinds: dict[int, str] = {}     # index du bloc → type
         self._tools: dict[int, int] = {}     # index du bloc → index de l'appel
-        self._thinking: dict[int, dict] = {}
-        self._first_tool = ""
+        # Le contenu du tour, reconstitué bloc par bloc (index → bloc), à
+        # garder pour le rejouer (_remember) ; les arguments des appels
+        # arrivent en morceaux de JSON.
+        self._blocks: dict[int, dict] = {}
+        self._args: dict[int, str] = {}
         self._finish = None
 
     def feed(self, chunk: bytes) -> bytes:
-        self._buf += chunk
+        # Les fins de ligne CRLF (une passerelle) : ramenées à LF, la
+        # paire pouvant arriver coupée entre deux morceaux.
+        self._buf = (self._buf + chunk).replace(b"\r\n", b"\n")
         out = b""
         while b"\n\n" in self._buf:
             event, self._buf = self._buf.split(b"\n\n", 1)
@@ -382,35 +411,35 @@ class StreamTranslator:
             return _chunk(self._base, {"role": "assistant", "content": ""})
         if kind == "content_block_start":
             i, block = ev.get("index", 0), ev.get("content_block") or {}
-            self._kinds[i] = block.get("type")
+            self._blocks[i] = dict(block)
             if block.get("type") == "tool_use":
                 n = self._tools[i] = len(self._tools)
-                if n == 0:
-                    self._first_tool = block.get("id") or ""
+                self._args[i] = ""
                 return _chunk(self._base, {"tool_calls": [{
                     "index": n, "id": block.get("id"), "type": "function",
                     "function": {"name": block.get("name"), "arguments": ""}}]})
-            if block.get("type") in ("thinking", "redacted_thinking"):
-                self._thinking[i] = dict(block)
             if block.get("type") == "text" and block.get("text"):
                 return _chunk(self._base, {"content": block["text"]})
             return b""
         if kind == "content_block_delta":
             i, d = ev.get("index", 0), ev.get("delta") or {}
             dt = d.get("type")
+            block = self._blocks.setdefault(i, {})
             if dt == "text_delta":
+                block["text"] = block.get("text", "") + d.get("text", "")
                 return _chunk(self._base, {"content": d.get("text", "")})
             if dt == "input_json_delta" and i in self._tools:
+                self._args[i] += d.get("partial_json", "")
                 return _chunk(self._base, {"tool_calls": [{
                     "index": self._tools[i],
                     "function": {"arguments": d.get("partial_json", "")}}]})
             if dt == "thinking_delta":
-                block = self._thinking.setdefault(i, {"type": "thinking", "thinking": ""})
+                block.setdefault("type", "thinking")
                 block["thinking"] = block.get("thinking", "") + d.get("thinking", "")
                 if d.get("thinking"):
                     return _chunk(self._base, {"reasoning_content": d["thinking"]})
             if dt == "signature_delta":
-                block = self._thinking.setdefault(i, {"type": "thinking", "thinking": ""})
+                block.setdefault("type", "thinking")
                 block["signature"] = block.get("signature", "") + d.get("signature", "")
             return b""
         if kind == "message_delta":
@@ -418,8 +447,12 @@ class StreamTranslator:
             self._finish = FINISH.get((ev.get("delta") or {}).get("stop_reason"), "stop")
             return _chunk(self._base, {}, finish=self._finish)
         if kind == "message_stop":
-            if self._first_tool:
-                _remember(self._first_tool, [self._thinking[i] for i in sorted(self._thinking)])
+            for i, raw in self._args.items():
+                try:
+                    self._blocks[i]["input"] = json.loads(raw) if raw else {}
+                except ValueError:
+                    self._blocks[i]["input"] = {}
+            _remember([self._blocks[i] for i in sorted(self._blocks)])
             return _chunk(self._base, {}, usage=_usage(self._usage)) + b"data: [DONE]\n\n"
         if kind == "error":
             err = ev.get("error") or {}

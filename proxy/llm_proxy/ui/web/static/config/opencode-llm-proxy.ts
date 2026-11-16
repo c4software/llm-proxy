@@ -7,13 +7,14 @@
 //     de PDF, recherche dans une page, mémoire, OCR, transcription, exécution
 //     de code, images.
 // Adresse et clé lues dans l'environnement (LLM_PROXY_URL, LLM_PROXY_API_KEY ;
-// LLM_PROXY_KEY accepté aussi) : rien en dur. Proxy injoignable : aucun modèle
+// LLM_PROXY_KEY accepté aussi ; une variable vide compte comme absente) : rien
+// en dur. Proxy injoignable : aucun modèle
 // enregistré, la découverte n'attend pas plus de DELAI_DECOUVERTE.
 // Posé dans ~/.config/opencode/plugins/ (chargé d'office par opencode 2.x).
 import { Model, Plugin, Provider } from "@opencode/plugin"
 
-const ENDPOINT = (process.env.LLM_PROXY_URL ?? "http://llmproxy").replace(/\/+$/, "")
-const API_KEY = process.env.LLM_PROXY_API_KEY ?? process.env.LLM_PROXY_KEY ?? "unused"
+const ENDPOINT = (process.env.LLM_PROXY_URL || "http://llmproxy").replace(/\/+$/, "")
+const API_KEY = process.env.LLM_PROXY_API_KEY || process.env.LLM_PROXY_KEY || "unused"
 const PROVIDER = "llmproxy"
 const DEFAULT_CONTEXT = 128_000
 const MAX_OUTPUT = 16_384

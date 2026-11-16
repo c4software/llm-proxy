@@ -163,7 +163,7 @@ FORM_DROPS = ("oidc", "oidc.redirect_uri", "anthropic.model_map.default",
               "tools.transcribe.model")
 # Les clés d'un backend que le formulaire règle ; les autres (délais,
 # tokenize_path…) restent. Un backend absent du formulaire est retiré.
-BACKEND_FORM_KEYS = ("url", "api_key", "quotas", "images", "force_tool_choice",
+BACKEND_FORM_KEYS = ("url", "api_key", "api", "quotas", "images", "force_tool_choice",
                      "max_tokens", "fair_share")
 
 
