@@ -264,11 +264,7 @@ page à côté de son module (`config/pi-llm-proxy.ts`,
   serveur MCP du proxy, et retire `websearch` et `webfetch` d'OpenCode.
 
 Les deux lisent `LLM_PROXY_URL` et `LLM_PROXY_API_KEY` dans
-l'environnement : rien n'est écrit en dur dans les fichiers. Sans
-variable de clé (ou vide), elles lisent `~/.config/llm-proxy.key`, le
-fichier que pose le bloc *La clé, une fois* (sous Windows
-`%USERPROFILE%\.config\llm-proxy.key`). Le `mcp.json` de pi / omp, lui,
-ne lit que la variable.
+l'environnement : rien n'est écrit en dur dans les fichiers.
 Sous Windows, sans profil du shell, la page les pose en variables
 d'utilisateur par PowerShell (clé en saisie masquée). Si `/model` ne
 propose aucun modèle `llmproxy`, `omp models llmproxy` (ou `pi
