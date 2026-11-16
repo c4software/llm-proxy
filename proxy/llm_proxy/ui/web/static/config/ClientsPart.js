@@ -144,7 +144,8 @@ export const ClientsPart = {
         files.push({ name: "Windows : les variables de l'utilisateur (PowerShell)", lang: "powershell",
           download: "llm-proxy-env.ps1",
           note: "L'adresse du proxy et la clé, " + forWhat + " Saisie masquée, hors de l'historique. "
-            + "Lues par les terminaux ouverts ensuite.",
+            + "Lues par les terminaux ouverts ensuite. Sans variable de clé, l'extension lit "
+            + "%USERPROFILE%\\.config\\llm-proxy.key.",
           content: set("LLM_PROXY_URL", q(origin))
             + (auth.value
               ? `$s = Read-Host "Clé du proxy" -AsSecureString\n`
@@ -297,7 +298,8 @@ export const ClientsPart = {
           files.push(extFile("pi-llm-proxy.ts",
             "~/.pi/agent/extensions/llm-proxy.ts et ~/.omp/agent/extensions/llm-proxy.ts",
             "L'extension du provider : lit GET /v1/models du proxy au démarrage "
-            + "et enregistre ses modèles sous le provider llmproxy. Le même fichier pour pi et omp "
+            + "et enregistre ses modèles sous le provider llmproxy. Clé : LLM_PROXY_API_KEY, sinon "
+            + "~/.config/llm-proxy.key. Le même fichier pour pi et omp "
             + "(Windows : %USERPROFILE%\\.pi\\agent\\extensions et %USERPROFILE%\\.omp\\agent\\extensions)."));
           shell("Lancer", `pi --model llmproxy/${model}\n`,
             "Avec l'extension llm-proxy.ts, les modèles se nomment llmproxy/<backend>/<modèle>.");
@@ -316,7 +318,8 @@ export const ClientsPart = {
           files.push(extFile("opencode-llm-proxy.ts", "~/.config/opencode/plugins/llm-proxy.ts",
             "Le plugin (OpenCode 2.x) : un provider llmproxy dont les modèles sont lus "
             + "sur GET /v1/models du proxy (au démarrage, puis toutes les 5 min), et le serveur MCP du "
-            + "proxy. Il retire les outils websearch et webfetch d'OpenCode : la recherche est celle du proxy."));
+            + "proxy. Il retire les outils websearch et webfetch d'OpenCode : la recherche est celle du proxy. "
+            + "Clé : LLM_PROXY_API_KEY, sinon ~/.config/llm-proxy.key."));
           shell("~/.bashrc (ou ~/.zshrc)",
             `export LLM_PROXY_URL=${origin}\n${exportLine}\n`
             + (env !== "LLM_PROXY_API_KEY" ? `export LLM_PROXY_API_KEY="$${env}"\n` : ""),
