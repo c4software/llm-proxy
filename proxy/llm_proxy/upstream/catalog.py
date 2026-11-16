@@ -119,7 +119,10 @@ def _architecture(m: dict, kind: str, b: Backend | None = None) -> dict:
     arch = m.get("architecture")
     if isinstance(arch, dict) and not _overridden(m, b):
         inp, out = arch.get("input_modalities"), arch.get("output_modalities")
-        if isinstance(inp, list) and isinstance(out, list) and inp and out:
+        # llama.cpp ne donne que l'entrée : la sortie, celle du type.
+        if not (isinstance(out, list) and out):
+            out = _TYPE_MODALITIES.get(kind, (["text"], ["text"]))[1]
+        if isinstance(inp, list) and inp:
             inp, out = [str(x) for x in inp], [str(x) for x in out]
             return {"modality": "+".join(inp) + "->" + "+".join(out),
                     "input_modalities": inp, "output_modalities": out}

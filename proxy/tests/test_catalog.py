@@ -72,6 +72,7 @@ def test_architecture_a_la_forme_d_openrouter():
         {"id": "brut"},                                                    # llama-swap
         {"id": "lcpp", "architecture": {"input_modalities": ["text", "image", "audio"],
                                         "output_modalities": ["text"]}},  # llama.cpp
+        {"id": "llama-server", "architecture": {"input_modalities": ["text", "image"]}},
         {"id": "forcé", "architecture": {"input_modalities": ["text"],
                                          "output_modalities": ["text"]}},
     ]
@@ -86,5 +87,9 @@ def test_architecture_a_la_forme_d_openrouter():
     assert got["cat/whisper"]["input_modalities"] == ["audio"]
     assert got["cat/brut"]["modality"] == "text->text"
     assert got["cat/lcpp"]["input_modalities"] == ["text", "image", "audio"]
+    # llama-server : l'entrée seule, la sortie suit le type déduit.
+    assert got["cat/llama-server"] == {"modality": "text+image->text",
+                                       "input_modalities": ["text", "image"],
+                                       "output_modalities": ["text"]}
     assert got["cat/forcé"] == {"modality": "text->image",
                                 "input_modalities": ["text"], "output_modalities": ["image"]}
