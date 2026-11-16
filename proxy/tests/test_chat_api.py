@@ -183,7 +183,7 @@ def test_stream_of_two_upstream_turns_reads_as_one(chat):
     assert len(chat.lines) == 1
     assert chat.lines[0][:5] == (
         "essai/qwen", "essai", "qwen", "/v1/chat/completions", 200)
-    assert chat.lines[0][6:11] == (250, 15, True, True, 140)
+    assert chat.lines[0][6:] == (250, 15, True, True, 140)
     assert [line[:4] for line in chat.tool_lines] == [
         ("web_search", "/v1/chat/completions", "essai/qwen", "ok")]
     assert all(u.closed for u in ups)
@@ -205,7 +205,7 @@ def test_json_mode(chat):
     assert "stream_options" not in chat.sent[0]
     assert chat.sent[1]["messages"][-1]["content"] == FOUND
     assert len(chat.lines) == 1
-    assert chat.lines[0][6:11] == (250, 15, True, False, 140)
+    assert chat.lines[0][6:] == (250, 15, True, False, 140)
 
 
 def test_cited_sources_come_back_as_url_citations(chat, monkeypatch):
@@ -610,7 +610,7 @@ def test_always_presents_the_hosted_tools_to_a_request_that_declares_nothing(
     assert not any("usage" in d for d in docs)
     assert chat.hosted.runs == [
         ("web_search", {"query": "llama.cpp latest release"}, {})]
-    assert len(chat.lines) == 1 and chat.lines[0][6:11] == (250, 15, True, True, 140)
+    assert len(chat.lines) == 1 and chat.lines[0][6:] == (250, 15, True, True, 140)
     assert [line[:4] for line in chat.tool_lines] == [
         ("web_search", "/v1/chat/completions", "essai/qwen", "ok")]
     chat.replies = [FakeUpstream(stream(*ANSWER_TURN))]

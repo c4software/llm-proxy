@@ -24,7 +24,7 @@
   l'onglet est masqué.
 */
 import { ask } from "../lib/http.js";
-import { num, ms, dur, ago, moment, money } from "../lib/format.js";
+import { num, ms, dur, ago, moment } from "../lib/format.js";
 
 const { ref, computed, watch, onMounted, onUnmounted } = Vue;
 
@@ -129,7 +129,7 @@ export const StatsView = {
             acc.set(r.model, m = {
               id: r.model, requests: 0, errors: 0, streamed: 0, estimated: 0,
               anthropic: 0, prompt: 0, cached: 0, completion: 0,
-              latencySum: 0, maxLatency: 0, last: 0, cost: null,
+              latencySum: 0, maxLatency: 0, last: 0,
             });
           }
           m.requests += r.num_model_requests;
@@ -140,9 +140,6 @@ export const StatsView = {
           m.prompt += r.input_tokens;
           m.cached += r.input_cached_tokens || 0;
           m.completion += r.output_tokens;
-          // Le prix (extension du proxy) : null tant qu'aucune requête du
-          // modèle n'a de tarif ([backends.<nom>.prices]).
-          if (r.cost !== null && r.cost !== undefined) m.cost = (m.cost || 0) + r.cost;
           m.latencySum += r.total_latency_seconds;
           m.maxLatency = Math.max(m.maxLatency, r.max_latency_seconds);
           m.last = Math.max(m.last, r.last_request_time);
@@ -185,9 +182,8 @@ export const StatsView = {
       cached: t.cached + m.cached,
       completion: t.completion + m.completion,
       tokens: t.tokens + m.tokens,
-      cost: m.cost === null ? t.cost : (t.cost || 0) + m.cost,
     }), { requests: 0, errors: 0, streamed: 0, anthropic: 0, prompt: 0,
-          cached: 0, completion: 0, tokens: 0, cost: null }));
+          cached: 0, completion: 0, tokens: 0 }));
 
     const successRate = computed(() => {
       const t = totals.value;
@@ -434,7 +430,7 @@ export const StatsView = {
              models, totals, bars, axis, peak, since, now, tools, toolCalls,
              loaded, entering, webCache, mcpServers,
              note, shortcuts, bucketLabel, successRate,
-             backendSummary, num, ms, dur, moment, money, tickLabel, select, selectMetric,
+             backendSummary, num, ms, dur, moment, tickLabel, select, selectMetric,
              ago: (ts) => ago(ts, now.value) };
   },
   template: `
@@ -474,11 +470,6 @@ export const StatsView = {
         {{ num(totals.completion) }} sortie<template v-if="totals.cached">
         · {{ Math.round(100 * totals.cached / totals.prompt) || "<1" }}% de
         l'entrée en cache</template></div>
-    </div>
-    <div class="card" v-if="totals.cost !== null"
-         title="Le prix des requêtes des modèles qui ont un tarif ([backends.<nom>.prices]), en dollars, au tarif du moment de chaque requête">
-      <div class="label">Coût</div>
-      <div class="value">{{ money(totals.cost) }}</div>
     </div>
     <div class="card">
       <div class="label">Modèles actifs</div>
@@ -559,7 +550,7 @@ export const StatsView = {
         <thead><tr>
           <th>Modèle</th><th>Requêtes</th><th>Erreurs</th><th>Entrée</th>
           <th>Sortie</th><th>Total</th><th>Part</th><th>Moy./req</th>
-          <th>Cache</th><th>Coût</th>
+          <th>Cache</th>
           <th>Lat. moy.</th><th>Lat. max</th>
           <th>Comptage</th><th>Dernière</th>
         </tr></thead>
@@ -590,7 +581,6 @@ export const StatsView = {
               <span v-if="m.cached">{{ m.cachePct }}%</span>
               <span v-else class="dim">—</span>
             </td>
-            <td :class="{ dim: m.cost === null }">{{ money(m.cost) }}</td>
             <td>{{ ms(m.avgLatency) }}</td>
             <td class="dim">{{ ms(m.maxLatency) }}</td>
             <!-- Provenance des tokens : \`usage\` de l'upstream, ou
@@ -606,7 +596,7 @@ export const StatsView = {
             <td class="dim">{{ ago(m.last) }}</td>
           </tr>
           <tr v-if="!models.length && loaded">
-            <td colspan="14"><div class="empty">
+            <td colspan="13"><div class="empty">
               <div class="big">Aucune génération sur cette période</div>
               <div v-if="since">Les mesures remontent à {{ dur(now - since) }} ;
                 essayez une période plus large.</div>

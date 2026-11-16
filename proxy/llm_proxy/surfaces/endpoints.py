@@ -165,7 +165,6 @@ async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
             status_code=upstream.status_code,
             headers=response_headers(upstream))
     robinet = chat_api.Translator(upstream.status_code, content_type, ctx)
-    robinet.rate = call.rate()
     base = payload.get("messages")
     base = list(base) if isinstance(base, list) else []
     # `payload` a déjà perdu son préfixe (strip_backend_prefix), et la

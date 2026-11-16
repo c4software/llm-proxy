@@ -286,11 +286,6 @@ class Translator:
         return _stop_reason(self._finish_reason, self._saw_tool,
                             bool(self.results))
 
-    def usages(self) -> list[dict]:
-        """Les usages de l'upstream, un par aller-retour : le prix se
-        calcule requête par requête (pricing.usage_cost)."""
-        return self._past + ([self.usage] if isinstance(self.usage, dict) else [])
-
     def cached(self) -> int:
         return _cached(self._total())
 

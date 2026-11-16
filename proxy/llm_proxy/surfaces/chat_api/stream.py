@@ -9,7 +9,6 @@ import uuid
 
 from ...core.settings import log
 from ...storage import files
-from ...upstream import pricing
 
 from .common import CHARS_PER_TOKEN, GAP, PREVIEW_CHARS, Context
 from .memory import _key, _weight
@@ -84,9 +83,6 @@ class Translator:
         self.status = 200
         self.usage: dict | None = None    # usage upstream du tour en cours
         self._past: list[dict] = []       # usages des tours précédents
-        # Le tarif du modèle (relaying.Call.rate) : `usage.cost`, le prix
-        # de TOUS les tours de la réponse (pricing.usage_cost).
-        self.rate: dict | None = None
         self.out_chars = 0
         # Appels hébergés du tour, à exécuter : {id, name, arguments}.
         self.pending: list[dict] = []
@@ -283,7 +279,7 @@ class Translator:
         choice["message"] = msg
         choice["finish_reason"] = self._final_reason()
         doc["choices"] = [choice]
-        last = self._priced(self._last())
+        last = self._last()
         if last is not None:
             doc["usage"] = last
         return json.dumps(doc, ensure_ascii=False).encode()
@@ -309,12 +305,6 @@ class Translator:
         turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
         return turns[-1] if turns else None
 
-    def _priced(self, usage: dict | None) -> dict | None:
-        """`usage` complété de `cost` (forme d'OpenRouter) : le prix de
-        tous les tours de la réponse, s'il y a un tarif."""
-        cost = pricing.usage_cost(self.rate, self.usages())
-        return usage if usage is None or cost is None else {**usage, "cost": cost}
-
     def _total(self) -> dict | None:
         """L'usage CONSOMMÉ (quotas, statistiques, logs) : celui de
         l'upstream s'il n'y a eu qu'un tour, la SOMME sinon."""
@@ -323,11 +313,6 @@ class Translator:
         for u in turns:
             total = u if total is None else _sum(total, u)
         return total
-
-    def usages(self) -> list[dict]:
-        """Les usages de l'upstream, un par aller-retour : le prix se
-        calcule requête par requête (pricing.usage_cost)."""
-        return self._past + ([self.usage] if isinstance(self.usage, dict) else [])
 
     def cached(self) -> int:
         details = (self._total() or {}).get("prompt_tokens_details")
@@ -544,7 +529,7 @@ class Translator:
         hidden = self.ctx.restored + sum(_weight(m) for m in self._history)
         if self.ctx.progress and hidden:
             out += self._block({"x_hidden": {"chars": hidden}})
-        last = self._priced(self._last())
+        last = self._last()
         if self.ctx.include_usage and last is not None:
             out += _sse({"object": "chat.completion.chunk",
                          **(self._head or {}), "choices": [], "usage": last})

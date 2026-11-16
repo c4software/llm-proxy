@@ -9,7 +9,6 @@
   avertissements.
 */
 import { q, list, envName, csv } from "../shared.js";
-import { pricesToml } from "./providers.js";
 
 export const TOOL_LIST = [
   { id: "web_search", label: "Recherche web (SearXNG)" },
@@ -63,9 +62,6 @@ export function prefillForm(px, c) {
   px.backends = Object.entries(g("backends", {})).map(([name, b]) => ({
     name, url: b.url || "", key: !!b.api_key, keyVar: varOf(b.api_key), quotas: !!b.quotas,
     api: b.api === "anthropic" ? "anthropic" : "openai",
-    // Les tarifs : gardés tels quels (non édités ici, voir Avancé ou le
-    // fichier complet), réécrits avec le backend.
-    prices: b.prices && typeof b.prices === "object" ? b.prices : null,
     images: b.images === undefined ? b.api === "anthropic" : !!b.images, toolChoice: typeof b.force_tool_choice === "string" ? b.force_tool_choice : "",
     maxTokens: b.max_tokens || "", fairShare: b.fair_share !== false,
   }));
@@ -192,7 +188,6 @@ export function buildProxy(px) {
     if (b.toolChoice) L.push(`force_tool_choice = ${q(b.toolChoice)}`);
     if (Number(b.maxTokens) > 0) L.push(`max_tokens = ${Number(b.maxTokens)}`);
     if (!b.fairShare) L.push("fair_share = false");
-    if (b.prices) L.push("", ...pricesToml(name, b.prices));
     L.push("");
   }
   if (!names.size) warn.push("Aucun backend : le proxy n'aurait rien à servir.");

@@ -36,7 +36,7 @@ const FORM_FLAT = new Set(["proxy.log_level", "proxy.api_keys", "proxy.exempt_pa
   "responses.enabled", "chat.hosted_tools", "chat.always", "chat.always_except",
   "tools.max_calls", "mcp_server.enabled", "ui.chat", "ui.chat_model",
   "files.public_url", "stats.retention_days"]);
-const BACKEND_FORM_KEYS = ["url", "api_key", "api", "prices", "quotas", "images", "force_tool_choice",
+const BACKEND_FORM_KEYS = ["url", "api_key", "api", "quotas", "images", "force_tool_choice",
                            "max_tokens", "fair_share"];
 const OIDC_FORM_KEYS = ["issuer", "client_id", "client_secret", "redirect_uri",
                         "new_accounts", "session_days", "max_keys_per_account", "label"];

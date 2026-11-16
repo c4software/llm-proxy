@@ -9,7 +9,7 @@
 */
 import { useCopy, download } from "../lib/files.js";
 import { q, list, randomKey } from "./shared.js";
-import { PROVIDERS, buildOverride, pricesToml } from "./proxy/providers.js";
+import { PROVIDERS, buildOverride } from "./proxy/providers.js";
 
 const { ref, reactive, computed, watch } = Vue;
 
@@ -67,9 +67,6 @@ export const SetupPanel = {
         if (p.api) L.push(`api = ${q(p.api)}`);
         if (p.quotas) L.push("quotas = true");
         if (p.toolChoice) L.push(`force_tool_choice = ${q(p.toolChoice)}`);
-        // Une sous-table : après toutes les clés du backend.
-        if (p.prices) L.push("# Tarifs publics, $ par million de tokens : le coût de chaque requête.",
-                             ...pricesToml(p.id, p.prices()));
       }
       if (c.agents) {
         L.push("", "# Claude Code : l'API Messages d'Anthropic, traduite", "[anthropic]", "enabled = true");

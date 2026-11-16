@@ -140,7 +140,7 @@ def test_startup_reads_the_last_hour_back(tmp_path, monkeypatch, proxy):
     ]
     for ts, key, backend, endpoint, tokens in rows:
         conn.execute(stats.INSERT, (ts, backend + "/m", backend, "m", endpoint,
-                                    200, 1.0, tokens, 0, 1, 0, 0, key, None))
+                                    200, 1.0, tokens, 0, 1, 0, 0, key))
     conn.commit()
     conn.close()
     assert startup.seed_fair_share() == 3

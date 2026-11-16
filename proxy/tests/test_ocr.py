@@ -193,7 +193,7 @@ def test_ocr_image_envoyee_au_modele_de_vision_et_texte_rendu(env):
     (line,) = env.lines
     assert line[:5] == ("vision/lecteur", "vision", "lecteur",
                         "/v1/tools/ocr", 200)
-    assert line[6:11] == (900, 40, True, False, 7)
+    assert line[6:] == (900, 40, True, False, 7)
     assert ocr.TOOL.summary({"url": "http://site.test/scan"}, web.last) == {
         "type": "ocr", "url": "http://site.test/scan"}
 

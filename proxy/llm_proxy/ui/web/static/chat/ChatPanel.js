@@ -81,7 +81,7 @@ import { useRecorder } from "./voice/recorder.js";
 import { role as voiceRole, presetVoices, language as voiceLanguage } from "./voice/proxy.js";
 import { clones as voiceClones, load as loadClones } from "./voice/clones.js";
 import { Markdown } from "../lib/markdown.js";
-import { num, size, money } from "../lib/format.js";
+import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
 
 export const ChatPanel = {
@@ -781,7 +781,6 @@ export const ChatPanel = {
               const choice = (j.choices || [])[0] || {};
               live.content = (choice.message || {}).content || "";
               live.usage = j.usage || null;
-              if (j.usage && typeof j.usage.cost === "number") live.cost = (live.cost || 0) + j.usage.cost;
               return;
             }
             await readStream(r.body, live, { calls, onCall: (slot) => writing(live, slot),
@@ -1069,15 +1068,6 @@ export const ChatPanel = {
     const autoCompact = VueUse.useLocalStorage("llm-proxy-auto-compact", true);
     const ctxOpen = ref(false);
     const contextMax = (conv) => { const e = conv && modelEntry(conv.model); return (e && e.context) || 0; };
-    // Le coût de la conversation : la somme des prix de ses réponses et de
-    // ses résumés (`cost`, cumulé à la réception de usage.cost) ; null
-    // tant qu'aucune n'en a (un modèle sans tarif).
-    const convCost = computed(() => {
-      const c = current.value;
-      if (!c) return null;
-      const priced = c.messages.filter((m) => typeof m.cost === "number");
-      return priced.length ? priced.reduce((s, m) => s + m.cost, 0) : null;
-    });
     const context = computed(() => {
       const c = current.value;
       if (!c || !c.messages.length || genMode.value) return null;
@@ -1155,8 +1145,7 @@ export const ChatPanel = {
             throw new Error((j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`);
           }
           if ((r.headers.get("content-type") || "").includes("event-stream")) await readStream(r.body, s);
-          else { const j = await r.json(); s.content = (((j.choices || [])[0] || {}).message || {}).content || ""; s.usage = j.usage || null;
-            if (j.usage && typeof j.usage.cost === "number") s.cost = (s.cost || 0) + j.usage.cost; }
+          else { const j = await r.json(); s.content = (((j.choices || [])[0] || {}).message || {}).content || ""; s.usage = j.usage || null; }
         };
         try {
           await once(Compact.request(msgs, focus));
@@ -1794,7 +1783,7 @@ export const ChatPanel = {
              sheet, sheetOpen, cardAct, cardView, keptView, keptAct, keptNotes, body, keptComponent, keptBelow, cardComponent, cardPlacement, cardPending, folderCtx,
              download, downloadOut, extOf,
              dropZone, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
-             copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, money, convCost, when,
+             copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
              host, context, contextTitle, ctxParts, sentFrom, autoCompact, ctxOpen, compactNow, uncompact,
              retryCompacted, tooLong, editing, cancelEdit, commandHints, useCommand, kTokens: Compact.kTokens, estimate: Compact.estimate,
              AUTO_AT: Compact.AUTO_AT };
@@ -2094,7 +2083,6 @@ export const ChatPanel = {
             <div class="msg-meta" v-if="!(streaming && i === current.messages.length - 1)">
               <span>{{ m.model }}</span>
               <span v-if="m.usage">{{ num(m.usage.prompt_tokens) }} → {{ num(m.usage.completion_tokens) }} tokens</span>
-              <span v-if="typeof m.cost === 'number'" title="Le prix de cette réponse (tous ses appels au modèle), au tarif du proxy">{{ money(m.cost) }}</span>
               <span v-if="m.duration">{{ m.duration.toFixed(1) }} s</span>
               <button type="button" class="link" v-if="m.content" @click="copyText(m.content, $event.target)">Copier</button>
               <button type="button" class="link" v-if="m.content && voiceSupported" @click="listen(m)"
@@ -2321,8 +2309,6 @@ export const ChatPanel = {
                 ? " sur " + num(context.max) + " (" + Math.round(context.ratio * 100) + " %)" : "" }}<br>
                 <span class="dim">{{ context.measured ? "mesuré par le modèle à sa dernière réponse"
                   : "estimé : la dernière mesure, plus ce qui a suivi" }}</span></p>
-              <p class="menu-note" v-if="convCost !== null"
-                 title="La somme des prix de ses réponses et de ses résumés, au tarif du proxy">Coût de la conversation : <b>{{ money(convCost) }}</b></p>
               <template v-if="ctxParts">
                 <div class="ctx-bar" role="img" :aria-label="ctxParts.parts.map((p) => p.label + ' ' + num(p.tokens)).join(', ')">
                   <span v-for="p in ctxParts.parts" :key="p.key" :class="'part-' + p.key"

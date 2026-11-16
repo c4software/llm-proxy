@@ -37,12 +37,7 @@ export function take(doc, live, hooks = {}) {
       : doc.error.message || "erreur du proxy";
     return;
   }
-  if (doc.usage) {
-    live.usage = doc.usage;
-    // Le prix de la requête (usage.cost, posé par le proxy quand le modèle
-    // a un tarif) : CUMULÉ sur les requêtes du tour (outils de la page).
-    if (typeof doc.usage.cost === "number") live.cost = (live.cost || 0) + doc.usage.cost;
-  }
+  if (doc.usage) live.usage = doc.usage;
   for (const choice of doc.choices || []) {
     const d = choice.delta || {};
     if (d.content) live.content += d.content;

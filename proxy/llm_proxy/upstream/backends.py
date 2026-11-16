@@ -17,7 +17,7 @@ import httpx2
 
 from ..core import config
 from ..core.settings import META_TIMEOUT, TIMEOUT, TOOL_CHOICE, log
-from . import albert, anthropic, pricing
+from . import albert, anthropic
 
 
 class Backend:
@@ -95,13 +95,6 @@ class Backend:
             str(k).strip().lower(): str(v).strip()
             for k, v in (overrides.items() if isinstance(overrides, dict) else ())
             if str(k).strip() and str(v).strip()}
-        # Les tarifs, en $ par million de tokens, par motif de modèle
-        # (pricing.py) : le coût de chaque requête, aux stats et au client.
-        self.prices = pricing.parse(name, cfg.get("prices"))
-
-    def rate(self, plain_model: str) -> dict | None:
-        """Le tarif d'un modèle de ce backend (sans préfixe), ou None."""
-        return pricing.rate_of(self.prices, plain_model)
 
     @staticmethod
     def _tool_choice(value) -> str | None:

@@ -51,9 +51,7 @@ SELECT CAST((ts - ?) / ? AS INTEGER)      AS b,
        SUM(latency),
        MAX(latency),
        MIN(ts),
-       MAX(ts),
-       SUM(cost),
-       COUNT(cost)
+       MAX(ts)
 FROM requests WHERE ts >= ? AND ts < ?{filter}
 GROUP BY b, mk, k
 ORDER BY b, mk, k
@@ -227,7 +225,7 @@ def usage_completions(start_time: int, end_time: int | None = None,
                                 (origin, width, lo, hi) + tail).fetchall()
         for (b, mk, key, prompt, completion, requests, errors, streamed,
              estimated, anthropic, cached, latency_sum, latency_max,
-             first_ts, last_ts, cost, priced) in rows:
+             first_ts, last_ts) in rows:
             yield b, first_ts, {
                 "object": "organization.usage.completions.result",
                 "input_tokens": prompt or 0,
@@ -256,52 +254,6 @@ def usage_completions(start_time: int, end_time: int | None = None,
                 "max_latency_seconds": round(latency_max or 0.0, 3),
                 "first_request_time": int(first_ts),
                 "last_request_time": int(last_ts),
-                # Le prix, en dollars, des requêtes qui ont un tarif
-                # ([backends.<nom>.prices]) : None si aucune n'en a.
-                "cost": round(cost, 6) if priced else None,
-                "num_priced_requests": priced or 0,
-            }
-
-    return _usage_page(start_time, end_time, bucket_width, limit, page,
-                       empty, results)
-
-
-# ── Coûts (Costs API d'OpenAI) ──────────────────────────────────────────
-#
-# `/v1/organization/costs` : le prix des requêtes, en dollars, par seau ;
-# `line_item` y est le modèle (préfixé), `api_key_id` une extension. Seules
-# les requêtes qui ont un tarif comptent : un modèle sans prix n'y apparaît
-# pas (il ne coûte rien de connu).
-
-COST_GROUP_FIELDS = ("project_id", "line_item", "api_key_id")
-
-
-def usage_costs(start_time: int, end_time: int | None = None,
-                bucket_width: str = "1d", group_by=(),
-                limit: int | None = None, page: str | None = None,
-                models=(), empty: bool = False, keys=None) -> dict:
-    """`/v1/organization/costs` : forme de la Costs API d'OpenAI
-    (page → bucket → organization.costs.result, amount en usd)."""
-    model_expr = "model_key" if "line_item" in list(group_by) else "NULL"
-    key_expr = "api_key_id" if "api_key_id" in list(group_by) else "NULL"
-    where, tail = _model_filter(models)
-    kwhere, ktail = _key_filter(keys)
-    where, tail = where + " AND cost IS NOT NULL" + kwhere, tail + ktail
-
-    def results(origin, width, lo, hi):
-        with _reader() as conn:
-            rows = conn.execute(_AGG.format(model=model_expr, key=key_expr,
-                                            filter=where),
-                                (origin, width, lo, hi) + tail).fetchall()
-        for row in rows:
-            b, mk, key, first_ts, cost = row[0], row[1], row[2], row[13], row[15]
-            yield b, first_ts, {
-                "object": "organization.costs.result",
-                "amount": {"value": round(cost or 0.0, 6), "currency": "usd"},
-                "line_item": mk,
-                "project_id": None,
-                # ── extension du proxy ──
-                "api_key_id": key,
             }
 
     return _usage_page(start_time, end_time, bucket_width, limit, page,

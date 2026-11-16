@@ -26,53 +26,17 @@ export const PROVIDERS = [
     model: "go/glm-5.3-flash" },
   { id: "claude", label: "Anthropic (Claude)", note: "payant, crédit d'API",
     url: "https://api.anthropic.com", keyVar: "ANTHROPIC_API_KEY", api: "anthropic",
-    model: "claude/claude-opus-5-5", prices: () => CLAUDE_PRICES },
+    model: "claude/claude-opus-5-5" },
   // Son défaut tool_choice « none » casse les outils : « auto » injecté.
   { id: "albert", label: "Albert (API de l'État)", note: "quotas",
     url: "https://albert.api.etalab.gouv.fr", keyVar: "ALBERT_API_KEY",
     quotas: true, toolChoice: "auto" },
 ];
 
-// Les tarifs publics d'Anthropic en novembre 2026, $ par million de tokens
-// ([backends.<nom>.prices], upstream/pricing.py) ; cache_write : l'écriture
-// à 5 minutes (le cache automatique du proxy). Le premier motif qui couvre
-// un modèle gagne : les plus précis d'abord.
-const CLAUDE_PRICES = {
-  "claude-fable-5-2": { input: 8, output: 40, cache_read: 0.2, cache_write: 10 },
-  "claude-mythos-5-2": { input: 8, output: 40, cache_read: 0.2, cache_write: 10 },
-  "claude-fable-5-1": { input: 10, output: 50, cache_read: 0.25, cache_write: 12.5 },
-  "claude-mythos-5-1": { input: 10, output: 50, cache_read: 0.25, cache_write: 12.5 },
-  "claude-fable-5": { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
-  "claude-mythos-5": { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
-  "claude-opus-5-5": { input: 4, output: 20, cache_read: 0.2, cache_write: 5 },
-  "claude-opus-*": { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
-  "claude-sonnet-5-5": { input: 2, output: 10, cache_read: 0.1, cache_write: 2.5 },
-  "claude-sonnet-5": { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 },
-  "claude-sonnet-4-6": { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
-  "claude-haiku-5-5": { input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125,
-    long: { above: 100000, input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625 } },
-  "claude-haiku-4-5*": { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 },
-};
-
-// Une valeur TOML en ligne : un tarif en décimal (4.0, 0.125), `above` en
-// entier (un nombre de tokens), une table en ligne ({ input = 4.0, … }).
-const tomlValue = (v, key = "") => (v && typeof v === "object"
-  ? "{ " + Object.entries(v).map(([k, x]) => `${k} = ${tomlValue(x, k)}`).join(", ") + " }"
-  : key === "above" ? String(Math.round(v))
-  : Number.isInteger(Number(v)) ? Number(v).toFixed(1) : String(Number(v)));
-
-/** Les lignes de [backends.<nom>.prices] (vide sans tarif). */
-export function pricesToml(name, prices) {
-  const rows = Object.entries(prices || {});
-  if (!rows.length) return [];
-  return [`[backends.${name}.prices]`,
-          ...rows.map(([pattern, rate]) => `${JSON.stringify(pattern)} = ${tomlValue(rate)}`)];
-}
-
 // Une ligne du formulaire Backends, préremplie pour ce fournisseur.
 export const providerBackend = (p) => ({
   name: p.id, url: p.url, key: true, keyVar: p.keyVar, quotas: !!p.quotas,
-  api: p.api || "openai", images: p.api === "anthropic", prices: p.prices ? p.prices() : null,
+  api: p.api || "openai", images: p.api === "anthropic",
   toolChoice: p.toolChoice || "", maxTokens: "", fairShare: true,
 });
 
