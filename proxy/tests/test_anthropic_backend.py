@@ -94,7 +94,8 @@ def test_requete_traduite():
     assert body["tool_choice"] == {"type": "any", "disable_parallel_tool_use": True}
     assert body["tools"][0]["input_schema"]["properties"] == {"p": {"type": "string"}}
     assert body["output_config"] == {"effort": "high"}
-    assert body["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert body["thinking"] == {"type": "adaptive", "display": "summarized",
+                                "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
     user, assistant, after = body["messages"]
     assert user["content"][1] == {"type": "image", "source": {
         "type": "base64", "media_type": "image/png", "data": "AAAA"}}
@@ -148,6 +149,10 @@ def test_reponse_et_reflexion_rejouee(claude):
     doc = r.json()
     headers, sent = claude.sent[0]
     assert headers["anthropic-version"] == anthropic.VERSION
+    # Réflexion demandée : le bêta qui laisse écarter un bloc rejoué dans
+    # une conversation modifiée, au lieu d'un 400.
+    assert headers["anthropic-beta"] == anthropic.BINDING_BETA
+    assert sent["thinking"]["block_binding"] == {"prefix_mismatch_behavior": "drop_block"}
     assert "authorization" not in headers
     assert sent["model"] == "claude-opus-5-5"
     msg = doc["choices"][0]["message"]

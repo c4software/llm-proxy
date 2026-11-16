@@ -33,6 +33,12 @@ from datetime import datetime
 from ..core.settings import log
 
 VERSION = "2023-06-01"
+# Les blocs de réflexion signés sont liés à la conversation qui les a
+# produits (système, outils, messages d'avant) : rejoués dans une requête
+# dont le système ou les outils ont changé (la page, un client qui ajoute
+# un outil), ils donnent un 400. Avec ce bêta et `drop_block`, Anthropic
+# les écarte simplement : la requête passe, sans cette réflexion-là.
+BINDING_BETA = "thinking-binding-controls-2026-08-01"
 
 # Sortie demandée quand le client n'en dit rien : bornée par celle du
 # modèle (catalogue).
@@ -261,7 +267,8 @@ def to_messages(payload: dict, caps: dict | None = None,
     thinking = caps.get("thinking") if isinstance(caps.get("thinking"), dict) else {}
     adaptive = ((thinking.get("types") or {}).get("adaptive") or {}).get("supported")
     if adaptive:
-        body["thinking"] = {"type": "adaptive", "display": "summarized"}
+        body["thinking"] = {"type": "adaptive", "display": "summarized",
+                            "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
     return body
 
 

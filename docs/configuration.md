@@ -91,7 +91,10 @@ chat/completions → Messages, outils hébergés du proxy actifs).
 - **Réflexion** : sur les modèles à réflexion adaptative, demandée en
   résumé et rendue en `reasoning_content`. Ses blocs signés sont gardés en
   mémoire (4 096 tours, perdus au redémarrage) et rejoués avec les appels
-  d'outils qui les suivent, que le client ne renvoie pas.
+  d'outils qui les suivent, que le client ne renvoie pas. Un bloc est lié à
+  la conversation qui l'a produit : si le système ou les outils ont changé
+  depuis, Anthropic l'écarte (`drop_block`, bêta
+  `thinking-binding-controls-2026-08-01`) au lieu de refuser la requête.
 - **`reasoning_effort`** → `output_config.effort`, si le modèle prend ce
   niveau (`minimal` et `none` → `low`).
 - **Retirés** : `temperature`, `top_p`, `top_k` (refusés par les modèles

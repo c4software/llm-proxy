@@ -339,8 +339,11 @@ async def _anthropic_request(call: Call, path: str, body: bytes):
         await fetch_models(b)
     out = anthropic.to_messages(payload, b.model_caps.get(model),
                                 b.model_max_out.get(model))
+    hdrs = b.auth_headers()
+    if "block_binding" in (out.get("thinking") or {}):
+        hdrs["anthropic-beta"] = anthropic.BINDING_BETA
     return b.client.build_request(
-        "POST", "/v1/messages", headers=b.auth_headers(),
+        "POST", "/v1/messages", headers=hdrs,
         content=json.dumps(out, ensure_ascii=False).encode()), bool(out.get("stream"))
 
 
