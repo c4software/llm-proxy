@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS requests (
   exact             INTEGER NOT NULL,
   streamed          INTEGER NOT NULL,
   cached_tokens     INTEGER NOT NULL DEFAULT 0,
-  api_key_id        TEXT    NOT NULL DEFAULT ''
+  api_key_id        TEXT    NOT NULL DEFAULT '',
+  cost              REAL
 );
 CREATE INDEX IF NOT EXISTS requests_ts       ON requests(ts);
 CREATE INDEX IF NOT EXISTS requests_ts_model ON requests(ts, model_key);
@@ -58,8 +59,8 @@ CREATE INDEX IF NOT EXISTS requests_ts_model ON requests(ts, model_key);
 INSERT = """
 INSERT INTO requests (ts, model_key, backend, model, endpoint, status,
                       latency, prompt_tokens, completion_tokens, exact,
-                      streamed, cached_tokens, api_key_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      streamed, cached_tokens, api_key_id, cost)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -109,6 +110,9 @@ TABLES = ("requests", "tool_calls")
 # TABLE au démarrage, avec leur défaut. (table, nom, définition)
 ADDED_COLUMNS = (
     ("requests", "cached_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    # Le prix, en dollars, au tarif du moment ([backends.<nom>.prices]) ;
+    # NULL sans tarif.
+    ("requests", "cost", "REAL"),
     ("requests", "api_key_id", "TEXT NOT NULL DEFAULT ''"),
     ("tool_calls", "api_key_id", "TEXT NOT NULL DEFAULT ''"),
 )
@@ -270,7 +274,7 @@ class _reader:
 def record(model_key: str, backend: str, model: str, endpoint: str,
            status: int, latency: float, prompt_tokens: int,
            completion_tokens: int, exact: bool, streamed: bool,
-           cached_tokens: int = 0) -> None:
+           cached_tokens: int = 0, cost: float | None = None) -> None:
     """Enregistre UNE requête. `model_key` est le nom préfixé demandé par
     le client. Non bloquant : la ligne part dans la file d'écriture."""
     if not model_key:
@@ -278,7 +282,8 @@ def record(model_key: str, backend: str, model: str, endpoint: str,
     row = (time.time(), model_key, backend, model, "/" + endpoint.strip("/"),
            int(status), max(float(latency), 0.0), max(int(prompt_tokens), 0),
            max(int(completion_tokens), 0), int(bool(exact)),
-           int(bool(streamed)), max(int(cached_tokens), 0), CLIENT.get())
+           int(bool(streamed)), max(int(cached_tokens), 0), CLIENT.get(),
+           None if cost is None else max(float(cost), 0.0))
     _enqueue(INSERT, row)
 
 

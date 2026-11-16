@@ -365,6 +365,6 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                      robinet.summary())
         prompt, completion, exact = robinet.tokens(prompt_estimate)
         call.done(status, prompt, completion, exact, robinet.sse,
-                  robinet.cached())
+                  robinet.cached(), robinet.usages())
         if upstream is not None:
             await upstream.aclose()

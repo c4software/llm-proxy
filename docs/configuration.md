@@ -64,6 +64,7 @@ url = "http://bigchuck:8009"
 | `images` | `false` (`true` avec `api = "anthropic"`) | Les modèles multimodaux du backend reçoivent les `image_url` d'un client Anthropic. Sinon, texte de remplacement |
 | `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact. llama.cpp : `"/tokenize"` |
 | `fair_share` | `true` | Le backend relève du [partage équitable](tableau-de-bord.md#partage-équitable). `false` : ses requêtes ne comptent dans la part de personne et n'attendent jamais |
+| `prices` | `{}` | Tarifs en $ par million de tokens, par motif de modèle (le premier qui couvre gagne) : `input`, `output`, `cache_read`, `cache_write` (`input` à défaut), `long = { above = <tokens>, … }`. Donne le coût de chaque requête : stats, `usage.cost` des réponses, page. Voir [Statistiques, « Coûts »](statistiques.md#coûts) |
 | `model_types` | `{}` | Type imposé à des modèles, par motif (`"*-vision-*" = "image-text-to-text"`). Sinon : le catalogue du backend, ou à défaut (llama-swap) le nom du modèle (`image`, `tts`, `asr`, `embed`…). Décide de ce qui est proposé à un client de chat et de qui reçoit les images |
 
 ### Backend Anthropic
@@ -105,6 +106,9 @@ chat/completions → Messages, outils hébergés du proxy actifs).
   est à laisser absent.
 - **Seul `/v1/chat/completions`** : embeddings, voix, images → 404. L'OCR
   et la transcription visent un modèle d'un autre backend.
+- **Tarifs** : `prices` donne le coût de chaque requête. Les tarifs publics
+  d'Anthropic sont dans `data/config.example.toml` (sous ce backend) ;
+  l'installation et *Ajouter un fournisseur connu* les reprennent.
 
 **Tout modèle doit être préfixé.** Un préfixe inconnu donne `400
 unknown_backend_prefix`. Seules les requêtes sans champ `model` (endpoints

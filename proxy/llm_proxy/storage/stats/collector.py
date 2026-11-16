@@ -7,6 +7,8 @@ ne les dit pas.
 import json
 import re
 
+from ...upstream import pricing
+
 
 # Réponse non streamée : seules la TÊTE et la QUEUE du corps sont
 # retenues, TAIL_BYTES chacune — `usage` vit à l'une ou l'autre, jamais au
@@ -17,6 +19,11 @@ TAIL_BYTES = 64 << 10
 # Flux SSE : une ligne sans retour chariot ne peut pas dépasser ceci —
 # au-delà ce n'est pas du SSE, on cesse de l'inspecter.
 MAX_LINE_BYTES = 1 << 20
+
+
+# Réponse JSON retenue entière pour y ajouter son prix : au-delà, rendue
+# telle quelle, sans `usage.cost`.
+MAX_JSON_BYTES = 16 << 20
 
 
 # Même approximation que le limiteur (albert.CHARS_PER_TOKEN).
@@ -82,6 +89,12 @@ class UsageCollector:
       la longueur des deltas de contenu (filet de sécurité quand
       l'upstream n'envoie aucun `usage`) et une autre repère l'éventuel
       objet `usage`, seul morceau décodé.
+
+    Avec un tarif (`rate`, posé par le relais quand le modèle en a un), le
+    robinet AJOUTE `usage.cost` (le prix, en dollars, forme d'OpenRouter) :
+    en SSE, il rend alors les lignes complètes et réécrit le seul bloc qui
+    porte `usage` ; une réponse JSON est retenue entière (MAX_JSON_BYTES,
+    au-delà rendue telle quelle) et rendue à la fin, complétée.
     """
 
     def __init__(self, content_type: str):
@@ -92,11 +105,16 @@ class UsageCollector:
         self._head = bytearray()  # JSON : tête du corps
         self.usage: dict | None = None
         self.out_chars = 0
+        self.rate: dict | None = None
+        self._out = bytearray()   # avec un tarif : ce qui reste à rendre
 
     def feed(self, chunk: bytes) -> bytes:
         """Inspecte `chunk` et le rend TEL QUEL : ce robinet est
-        l'identité. (Même interface qu'anthropic_api.Translator, qui
-        lui réécrit — relaying.forward ne distingue pas les deux.)"""
+        l'identité — sauf avec un tarif (`usage.cost` ajouté). (Même
+        interface qu'anthropic_api.Translator, qui lui réécrit —
+        relaying.forward ne distingue pas les deux.)"""
+        if self.rate is not None and (self.sse or self.json):
+            return self._feed_priced(chunk)
         try:
             if self.sse:
                 self._feed_sse(chunk)
@@ -136,11 +154,76 @@ class UsageCollector:
             if usage is not None:
                 self.usage = usage
 
+    def _feed_priced(self, chunk: bytes) -> bytes:
+        try:
+            self._out += chunk
+            if self.json:
+                if len(self._out) > MAX_JSON_BYTES:    # trop gros : tel quel
+                    self.rate = None
+                    out, self._out = bytes(self._out), bytearray()
+                    self._head += out[:TAIL_BYTES]
+                    self._buf += out[-TAIL_BYTES:]
+                    return out
+                return b""
+            nl = self._out.rfind(b"\n")
+            if nl < 0:
+                if len(self._out) > MAX_LINE_BYTES:      # pas du SSE
+                    self.rate, self.sse = None, False
+                    out, self._out = bytes(self._out), bytearray()
+                    return out
+                return b""
+            done = bytes(self._out[:nl + 1])
+            del self._out[:nl + 1]
+            self._feed_sse(done)
+            if b'"usage"' not in done:
+                return done
+            return b"\n".join(self._priced_line(line) for line in done.split(b"\n"))
+        except Exception:
+            # Un flux au schéma inattendu ne casse jamais le relais.
+            self.rate = None
+            out, self._out = bytes(self._out), bytearray()
+            return out
+
+    def _priced_line(self, line: bytes) -> bytes:
+        if not line.startswith(b"data:") or b'"usage"' not in line:
+            return line
+        try:
+            doc = json.loads(line[5:])
+        except ValueError:
+            return line
+        if not self._price(doc):
+            return line
+        return b"data: " + json.dumps(doc, ensure_ascii=False).encode()
+
+    def _price(self, doc) -> bool:
+        """Ajoute `cost` à `doc["usage"]` ; True s'il l'a fait."""
+        u = doc.get("usage") if isinstance(doc, dict) else None
+        cost = pricing.usage_cost(self.rate, [u]) if isinstance(u, dict) else None
+        if cost is None:
+            return False
+        u["cost"] = cost
+        return True
+
     def finish(self) -> bytes:
         """Fin du flux : sur une réponse JSON, cherche `usage` dans la
         queue puis la tête conservées — dernière occurrence d'abord,
         c'est celle du niveau racine. Rien à émettre : tout est déjà
-        parti par feed()."""
+        parti par feed() — sauf, avec un tarif, ce qui a été retenu."""
+        if self.rate is not None and self._out:
+            out, self._out = bytes(self._out), bytearray()
+            if self.json:
+                try:
+                    doc = json.loads(out)
+                except ValueError:
+                    doc = None
+                if isinstance(doc, dict):
+                    if isinstance(doc.get("usage"), dict):
+                        self.usage = dict(doc["usage"])
+                    if self._price(doc):
+                        out = json.dumps(doc, ensure_ascii=False).encode()
+                return out
+            self._feed_sse(out)
+            return out
         if self.json:
             for part in (self._buf, self._head):
                 if self.usage is not None:
@@ -165,6 +248,10 @@ class UsageCollector:
                     c if isinstance(c, int) else _est(self.out_chars),
                     True)
         return fallback_prompt, _est(self.out_chars), False
+
+    def usages(self) -> list[dict]:
+        """L'usage de l'upstream (un seul aller-retour), s'il en a rendu un."""
+        return [self.usage] if isinstance(self.usage, dict) else []
 
     def cached(self) -> int:
         return cached_tokens(self.usage)

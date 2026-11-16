@@ -23,7 +23,7 @@ from ..core.httputil import error_response
 from ..core.settings import HOP_BY_HOP, is_exempt, log
 from ..storage import stats
 from ..surfaces import anthropic_api
-from . import albert, anthropic
+from . import albert, anthropic, pricing
 from .backends import Backend, backend_offline_message
 
 
@@ -121,9 +121,16 @@ class Call:
             return self.model_key[len(b) + 1:]
         return self.model_key
 
+    def rate(self) -> dict | None:
+        """Le tarif du modèle de cet appel ([backends.<nom>.prices])."""
+        return self.backend.rate(self.plain_model)
+
     def done(self, status: int, prompt_tokens: int = 0,
              completion_tokens: int = 0, exact: bool = False,
-             streamed: bool = False, cached_tokens: int = 0) -> None:
+             streamed: bool = False, cached_tokens: int = 0,
+             usages: list | None = None) -> None:
+        """`usages` : ceux de l'upstream, un par aller-retour, pour le prix
+        (pricing.usage_cost) ; à défaut, les tokens comptés."""
         if self._done or not self.model_key:
             return
         self._done = True
@@ -134,10 +141,14 @@ class Call:
         if status >= 400 and not exact:
             prompt_tokens = completion_tokens = cached_tokens = 0
             exact = True
+            usages = None
+        rate = self.rate()
+        cost = (pricing.usage_cost(rate, usages) if usages
+                else pricing.cost(rate, prompt_tokens, completion_tokens, cached_tokens))
         stats.record(self.model_key, self.backend.name, self.plain_model,
                      self.endpoint, status, time.monotonic() - self.started,
                      prompt_tokens, completion_tokens, exact, streamed,
-                     cached_tokens)
+                     cached_tokens, cost)
         if shared(self):
             fairshare.charge(fairshare.CLIENT.get(),
                              prompt_tokens + completion_tokens)
@@ -382,7 +393,7 @@ async def relay(call: Call, upstream: httpx2.Response, robinet,
             )
         prompt, completion, exact = robinet.tokens(prompt_estimate)
         call.done(upstream.status_code, prompt, completion, exact,
-                  robinet.sse, robinet.cached())
+                  robinet.sse, robinet.cached(), robinet.usages())
         await upstream.aclose()
 
 
@@ -397,6 +408,8 @@ async def forward(call: Call, request: Request, path: str, body: bytes,
     if isinstance(upstream, JSONResponse):
         return upstream
     robinet = tap(upstream.status_code, upstream.headers.get("content-type", ""))
+    # Le tarif du modèle : le robinet chat/completions en tire `usage.cost`.
+    robinet.rate = call.rate()
     # Filet de sécurité si l'upstream ne renvoie aucun `usage` : même
     # approximation que le limiteur (corps envoyé ≈ tokens d'entrée).
     prompt_estimate = albert.estimate_chat_cost(body) if body else 0

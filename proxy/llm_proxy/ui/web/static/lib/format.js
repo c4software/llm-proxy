@@ -5,6 +5,16 @@
 // Entier, espace comme séparateur de milliers.
 export const num = (v) => String(Math.round(v) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 
+// Un prix en dollars (`usage.cost`), approché (tarifs saisis, arrondi) :
+// « ~0,0123 $ », deux décimales à partir d'un dollar ; « ~<0,0001 $ » pour
+// un prix non nul plus petit ; « — » sans prix connu.
+export function money(v) {
+  if (v === null || v === undefined) return "—";
+  if (v > 0 && v < 0.0001) return "~<0,0001 $";
+  return "~" + v.toLocaleString("fr-FR", { minimumFractionDigits: v >= 1 ? 2 : 4,
+                                           maximumFractionDigits: v >= 1 ? 2 : 4 }) + " $";
+}
+
 // Taille d'un fichier : Ko (au moins 1), ou Mo avec une décimale.
 export const size = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace(".", ",") + " Mo"
   : Math.max(1, Math.round(n / 1e3)) + " Ko";

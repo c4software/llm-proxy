@@ -263,6 +263,15 @@ l'en-tête ouvre le panneau des fichiers mémoire de la clé, à lire,
 corriger ou effacer. Il se relit après chaque appel à l'outil `memory`,
 affiché lisiblement (« `create /memories/…` »).
 
+## Coût
+
+Quand le modèle a un tarif (`[backends.<nom>.prices]`, voir
+[Statistiques, « Coûts »](statistiques.md#coûts)), chaque réponse montre
+son prix sous elle : la somme de tous ses appels au modèle (outils
+compris), lue dans `usage.cost`. Le menu de la jauge de contexte donne le **coût
+de la conversation** : la somme de ses réponses et de ses résumés. Les
+montants sont approchés (« ~0,0015 $ ») : des tarifs saisis, arrondis.
+
 ## Contexte et résumé
 
 La barre de saisie montre une **jauge** du contexte. Elle compare ce que

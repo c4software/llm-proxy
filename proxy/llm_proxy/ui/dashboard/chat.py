@@ -335,6 +335,13 @@ async def ui_usage(request: Request):
     return await usage_page(request, own=True)
 
 
+@router.get("/ui/costs")
+async def ui_costs(request: Request):
+    """La route des coûts, sous /ui pour la même raison."""
+    return await usage_page(request, stats.usage_costs,
+                            stats.COST_GROUP_FIELDS, own=True)
+
+
 @router.get("/ui/usage/tools")
 async def ui_usage_tools(request: Request):
     """La route d'usage des outils, sous /ui pour la même raison."""

@@ -26,6 +26,9 @@ USAGE_PATH = "/v1/organization/usage/completions"
 # Route sœur, propre au proxy : les exécutions d'outils hébergés, à la
 # même forme (stats.usage_tools).
 USAGE_TOOLS_PATH = "/v1/organization/usage/tools"
+# Les coûts, à la forme de la Costs API d'OpenAI (stats.usage_costs) ;
+# `line_item` : le modèle.
+COSTS_PATH = "/v1/organization/costs"
 
 
 def usage_query(request: Request,
@@ -129,6 +132,14 @@ async def own_keys(request: Request) -> list[str] | None:
 @router.get(USAGE_PATH)
 async def usage_completions(request: Request):
     return await usage_page(request)
+
+
+@router.get(COSTS_PATH)
+async def usage_costs(request: Request):
+    """Le prix des requêtes ([backends.<nom>.prices]) : mêmes paramètres
+    et pagination que l'Usage API ; `group_by` sur `line_item` (le
+    modèle), `api_key_id`."""
+    return await usage_page(request, stats.usage_costs, stats.COST_GROUP_FIELDS)
 
 
 @router.get(USAGE_TOOLS_PATH)

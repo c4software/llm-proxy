@@ -47,6 +47,9 @@ Ils sont additifs : un SDK ignore ce qu'il ne connaît pas.
   `num_anthropic_requests` (arrivées par `/v1/messages`),
   `total_latency_seconds`, `avg_latency_seconds`, `max_latency_seconds`,
   `first_request_time`, `last_request_time`.
+- `cost` : le prix, en dollars, des requêtes qui ont un tarif
+  (`[backends.<nom>.prices]`, voir [Coûts](#coûts)), `null` si aucune n'en
+  a ; `num_priced_requests` : combien en ont un.
 
 ### Dimensions et filtres
 
@@ -74,6 +77,35 @@ percentile**, qui n'a pas cette propriété.
   (`num_estimated_requests`).
 - Une requête en erreur sans `usage` (500 du backend, 429 local, client
   parti) compte **0 token**.
+
+## Coûts
+
+Un backend peut porter ses tarifs, en dollars par million de tokens
+([`prices`](configuration.md#backendsnom)). Le prix de chaque requête est alors
+calculé une fois, quand elle est comptée, au tarif du moment :
+
+- entrée lue normalement, lue du cache (`cache_read`), écrite dans le
+  cache (`cache_write`, que le backend Anthropic fait remonter en
+  `prompt_tokens_details.cache_write_tokens`), sortie ; un palier `long`
+  au-delà d'une taille d'entrée (Claude Haiku 5.5) ;
+- un tour à plusieurs allers-retours (outils hébergés) : la somme de
+  chacun, le palier jugé requête par requête.
+
+Il se lit à quatre endroits :
+
+- dans chaque réponse `chat/completions` : `usage.cost`, la forme
+  d'OpenRouter (JSON et dernier bloc du flux) ;
+- dans `GET /v1/organization/costs`, la forme de la Costs API d'OpenAI
+  (`amount: {value, currency: "usd"}`), mêmes paramètres et pagination
+  que l'usage, `group_by` sur `line_item` (le modèle préfixé) et
+  `api_key_id` ; seules les requêtes à tarif y comptent ;
+- dans l'onglet Statistiques : une carte « Coût » et une colonne par
+  modèle ;
+- dans le chat de la page : sous chaque réponse et pour la conversation.
+
+Un modèle sans tarif n'a pas de prix (`null`) : un backend local n'en a
+pas. Le tarif d'une requête passée ne change pas quand la configuration
+change.
 
 ## Usage des outils hébergés
 

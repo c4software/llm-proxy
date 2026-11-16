@@ -54,7 +54,8 @@ def test_migration_adds_cached_column_to_old_base(tmp_path, monkeypatch):
     conn = sqlite3.connect(path)
     conn.executescript(stats.SCHEMA.replace(
         ",\n  cached_tokens     INTEGER NOT NULL DEFAULT 0", "").replace(
-        ",\n  api_key_id        TEXT    NOT NULL DEFAULT ''", ""))
+        ",\n  api_key_id        TEXT    NOT NULL DEFAULT ''", "").replace(
+        ",\n  cost              REAL", ""))
     conn.executescript(stats.TOOLS_SCHEMA.replace(
         ",\n  api_key_id   TEXT    NOT NULL DEFAULT ''", ""))
     conn.execute("INSERT INTO requests VALUES (NULL, ?, 'a/m', 'a', 'm', "
@@ -65,9 +66,9 @@ def test_migration_adds_cached_column_to_old_base(tmp_path, monkeypatch):
     try:
         with stats._reader() as r:
             cols = {row[1] for row in r.execute("PRAGMA table_info(requests)")}
-            assert {"cached_tokens", "api_key_id"} <= cols
-            assert r.execute("SELECT cached_tokens, api_key_id FROM requests"
-                             ).fetchone() == (0, "")
+            assert {"cached_tokens", "api_key_id", "cost"} <= cols
+            assert r.execute("SELECT cached_tokens, api_key_id, cost FROM requests"
+                             ).fetchone() == (0, "", None)
             cols = {row[1] for row in r.execute("PRAGMA table_info(tool_calls)")}
             assert "api_key_id" in cols
     finally:
@@ -315,7 +316,7 @@ def test_migration_adds_tool_calls_to_a_base_with_requests_only(tmp_path, monkey
     conn.executescript(stats.SCHEMA)
     conn.execute(stats.INSERT, (time.time(), "a/m", "a", "m",
                                 "/v1/chat/completions", 200, 1.0, 10, 2, 1, 0, 0,
-                                ""))
+                                "", None))
     conn.commit(); conn.close()
     everywhere(monkeypatch, stats, "DB_PATH", str(path))
     stats.init()
@@ -338,7 +339,7 @@ def test_purge_drops_old_tool_calls_with_old_requests(db, monkeypatch):
             conn.execute(stats.INSERT_TOOL,
                          (ts, "web_search", "/v1/tools", "", "ok", 0.1, 1, ""))
             conn.execute(stats.INSERT, (ts, "a/m", "a", "m", "/v1/messages",
-                                        200, 1.0, 1, 1, 1, 0, 0, ""))
+                                        200, 1.0, 1, 1, 1, 0, 0, "", None))
         conn.commit()
         count = lambda: [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
                          for t in stats.TABLES]
@@ -385,3 +386,36 @@ def test_page_ui_annonce_ses_modules():
     assert "config/ConfigPanel.js" not in static_files.MODULES
     assert "stats/StatsView.js" not in static_files.MODULES
     assert html.index(pre) < html.index('<script type="module"')
+
+
+def test_costs_route_and_cost_in_usage(proxy, db):
+    """Le prix des requêtes : `/v1/organization/costs` à la forme de la
+    Costs API d'OpenAI (line_item = le modèle), et `cost` en extension des
+    résultats d'usage. Une requête sans tarif n'y compte pas."""
+    day = 86_400
+    t0 = 1_700_000_000 // day * day
+    rows = [(t0 + 10, "a/m", 0.25), (t0 + 20, "a/m", 0.5), (t0 + 30, "b/n", None),
+            (t0 + day + 5, "b/n", 1.0)]
+    with stats._reader() as conn:
+        for ts, mk, cost in rows:
+            conn.execute(stats.INSERT, (ts, mk, mk[0], mk[2], "/v1/chat/completions",
+                                        200, 1.0, 10, 2, 1, 0, 0, "", cost))
+        conn.commit()
+
+    def get(path="/v1/organization/costs", **params):
+        return proxy.client.get(path, params={"start_time": t0,
+                                              "end_time": t0 + 2 * day, **params})
+
+    one, two = get().json()["data"]
+    assert one["results"] == [{"object": "organization.costs.result",
+                               "amount": {"value": 0.75, "currency": "usd"},
+                               "line_item": None, "project_id": None, "api_key_id": None}]
+    assert two["results"][0]["amount"]["value"] == 1.0
+    data = get(group_by="line_item").json()["data"]
+    assert [[(r["line_item"], r["amount"]["value"]) for r in b["results"]] for b in data] \
+        == [[("a/m", 0.75)], [("b/n", 1.0)]]
+    assert get("/ui/costs").json() == get().json()
+    assert get(group_by="model").status_code == 400
+    usage = get("/v1/organization/usage/completions", group_by="model").json()["data"][0]
+    assert [(r["model"], r["cost"], r["num_priced_requests"]) for r in usage["results"]] \
+        == [("a/m", 0.75, 2), ("b/n", None, 0)]

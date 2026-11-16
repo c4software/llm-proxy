@@ -280,9 +280,13 @@ def _usage(u: dict) -> dict:
     prompt = int(u.get("input_tokens") or 0) + cached \
         + int(u.get("cache_creation_input_tokens") or 0)
     completion = int(u.get("output_tokens") or 0)
+    # Écrits dans le cache : facturés plus cher que l'entrée ; le nom
+    # d'OpenRouter (prompt_tokens_details.cache_write_tokens).
+    written = int(u.get("cache_creation_input_tokens") or 0)
     return {"prompt_tokens": prompt, "completion_tokens": completion,
             "total_tokens": prompt + completion,
-            "prompt_tokens_details": {"cached_tokens": cached}}
+            "prompt_tokens_details": {"cached_tokens": cached,
+                                      "cache_write_tokens": written}}
 
 
 def from_message(msg: dict) -> dict:
