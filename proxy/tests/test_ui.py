@@ -423,6 +423,13 @@ def test_chat_edits_an_attached_image(ui, monkeypatch):
     assert r.status_code == 200
     assert b'name="steps"\r\n\r\n20\r\n' in seen[-1][2]
     assert b'name="loras"' not in seen[-1][2]
+    assert b'name="strength"' not in seen[-1][2]
+    r = ui.client.post("/ui/images/edits", json={**body, "strength": 0.5})
+    assert r.status_code == 200
+    assert b'name="strength"\r\n\r\n0.5\r\n' in seen[-1][2]
+    # Sous 1, l'image part deux fois : départ, puis référence.
+    assert seen[-1][2].count(b'name="image[]"') == 2
+    assert seen[-1][2].count(png) == 2
     r = ui.client.post("/ui/images/edits", json={
         **body, "loras": [{"name": "omni", "scale": 1}]})
     assert r.status_code == 200

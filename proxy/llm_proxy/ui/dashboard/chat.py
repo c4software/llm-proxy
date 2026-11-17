@@ -96,6 +96,7 @@ async def ui_session(request: Request):
                 "factors": tools.image_generation.UPSCALE_FACTORS,
                 "prompt": tools.image_generation.UPSCALE_PROMPT,
                 "max_pixels": tools.image_generation.UPSCALE_MAX_PIXELS,
+                "strength": tools.image_generation.UPSCALE_STRENGTH,
             } if tools.image_generation.UPSCALE_MODEL else None,
             # Les outils de la page refusés à tous ([ui].page_tools_disabled).
             "page_tools_disabled": page_tools.disabled(),
@@ -215,7 +216,7 @@ DATA_URL = re.compile(r"data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)\Z")
 @router.post("/ui/images/edits")
 async def ui_images_edits(request: Request):
     """La retouche d'une image du chat : un corps JSON (`model`, `prompt`,
-    `image` en data URL, `size`, `steps`, `loras`) converti en formulaire /v1/images/edits et
+    `image` en data URL, `size`, `steps`, `strength`, `loras`) converti en formulaire /v1/images/edits et
     relayé comme lui. JSON et non formulaire : une page tierce ne peut pas
     l'envoyer (json_only)."""
     if not UI_CHAT:
@@ -245,33 +246,41 @@ async def ui_images_edits(request: Request):
         return error_response("openai", 400, "invalid_request_error",
                               "`image` n'est ni PNG, ni JPEG, ni GIF, ni WebP")
     fields = {"prompt": prompt.strip()}
-    for name in ("size", "n", "steps"):
+    for name in ("size", "n", "steps", "strength"):
         if payload.get(name) not in (None, ""):
             fields[name] = str(payload[name])
     # `loras` : une liste, que gufo lit en texte JSON dans un formulaire.
     if isinstance(payload.get("loras"), list):
         fields["loras"] = json.dumps(payload["loras"])
+    one = ("image", "image." + kind.split("/")[1], image, kind)
+    # Sous une force de 1, gufo prend la première image comme image de
+    # DÉPART et les suivantes comme références : seule, elle n'est plus
+    # qu'un départ bruité, et le modèle redessine d'après la consigne
+    # (« Agrandir » à 0,6 a perdu le canoë de l'image, 17/11/2026). Elle est
+    # donc envoyée deux fois, départ puis référence (image[]).
+    images = [one]
+    if "strength" in fields:
+        images = [("image[]", *one[1:]), ("image[]", *one[1:])]
     # Le coût : le prompt, pas les octets de l'image.
-    return await _relay_form(request, payload, fields, (
-        "image", "image." + kind.split("/")[1], image, kind),
-        "/v1/images/edits", prompt.encode())
+    return await _relay_form(request, payload, fields, images,
+                             "/v1/images/edits", prompt.encode())
 
 
 async def _relay_form(request: Request, payload: dict, fields: dict,
-                      file: tuple, normalized: str, cost: bytes):
+                      file: tuple | list, normalized: str, cost: bytes):
     """Un corps JSON du chat relayé en FORMULAIRE (multipart) à la route
     `normalized` du backend que nomme son `model` : préfixe retiré, porte
     de quota (coût estimé sur `cost`), flux. `file` : (champ, nom,
-    octets, type)."""
+    octets, type), ou une liste de tels fichiers."""
     model_key = str(payload.get("model") or "")
     backend, prefixed = route_backend({"model": model_key})
     if backend is None:
         return error_response("openai", 400, "unknown_backend_prefix",
                               unknown_prefix_message(model_key))
-    field, name, data, kind = file
     form = httpx2.Request("POST", "http://form.invalid", data={
         "model": model_key[len(backend.name) + 1:] if prefixed else model_key,
-        **fields}, files={field: (name, data, kind)})
+        **fields}, files=[(field, (name, data, kind)) for field, name, data, kind
+                          in (file if isinstance(file, list) else [file])])
     raw = form.read()
     # La requête relayée porte le type du formulaire, pas celui du JSON.
     headers = [(k, v) for k, v in request.scope["headers"]

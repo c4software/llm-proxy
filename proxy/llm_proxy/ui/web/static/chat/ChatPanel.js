@@ -1424,7 +1424,8 @@ export const ChatPanel = {
     // AGRANDIR une image (`[tools.image_generation].upscale_model`) : une
     // retouche par ce modèle, consigne fixe, à `factor` fois la taille
     // (bornée par la surface permise). Le modèle REDESSINE l'image : la
-    // réponse le dit. Sans prompt de suite (m.prompt vide) : ni « Générer
+    // réponse le dit. Sous une force (`strength`) de 1, il part de l'image
+    // et ne joue que les dernières passes : il la redessine moins. Sans prompt de suite (m.prompt vide) : ni « Générer
     // encore » ni « Régénérer » ne la rejouent comme une demande.
     const upscaleOpt = computed(() => chat.value.image_upscale || null);
     const upscaleFactor = ref(2);
@@ -1449,7 +1450,9 @@ export const ChatPanel = {
         const size = upscaleSize(w, h, factor, up.max_pixels);
         if (!size) throw new Error(`Déjà à la taille maximale (${w} × ${h}).`);
         live.content = `*Agrandie ×${factor} : ${w} × ${h} → ${size.replace("x", " × ")}, redessinée par ${up.model}*`;
-        const got = await oneImage(c, { model: up.model, prompt: up.prompt, size, n: 1, image },
+        const body = { model: up.model, prompt: up.prompt, size, n: 1, image };
+        if (up.strength < 1) body.strength = up.strength;
+        const got = await oneImage(c, body,
                                    ctrl.signal, () => emit("unauthorized"));
         const { revised, ...img } = got;
         live.attachments.push(img);

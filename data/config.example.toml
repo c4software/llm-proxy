@@ -414,6 +414,13 @@ upscale_model = ""
 upscale_factors = [1.5, 2]
 upscale_max_pixels = 4194304
 # upscale_prompt = "The same image at a higher resolution. …"
+# Force de la retouche, de 0,01 à 1 (`strength` de gufo 0.35.0) : sous 1, le
+# modèle part de l'image agrandie et ne joue que les dernières passes
+# (passes × force), l'image servant aussi de référence ; plus bas, plus
+# fidèle mais plus mou (17/11/2026, Turbo : 0,6 et 0,4 gardent mieux
+# l'image mais ajoutent 2,5 à 3 fois moins de détail que 1).
+# 1 : retouche complète (champ non envoyé), le meilleur agrandissement.
+upscale_strength = 1.0
 # Délai (s) de la génération, et d'un téléchargement ; timeout + 2 ×
 # download_timeout remplace [tools].run_timeout pour cet outil.
 timeout = 300
