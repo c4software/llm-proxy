@@ -304,3 +304,17 @@ def test_par_hosted_delai_et_compte_propres_et_lien_ecrit_par_le_proxy(
         "Error: the limit of 2 image_generation calls for one answer is "
         "reached. Answer now with what you already have."))
     assert len(img.requests) == 1
+
+
+def test_forces_d_agrandissement_validees():
+    """upscale_strengths : liste de { label, value }, value de 0,01 à 1 ;
+    toute entrée invalide rend la liste vide (refusée au démarrage)."""
+    from llm_proxy.tools import image_generation as ig
+    assert ig._forces(ig.UPSCALE_STRENGTHS_DEFAUT) == [
+        {"label": "Détaillé", "value": 1.0}, {"label": "Équilibré", "value": 0.6},
+        {"label": "Fidèle", "value": 0.4}]
+    assert ig._forces([{"label": "Un", "value": 1}]) == [{"label": "Un", "value": 1.0}]
+    for bad in ([], "0.5", [{"label": "", "value": 0.5}], [{"label": "x", "value": 0}],
+                [{"label": "x", "value": 1.5}], [{"label": "x", "value": True}],
+                [{"label": "x"}], [0.5]):
+        assert ig._forces(bad) == [], bad

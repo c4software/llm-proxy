@@ -152,24 +152,49 @@ UPSCALE_PROMPT = config.text(
     "as they are; only add fine detail and sharpness.").strip()
 UPSCALE_MAX_PIXELS = config.integer("tools.image_generation.upscale_max_pixels",
                                     2048 * 2048)
-# Force de la retouche (`strength`, image vers image de gufo 0.35.0,
-# gufo-org/gufo#1212) : sous 1, le modèle part de l'image agrandie bruitée et
-# ne joue que les dernières passes (passes × force), l'image servant aussi
-# de référence (chat.py). Mesuré le 17/11/2026 (Turbo, 512² vers 1024²) :
-# 0,6 et 0,4 gardent mieux l'image (PSNR 31,5 et 32,1 dB contre 28,9) mais
-# ajoutent 2,5 à 3 fois moins de détail ; d'où 1 par défaut. 1 : retouche
-# complète, rien n'est envoyé (le comportement d'avant, et celui d'un
-# backend qui ignore le champ).
-UPSCALE_STRENGTH = config.num("tools.image_generation.upscale_strength", 1.0)
+# Forces de la retouche proposées par la page (`strength`, image vers image
+# de gufo 0.35.0, gufo-org/gufo#1212), une liste de { label, value }, la
+# première choisie par défaut. Sous 1, le modèle part de l'image agrandie
+# bruitée et ne joue que les dernières passes (passes × force), l'image
+# servant aussi de référence (chat.py). Mesuré le 17/11/2026 (Turbo, 512²
+# vers 1024²) : 0,6 et 0,4 gardent mieux l'image (PSNR 31,5 et 32,1 dB
+# contre 28,9) mais ajoutent 2,5 à 3 fois moins de détail ; d'où 1 en tête.
+# 1 : retouche complète, rien n'est envoyé (le comportement d'avant, et
+# celui d'un backend qui ignore le champ).
+UPSCALE_STRENGTHS_DEFAUT = [{"label": "Détaillé", "value": 1.0},
+                            {"label": "Équilibré", "value": 0.6},
+                            {"label": "Fidèle", "value": 0.4}]
+
+
+def _forces(value) -> list[dict]:
+    """Les forces de `upscale_strengths`, validées : une liste non vide de
+    { label (texte non vide), value (0,01 à 1) }."""
+    out = []
+    if isinstance(value, list):
+        for item in value:
+            if not isinstance(item, dict):
+                return []
+            label, force = str(item.get("label") or "").strip(), item.get("value")
+            if (not label or isinstance(force, bool)
+                    or not isinstance(force, (int, float))
+                    or not 0.01 <= force <= 1):
+                return []
+            out.append({"label": label, "value": float(force)})
+    return out
+
+
+UPSCALE_STRENGTHS = _forces(config.get("tools.image_generation.upscale_strengths",
+                                       UPSCALE_STRENGTHS_DEFAUT))
 if UPSCALE_MODEL and (not UPSCALE_FACTORS or min(UPSCALE_FACTORS) <= 1
                       or not UPSCALE_PROMPT or UPSCALE_MAX_PIXELS < 32 * 32
-                      or not 0.01 <= UPSCALE_STRENGTH <= 1):
+                      or not UPSCALE_STRENGTHS):
     raise SystemExit(
         f"{config.CONFIG_PATH} : tools.image_generation.upscale_factors doit "
         f"lister des facteurs > 1, avec une consigne (upscale_prompt), une "
-        f"surface (upscale_max_pixels) et une force de 0,01 à 1 "
-        f"(upscale_strength) (reçu {UPSCALE_FACTORS}, {UPSCALE_MAX_PIXELS}, "
-        f"{UPSCALE_STRENGTH})")
+        f"surface (upscale_max_pixels) et des forces (upscale_strengths : "
+        f"liste non vide de {{ label, value }}, value de 0,01 à 1) (reçu "
+        f"{UPSCALE_FACTORS}, {UPSCALE_MAX_PIXELS}, "
+        f"{config.get('tools.image_generation.upscale_strengths')!r})")
 
 
 def dimensions(data: bytes) -> str:

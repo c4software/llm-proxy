@@ -96,7 +96,7 @@ async def ui_session(request: Request):
                 "factors": tools.image_generation.UPSCALE_FACTORS,
                 "prompt": tools.image_generation.UPSCALE_PROMPT,
                 "max_pixels": tools.image_generation.UPSCALE_MAX_PIXELS,
-                "strength": tools.image_generation.UPSCALE_STRENGTH,
+                "strengths": tools.image_generation.UPSCALE_STRENGTHS,
             } if tools.image_generation.UPSCALE_MODEL else None,
             # Les outils de la page refusés à tous ([ui].page_tools_disabled).
             "page_tools_disabled": page_tools.disabled(),

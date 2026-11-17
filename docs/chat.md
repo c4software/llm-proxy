@@ -113,8 +113,9 @@ quand Chrome le propose. Il répond **sur l'appareil**, sans le proxy.
   détails changent un peu. Le résultat arrive dans une nouvelle réponse.
   Mesuré le 08/11/2026 avec Qwen-Image-2.1-Turbo sur gufo : 1024² vers
   2048² en 182 s, bascule du modèle de texte comprise ; texte de l'image
-  intact, composition gardée. Une force (`upscale_strength`) sous 1 garde l'image
-  plus fidèlement mais ajoute moins de détail.
+  intact, composition gardée. À côté du facteur, la force (`upscale_strengths`,
+  « Détaillé (1) » par défaut, « Équilibré (0,6) », « Fidèle (0,4) ») :
+  plus basse, l'image est mieux gardée mais reçoit moins de détail.
 - *Générer encore* (sous la réponse, avec un nombre de 1 à 4) : d'autres
   images avec le **même prompt**, tel qu'envoyé — rien du fil depuis —,
   jointes à la même réponse (et la même image retouchée, si c'en était une).

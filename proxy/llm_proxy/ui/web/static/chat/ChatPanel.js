@@ -1429,6 +1429,16 @@ export const ChatPanel = {
     // encore » ni « Régénérer » ne la rejouent comme une demande.
     const upscaleOpt = computed(() => chat.value.image_upscale || null);
     const upscaleFactor = ref(2);
+    // La force choisie (`upscale_strengths`, la première par défaut) ;
+    // affichée « libellé (valeur) ».
+    const upscaleStrength = ref(null);
+    watch(upscaleOpt, (up) => {
+      const all = (up && up.strengths) || [];
+      if (!all.some((s) => s.value === upscaleStrength.value)) {
+        upscaleStrength.value = all.length ? all[0].value : null;
+      }
+    }, { immediate: true });
+    const strengthText = (s) => `${s.label} (${String(s.value).replace(".", ",")})`;
     async function upscale(a, factor = upscaleFactor.value) {
       const up = upscaleOpt.value, c = current.value;
       if (!up || !c || streaming.value || !ownImage(a.data)) return;
@@ -1451,7 +1461,8 @@ export const ChatPanel = {
         if (!size) throw new Error(`Déjà à la taille maximale (${w} × ${h}).`);
         live.content = `*Agrandie ×${factor} : ${w} × ${h} → ${size.replace("x", " × ")}, redessinée par ${up.model}*`;
         const body = { model: up.model, prompt: up.prompt, size, n: 1, image };
-        if (up.strength < 1) body.strength = up.strength;
+        const force = upscaleStrength.value;
+        if (force != null && force < 1) body.strength = force;
         const got = await oneImage(c, body,
                                    ctrl.signal, () => emit("unauthorized"));
         const { revised, ...img } = got;
@@ -1772,7 +1783,7 @@ export const ChatPanel = {
     });
 
     return { chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
-             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, imageSteps, imageLoras, upscaleOpt, upscaleFactor, upscale,
+             ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, imageSteps, imageLoras, upscaleOpt, upscaleFactor, upscaleStrength, strengthText, upscale,
              voiceMode, asrMode, rec, toggleRecord, genMode, voiceChoices, newVoice, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
              storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
@@ -2106,7 +2117,10 @@ export const ChatPanel = {
                   <button type="button" class="link" @click="upscale(m.attachments[0])"
                           title="Agrandir : le modèle d'agrandissement redessine l'image à une plus grande taille (détails un peu changés)">Agrandir</button>
                   <select v-model.number="upscaleFactor" aria-label="Facteur d'agrandissement">
-                    <option v-for="f in upscaleOpt.factors" :key="f" :value="f">× {{ f }}</option></select></span>
+                    <option v-for="f in upscaleOpt.factors" :key="f" :value="f">× {{ f }}</option></select>
+                  <select v-if="upscaleOpt.strengths && upscaleOpt.strengths.length > 1" v-model.number="upscaleStrength"
+                          aria-label="Force de l'agrandissement" title="Plus bas : plus fidèle à l'image, moins de détail ajouté">
+                    <option v-for="s in upscaleOpt.strengths" :key="s.value" :value="s.value">{{ strengthText(s) }}</option></select></span>
               </template>
               <span v-else-if="m.image && m.attachments.length > 1">cliquer une image pour la télécharger ou la retoucher</span>
               <span class="gen-more" v-if="m.image && m.prompt && !streaming">
@@ -2371,6 +2385,9 @@ export const ChatPanel = {
         <template v-if="upscaleOpt && ownImage(zoom.data)">
           <select v-model.number="upscaleFactor" :disabled="streaming" aria-label="Facteur d'agrandissement">
             <option v-for="f in upscaleOpt.factors" :key="f" :value="f">× {{ f }}</option></select>
+          <select v-if="upscaleOpt.strengths && upscaleOpt.strengths.length > 1" v-model.number="upscaleStrength"
+                  :disabled="streaming" aria-label="Force de l'agrandissement" title="Plus bas : plus fidèle à l'image, moins de détail ajouté">
+            <option v-for="s in upscaleOpt.strengths" :key="s.value" :value="s.value">{{ strengthText(s) }}</option></select>
           <button type="button" class="btn ghost" :disabled="streaming" @click="upscale(zoom)"
                   title="Le modèle d'agrandissement redessine l'image à une plus grande taille (détails un peu changés)">Agrandir</button>
         </template>
