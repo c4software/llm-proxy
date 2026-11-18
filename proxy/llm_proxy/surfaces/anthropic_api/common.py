@@ -17,7 +17,7 @@ from ...core.settings import PING_INTERVAL, TRACE  # noqa: F401
 
 # Noms de modèles Anthropic → noms préfixés du proxy. «default» attrape
 # tout nom sans préfixe backend qui n'est pas dans la table.
-_raw_map = config.section("anthropic").get("model_map")
+_raw_map = config.get("anthropic.model_map", {})
 
 
 MODEL_MAP: dict[str, str] = {

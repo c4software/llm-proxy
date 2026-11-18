@@ -81,6 +81,8 @@ reconstruit toujours sur place, par exemple pour une version modifiée.
 4. Exposer le service via Nginx Proxy Manager sur un sous-domaine interne.
 
 Les réglages se modifient ensuite dans `data/config.toml`, dans le volume.
+Une partie s'applique sans redémarrer (`docker compose kill -s HUP albert-proxy`,
+ou « Recharger » dans la page) : voir [Rechargement à chaud](configuration.md#rechargement-à-chaud).
 
 Le Dockerfile seul ne livre pas :
 

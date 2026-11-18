@@ -105,8 +105,11 @@ résultats, les fichiers rendus et les caches vivent en mémoire du
 processus. Le proxy tourne donc en UN processus par dossier de données :
 `startup.single_process` prend un verrou exclusif sur `stats.db.lock` et
 un second processus (`--workers`, `WEB_CONCURRENCY`) s'arrête au
-démarrage. La configuration est lue à l'import : la changer demande un
-redémarrage.
+démarrage. La configuration est lue à l'import, en constantes de module ;
+`core/reload.py` en recharge une liste blanche à chaud (SIGHUP,
+`POST /ui/config/reload`) en réévaluant leurs expressions d'origine, trouvées
+dans le source des modules, et en suivant leurs copies (`from … import`).
+Le reste demande un redémarrage.
 
 ## Fichiers
 
@@ -151,6 +154,7 @@ partie qui l'a importé.
 | `core/settings.py` | La table `[proxy]` en constantes typées |
 | `core/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON |
 | `core/identity.py` | Le client : condensé stable de sa clé (`owner`), secret `data/client.secret` |
+| `core/reload.py` | Le rechargement à chaud : réglages rechargeables (`SAFE`), réévalués et propagés à leurs copies, tout ou rien |
 | `core/sqlite_store.py` | Une base de magasin (comptes, mémoire, conversations) : une connexion par processus, schéma posé une fois, opérations sous verrou |
 | `core/config_docs.py` | La description de chaque réglage, lue dans `config.example.toml` (montrée par Configuration → Proxy, exigée par un test) |
 | `core/multipart.py` | Champ `model` d'un corps multipart : lu pour router, préfixe retiré |

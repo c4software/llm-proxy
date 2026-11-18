@@ -26,8 +26,8 @@ import tomllib
 from fastapi import APIRouter, Request
 
 from ..access import oidc
-from ..core import config, config_docs
-from ..core.httputil import error_response, parse_json
+from ..core import config, config_docs, reload
+from ..core.httputil import error_response, json_only, parse_json
 from .dashboard import admin_only
 
 router = APIRouter()
@@ -313,3 +313,20 @@ async def ui_config_check(request: Request):
         return {"ok": False, "error": str(exc), "unknown": [], "masked": 0}
     masked = text.count(MASK)
     return {"ok": True, "error": None, "unknown": unknown(tree), "masked": masked}
+
+
+@router.post("/ui/config/reload")
+async def ui_config_reload(request: Request):
+    """Relit data/config.toml et applique à chaud les réglages
+    rechargeables (core/reload.py), comme un SIGHUP. Rend ce qui a été
+    appliqué et ce qui attend un redémarrage ; un fichier invalide ne
+    change rien (400). Le fichier lui-même n'est jamais écrit."""
+    if (bad := forbidden(request)) is not None:
+        return bad
+    if (bad := json_only(request)) is not None:
+        return bad
+    try:
+        result = reload.reload()
+    except reload.ReloadError as exc:
+        return error_response("openai", 400, "invalid_config", str(exc))
+    return {**result, "reloadable": list(reload.SAFE)}

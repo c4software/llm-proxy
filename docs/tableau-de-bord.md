@@ -322,4 +322,8 @@ OIDC.
 - **Vérifier** (`POST /ui/config/check`) : syntaxe TOML et clés
   inconnues, qu'une faute de frappe rendrait sinon inertes sans un mot.
 - **Appliquer**, c'est remplacer `data/config.toml` sur l'hôte (l'ancien
-  en `.bak`, valeurs masquées remises) et redémarrer.
+  en `.bak`, valeurs masquées remises), puis **Recharger**
+  (`POST /ui/config/reload`) : le proxy relit le fichier et applique à
+  chaud les réglages rechargeables ; la page dit ce qui a été appliqué et
+  ce qui attend un redémarrage. Voir
+  [Rechargement à chaud](configuration.md#rechargement-à-chaud).

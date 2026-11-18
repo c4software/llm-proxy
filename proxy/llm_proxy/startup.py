@@ -9,6 +9,7 @@ quotas ; et l'arrêt, dans l'ordre inverse.
 import asyncio
 import fcntl
 import os
+import signal
 import time
 from contextlib import asynccontextmanager
 
@@ -17,7 +18,7 @@ from fastapi import FastAPI
 from . import tools
 from .access import accounts, auth, fairshare, oidc
 from .access.auth import account_owner
-from .core import config
+from .core import config, reload
 from .core.settings import EXEMPT_SUFFIXES, is_exempt, log
 from .storage import files, stats
 from .surfaces import anthropic_api, chat_api, responses_api
@@ -75,6 +76,24 @@ def single_process() -> None:
     fh.write(f"{os.getpid()}\n")
     fh.flush()
     _HOLD = fh
+
+
+def on_sighup() -> None:
+    """SIGHUP (`docker compose kill -s HUP albert-proxy`) : la
+    configuration relue, les réglages rechargeables appliqués à chaud."""
+    log.info("SIGHUP : relecture de %s", config.CONFIG_PATH)
+    try:
+        reload.reload()
+    except reload.ReloadError as exc:
+        log.error("rechargement refusé, configuration inchangée : %s", exc)
+
+
+def watch_sighup() -> bool:
+    try:
+        asyncio.get_running_loop().add_signal_handler(signal.SIGHUP, on_sighup)
+        return True
+    except (NotImplementedError, RuntimeError, AttributeError):
+        return False          # pas de signaux (Windows, boucle hors du fil principal)
 
 
 @asynccontextmanager
@@ -276,7 +295,14 @@ async def lifespan(app: FastAPI):
         ", ".join(EXEMPT_SUFFIXES) or "aucun",
     )
 
+    hup = watch_sighup()
+    # La lecture du source des modules (core/reload.py), une fois, hors de
+    # la boucle : le premier rechargement n'a plus qu'à évaluer.
+    await asyncio.to_thread(reload.prepare)
+
     yield
+    if hup:
+        asyncio.get_running_loop().remove_signal_handler(signal.SIGHUP)
     for task in refresh_tasks:
         task.cancel()
     await tools.mcp.stop()

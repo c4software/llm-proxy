@@ -33,6 +33,37 @@ L'environnement ne sert qu'à deux choses :
 `data/config.toml` et `data/stats.db` sont dans `.gitignore`. Le dépôt
 ne garde que l'exemple.
 
+## Rechargement à chaud
+
+Le proxy relit `data/config.toml` sans redémarrer :
+
+- par **SIGHUP** : `docker compose kill -s HUP albert-proxy` (ou
+  `kill -HUP <pid>` hors conteneur) ;
+- par la page : **Configuration → Proxy → Recharger**
+  (`POST /ui/config/reload`, admins seulement avec OIDC).
+
+Seuls ces réglages s'appliquent à chaud ; ils sont lus à chaque usage :
+
+| Table | Clés |
+|---|---|
+| `[proxy]` | `api_keys` (retirer toutes les clés ouvre le proxy, en ajouter le ferme) |
+| `[anthropic]` | `model_map`, `ping_interval`, `trace`, `reasoning_as_thinking` |
+| `[responses]` | `reasoning_as_summary` |
+| `[chat]` | `always`, `always_except`, `annotations` |
+| `[fair_share]` | `tokens_per_hour` |
+| `[tools]` | `max_calls`, `run_timeout`, `max_result_chars`, `direct_calls_per_minute` |
+| `[quotas]` | `max_queue_seconds` |
+| `[mcp_server]` | `allowed_origins` |
+| `[ui]` | `page_tools_disabled`, `linux_relay_max_bytes`, `linux_relay_idle_seconds` |
+
+Tout autre changement (backends, outils activés, chemins, OIDC…) reste
+sans effet jusqu'au redémarrage : le journal et la page les nomment
+(« attend un redémarrage »), et la configuration affichée reste celle en
+vigueur. Un fichier invalide (TOML illisible, valeur du mauvais type) est
+refusé en entier : rien ne change. Les variables `${VAR}` sont relues dans
+l'environnement du processus, qui ne change pas : un secret modifié dans
+le `.env` demande de recréer le conteneur.
+
 ## `[backends.<nom>]`
 
 Une table par backend. **Le nom de la table est le préfixe de routage.**
