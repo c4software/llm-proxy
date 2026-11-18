@@ -31,8 +31,9 @@ Commandes :
 - `proxy/wasm/` : `npm ci && npm run build`, qui écrit les runtimes des
   bacs dans `llm_proxy/ui/web/static/vendor/` (non versionné ; l'image le fait
   elle-même), et `npm run check`, qui vérifie les types du code de la
-  page (fichiers en `// @ts-check`) et le registre de ses outils (aussi
-  lancé par pytest) ;
+  page (fichiers en `// @ts-check`), le registre de ses outils et les
+  tests Node de sa logique (`wasm/tests/`, `node --test`) — aussi
+  lancés par pytest ;
 - `proxy/linux/build.sh` : la VM Linux du navigateur, par Docker, dans
   `vendor/linux/` (voir [La VM Linux](linux.md)) ;
 - `services/executor/` : `pytest` ;
@@ -54,21 +55,58 @@ Une requête suit toujours le même chemin.
    stats, une seule fois, quelle que soit l'issue. Il construit les
    erreurs à la forme attendue : `{"error": {…}}`, ou
    `{"type": "error", …}` pour un client Anthropic.
-2. **La porte de quota (`gate`).** Un backend `quotas = true` passe par sa
-   `QuotaState`. Le relais n'en sait pas plus : la mécanique des quotas
-   vit dans `albert.py`.
+2. **La porte (`gate`).** D'abord le partage équitable (`share_gate`) :
+   un client au-delà de sa part attend qu'elle se libère. Puis, pour un
+   backend `quotas = true`, le limiteur de sa `QuotaState` (`albert.py`),
+   qui range la place prise dans `Call.tickets` : quand la requête est
+   comptée, la fenêtre est recalée sur l'`usage` réel. Le flux à pings
+   de `/v1/messages` (`pinged_stream`) ne peut pas passer par `gate`, qui
+   rend une réponse HTTP : il appelle les deux mêmes attentes en émettant
+   des `event: ping`.
 3. **Le relais (`forward`)** envoie la requête au backend. Les octets de
    la réponse traversent un « robinet », qui les lit ou les réécrit au
    passage :
    - `stats.UsageCollector` laisse passer la réponse et lit l'`usage` ;
+   - `chat_api.Translator` la réécrit quand un outil hébergé est
+     présenté sur `/v1/chat/completions` ;
    - `anthropic_api.Translator` la réécrit pour un client Anthropic ;
    - `responses_api.Translator` la réécrit pour un client Responses.
+
+   Les trois traducteurs héritent de `surfaces/robinet.py` : découpe du
+   flux SSE, usage du dernier tour et somme des tours, tokens comptés.
+   Une coupure de l'upstream en plein flux passe par leur `fail` (ou un
+   chunk d'erreur en relais direct) et compte `502` ; un client qui
+   raccroche en cours de réponse compte `499`, avec ce qui a été généré.
 4. **Les outils hébergés.** Les traducteurs portent aussi les outils
    hébergés, par un contrat commun (`pending`, `resolve`, `next_turn`,
    `finalize`, `fail`). Une seule boucle, `hosted_loop`, exécute les
-   appels et relance le backend, pour toutes les surfaces.
+   appels et relance le backend, pour toutes les surfaces ; un seul
+   départ, `endpoints.start_hosted`, ouvre le premier tour et choisit
+   entre relais d'erreur, flux et JSON mené à son terme
+   (`relaying.drain`, qui arrête la boucle si le client raccroche).
 
-`gate` et `forward` sont communs à toutes les routes.
+`gate` et `forward` servent toutes les routes ; seul `pinged_stream` a
+son propre chemin, sur les mêmes attentes.
+
+### Sens des dépendances
+
+`core/` ne dépend de rien d'autre du proxy. Puis, de bas en haut :
+`access/` et `storage/` ; `upstream/` (les backends) ; `tools/` (qui
+appellent des backends) ; `surfaces/` et `exposure/` ; `ui/`. Un paquet
+n'importe que des paquets plus bas. Deux écarts assumés : `storage/backup`
+lit `access/accounts` (il sauvegarde sa base), et `surfaces/endpoints`
+lit `ui/page_tools`, une feuille qui ne dépend que de `core/` (les outils
+de la page refusés par la configuration).
+
+### Un seul processus
+
+Les fenêtres du partage équitable et des limiteurs, la mémoire des
+résultats, les fichiers rendus et les caches vivent en mémoire du
+processus. Le proxy tourne donc en UN processus par dossier de données :
+`startup.single_process` prend un verrou exclusif sur `stats.db.lock` et
+un second processus (`--workers`, `WEB_CONCURRENCY`) s'arrête au
+démarrage. La configuration est lue à l'import : la changer demande un
+redémarrage.
 
 ## Fichiers
 
@@ -80,7 +118,7 @@ Une requête suit toujours le même chemin.
 | `docker-compose.override.example.yml` | Modèle de `docker-compose.override.yml` (non versionné, fusionné par Compose) : l'exécuteur et son réseau interne, les adaptations à la machine. Voir [Le compose de base et son override](execution-de-code.md#le-compose-de-base-et-son-override) |
 | `data/config.example.toml` | Modèle de configuration documenté : chaque réglage, sa valeur par défaut |
 | `docs/outils.md` | Le contrat des outils hébergés, et comment en écrire un |
-| `services/executor/` | L'exécuteur de code : `entrypoint.sh`, `containers/` (podman sans root), `executor/` (`sandbox.py` : un bac par conversation, `server.py` : l'API, `validate.py`), `sandbox/` (contenu d'un bac), `tests/` (faux podman) |
+| `services/executor/` | L'exécuteur de code : `entrypoint.sh`, `containers/` (podman sans root), `executor/` (`sandbox.py` : un bac par conversation, `server.py` : l'API, `validate.py`, `egress.py` : la sortie réseau, CONNECT:443 sur liste), `sandbox/` (contenu d'un bac : `check.py`, `forward.py`), `tests/` (faux podman) |
 | `services/searxng/settings.yml` | Réglages de SearXNG : ses défauts plus le format JSON. Monté en lecture seule |
 | `bench/` | Validation avec de vrais clients en conteneurs jetables, scénarios PASS/FAIL. Voir [bench/README.md](../bench/README.md) |
 
@@ -112,6 +150,9 @@ partie qui l'a importé.
 | `core/config.py` | Lecture de `data/config.toml` : `${VAR}`, accès typés ; absent, le mode installation (`SETUP`) |
 | `core/settings.py` | La table `[proxy]` en constantes typées |
 | `core/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON |
+| `core/identity.py` | Le client : condensé stable de sa clé (`owner`), secret `data/client.secret` |
+| `core/sqlite_store.py` | Une base de magasin (comptes, mémoire, conversations) : une connexion par processus, schéma posé une fois, opérations sous verrou |
+| `core/config_docs.py` | La description de chaque réglage, lue dans `config.example.toml` (montrée par Configuration → Proxy, exigée par un test) |
 | `core/multipart.py` | Champ `model` d'un corps multipart : lu pour router, préfixe retiré |
 
 ### `access/` : qui parle au proxy
@@ -129,14 +170,16 @@ partie qui l'a importé.
 |---|---|
 | `upstream/backends.py` | Backends, clients HTTP, routage au préfixe de modèle |
 | `upstream/albert.py` | Spécificités d'Albert : limiteur de quotas, familles de modèles, `/v1/me/info` |
-| `upstream/relaying.py` | Le relais : `Call`, porte de quota, `forward` |
-| `upstream/catalog.py` | `/v1/models` fusionné et préfixé, type et contexte de chaque modèle |
+| `upstream/anthropic.py` | Le backend Anthropic natif (`api = "anthropic"`) : chat/completions ↔ Messages, flux compris |
+| `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), `forward`, `relay`, `drain` |
+| `upstream/catalog.py` | Catalogue fusionné et préfixé (servi par `/v1/models`), type et contexte de chaque modèle |
 
 ### `surfaces/` : les API de conversation
 
 | Fichier | Rôle |
 |---|---|
-| `surfaces/endpoints.py` | `/v1/chat/completions`, `/v1/messages` (et `count_tokens`), `/v1/responses` |
+| `surfaces/endpoints.py` | `/v1/chat/completions`, `/v1/messages` (et `count_tokens`), `/v1/responses`, `/v1/models` ; `start_hosted`, `pinged_stream` |
+| `surfaces/robinet.py` | La base commune des trois `Translator` |
 | `surfaces/chat_api/` | Outils hébergés sur `/v1/chat/completions` : une seule réponse pour plusieurs tours upstream. Paquet : `common`, `declare`, `memory` (échanges cachés), `stream` (le `Translator`) |
 | `surfaces/responses_api/` | Traduction Responses ↔ chat/completions, flux compris ; outils hébergés ; `namespace` aplatis. Paquet : `common`, `request`, `response`, `stream` (le `Translator`) |
 | `surfaces/anthropic_api/` | Traduction Messages ↔ chat/completions, flux compris ; `model_map` ; outils serveur `web_search` et `web_fetch`. Paquet : `common`, `request`, `response`, `stream` (le `Translator`) |
@@ -160,6 +203,7 @@ partie qui l'a importé.
 | `tools/code_execution.py` | `code_execution` : client de l'exécuteur, texte et fichiers produits |
 | `tools/image_generation.py` | `image_generation` : génération ou retouche par un backend, image rendue en fichier |
 | `tools/memory.py` | `memory` : `view`, `create`, `str_replace`, `insert`, `delete`, `rename` |
+| `tools/provenance.py` | Les sites connus d'une conversation : ceux qu'un outil qui lit une URL peut ouvrir |
 | `tools/mcp/` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés. Paquet : `protocol`, `tool` (`McpTool`), `server`, `registry` |
 
 ### `exposure/` : les outils offerts tels quels
@@ -167,7 +211,7 @@ partie qui l'a importé.
 | Fichier | Rôle |
 |---|---|
 | `exposure/mcp_server.py` | Serveur MCP (`POST /mcp`), sans état, sur les outils hébergés actifs |
-| `exposure/tool_routes.py` | `/v1/tools`, `/mcp`, fichiers rendus |
+| `exposure/tool_routes.py` | `/v1/tools`, `/mcp`, fichiers rendus ; appels directs bornés par client (`[tools].direct_calls_per_minute`) |
 
 ### `storage/` : ce que le proxy garde dans `data/`
 
@@ -176,6 +220,7 @@ partie qui l'a importé.
 | `storage/stats/` | Compteurs SQLite (par requête, par exécution d'outil), lecture de l'`usage` dans le flux. Paquet : `collector` (`UsageCollector`), `db` (SQLite, file d'écriture), `usage` (Usage API) |
 | `storage/conversations.py` | Historique du chat de la page (`data/conversations.db`) : conversations et images par compte |
 | `storage/memories.py` | Magasin de la mémoire persistante (`data/memory.db`), par client, sous `/memories` |
+| `storage/voices.py` | Les voix clonées de la page, par compte (table à part de `conversations.db`) |
 | `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
 | `storage/backup.py` | Sauvegarde et restauration de `data/` |
 
@@ -189,8 +234,12 @@ partie qui l'a importé.
 | `ui/config_view.py` | La configuration effective pour la page (secrets masqués), le formulaire, la vérification d'un TOML modifié. N'écrit jamais |
 | `ui/usage_api.py` | L'Usage API (`/v1/organization/usage/*`) et ce qu'une page connectée en voit |
 | `ui/health.py` | `/healthz` et `/ui/health` : état détaillé du déploiement |
+| `ui/page_tools.py` | Les outils de la page refusés par `[ui].page_tools_disabled`, lus dans `page_tools.json` (tiré du registre de la page) |
+| `ui/linux_relay.py` | Le relais réseau (Wisp) de la VM Linux : jeton signé, adresses publiques seulement, plafond d'octets et délai d'inactivité |
+| `ui/voice_routes.py` | Routes `/ui/voices` (voix clonées) |
+| `ui/dataurl.py` | Lecture des URL `data:` envoyées par la page (images, audio) |
 | `ui/web/templates/index.html` | Squelette de la page |
 | `ui/web/static/` | Modules ES par domaine : `app.js` (session, vues, menu), `stats/`, `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème), plus `dashboard.css`, `vue.global.prod.js` et `vueuse.iife.min.js` (VueUse 15, ses modules `shared` et `core`) |
-| `ui/web/static/chat/` | `ChatPanel.js`, `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.js`, `LinuxPanel.js` (le terminal de la VM Linux), `SidePanel.js` (leur panneau commun : largeur, Large, Réseau), `voice/` (la voix : moteurs navigateur et proxy, voix clonées et leur studio, normalisation de la référence, transcription des modèles ASR), `notify.js` |
+| `ui/web/static/chat/` | `ChatPanel.js`, `api.js` (les messages envoyés au modèle, règle « ajout seul »), `turn.js` (les étapes d'un tour), `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.js`, `LinuxPanel.js` (le terminal de la VM Linux), `SidePanel.js` (leur panneau commun : largeur, Large, Réseau), `voice/` (la voix : moteurs navigateur et proxy, voix clonées et leur studio, normalisation de la référence, transcription des modèles ASR), `notify.js` |
 | `ui/web/static/chat/tools/` | Les outils que la page exécute : `contract.js` (les listes `TOOL` et `FAMILY`, l'interface `PageTool`), `index.js` (le registre, qui vérifie chaque outil au chargement), `page/` (questions, fichiers, artifacts, dossier), `device/` (l'appareil ; `vueuse.js`, les composables VueUse des outils ; `media.js`, les flux), `sandbox/` (`bac.js`, le bac commun ; `files.js` ; `javascript.js`, `typescript.js`, `php.js`, `sql.js`, `postgres.js`, `sqlbase.js`, `tables.js` ; `linux.js` et `linuxvm.js`, la VM Linux) ; `text.js`, lire, chercher et retoucher un texte (artifacts et fichiers de la VM). Voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page) |
 | `ui/web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js), `html-to-image.js` (la capture d'un artifact), `sucrase.js`, `typescript.js` (le compilateur TypeScript 6 et ses `lib.*.d.ts`), `pglite.*` et `initdb.wasm` (PostgreSQL, PGlite), `xterm.*` (le terminal) ; `linux/`, la VM Linux, construite par `proxy/linux/build.sh` |
