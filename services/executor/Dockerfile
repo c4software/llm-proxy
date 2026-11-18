@@ -102,11 +102,15 @@ ENV PYTHONUNBUFFERED=1 \
 # uidmap : un bac tourne sous un uid à lui, dans un userns à plusieurs
 # uid. catatonit : l'init de `podman run --init`, qui enterre les zombies
 # d'un programme tué par son délai. Ni fuse-overlayfs (magasin `vfs`) ni
-# passt/slirp4netns (un bac n'a pas de réseau).
+# passt/slirp4netns (un bac n'a pas de réseau). Les plugins CNI
+# (containernetworking-plugins, version 1.1.1 compilée avec un vieux Go,
+# signalée par les scanners) sont retirés : podman 5 passe par netavark, et
+# un bac n'a de toute façon pas de réseau ; podman reste installé.
 RUN apt-get update \
  && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
       podman crun uidmap catatonit libcap2-bin \
+ && apt-get purge -y containernetworking-plugins \
  && rm -rf /var/lib/apt/lists/* \
  && test -x /usr/libexec/podman/catatonit \
  && podman --version

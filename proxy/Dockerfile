@@ -78,7 +78,11 @@ WORKDIR /app
 
 # ffmpeg : `transcribe` convertit en WAV l'audio que le modèle ne lit
 # pas ([tools.transcribe].convert) ; sans lui, ces fichiers sont refusés.
+# upgrade : l'image python:3.13-slim n'est pas republiée à chaque correctif
+# de sécurité Debian (zlib1g deb13u1 en novembre 2026) ; on les prend au build,
+# comme l'exécuteur.
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
