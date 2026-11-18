@@ -301,7 +301,7 @@ export const ProxyPart = {
               <div class="row checks">
                 <span class="check">protocole
                   <select v-model="b.api" aria-label="protocole du backend"
-                          @change="if (b.api === 'anthropic') b.images = true">
+                          @change="b.api === 'anthropic' && (b.images = true)">
                     <option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></span>
                 <label class="check"><input type="checkbox" v-model="b.key"> clé d'API</label>
                 <label class="check"><input type="checkbox" v-model="b.quotas"> quotas (Albert)</label>
