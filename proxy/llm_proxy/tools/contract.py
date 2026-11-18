@@ -124,7 +124,7 @@ class Call:
     `endpoint` : la route par où l'appel arrive («/v1/responses»…).
     `model`    : le modèle PRÉFIXÉ de la conversation, «» pour l'appel
                  direct.
-    `client`   : le condensé de la clé du client (tools.owner), «» pour
+    `client`   : le condensé de la clé du client (identity.owner), «» pour
                  un proxy ouvert — jamais la clé. STABLE d'un démarrage
                  à l'autre : un outil peut y attacher ce qu'il garde.
     `session`  : l'identifiant de la CONVERSATION, de quoi retrouver un

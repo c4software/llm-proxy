@@ -7,6 +7,7 @@ dans test_mcp.py.)"""
 import pytest
 
 from fakes import rpc, everywhere
+from llm_proxy.core import identity
 from llm_proxy.access import auth
 from llm_proxy.storage import files
 from llm_proxy.exposure import mcp_server
@@ -139,7 +140,7 @@ def test_cle_exigee_client_passe_et_desactive(mcp, monkeypatch):
     assert rpc(client, "ping").status_code == 401
     rpc(client, "tools/call", {"name": "web_search", "arguments": {"query": "x"}},
         headers={"Authorization": "Bearer sk-ok"})
-    assert seen[-1][1].client == tools.owner("sk-ok") != ""
+    assert seen[-1][1].client == identity.owner("sk-ok") != ""
     monkeypatch.setattr(mcp_server, "ENABLED", False)
     assert rpc(client, "ping", headers={"Authorization": "Bearer sk-ok"}).status_code == 404
 

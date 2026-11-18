@@ -2,7 +2,7 @@
 Ce que toutes les routes partagent pour parler HTTP : la forme des
 erreurs (OpenAI ou Anthropic, selon le client), la lecture d'un corps
 JSON, et l'exigence d'un corps JSON sur les routes /ui qui écrivent.
-Ne connaît que FastAPI et anthropic_api (la forme d'erreur Anthropic).
+Ne connaît que FastAPI : la forme d'erreur Anthropic est définie ici.
 """
 
 import json
@@ -10,7 +10,28 @@ import json
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from ..surfaces import anthropic_api
+
+# Types d'erreur de l'API Anthropic par statut HTTP.
+ERROR_TYPES = {
+    400: "invalid_request_error",
+    401: "authentication_error",
+    403: "permission_error",
+    404: "not_found_error",
+    413: "request_too_large",
+    429: "rate_limit_error",
+    500: "api_error",
+    529: "overloaded_error",
+}
+
+
+def error_type(status: int) -> str:
+    if status in ERROR_TYPES:
+        return ERROR_TYPES[status]
+    return "api_error" if status >= 500 else "invalid_request_error"
+
+
+def error_body(message: str, type_: str) -> dict:
+    return {"type": "error", "error": {"type": type_, "message": message}}
 
 
 def dialect_of(request: Request) -> str:
@@ -30,7 +51,7 @@ def error_response(dialect: str, status: int, type_: str, message: str,
     un client Anthropic. `type_` est le type OpenAI (celui des logs et
     de la doc) ; côté Anthropic le type se déduit du statut."""
     if dialect == "anthropic":
-        body = anthropic_api.error_body(message, anthropic_api.error_type(status))
+        body = error_body(message, error_type(status))
     else:
         body = {"error": {"message": message, "type": type_}}
     return JSONResponse(body, status_code=status, headers=headers)

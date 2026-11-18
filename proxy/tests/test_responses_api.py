@@ -16,11 +16,12 @@ from fakes import (ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
                    SEARCH_TURN, SEARCHED, FakeUpstream, chat_doc, chunk, feed,
                    hosted_tools, search_then_answer, sse, sse_events, stream,
                    tool_call, usage)
+from llm_proxy.core import settings
+from llm_proxy.core import identity
 from llm_proxy.access import auth
 from llm_proxy.upstream import relaying
 from llm_proxy.surfaces import tool_loop
 from llm_proxy.surfaces import responses_api as R
-from llm_proxy.surfaces import anthropic_api
 from llm_proxy.upstream import backends
 from llm_proxy import tools
 from llm_proxy.tools import web_fetch, web_search
@@ -846,7 +847,7 @@ def test_to_chat_replay_is_scoped_to_the_client():
     autre, l'élément est reconstruit comme s'il était perdu — rien ne dit
     qu'il existe ailleurs."""
     hosted = hosted_tools()
-    alice, bob = tools.owner("clé-alice"), tools.owner("clé-bob")
+    alice, bob = identity.owner("clé-alice"), identity.owner("clé-bob")
     request = codex_request()
     _, ctx = R.to_chat(request, hosted=hosted, client=alice)
     t = R.Translator(200, "text/event-stream", ctx)
@@ -1044,7 +1045,7 @@ def test_app_loop_client_gone_closes_everything(proxy, monkeypatch):
             raise
 
     proxy.hosted.by_name["web_search"].run = endless
-    everywhere(monkeypatch, anthropic_api, "PING_INTERVAL", 0.01)
+    monkeypatch.setattr(settings, "PING_INTERVAL", 0.01)
     request = codex_request(model="essai/qwen")
 
     async def hang_up(marker: bytes):
@@ -1068,7 +1069,9 @@ def test_app_loop_client_gone_closes_everything(proxy, monkeypatch):
     # client Responses le temps d'une attente : elle est annulée.
     up = asyncio.run(hang_up(b": ping\n\n"))
     assert up.closed and started and cancelled == started
-    assert [(line[4], *line[6:8]) for line in proxy.lines] == [(200, 100, 10)] * 2
+    # Comptées 499 (client parti en cours de réponse), avec ce qui a été
+    # consommé : raccrocher ne fait pas passer outre les quotas.
+    assert [(line[4], *line[6:8]) for line in proxy.lines] == [(499, 100, 10)] * 2
     assert not proxy.sent
 
 

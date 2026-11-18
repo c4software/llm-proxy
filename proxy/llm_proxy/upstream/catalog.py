@@ -12,18 +12,14 @@ import asyncio
 import fnmatch
 import time
 
-from fastapi import APIRouter, Request
+from fastapi import Request
 
-from .. import tools
-from ..core.httputil import anthropic_disabled, dialect_of, error_response
 from ..core.settings import CATALOG_TTL, log
-from ..surfaces import anthropic_api, chat_api
 from . import anthropic
 from .backends import Backend, BACKENDS
 from .relaying import clean_headers
 
 
-router = APIRouter()
 
 
 def _model_max_context(m: dict) -> int | None:
@@ -65,22 +61,7 @@ _NAME_TYPES = (
 )
 
 
-def always_shown() -> list[str]:
-    """Les outils de [chat].always présentables à l'instant : ceux du
-    registre, actifs. Relu à chaque appel — le registre peut grandir
-    après le démarrage."""
-    return chat_api.offered(tools.enabled())
-
-
-def _spares(b: Backend, model: str) -> bool:
-    """Ce modèle est-il de ceux à qui rien n'est présenté d'office
-    ([chat].always_except) ? Jugé sur son nom PRÉFIXÉ, que le client l'ait
-    écrit ainsi ou non (backend de repli)."""
-    plain = model.lower().removeprefix(b.name + "/")
-    return chat_api.excepted(f"{b.name}/{plain}")
-
-
-def _converses(b: Backend, model: str) -> bool:
+def converses(b: Backend, model: str) -> bool:
     """Peut-on présenter D'OFFICE des outils à ce modèle (nom préfixé ou
     non) ? Non si le catalogue de son backend le dit d'un autre type que
     de conversation (image, voix, embeddings) : un `tools` qu'il n'attend
@@ -281,19 +262,3 @@ async def merged_models(request: Request) -> list[dict] | None:
     if all(lst is None for lst in results):
         return None
     return [e for lst in results if lst for e in lst]
-
-
-@router.get("/v1/models")
-async def list_models(request: Request):
-    """Même catalogue, deux formes : OpenAI par défaut, Anthropic quand
-    la requête porte `anthropic-version` (et que la surface est active)."""
-    dialect = dialect_of(request)
-    if dialect == "anthropic" and not anthropic_api.ENABLED:
-        return anthropic_disabled(dialect)
-    entries = await merged_models(request)
-    if entries is None:
-        return error_response(dialect, 502, "proxy_error",
-                              "aucun backend joignable pour /v1/models")
-    if dialect == "anthropic":
-        return anthropic_api.models_list(entries)
-    return {"object": "list", "data": entries}

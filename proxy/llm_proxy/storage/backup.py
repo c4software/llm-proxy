@@ -38,7 +38,7 @@ import tempfile
 import time
 import tomllib
 
-from .. import tools
+from ..core import identity
 from ..access import accounts
 from ..core import config
 from . import conversations, memories, stats
@@ -51,7 +51,7 @@ def sources() -> dict[str, str]:
     return {"stats.db": stats.DB_PATH, "memory.db": memories.DB_PATH,
             "accounts.db": accounts.DB_PATH,
             "conversations.db": conversations.DB_PATH,
-            "client.secret": tools.SECRET_PATH,
+            "client.secret": identity.SECRET_PATH,
             "config.toml": config.CONFIG_PATH}
 
 

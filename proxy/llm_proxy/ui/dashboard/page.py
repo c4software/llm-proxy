@@ -7,7 +7,7 @@ routes /ui de ce paquet.
 import os
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-from ... import tools
+from ...core import identity
 from ...access import auth, oidc
 from ...core import config
 from ...core.settings import log
@@ -102,7 +102,7 @@ async def ui_login(request: Request):
         return error_response("openai", 401, "invalid_api_key",
                               "clé du proxy invalide")
     request.session.clear()
-    request.session["kd"] = tools.owner(key)
+    request.session["kd"] = identity.owner(key)
     response = JSONResponse({"ok": True})
     drop_legacy_cookie(response, request)
     return response

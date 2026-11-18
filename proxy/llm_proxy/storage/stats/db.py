@@ -18,7 +18,7 @@ from ...core import config
 log = logging.getLogger("albert-proxy")
 
 
-# Le client de la requête en cours : condensé de sa clé (tools.owner), «»
+# Le client de la requête en cours : condensé de sa clé (identity.owner), «»
 # pour un proxy ouvert. Posé par l'application à l'entrée de chaque requête.
 CLIENT: contextvars.ContextVar[str] = contextvars.ContextVar(
     "stats_client", default="")

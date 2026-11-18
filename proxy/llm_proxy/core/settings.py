@@ -62,3 +62,16 @@ log = logging.getLogger("albert-proxy")
 
 def is_exempt(path: str) -> bool:
     return ("/" + path.strip("/")).endswith(EXEMPT_SUFFIXES)
+
+
+# [anthropic].trace — une ligne de log par réponse (les trois surfaces et
+# le relais) : stop_reason, outils appelés (nom + extrait des arguments),
+# tokens — pour voir ce qu'un agent qui s'emballe répète.
+TRACE = config.flag("anthropic.trace", False)
+
+
+# [anthropic].ping_interval — en flux, pendant l'attente du limiteur ou
+# d'un outil hébergé : un ping toutes les N secondes garde la connexion
+# vivante (certains clients coupent un flux muet ; l'API Anthropic envoie
+# aussi ces pings), sur les trois surfaces. 0 = attendre AVANT de répondre.
+PING_INTERVAL = config.num("anthropic.ping_interval", 10)

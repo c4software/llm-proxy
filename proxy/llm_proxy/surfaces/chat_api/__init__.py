@@ -25,7 +25,7 @@ toute requête, comme si elle les avait déclarés.
   * Un nom inconnu ou désactivé est ignoré, pas refusé : le client n'a rien
     demandé. Relu à chaque requête contre les outils actifs.
   * Rien d'office à `tool_choice: "none"`, à `n` > 1, ni à un modèle que
-    le catalogue ne dit pas de conversation (catalog._converses) : relais
+    le catalogue ne dit pas de conversation (catalog.converses) : relais
     brut.
   * Les autres `tool_choice` du client restent intacts (les outils d'office
     sont présentés quand même : le préfixe ne change pas d'une requête à
@@ -103,10 +103,12 @@ from .common import (  # noqa: F401
     SERVER,
 )
 from .declare import (  # noqa: F401
+    always_shown,
     declares,
     excepted,
     offered,
     prepare,
+    spares,
     unasked,
 )
 from .memory import (  # noqa: F401

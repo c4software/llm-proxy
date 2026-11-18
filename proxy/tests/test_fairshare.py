@@ -10,7 +10,7 @@ import pytest
 
 from fakes import FakeUpstream, chat_doc, everywhere
 from llm_proxy.access import auth, fairshare
-from llm_proxy import tools
+from llm_proxy.core import identity
 
 KEY = "sk-alice"
 
@@ -70,7 +70,7 @@ def ask(env, model="essai/qwen"):
 def test_over_its_share_a_client_waits_then_passes(shared):
     r, first = ask(shared)
     assert r.status_code == 200 and first < 0.3
-    assert fairshare.used(tools.owner(KEY)) == 150
+    assert fairshare.used(identity.owner(KEY)) == 150
     # 150 > 100 : la requête suivante attend que la fenêtre se vide — et
     # passe, sans 429.
     r, second = ask(shared)
@@ -89,7 +89,7 @@ def test_an_excluded_backend_neither_counts_nor_waits(shared, monkeypatch):
     from llm_proxy.upstream.backends import BACKENDS
     monkeypatch.setattr(BACKENDS["essai"], "fair_share", False)
     ask(shared)
-    assert fairshare.used(tools.owner(KEY)) == 0
+    assert fairshare.used(identity.owner(KEY)) == 0
     r, second = ask(shared)
     assert second < 0.3
 
@@ -123,10 +123,10 @@ def test_startup_reads_the_last_hour_back(tmp_path, monkeypatch, proxy):
     monkeypatch.setattr(accounts, "_cache", {})
     monkeypatch.setattr(oidc, "ENABLED", True)
     uid = accounts.login("https://idp", "alice", "a@x")["id"]
-    managed = tools.owner("une-cle-geree")
+    managed = identity.owner("une-cle-geree")
     accounts.create_key(uid, "une-cle-geree", managed)
     page = auth.account_owner(uid)
-    toml = tools.owner("sk-toml")
+    toml = identity.owner("sk-toml")
     now = time.time()
     conn = sqlite3.connect(stats.DB_PATH)
     conn.executescript(stats.SCHEMA)

@@ -6,6 +6,7 @@ pour le backend.
 
 import fnmatch
 
+from ... import tools
 from ...tools.contract import ToolName
 
 from .common import ALWAYS, ALWAYS_EXCEPT, SERVER, Context, Refused
@@ -151,3 +152,18 @@ def prepare(payload: dict, hosted, kinds, always=()) -> Context:
         # la réponse, cumulée sur les tours, retomberait sur l'estimation.
         payload["stream_options"] = {**options, "include_usage": True}
     return ctx
+
+
+def always_shown() -> list[str]:
+    """Les outils de [chat].always présentables à l'instant : ceux du
+    registre, actifs. Relu à chaque appel — le registre peut grandir
+    après le démarrage."""
+    return offered(tools.enabled())
+
+
+def spares(b, model: str) -> bool:
+    """Ce modèle est-il de ceux à qui rien n'est présenté d'office
+    ([chat].always_except) ? Jugé sur son nom PRÉFIXÉ, que le client l'ait
+    écrit ainsi ou non (backend de repli)."""
+    plain = model.lower().removeprefix(b.name + "/")
+    return excepted(f"{b.name}/{plain}")

@@ -15,7 +15,7 @@ from ..storage import files
 from ..surfaces import anthropic_api, chat_api, responses_api
 from ..upstream import albert
 from ..upstream.backends import BACKENDS
-from ..upstream.catalog import CHAT_TYPES, always_shown
+from ..upstream.catalog import CHAT_TYPES
 from .dashboard import ui_login_mode
 
 router = APIRouter()
@@ -58,7 +58,7 @@ def health_detail() -> dict:
         "chat": {"hosted_tools": chat_api.ENABLED,
                  # Présentés d'office EN CE MOMENT : les noms de
                  # [chat].always qui sont ceux d'un outil actif.
-                 "always": always_shown() if chat_api.ENABLED else [],
+                 "always": chat_api.always_shown() if chat_api.ENABLED else [],
                  "always_except": chat_api.ALWAYS_EXCEPT,
                  "memory": chat_api.MEMORY_ENABLED,
                  "memory_entries": len(chat_api.MEMORY),

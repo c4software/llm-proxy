@@ -12,7 +12,7 @@ from urllib.parse import quote
 from fastapi import Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from starlette.background import BackgroundTask
-from ... import tools
+from ...core import identity
 from ...access import accounts, auth, oidc
 from ...core.settings import log
 from ...storage import backup
@@ -189,7 +189,7 @@ async def ui_key_create(request: Request):
     try:
         record = await asyncio.to_thread(
             accounts.create_key, request_user(request)["id"], key,
-            tools.owner(key), label)
+            identity.owner(key), label)
     except accounts.AccountError as exc:
         return account_error(exc)
     return record | {"key": key}

@@ -45,12 +45,14 @@ exempt_paths = ["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]
 # Table absente ou enabled = false (défaut) → 404.
 [anthropic]
 enabled = true
-# En flux, pendant l'attente du limiteur : un `event: ping` toutes les N s
-# (un client coupe un flux muet). 0 = attendre avant de répondre.
+# En flux, pendant une attente (limiteur, partage équitable, outil
+# hébergé) : un ping toutes les N s, sur les trois surfaces (un client
+# coupe un flux muet). 0 = attendre avant de répondre.
 ping_interval = 10
 # `reasoning_content` du backend → bloc `thinking`. false = jeté.
 reasoning_as_thinking = true
-# Une ligne de log par réponse (stop_reason, outils appelés, tokens).
+# Une ligne de log par réponse, toutes surfaces (stop_reason, outils
+# appelés, tokens).
 trace = false
 
 # Nom de modèle reçu → nom PRÉFIXÉ du proxy. Claude Code envoie des noms
@@ -147,6 +149,10 @@ cache_ttl = 86400
 web_cache_ttl = 600
 web_cache_entries = 256
 web_cache_bytes = 64000000
+# Appels directs (/v1/tools/<nom> et tools/call de /mcp) par client et par
+# minute glissante ; au-delà → 429 avec Retry-After. 0 = sans limite. La
+# boucle des surfaces n'est pas concernée (max_calls la borne déjà).
+direct_calls_per_minute = 120
 
 # Recherche web par une instance SearXNG (service `searxng` du compose).
 [tools.web_search]
@@ -572,8 +578,8 @@ retention_days = 90
 margin = 0.9
 # Rafraîchissement (s) des limites via GET /v1/me/info.
 limits_refresh = 3600
-# Attente au-delà de N s (quota journalier épuisé) → 429 local avec
-# Retry-After plutôt que de bloquer.
+# Attente au-delà de N s (quota journalier épuisé), file comprise → 429
+# local avec Retry-After plutôt que de bloquer.
 max_queue_seconds = 900
 # Limites des modèles inconnus de /v1/me/info et de family_limits.
 generic_rpm = 30

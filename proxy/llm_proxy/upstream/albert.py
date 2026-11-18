@@ -100,20 +100,24 @@ class ClientGone(Exception):
 
 
 class Window:
-    """Fenêtre glissante (minute ou jour). max_req/max_tok à 0 = illimité."""
+    """Fenêtre glissante (minute ou jour). max_req/max_tok à 0 = illimité.
+    Chaque événement est une liste [instant, tokens, vivant] : son coût,
+    estimé à l'entrée, est recalé sur l'usage réel une fois la réponse
+    lue (`adjust`) tant qu'il n'est pas sorti de la fenêtre."""
 
     def __init__(self, seconds: float, max_req: int, max_tok: int):
         self.seconds = seconds
         self.max_req = max_req
         self.max_tok = max_tok
-        self.events: deque = deque()  # (timestamp, tokens)
+        self.events: deque = deque()  # [timestamp, tokens, vivant]
         self.tokens = 0
 
     def evict(self, now: float) -> None:
         cutoff = now - self.seconds
         while self.events and self.events[0][0] <= cutoff:
-            _, tok = self.events.popleft()
-            self.tokens -= tok
+            entry = self.events.popleft()
+            entry[2] = False
+            self.tokens -= entry[1]
 
     def wait_needed(self, now: float, cost: int) -> float:
         waits = []
@@ -122,7 +126,7 @@ class Window:
         if self.max_tok and self.tokens + cost > self.max_tok:
             need = self.tokens + cost - self.max_tok
             freed = 0
-            for ts, tok in self.events:
+            for ts, tok, _ in self.events:
                 freed += tok
                 if freed >= need:
                     waits.append(ts + self.seconds - now)
@@ -132,10 +136,24 @@ class Window:
                     waits.append(self.events[-1][0] + self.seconds - now)
         return max(waits) if waits else 0.0
 
-    def record(self, now: float, cost: int) -> None:
+    def record(self, now: float, cost: int) -> list | None:
+        """Enregistre un événement ; rend son entrée (pour `adjust`), ou
+        None si la fenêtre est illimitée (rien n'est gardé)."""
         if self.max_req or self.max_tok:
-            self.events.append((now, cost))
+            entry = [now, cost, True]
+            self.events.append(entry)
             self.tokens += cost
+            return entry
+        return None
+
+    def adjust(self, entry: list | None, tokens: int) -> None:
+        """Recale le coût de `entry` sur `tokens`. Sans effet sur un
+        événement déjà sorti de la fenêtre (son coût n'y pèse plus)."""
+        if entry is None or not entry[2]:
+            return
+        tokens = max(int(tokens), 0)
+        self.tokens += tokens - entry[1]
+        entry[1] = tokens
 
     def snapshot(self) -> dict:
         return {
@@ -173,17 +191,61 @@ class Limiter:
         self.day.max_req, self.day.max_tok = rpd, tpd
         self.source = source
 
-    async def acquire(self, cost: int, wait_gone=None) -> float:
+    async def acquire(self, cost: int, wait_gone=None,
+                      ticket: list | None = None) -> float:
         """Attend une place puis l'enregistre. `wait_gone` : coroutine
         sans argument qui NE REND LA MAIN QU'À LA DÉCONNEXION du client
         (pas de sondage : elle bloque). Mise en course avec l'attente —
-        si elle termine avant, la requête est abandonnée (ClientGone) et
-        le verrou rendu au suivant. Rien n'est lancé quand il n'y a pas
-        à attendre, le chemin sans contention ne coûte rien de plus."""
+        celle du verrou (les requêtes arrivées avant) comme celle du
+        quota : si elle termine avant, la requête est abandonnée
+        (ClientGone) et le verrou rendu au suivant. Rien n'est lancé quand
+        il n'y a pas à attendre, le chemin sans contention ne coûte rien
+        de plus. MAX_QUEUE_SECONDS compte TOUTE l'attente, verrou compris.
+        `ticket` : liste où ranger (limiteur, entrée minute, entrée jour,
+        coût), de quoi recaler la fenêtre sur l'usage réel
+        (relaying.Call.done → settle)."""
+        started = time.monotonic()
         waited = 0.0
         watcher: asyncio.Future | None = None
+
+        def gone() -> bool:
+            """La surveillance a-t-elle vu le client partir ? Une
+            surveillance en échec est abandonnée (on attend sans elle)."""
+            nonlocal watcher, wait_gone
+            if watcher is None or not watcher.done():
+                return False
+            if not watcher.cancelled() and watcher.exception() is None:
+                return True
+            log.debug("surveillance de déconnexion perdue : %r",
+                      None if watcher.cancelled() else watcher.exception())
+            wait_gone, watcher = None, None
+            return False
+
+        contended = self.lock.locked()
         try:
-            async with self.lock:
+            if contended and wait_gone is not None:
+                # File derrière une autre requête : le client peut partir
+                # avant même d'avoir le verrou.
+                watcher = asyncio.ensure_future(wait_gone())
+                locking = asyncio.ensure_future(self.lock.acquire())
+                try:
+                    while not locking.done():
+                        await asyncio.wait({locking, watcher},
+                                           return_when=asyncio.FIRST_COMPLETED)
+                        if not locking.done() and gone():
+                            raise ClientGone()
+                        if watcher is None:
+                            await locking
+                except BaseException:
+                    if locking.done() and not locking.cancelled():
+                        self.lock.release()
+                    else:
+                        locking.cancel()
+                    raise
+            else:
+                await self.lock.acquire()
+            try:
+                waited = time.monotonic() - started if contended else 0.0
                 while True:
                     now = time.monotonic()
                     self.minute.evict(now)
@@ -208,23 +270,26 @@ class Limiter:
                     if watcher is None:
                         await asyncio.sleep(step)
                     else:
-                        done, _ = await asyncio.wait({watcher}, timeout=step)
-                        if done:
-                            if watcher.exception() is None:
-                                raise ClientGone()
-                            # Surveillance en échec : on continue d'attendre
-                            # sans elle.
-                            log.debug("surveillance de déconnexion perdue : %r",
-                                      watcher.exception())
-                            wait_gone, watcher = None, None
+                        await asyncio.wait({watcher}, timeout=step)
+                        if gone():
+                            raise ClientGone()
                     waited += step
                 now = time.monotonic()
-                self.minute.record(now, cost)
-                self.day.record(now, cost)
+                minute = self.minute.record(now, cost)
+                day = self.day.record(now, cost)
+                if ticket is not None and (minute or day):
+                    ticket.append((self, minute, day, cost))
+            finally:
+                self.lock.release()
         finally:
             if watcher is not None:
                 watcher.cancel()
         return waited
+
+    def adjust(self, minute: list | None, day: list | None,
+               tokens: int) -> None:
+        self.minute.adjust(minute, tokens)
+        self.day.adjust(day, tokens)
 
     def snapshot(self) -> dict:
         now = time.monotonic()
@@ -476,10 +541,19 @@ class QuotaState:
                                _m(r["rpd"]), _m(r["tpd"]), "compte")
         return True
 
-    async def refresh_loop(self, backend) -> None:
+    async def refresh_loop(self, backend, loaded: bool = True) -> None:
+        """Relit les limites du compte toutes les LIMITS_REFRESH s. Tant
+        qu'elles n'ont jamais pu être lues (Albert injoignable au
+        démarrage), réessaie plus souvent : sinon les familles statiques
+        restaient jusqu'au redémarrage."""
         while True:
-            await asyncio.sleep(LIMITS_REFRESH)
-            await self.refresh(backend)
+            delay = LIMITS_REFRESH if loaded else min(LIMITS_REFRESH,
+                                                      RETRY_UNLOADED)
+            await asyncio.sleep(delay)
+            got = await self.refresh(backend)
+            if got and not loaded:
+                log.info("[%s] limites du compte lues", backend.name)
+            loaded = loaded or bool(got)
 
     def get_limiter(self, payload) -> Limiter:
         """Priorité : bucket routeur (compte) > famille statique > générique."""
@@ -550,6 +624,24 @@ class QuotaState:
             "rate_limits": {key: lim.snapshot()
                             for key, lim in self.limiters.items()},
         }
+
+
+def settle(ticket: list, tokens: int) -> None:
+    """Recale les fenêtres des places prises (`ticket`, rempli par
+    Limiter.acquire) sur les tokens réellement consommés : l'estimation
+    d'entrée ignore la sortie et surcompte une image en base64. Plusieurs
+    places (tours de la boucle des outils hébergés) : le total réparti au
+    prorata des estimations."""
+    if not ticket:
+        return
+    estimated = sum(cost for *_, cost in ticket) or 1
+    for limiter, minute, day, cost in ticket:
+        limiter.adjust(minute, day, round(tokens * cost / estimated))
+
+
+# Délai entre deux essais tant que les limites du compte n'ont jamais pu
+# être lues.
+RETRY_UNLOADED = 60
 
 
 def estimate_chat_cost(raw: bytes) -> int:

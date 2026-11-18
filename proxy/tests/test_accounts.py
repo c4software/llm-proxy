@@ -23,7 +23,7 @@ from fakes import bearer, everywhere
 from llm_proxy.access import accounts, oidc
 from llm_proxy import app as A
 from llm_proxy.access import auth
-from llm_proxy import tools
+from llm_proxy.core import identity
 
 ISSUER = "https://idp.test"
 JSON = {"content-type": "application/json"}
@@ -243,14 +243,14 @@ def test_toml_keys_still_work_next_to_accounts(idp, monkeypatch):
     monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-toml"])
     assert idp.client.get("/v1/tools", headers=bearer("sk-toml")).status_code == 200
     every = connect(idp).get("/ui/keys", params={"all": 1}).json()
-    assert every["toml"] == [{"api_key_id": tools.owner("sk-toml"),
-                              "hint": tools.owner("sk-toml")[:8],
+    assert every["toml"] == [{"api_key_id": identity.owner("sk-toml"),
+                              "hint": identity.owner("sk-toml")[:8],
                               "user_id": None, "user": None}]
 
 
 def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-toml"])
-    digest = tools.owner("sk-toml")
+    digest = identity.owner("sk-toml")
     alice = connect(idp)
     bob = connect(idp, "bob", "bob@example.org")
     bob_id = bob.get("/ui/session").json()["account"]["id"]
@@ -289,7 +289,7 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
 def test_binding_refuses_what_is_not_a_toml_key(idp, monkeypatch):
     monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-toml"])
     alice = connect(idp)
-    digest = tools.owner("sk-toml")
+    digest = identity.owner("sk-toml")
     assert alice.put("/ui/keys/toml/" + "0" * 32,
                      json={"user_id": 1}).status_code == 404
     assert alice.put(f"/ui/keys/toml/{digest}",
@@ -383,12 +383,12 @@ def test_an_admin_downloads_a_backup(idp, tmp_path, monkeypatch):
 
     from llm_proxy.core import config
     from llm_proxy.storage import memories, stats
-    from llm_proxy import tools
+    from llm_proxy.core import identity
     (tmp_path / "config.toml").write_text("[proxy]\n")
     monkeypatch.setattr(config, "CONFIG_PATH", str(tmp_path / "config.toml"))
     monkeypatch.setattr(memories, "DB_PATH", str(tmp_path / "memory.db"))
     everywhere(monkeypatch, stats, "DB_PATH", str(tmp_path / "absente.db"))
-    tools.owner("x")                                  # crée client.secret
+    identity.owner("x")                                  # crée client.secret
     alice = connect(idp)
     bob = connect(idp, "bob", "bob@example.org")
     r = alice.get("/ui/admin/backup")

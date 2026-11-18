@@ -20,9 +20,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ..access import accounts, fairshare
 from ..access.auth import auth_required
 from ..core.httputil import error_response
+from ..core import settings
 from ..core.settings import HOP_BY_HOP, is_exempt, log
 from ..storage import stats
-from ..surfaces import anthropic_api
 from . import albert, anthropic
 from .backends import Backend, backend_offline_message
 
@@ -113,6 +113,9 @@ class Call:
         # Le statut compté par done() : ce qu'une réponse construite APRÈS
         # la boucle des outils hébergés doit porter (messages(), en JSON).
         self.status = 0
+        # Les places prises dans les fenêtres du limiteur (Limiter.acquire),
+        # recalées sur l'usage réel quand la requête est comptée.
+        self.tickets: list = []
 
     @property
     def plain_model(self) -> str:
@@ -123,15 +126,22 @@ class Call:
 
     def done(self, status: int, prompt_tokens: int = 0,
              completion_tokens: int = 0, exact: bool = False,
-             streamed: bool = False, cached_tokens: int = 0) -> None:
+             streamed: bool = False, cached_tokens: int = 0,
+             partial: bool = False) -> None:
+        """`partial` : la réponse a commencé puis s'est interrompue (client
+        parti en plein flux → 499, upstream coupé → 502) — ce qui a été
+        généré est compté (estimé au besoin), sinon raccrocher juste avant
+        la fin ferait passer outre quotas et partage équitable."""
         if self._done or not self.model_key:
             return
         self._done = True
         self.status = status
+        if status < 400 or partial:
+            albert.settle(self.tickets, prompt_tokens + completion_tokens)
         # Erreur sans `usage` upstream (500, 429 local, client parti…) :
         # rien n'a été consommé de mesurable — des zéros exacts, pas le
         # corps envoyé compté en tokens estimés.
-        if status >= 400 and not exact:
+        if status >= 400 and not exact and not partial:
             prompt_tokens = completion_tokens = cached_tokens = 0
             exact = True
         stats.record(self.model_key, self.backend.name, self.plain_model,
@@ -160,6 +170,46 @@ async def wait_disconnect(request: Request) -> None:
             return
 
 
+async def drain(gen, call: Call, request: Request) -> bytes | None:
+    """Mène `gen` (la boucle des outils hébergés, en JSON) à son terme et
+    rend ses octets — ou None si le client raccroche avant : la boucle est
+    alors annulée (outils et tours upstream arrêtés) et la requête comptée
+    499. Sans cette course, une recherche et ses tours suivants allaient
+    au bout pour personne."""
+    chunks: list[bytes] = []
+
+    async def collect():
+        async for chunk in gen:
+            chunks.append(chunk)
+
+    task = asyncio.ensure_future(collect())
+    gone = asyncio.ensure_future(wait_disconnect(request))
+    try:
+        done, _ = await asyncio.wait({task, gone},
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if task in done:
+            task.result()
+            return b"".join(chunks)
+        if gone.exception() is not None:
+            # Surveillance en échec : on attend la boucle sans elle.
+            await task
+            return b"".join(chunks)
+        log.info("client parti pendant la boucle des outils : %s abandonné",
+                 call.endpoint)
+        call.done(CLIENT_CLOSED)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        await gen.aclose()
+        return None
+    finally:
+        gone.cancel()
+        if not task.done():
+            task.cancel()
+
+
 def shared(call: Call) -> bool:
     """La requête relève-t-elle du partage équitable ? Pas sur une route
     exemptée du limiteur ([proxy].exempt_paths), ni sur un backend
@@ -181,6 +231,29 @@ async def share_of() -> int | None:
     return share or None
 
 
+async def share_gate(call: Call, gone) -> bool:
+    """Le partage équitable seul : attend que le client de la requête soit
+    sous sa part. `gone()` (coroutine) ne rend la main qu'au départ du
+    client. Faux = client parti pendant l'attente, déjà compté (499).
+    Commun à `gate` et au flux à pings de /v1/messages
+    (endpoints.pinged_stream), qui ne peut pas passer par `gate`."""
+    client = fairshare.CLIENT.get()
+    if client is None or not shared(call):
+        return True
+    try:
+        waited = await fairshare.wait(client, share_of, gone)
+    except fairshare.ClientGone:
+        log.info("[partage] client parti pendant l'attente : %s "
+                 "abandonné", call.endpoint)
+        call.done(CLIENT_CLOSED)
+        return False
+    if waited:
+        log.info("[partage] %s relâché après %.1fs d'attente (part "
+                 "dépassée, %d tokens sur l'heure)", call.endpoint,
+                 waited, fairshare.used(client))
+    return True
+
+
 async def gate(call: Call, request: Request, payload, cost: int) -> Response | None:
     """La porte commune à toutes les routes. None = passer. D'abord le
     partage équitable (fairshare) : un client au-delà de sa part attend
@@ -189,26 +262,15 @@ async def gate(call: Call, request: Request, payload, cost: int) -> Response | N
     l'attente du quota dépasserait MAX_QUEUE_SECONDS, 499 si le client a
     raccroché pendant l'une ou l'autre attente (la requête n'est PAS partie
     à l'upstream — personne ne lira cette réponse)."""
-    client = fairshare.CLIENT.get()
-    if client is not None and shared(call):
-        try:
-            waited = await fairshare.wait(client, share_of,
-                                          lambda: wait_disconnect(request))
-        except fairshare.ClientGone:
-            log.info("[partage] client parti pendant l'attente : %s "
-                     "abandonné", call.endpoint)
-            call.done(CLIENT_CLOSED)
-            return Response(status_code=CLIENT_CLOSED)
-        if waited:
-            log.info("[partage] %s relâché après %.1fs d'attente (part "
-                     "dépassée, %d tokens sur l'heure)", call.endpoint,
-                     waited, fairshare.used(client))
+    if not await share_gate(call, lambda: wait_disconnect(request)):
+        return Response(status_code=CLIENT_CLOSED)
     b = call.backend
     if not b.quotas or is_exempt(call.endpoint):
         return None
     limiter = b.quota_state.get_limiter(payload)  # model dé-préfixé
     try:
-        waited = await limiter.acquire(cost, lambda: wait_disconnect(request))
+        waited = await limiter.acquire(cost, lambda: wait_disconnect(request),
+                                       ticket=call.tickets)
     except albert.QuotaWaitTooLong as exc:
         return quota_error(call, exc, limiter)
     except albert.ClientGone:
@@ -352,6 +414,23 @@ async def _anthropic_request(call: Call, path: str, body: bytes):
 ERROR_EXCERPT = 600
 
 
+def interrupted(robinet, message: str) -> bytes:
+    """Ce que le client lit d'un flux upstream coupé : le `fail` du
+    robinet qui traduit (event: error, response.failed, chunk d'erreur),
+    ou, en relais direct d'un flux SSE, un chunk d'erreur à la forme
+    OpenAI suivi de [DONE]. Rien en JSON : le corps reste tronqué, ce que
+    tout lecteur JSON détecte."""
+    fail = getattr(robinet, "fail", None)
+    if fail is not None:
+        return fail(message, 502)
+    if getattr(robinet, "sse", False):
+        body = {"error": {"message": message, "type": "upstream_error",
+                          "code": 502}}
+        return (b"data: " + json.dumps(body, ensure_ascii=False).encode()
+                + b"\n\ndata: [DONE]\n\n")
+    return b""
+
+
 async def relay(call: Call, upstream: httpx2.Response, robinet,
                 prompt_estimate: int):
     """Les octets upstream, passés par le robinet. Le `finally` compte
@@ -359,19 +438,39 @@ async def relay(call: Call, upstream: httpx2.Response, robinet,
     quoi qu'il arrive. Une erreur upstream (4xx/5xx) est loggée avec le
     début de son corps — le client, lui, ne voit souvent qu'un statut."""
     failed = upstream.status_code >= 400
+    status, partial = upstream.status_code, False
     excerpt = bytearray()
     try:
-        async for chunk in upstream.aiter_raw():
-            if failed and len(excerpt) < ERROR_EXCERPT:
-                excerpt += chunk[:ERROR_EXCERPT - len(excerpt)]
-            out = robinet.feed(chunk)
+        try:
+            async for chunk in upstream.aiter_raw():
+                if failed and len(excerpt) < ERROR_EXCERPT:
+                    excerpt += chunk[:ERROR_EXCERPT - len(excerpt)]
+                out = robinet.feed(chunk)
+                if out:
+                    yield out
+        except httpx2.HTTPError as exc:
+            # Coupure upstream en plein flux (ReadError, ReadTimeout…) : le
+            # statut est parti, l'échec se dit dans le flux — sinon le
+            # client lirait une réponse tronquée comme complète — et la
+            # ligne de stats compte 502, pas le 200 du départ.
+            status, partial = 502, True
+            log.warning("[%s] %s : flux upstream coupé (%s) : %r",
+                        call.backend.name, call.endpoint, call.model_key, exc)
+            out = interrupted(robinet, f"upstream stream interrupted: {exc}")
             if out:
                 yield out
+            return
         out = robinet.finish()
         if out:
             yield out
+    except (asyncio.CancelledError, GeneratorExit):
+        # Le client a raccroché en plein flux : 499, ce qui a été généré
+        # jusque-là compté.
+        if not failed:
+            status, partial = CLIENT_CLOSED, True
+        raise
     finally:
-        if anthropic_api.TRACE and hasattr(robinet, "summary"):
+        if settings.TRACE and hasattr(robinet, "summary"):
             log.info("[%s] %s → %s", call.backend.name, call.model_key,
                      robinet.summary())
         if failed:
@@ -381,8 +480,8 @@ async def relay(call: Call, upstream: httpx2.Response, robinet,
                 excerpt.decode("utf-8", "replace").replace("\n", " "),
             )
         prompt, completion, exact = robinet.tokens(prompt_estimate)
-        call.done(upstream.status_code, prompt, completion, exact,
-                  robinet.sse, robinet.cached())
+        call.done(status, prompt, completion, exact,
+                  robinet.sse, robinet.cached(), partial=partial)
         await upstream.aclose()
 
 

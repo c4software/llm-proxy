@@ -22,6 +22,7 @@ import pytest
 from fakes import (FOUND, PUBLIC, RESULTS, SEARCHED, Echo, FakeUpstream,
                    FakeWeb, chat_doc, fake_dns, go, hosted_chat, outil,
                    pdf_bytes, rendu)
+from llm_proxy.core import identity
 from llm_proxy.access import auth
 from llm_proxy.upstream import catalog
 from llm_proxy.surfaces import tool_loop
@@ -823,16 +824,16 @@ def test_memory_evince_l_entree_la_moins_recemment_utilisee():
 def test_memory_cloisonnee_par_client():
     """Le client fait partie de la clé : le même identifiant, pour un autre
     client, n'existe pas. La borne, elle, est commune."""
-    alice, bob = tools.owner("clé-alice"), tools.owner("clé-bob")
+    alice, bob = identity.owner("clé-alice"), identity.owner("clé-bob")
     # Un condensé, stable dans le processus, qui ne contient pas la clé ;
     # pas de clé = le client unique d'un proxy ouvert.
-    assert alice == tools.owner("clé-alice") != bob
-    assert len(alice) == 32 and "alice" not in alice and tools.owner("") == ""
+    assert alice == identity.owner("clé-alice") != bob
+    assert len(alice) == 32 and "alice" not in alice and identity.owner("") == ""
     # Stable d'un démarrage à l'autre : le secret est relu de son fichier,
     # créé lisible du seul propriétaire.
-    tools._secret = None
-    assert tools.owner("clé-alice") == alice
-    assert os.stat(tools.SECRET_PATH).st_mode & 0o777 == 0o600
+    identity._secret = None
+    assert identity.owner("clé-alice") == alice
+    assert os.stat(identity.SECRET_PATH).st_mode & 0o777 == 0o600
     m = tools.Memory(3, 60)
     m.store("ws_1", "n", "{}", "pour alice", alice)
     assert m.recall("ws_1", alice)["result"] == "pour alice"

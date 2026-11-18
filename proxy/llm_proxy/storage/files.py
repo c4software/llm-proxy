@@ -142,7 +142,7 @@ class Stored:
     inline: bool            # affiché par le navigateur, ou téléchargé
     data: bytes
     expires: float          # time.monotonic()
-    owner: str = ""         # tools.owner du client, pour les comptes
+    owner: str = ""         # identity.owner du client, pour les comptes
 
     @property
     def url(self) -> str:

@@ -48,7 +48,7 @@ class Context:
         # nom → outil de tools/
         self.hosted: dict = {}
         self.memory = None
-        # tools.owner() de la clé présentée, «» pour un proxy ouvert.
+        # identity.owner() de la clé présentée, «» pour un proxy ouvert.
         self.client = ""
         # Outils du CLIENT présentés au modèle comme des fonctions : nom de
         # la fonction → (nom de l'outil `custom`, son namespace ou None),

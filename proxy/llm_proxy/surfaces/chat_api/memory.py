@@ -119,7 +119,7 @@ def _key(state, text: str, ids: list[str]) -> str:
 def restore(payload: dict, ctx: Context, client: str) -> int:
     """Réinsère, DANS `payload`, les échanges cachés reconnus (tête de
     module) et pose sur `ctx` de quoi ranger celui de cette réponse. Rend
-    le nombre d'échanges réinsérés. `client` : tools.owner() de la clé,
+    le nombre d'échanges réinsérés. `client` : identity.owner() de la clé,
     «» pour un proxy ouvert."""
     messages = payload.get("messages")
     if not MEMORY_ENABLED or not isinstance(messages, list):

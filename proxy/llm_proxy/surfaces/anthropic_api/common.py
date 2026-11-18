@@ -9,6 +9,10 @@ import json
 import re
 
 from ...core import config
+# La forme d'erreur Anthropic et les réglages communs aux surfaces vivent
+# dans le noyau (core) ; réexportés ici pour les parties du paquet.
+from ...core.httputil import ERROR_TYPES, error_body, error_type  # noqa: F401
+from ...core.settings import PING_INTERVAL, TRACE  # noqa: F401
 
 
 # Noms de modèles Anthropic → noms préfixés du proxy. «default» attrape
@@ -26,19 +30,6 @@ MODEL_MAP: dict[str, str] = {
 # Absente du TOML = surface inactive : un déploiement existant n'expose
 # rien de nouveau sans l'avoir demandé.
 ENABLED = config.flag("anthropic.enabled", False)
-
-
-# Une ligne de log par réponse /v1/messages : stop_reason, outils appelés
-# (nom + extrait des arguments), tokens — pour voir ce qu'un agent qui
-# s'emballe répète.
-TRACE = config.flag("anthropic.trace", False)
-
-
-# En flux, pendant l'attente du limiteur : un `event: ping` toutes les N
-# secondes garde la connexion vivante (certains clients coupent un flux
-# muet ; l'API Anthropic envoie aussi ces pings). 0 = attendre AVANT de
-# répondre.
-PING_INTERVAL = config.num("anthropic.ping_interval", 10)
 
 
 # `reasoning_content` d'un backend → bloc `thinking` pour le client, sans
@@ -88,19 +79,6 @@ ERROR_CODES = {
 }
 
 
-# Types d'erreur de l'API Anthropic par statut HTTP.
-ERROR_TYPES = {
-    400: "invalid_request_error",
-    401: "authentication_error",
-    403: "permission_error",
-    404: "not_found_error",
-    413: "request_too_large",
-    429: "rate_limit_error",
-    500: "api_error",
-    529: "overloaded_error",
-}
-
-
 def resolve_model(name: str, backends) -> str | None:
     """Nom tel que le client l'envoie → nom préfixé routable, ou None.
     Ordre : table exacte, table sans suffixe «[…]», nom déjà préfixé
@@ -116,16 +94,6 @@ def resolve_model(name: str, backends) -> str | None:
     if any(key.startswith(b + "/") for b in backends):
         return str(name).strip()
     return MODEL_MAP.get("default")
-
-
-def error_type(status: int) -> str:
-    if status in ERROR_TYPES:
-        return ERROR_TYPES[status]
-    return "api_error" if status >= 500 else "invalid_request_error"
-
-
-def error_body(message: str, type_: str) -> dict:
-    return {"type": "error", "error": {"type": type_, "message": message}}
 
 
 def prompt_text(payload) -> str:

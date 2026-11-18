@@ -25,9 +25,21 @@ détaille.
 - **Limiteur de quotas** (`quotas = true`, Albert) : retarde les requêtes
   pour rester sous les limites minute et jour du compte, lues sur
   `/v1/me/info`. Au-delà de `quotas.max_queue_seconds` : 429 local avec
-  `Retry-After`. Un client qui raccroche quitte la file sans rien
-  consommer (compté `499`). Deux comptes Albert ont des limiteurs
+  `Retry-After` (la file derrière les requêtes précédentes compte dans
+  cette attente). Un client qui raccroche quitte la file sans rien
+  consommer (compté `499`), même avant son tour. L'entrée est estimée à
+  la taille du corps, puis la fenêtre est recalée sur l'`usage` réel de
+  la réponse (sortie comprise). Deux comptes Albert ont des limiteurs
   indépendants.
+- **Un seul processus par dossier de données** : quotas, partage
+  équitable et mémoires vivent en mémoire du processus. Un second
+  processus (`--workers`, `WEB_CONCURRENCY`) sur les mêmes données
+  s'arrête au démarrage (verrou `stats.db.lock`).
+- **Flux interrompus** : une coupure de l'upstream en plein flux se dit au
+  client (chunk d'erreur puis `[DONE]`, `event: error`, `response.failed`)
+  et compte `502` ; un client qui raccroche en cours de réponse compte
+  `499`. Dans les deux cas ce qui a été généré est compté (quotas,
+  partage équitable, statistiques).
 - **Backends locaux à la demande** : jamais sondés, connexion coupée à
   1 s. Éteint, un backend répond 503 `backend_offline` avec `Retry-After`
   et disparaît de `/v1/models`.

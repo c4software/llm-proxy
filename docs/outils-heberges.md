@@ -613,7 +613,7 @@ persistants.
 **Cloisonnée par clé** :
 
 - Un fichier appartient à la clé qui l'a écrit (`call.client`, condensé de
-  `tools.owner`) et ne se relit qu'avec elle ; le modèle ne choisit pas le
+  `core.identity.owner`) et ne se relit qu'avec elle ; le modèle ne choisit pas le
   client. La clé n'est jamais écrite ; le condensé est stable (secret dans
   `data/client.secret`). Changer de clé, c'est changer de mémoire.
 - **Avec les [comptes OIDC](tableau-de-bord.md#comptes-oidc)**, c'est le

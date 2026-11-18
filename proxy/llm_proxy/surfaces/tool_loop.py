@@ -10,16 +10,19 @@ gardent le flux du client ouvert.
 import asyncio
 from urllib.parse import urlsplit
 
+import httpx2
+
 from fastapi import Request, Response
 
 from .. import tools
 from ..tools import provenance
 from ..access.auth import request_owner
 from ..core.httputil import parse_json
+from ..core import settings
 from ..core.settings import log
 from ..upstream import albert, relaying
 from ..upstream.backends import strip_backend_prefix
-from . import anthropic_api, responses_api
+from . import responses_api
 from ..upstream.relaying import (
     CLIENT_CLOSED,
     Call,
@@ -77,7 +80,7 @@ def hosted_stream(call: Call, request: Request, payload: dict,
                        # ping_interval = 0 : pas de ping (sans ce garde
                        # l'attente aurait un délai nul et pingerait en boucle).
                        ping=b": ping\n\n" if robinet.sse
-                       and anthropic_api.PING_INTERVAL > 0 else None,
+                       and settings.PING_INTERVAL > 0 else None,
                        messages=messages)
 
 
@@ -96,7 +99,7 @@ async def _settled(task: asyncio.Future, ping: bytes | None) -> bool:
     avec, au plus tard après anthropic.ping_interval secondes — à
     l'appelant d'émettre son ping et de redemander."""
     done, _ = await asyncio.wait(
-        {task}, timeout=anthropic_api.PING_INTERVAL if ping else None)
+        {task}, timeout=settings.PING_INTERVAL if ping else None)
     return bool(done)
 
 
@@ -198,7 +201,7 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
     l'usage cumulé. Un client qui raccroche annule ce générateur : le
     `finally` compte ce qui a été consommé et ferme l'upstream."""
     quiet = Call(call.backend, "", call.endpoint, call.dialect)
-    status = upstream.status_code
+    status, partial = upstream.status_code, False
     limits = limit if isinstance(limit, dict) else None
     budget = sum(limits.values()) if limits is not None else limit
     hard_limit = HOSTED_HARD_LIMIT if budget is None \
@@ -216,10 +219,21 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
     task: asyncio.Future | None = None
     try:
         while True:
-            async for chunk in upstream.aiter_raw():
-                out = robinet.feed(chunk)
-                if out:
-                    yield out
+            try:
+                async for chunk in upstream.aiter_raw():
+                    out = robinet.feed(chunk)
+                    if out:
+                        yield out
+            except httpx2.HTTPError as exc:
+                # Coupure upstream en plein flux : le 200 est parti, le
+                # client lit l'échec dans le flux, la ligne compte 502.
+                status, partial = 502, True
+                log.warning("[%s] %s : flux upstream coupé au tour %d "
+                            "(%s) : %r", call.backend.name, call.endpoint,
+                            robinet.turns + 1, call.model_key, exc)
+                yield robinet.fail(f"upstream stream interrupted: {exc}",
+                                   status)
+                return
             out = robinet.finish()
             if out:
                 yield out
@@ -345,6 +359,12 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                     status)["error"]["message"], status)
                 return
             robinet.next_turn()
+    except (asyncio.CancelledError, GeneratorExit):
+        # Le client a raccroché en cours de réponse : 499, ce qui a été
+        # consommé jusque-là compté.
+        if status < 400:
+            status, partial = CLIENT_CLOSED, True
+        raise
     finally:
         if task is not None:
             # Client parti pendant une attente : la recherche s'arrête,
@@ -360,11 +380,14 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                 "%s : %d appel(s) d'outil hébergé en %d tour(s) "
                 "upstream (model=%s)", call.endpoint, ran, robinet.turns,
                 call.model_key)
-        if anthropic_api.TRACE and hasattr(robinet, "summary"):
+        if settings.TRACE and hasattr(robinet, "summary"):
             log.info("[%s] %s → %s", call.backend.name, call.model_key,
                      robinet.summary())
         prompt, completion, exact = robinet.tokens(prompt_estimate)
+        # Les places des tours suivants (prises par le Call muet) se
+        # recalent avec celles du premier, sur l'usage cumulé.
+        call.tickets += quiet.tickets
         call.done(status, prompt, completion, exact, robinet.sse,
-                  robinet.cached())
+                  robinet.cached(), partial=partial)
         if upstream is not None:
             await upstream.aclose()

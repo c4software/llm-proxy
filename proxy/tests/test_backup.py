@@ -14,7 +14,7 @@ from fakes import everywhere
 from llm_proxy.access import accounts
 from llm_proxy.storage import backup, conversations, memories, stats
 from llm_proxy.core import config
-from llm_proxy import tools
+from llm_proxy.core import identity
 
 
 @pytest.fixture
@@ -24,9 +24,9 @@ def data(tmp_path, monkeypatch):
     d.mkdir()
     (d / "config.toml").write_text('[proxy]\nlog_level = "INFO"\n')
     monkeypatch.setattr(config, "CONFIG_PATH", str(d / "config.toml"))
-    monkeypatch.setattr(tools, "SECRET_PATH", str(d / "client.secret"))
-    monkeypatch.setattr(tools, "_secret", None)
-    tools.owner("init")                         # crée le secret
+    monkeypatch.setattr(identity, "SECRET_PATH", str(d / "client.secret"))
+    monkeypatch.setattr(identity, "_secret", None)
+    identity.owner("init")                         # crée le secret
     monkeypatch.setattr(memories, "DB_PATH", str(d / "memory.db"))
     monkeypatch.setattr(accounts, "DB_PATH", str(d / "accounts.db"))
     monkeypatch.setattr(accounts, "_cache", {})

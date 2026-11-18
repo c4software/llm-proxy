@@ -26,7 +26,7 @@ que sur DEMANDE de l'utilisateur (voir la description) : un modèle à qui
 l'on disait d'y noter « au fil de l'eau » l'avancement de ses tâches la
 remplissait de notes de travail, relues ensuite par d'autres tâches.
 
-Le client est `call.client` (tools.owner : le condensé STABLE de sa clé),
+Le client est `call.client` (identity.owner : le condensé STABLE de sa clé),
 jamais un argument du modèle : il ne peut pas lire la mémoire d'un autre.
 Sans liaison de protocole : exécutable par /v1/tools et le serveur MCP
 (/mcp), présentable sur /v1/chat/completions (déclaré `{"type":

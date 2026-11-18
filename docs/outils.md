@@ -151,7 +151,7 @@ Ce qui ne vient **pas** du modèle, qui ne peut donc pas s'en affranchir.
 | `settings` | Réglages du **client** sur cet outil. Clés connues : `allowed_domains`, `blocked_domains` (outil serveur Anthropic), `max_chars` (tiré de `max_content_tokens`). Un outil ignore les autres |
 | `endpoint` | La route d'arrivée (`/v1/responses`, `/v1/tools`…) |
 | `model` | Le modèle préfixé ; vide pour l'appel direct |
-| `client` | Condensé de la clé (`tools.owner`), jamais la clé ; vide pour un proxy ouvert. **Stable** entre démarrages (secret dans `data/client.secret`) : `memory` y attache sa mémoire persistante |
+| `client` | Condensé de la clé (`core.identity.owner`), jamais la clé ; vide pour un proxy ouvert. **Stable** entre démarrages (secret dans `data/client.secret`) : `memory` y attache sa mémoire persistante |
 | `session` | Identifiant de la **conversation**, pour garder un état entre appels (le bac de `code_execution`). Seule `/v1/chat/completions` en fournit un : tiré à chaque requête, retrouvé avec l'échange caché que la mémoire reconnaît (`[chat].memory`), valable tant que le client renvoie ses réponses inchangées. `""` ailleurs : un outil à état doit marcher sans (un état par appel). Ne sort jamais du proxy |
 | `hosts` | Les **sites** déjà apparus dans la conversation (`tools/provenance.py`), pour un outil qui lit une URL du modèle : il appelle `provenance.check(url, call)` avant tout téléchargement. `None` quand la route ne voit pas de conversation (`/v1/tools`, `/mcp`) : pas de contrôle |
 

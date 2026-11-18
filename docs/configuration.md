@@ -142,9 +142,9 @@ Table absente = surface inactive, signalé au démarrage et dans `/healthz`.
 |---|---|---|
 | `enabled` | `false` | Ouvre la surface Anthropic (`/v1/messages`…) |
 | `model_map` | `{}` | Noms Anthropic → noms préfixés. `default` attrape les inconnus. Voir [API Anthropic Messages](api-anthropic.md#noms-de-modèles--anthropicmodel_map) |
-| `ping_interval` | `10` | Secondes entre deux `event: ping` pendant l'attente du limiteur, en flux. `0` = attendre avant de répondre |
+| `ping_interval` | `10` | Secondes entre deux pings pendant une attente en flux (limiteur, partage équitable, outil hébergé), sur les trois surfaces : `event: ping` pour `/v1/messages`, commentaire SSE ailleurs. `0` = attendre avant de répondre |
 | `reasoning_as_thinking` | `true` | `reasoning_content` du backend → bloc `thinking` |
-| `trace` | `false` | Une ligne de log par réponse `/v1/messages` : `stop_reason`, outils appelés (nom, extrait des arguments), tokens. Pour voir ce qu'un agent fait ou répète |
+| `trace` | `false` | Une ligne de log par réponse (toutes surfaces) : `stop_reason`, outils appelés (nom, extrait des arguments), tokens. Pour voir ce qu'un agent fait ou répète |
 
 ## `[responses]`
 
@@ -184,6 +184,7 @@ Réglages communs aux [outils hébergés](outils-heberges.md).
 | `web_cache_ttl` | `600` | Cache web : secondes pendant lesquelles une page ou une recherche est resservie. `0` = pas de cache |
 | `web_cache_entries` | `256` | Cache web : nombre d'entrées |
 | `web_cache_bytes` | `64000000` | Cache web : taille cumulée, en octets |
+| `direct_calls_per_minute` | `120` | Appels directs d'outils (`/v1/tools/<nom>`, `tools/call` de `/mcp`) par client et par minute glissante. Au-delà : `429` avec `Retry-After`. `0` = sans limite. La boucle des surfaces n'est pas concernée |
 
 ## `[tools.web_search]`
 
@@ -421,8 +422,8 @@ Pour les backends à `quotas = true`.
 | Clé | Défaut | Rôle |
 |---|---|---|
 | `margin` | `0.9` | Fraction des limites réellement utilisée (marge de sécurité) |
-| `max_queue_seconds` | `900` | Attente maximale avant un 429 local (quota journalier épuisé) |
-| `limits_refresh` | `3600` | Période de rechargement de `/v1/me/info`. `0` = jamais |
+| `max_queue_seconds` | `900` | Attente maximale avant un 429 local (quota journalier épuisé), file derrière les requêtes précédentes comprise. Un client qui raccroche pendant l'attente quitte la file sans consommer de quota |
+| `limits_refresh` | `3600` | Période de rechargement de `/v1/me/info`. `0` = jamais. Si les limites n'ont pas pu être lues au démarrage (Albert injoignable), nouvel essai toutes les 60 s jusqu'à la première lecture |
 | `generic_rpm` / `generic_tpm` | `30` / `128000` | Limites des modèles hors familles connues |
 | `status_interval` | `600` | Période du résumé des compteurs dans les logs |
 | `[quotas.family_limits.<famille>]` | *intégré* | `rpm`, `tpm`, `models = [préfixes]` : limites statiques de repli par famille |

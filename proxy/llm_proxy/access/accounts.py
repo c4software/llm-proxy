@@ -16,7 +16,7 @@ son administrateur sans rien écrire ailleurs. Le dernier admin ne peut
 pas perdre son rôle.
 
 UNE CLÉ = un uuid4 tiré par le proxy, montré UNE fois à sa création. N'en
-est gardé que le condensé (tools.owner, calculé par l'appelant : ce module
+est gardé que le condensé (identity.owner, calculé par l'appelant : ce module
 ne connaît pas le secret) et un indice (ses 8 premiers caractères) pour
 la reconnaître dans la liste. Une clé révoquée reste en base (ses
 statistiques gardent un libellé) mais ne vaut plus rien.
@@ -36,10 +36,10 @@ un petit cache à durée courte, vidé à chaque écriture locale.
 """
 
 import sqlite3
-import threading
 import time
 
 from ..core import config
+from ..core.sqlite_store import Store
 
 DB_PATH = config.resolve(config.text("oidc.database", "accounts.db"))
 ROLES = ("admin", "user", "pending", "blocked")
@@ -68,18 +68,11 @@ class AccountError(Exception):
         self.status = status
 
 
-_lock = threading.Lock()
 _cache: dict[tuple, tuple[float, object]] = {}
 _touched: dict[str, float] = {}
 
 
-def _connect() -> sqlite3.Connection:
-    # Résolu à l'appel : un test qui remplace DB_PATH ouvre SA base.
-    conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=10000")
-    conn.execute("PRAGMA foreign_keys=ON")
+def _setup(conn: sqlite3.Connection) -> None:
     conn.execute("""CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         issuer TEXT NOT NULL, sub TEXT NOT NULL,
@@ -102,19 +95,17 @@ def _connect() -> sqlite3.Connection:
     have = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
     if "share" not in have:
         conn.execute("ALTER TABLE users ADD COLUMN share INTEGER")
-    return conn
+
+
+_store = Store(lambda: DB_PATH, _setup, row_factory=sqlite3.Row,
+               foreign_keys=True)
 
 
 def _run(fn, write: bool = False):
     """fn(conn) sous le verrou, dans une transaction. Une écriture vide le
     cache : ce processus voit tout de suite ce qu'il vient de changer."""
-    with _lock:
-        conn = _connect()
-        try:
-            with conn:
-                result = fn(conn)
-        finally:
-            conn.close()
+    with _store.lock:
+        result = _store.run(fn)
         if write:
             _cache.clear()
         return result

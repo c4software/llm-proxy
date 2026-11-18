@@ -5,8 +5,8 @@ chat/completions en événements Messages.
 
 import json
 
+from ..robinet import Robinet
 from .common import (
-    CHARS_PER_TOKEN,
     ERROR_CODES,
     REASONING_AS_THINKING,
     error_body,
@@ -29,7 +29,7 @@ from .response import (
 )
 
 
-class Translator:
+class Translator(Robinet):
     """Le robinet de réponse pour /v1/messages : même interface que
     stats.UsageCollector (feed / finish / tokens / sse), mais les octets
     rendus sont la réponse Anthropic.
@@ -99,22 +99,6 @@ class Translator:
         self._trace_open: dict[int, list] = {}
 
     # ── interface robinet ──
-    def feed(self, chunk: bytes) -> bytes:
-        if not self.sse:
-            self._buf += chunk
-            return b""
-        self._buf += chunk
-        out = bytearray()
-        while True:
-            nl = self._buf.find(b"\n")
-            if nl < 0:
-                break
-            line = bytes(self._buf[:nl]).rstrip(b"\r")
-            del self._buf[:nl + 1]
-            if line.startswith(b"data:"):
-                out += self._data(line[5:].strip())
-        return bytes(out)
-
     def finish(self) -> bytes:
         if self.sse:
             return self._end()
@@ -249,18 +233,11 @@ class Translator:
             return out + _sse("error", body)
         return json.dumps(body, ensure_ascii=False).encode()
 
-    def _last(self) -> dict | None:
-        """L'usage rendu au CLIENT, à la forme chat/completions : celui du
-        dernier tour upstream. Son prompt relit tous les tours précédents :
-        c'est le contexte occupé, ce que mesure la jauge d'un client."""
-        turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
-        return turns[-1] if turns else None
-
     def _total(self) -> dict | None:
         """L'usage CONSOMMÉ (quotas, statistiques, logs), à la forme
         chat/completions : celui de l'upstream s'il n'y a eu qu'un tour, la
         SOMME sinon — chaque tour relit tout le préfixe."""
-        turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
+        turns = self._turns()
         if len(turns) <= 1:
             return turns[0] if turns else None
         return {
@@ -305,14 +282,6 @@ class Translator:
         if not self.ok:
             parts.append(f"HTTP {self.status}")
         return " | ".join(parts)
-
-    def tokens(self, fallback_prompt: int) -> tuple[int, int, bool]:
-        u = self._total() or {}
-        p, c = u.get("prompt_tokens"), u.get("completion_tokens")
-        if isinstance(p, int) or isinstance(c, int):
-            return (p if isinstance(p, int) else fallback_prompt,
-                    c if isinstance(c, int) else _est(self.out_chars), True)
-        return fallback_prompt, _est(self.out_chars), False
 
     # ── flux ──
     def _start(self, doc: dict) -> bytes:
@@ -491,6 +460,3 @@ class Translator:
         out += _sse("message_stop", {"type": "message_stop"})
         return bytes(out)
 
-
-def _est(chars: int) -> int:
-    return max(chars // CHARS_PER_TOKEN, 1) if chars else 0

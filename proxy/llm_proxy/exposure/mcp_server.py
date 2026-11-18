@@ -29,7 +29,7 @@ casse aucune session.
 
 L'authentification est celle de tout le proxy (middleware d'auth.py). La
 clé dit aussi QUI appelle
-(`call.client`, tools.owner) — ce qui cloisonne la mémoire persistante,
+(`call.client`, identity.owner) — ce qui cloisonne la mémoire persistante,
 le bac de code_execution, les fichiers rendus.
 
 L'appel ne connaît ni réponse en cours ni modèle : comme /v1/tools, il
@@ -97,7 +97,7 @@ async def call(hosted, params: dict, owner: str = "") -> dict:
     erreur d'OUTIL (`isError`), pas de protocole : le modèle la lit et
     s'adapte. Les fichiers produits (code_execution, image_generation)
     sont rangés au magasin (files.py) et rendus en `resource_link` — leur
-    texte, lui, les nomme déjà. `owner` : le client (tools.owner)."""
+    texte, lui, les nomme déjà. `owner` : le client (identity.owner)."""
     name = params.get("name")
     args = params.get("arguments")
     if args is None:

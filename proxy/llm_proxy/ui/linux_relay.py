@@ -44,7 +44,7 @@ import time
 from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import JSONResponse
 
-from .. import tools
+from ..core import identity
 from ..access import accounts
 from ..access.auth import request_owner, request_user
 from ..core import config
@@ -75,7 +75,7 @@ _open: dict[str, int] = {}       # client → WebSockets ouverts
 
 
 def _key() -> bytes:
-    return hmac.new(tools.owner_secret(), b"llm-proxy linux relay",
+    return hmac.new(identity.owner_secret(), b"llm-proxy linux relay",
                     hashlib.sha256).digest()
 
 

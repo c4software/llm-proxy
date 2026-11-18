@@ -353,7 +353,7 @@ def quotas(monkeypatch, backend, accepted=1) -> list:
     taken = []
 
     class Limiter:
-        async def acquire(self, cost, wait_gone=None):
+        async def acquire(self, cost, wait_gone=None, ticket=None):
             taken.append(cost)
             if len(taken) > accepted:
                 raise albert.QuotaWaitTooLong(1200, "minute")

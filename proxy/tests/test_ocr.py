@@ -569,7 +569,7 @@ def test_ocr_passe_par_le_limiteur_du_backend_a_quotas(env, monkeypatch):
     class Limiteur:
         attente = None
 
-        async def acquire(self, cost, wait_gone=None):
+        async def acquire(self, cost, wait_gone=None, ticket=None):
             pris.append(cost)
             if self.attente:
                 raise albert.QuotaWaitTooLong(self.attente, "minute")

@@ -19,11 +19,21 @@ os.environ.setdefault(
 
 @pytest.fixture(autouse=True)
 def secret_client(monkeypatch, tmp_path):
-    """Le secret des condensés de clés (tools.owner) dans un dossier
+    """Le secret des condensés de clés (identity.owner) dans un dossier
     temporaire : un test ne crée jamais data/client.secret."""
-    from llm_proxy import tools
-    monkeypatch.setattr(tools, "SECRET_PATH", str(tmp_path / "client.secret"))
-    monkeypatch.setattr(tools, "_secret", None)
+    from llm_proxy.core import identity
+    monkeypatch.setattr(identity, "SECRET_PATH", str(tmp_path / "client.secret"))
+    monkeypatch.setattr(identity, "_secret", None)
+
+
+@pytest.fixture(autouse=True)
+def fresh_direct_calls():
+    """Chaque test repart sans appel direct d'outil compté
+    (tool_routes.direct_wait)."""
+    from llm_proxy.exposure import tool_routes
+    tool_routes._direct.clear()
+    yield
+    tool_routes._direct.clear()
 
 
 @pytest.fixture(autouse=True)

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .. import tools
 from ..core import multipart
+from ..core import settings
 from ..ui import page_tools
 from ..upstream import albert, relaying
 from . import anthropic_api, chat_api, responses_api
@@ -25,10 +26,11 @@ from ..upstream.backends import (
     unknown_prefix_message,
 )
 from ..access.auth import request_owner
-from ..core.httputil import anthropic_disabled, error_response, parse_json
+from ..core.httputil import anthropic_disabled, dialect_of, error_response, parse_json
 from ..core.settings import INCOGNITO, log
-from ..upstream.catalog import _converses, _spares, accepts_images
+from ..upstream.catalog import accepts_images, converses, merged_models
 from ..upstream.relaying import (
+    CLIENT_CLOSED,
     Call,
     cap_max_tokens,
     client_gone,
@@ -93,7 +95,7 @@ async def chat(request: Request, page: bool = False):
         declared = chat_api.declares(payload, tools.kinds())
         model = str(payload.get("model") or "")
         always = not page and chat_api.unasked(payload) \
-            and _converses(backend, model) and not _spares(backend, model)
+            and converses(backend, model) and not chat_api.spares(backend, model)
     if declared or always:
         hosted = tools.Hosted()
         try:
@@ -152,19 +154,6 @@ async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
     robinet a gardé des tours faits. Le client ne les aura pas dans son
     historique : le robinet les range à la conclusion, chat_api.restore
     les réinsère à la requête suivante."""
-    upstream = await relaying.send_upstream(call, request, "v1/chat/completions", raw)
-    if isinstance(upstream, JSONResponse):
-        return upstream
-    estimate = albert.estimate_chat_cost(raw)
-    content_type = upstream.headers.get("content-type", "")
-    if upstream.status_code >= 400:
-        # Erreur dès le premier tour : rien à boucler, le relais ordinaire.
-        return StreamingResponse(
-            relay(call, upstream,
-                  default_tap(upstream.status_code, content_type), estimate),
-            status_code=upstream.status_code,
-            headers=response_headers(upstream))
-    robinet = chat_api.Translator(upstream.status_code, content_type, ctx)
     base = payload.get("messages")
     base = list(base) if isinstance(base, list) else []
     # `payload` a déjà perdu son préfixe (strip_backend_prefix), et la
@@ -174,21 +163,59 @@ async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
     def rebuild(robinet) -> dict:
         return {**payload, "model": model, "messages": base + robinet.history}
 
-    # Pas d'événement `ping` en chat/completions : un commentaire SSE
-    # (ligne «:», ignorée par tout lecteur de flux) tient la connexion
-    # pendant une recherche ou l'attente d'un quota. ping_interval = 0 :
-    # aucun (`_settled` sonderait sinon sans attendre).
-    ping = b": ping\n\n" if robinet.sse \
-        and anthropic_api.PING_INTERVAL > 0 else None
-    loop = hosted_loop(call, request, hosted, robinet, upstream, estimate,
-                       rebuild, ping=ping, messages=base)
-    if robinet.sse:
-        return StreamingResponse(loop, status_code=upstream.status_code,
+    def loop(robinet, upstream, estimate):
+        # Pas d'événement `ping` en chat/completions : un commentaire SSE
+        # (ligne «:», ignorée par tout lecteur de flux) tient la connexion
+        # pendant une recherche ou l'attente d'un quota. ping_interval = 0 :
+        # aucun (`_settled` sonderait sinon sans attendre).
+        ping = b": ping\n\n" if robinet.sse \
+            and settings.PING_INTERVAL > 0 else None
+        return hosted_loop(call, request, hosted, robinet, upstream, estimate,
+                           rebuild, ping=ping, messages=base)
+
+    # En JSON, la réponse prend le statut de l'issue de la boucle.
+    return await start_hosted(
+        call, request, raw,
+        lambda status, ct: chat_api.Translator(status, ct, ctx), loop,
+        json_status=lambda robinet: robinet.status, error_tap=default_tap)
+
+
+async def start_hosted(call: Call, request: Request, raw: bytes, tap, loop,
+                       json_status=None, error_tap=None) -> Response:
+    """Le départ commun des trois surfaces quand un outil hébergé est
+    présenté : même départ que `forward` (statut et en-têtes du PREMIER
+    upstream), puis la boucle `loop(robinet, upstream, estimate)`, qui
+    peut enchaîner plusieurs tours upstream.
+      * erreur dès le premier tour : rien à boucler, le relais ordinaire —
+        par le robinet, ou par `error_tap` s'il est donné ;
+      * en flux : la boucle, telle quelle ;
+      * en JSON, rien ne part avant la fin : la boucle est menée à son
+        terme ICI (relaying.drain : arrêtée si le client raccroche), et la
+        réponse prend le statut `json_status(robinet)`. Sans `json_status`
+        (Responses, qui a un objet `failed`), le JSON part en flux comme
+        le reste."""
+    upstream = await relaying.send_upstream(call, request, "v1/chat/completions", raw)
+    if isinstance(upstream, JSONResponse):
+        return upstream
+    estimate = albert.estimate_chat_cost(raw)
+    status, content_type = upstream.status_code, upstream.headers.get("content-type", "")
+    if status >= 400 and error_tap is not None:
+        return StreamingResponse(
+            relay(call, upstream, error_tap(status, content_type), estimate),
+            status_code=status, headers=response_headers(upstream))
+    robinet = tap(status, content_type)
+    if not robinet.ok:
+        return StreamingResponse(relay(call, upstream, robinet, estimate),
+                                 status_code=status,
                                  headers=response_headers(upstream))
-    # En JSON rien ne part avant la fin : la boucle est menée à son terme
-    # ICI, et la réponse prend le statut de son issue (comme messages()).
-    chunks = [chunk async for chunk in loop]
-    return Response(b"".join(chunks), status_code=robinet.status,
+    stream = loop(robinet, upstream, estimate)
+    if robinet.sse or json_status is None:
+        return StreamingResponse(stream, status_code=status,
+                                 headers=response_headers(upstream))
+    content = await relaying.drain(stream, call, request)
+    if content is None:
+        return Response(status_code=CLIENT_CLOSED)
+    return Response(content, status_code=json_status(robinet),
                     media_type="application/json")
 
 
@@ -259,20 +286,21 @@ async def messages(request: Request):
                     {"role": "assistant", "content": robinet.content}]},
                 images=images, hosted=hosted, results=robinet.results)
 
-        def body(robinet, upstream):
+        def body(robinet, upstream, estimate=cost):
             # En flux, des `ping` pendant les attentes de la boucle
             # (recherche en cours, quota d'un tour suivant) : même raison
             # que pinged_stream, Claude Code coupe un flux muet.
             ping = anthropic_api.ping_event() \
-                if robinet.sse and anthropic_api.PING_INTERVAL > 0 else None
-            return hosted_loop(call, request, hosted, robinet, upstream, cost,
-                               rebuild, limit=ctx.limits, options=ctx.options,
-                               ping=ping, messages=openai_payload.get("messages"))
+                if robinet.sse and settings.PING_INTERVAL > 0 else None
+            return hosted_loop(call, request, hosted, robinet, upstream,
+                               estimate, rebuild, limit=ctx.limits,
+                               options=ctx.options, ping=ping,
+                               messages=openai_payload.get("messages"))
     else:
         body = None
 
     if openai_payload.get("stream") and backend.quotas \
-            and anthropic_api.PING_INTERVAL > 0:
+            and settings.PING_INTERVAL > 0:
         return StreamingResponse(
             pinged_stream(call, request, openai_payload, raw, cost, tap, body),
             media_type="text/event-stream",
@@ -284,30 +312,11 @@ async def messages(request: Request):
     if body is None:
         return await forward(call, request, "v1/chat/completions", raw, tap=tap)
 
-    # Le client a déclaré la recherche que le proxy héberge : même départ
-    # que `forward` (statut et en-têtes du PREMIER upstream), mais la
-    # réponse peut enchaîner plusieurs tours upstream.
-    upstream = await relaying.send_upstream(call, request, "v1/chat/completions", raw)
-    if isinstance(upstream, JSONResponse):
-        return upstream
-    robinet = tap(upstream.status_code, upstream.headers.get("content-type", ""))
-    if not robinet.ok:
-        # Erreur dès le premier tour : rien à boucler, le relais ordinaire.
-        return StreamingResponse(relay(call, upstream, robinet, cost),
-                                 status_code=upstream.status_code,
-                                 headers=response_headers(upstream))
-    if robinet.sse:
-        return StreamingResponse(body(robinet, upstream),
-                                 status_code=upstream.status_code,
-                                 headers=response_headers(upstream))
-    # En JSON rien ne part avant la fin : la boucle est menée à son terme
-    # ICI, et la réponse prend le statut de son issue — un backend qui
-    # tombe au deuxième tour donne un vrai 503 à la forme Anthropic, pas
-    # un 200 dont le corps serait une erreur (un SDK le lirait comme un
-    # Message). La surface Responses, elle, a un objet `failed` pour ça.
-    chunks = [chunk async for chunk in body(robinet, upstream)]
-    return Response(b"".join(chunks), status_code=call.status or 200,
-                    media_type="application/json")
+    # En JSON, un backend qui tombe au deuxième tour donne un vrai 503 à la
+    # forme Anthropic, pas un 200 dont le corps serait une erreur (un SDK
+    # le lirait comme un Message).
+    return await start_hosted(call, request, raw, tap, body,
+                              json_status=lambda robinet: call.status or 200)
 
 
 async def pinged_stream(call: Call, request: Request, payload: dict,
@@ -322,18 +331,36 @@ async def pinged_stream(call: Call, request: Request, payload: dict,
     fois le premier upstream ouvert, à la place du relais ordinaire — la
     boucle des outils hébergés (messages())."""
     limiter = call.backend.quota_state.get_limiter(payload)
+    waiter = None
     acquired = False
-    try:
-        waiter = asyncio.ensure_future(limiter.acquire(cost))
+
+    async def pings(task):
         while True:
-            done, _ = await asyncio.wait({waiter},
-                                         timeout=anthropic_api.PING_INTERVAL)
+            done, _ = await asyncio.wait({task},
+                                         timeout=settings.PING_INTERVAL)
             if done:
-                break
+                return
             yield anthropic_api.ping_event()
+
+    try:
+        # Le partage équitable d'abord, comme `gate` : sans lui un client
+        # en flux passait outre sa part. Le départ du client annule ce
+        # générateur, donc l'attente : `gone` n'a pas à le guetter.
+        waiter = asyncio.ensure_future(
+            relaying.share_gate(call, asyncio.Event().wait))
+        async for ping in pings(waiter):
+            yield ping
+        if not waiter.result():
+            acquired = True          # déjà compté (499)
+            return
+        waiter = asyncio.ensure_future(
+            limiter.acquire(cost, ticket=call.tickets))
+        async for ping in pings(waiter):
+            yield ping
         try:
             waited = waiter.result()
         except albert.QuotaWaitTooLong as exc:
+            acquired = True          # compté par quota_error : pas « parti »
             body = json.loads(quota_error(call, exc, limiter).body)
             yield anthropic_api.sse_error(body)
             return
@@ -368,7 +395,8 @@ async def pinged_stream(call: Call, request: Request, payload: dict,
             # Annulé (client parti) pendant l'attente : la tâche d'attente
             # est coupée avec lui — `acquire` rend le verrou, rien n'est
             # compté dans la fenêtre.
-            waiter.cancel()
+            if waiter is not None:
+                waiter.cancel()
             client_gone(call, limiter)
 
 
@@ -486,23 +514,14 @@ async def responses(request: Request):
     if not ctx.hosted:
         return await forward(call, request, "v1/chat/completions", raw, tap=tap)
 
-    # Le client a déclaré un outil que le proxy héberge : même départ que
-    # `forward` (statut et en-têtes du PREMIER upstream), mais le flux
-    # peut enchaîner plusieurs tours upstream.
-    upstream = await relaying.send_upstream(call, request, "v1/chat/completions", raw)
-    if isinstance(upstream, JSONResponse):
-        return upstream
-    robinet = tap(upstream.status_code, upstream.headers.get("content-type", ""))
-    estimate = albert.estimate_chat_cost(raw)
-    if not robinet.ok:
-        # Erreur dès le premier tour : rien à boucler, le relais ordinaire.
-        stream = relay(call, upstream, robinet, estimate)
-    else:
-        stream = hosted_stream(call, request, payload, images, hosted,
-                               robinet, upstream, estimate,
-                               messages=chat_payload.get("messages"))
-    return StreamingResponse(stream, status_code=upstream.status_code,
-                             headers=response_headers(upstream))
+    # Le client a déclaré un outil que le proxy héberge. En JSON aussi la
+    # réponse part en flux : l'API Responses a un objet `failed` pour dire
+    # l'échec d'un tour suivant.
+    return await start_hosted(
+        call, request, raw, tap,
+        lambda robinet, upstream, estimate: hosted_stream(
+            call, request, payload, images, hosted, robinet, upstream,
+            estimate, messages=chat_payload.get("messages")))
 
 
 async def forward_post(request: Request, normalized: str, dialect: str):
@@ -541,3 +560,21 @@ async def forward_post(request: Request, normalized: str, dialect: str):
     if blocked is not None:
         return blocked
     return await forward(call, request, normalized.lstrip("/"), raw)
+
+
+# ── Catalogue ────────────────────────────────────────────────────────────
+
+@router.get("/v1/models")
+async def list_models(request: Request):
+    """Même catalogue, deux formes : OpenAI par défaut, Anthropic quand
+    la requête porte `anthropic-version` (et que la surface est active)."""
+    dialect = dialect_of(request)
+    if dialect == "anthropic" and not anthropic_api.ENABLED:
+        return anthropic_disabled(dialect)
+    entries = await merged_models(request)
+    if entries is None:
+        return error_response(dialect, 502, "proxy_error",
+                              "aucun backend joignable pour /v1/models")
+    if dialect == "anthropic":
+        return anthropic_api.models_list(entries)
+    return {"object": "list", "data": entries}

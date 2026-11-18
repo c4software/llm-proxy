@@ -4,13 +4,16 @@ direct (/v1/tools), serveur MCP (/mcp, voir mcp_server.py), et les
 fichiers qu'ils rendent (files.PATH, hors clé du proxy).
 """
 
+import collections
 import dataclasses
 import json
+import time
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from .. import tools
+from ..core import config
 from ..access.auth import request_owner
 from ..core.httputil import error_response, parse_json
 from ..core.settings import log
@@ -18,6 +21,45 @@ from ..storage import files
 from . import mcp_server
 
 router = APIRouter()
+
+
+# Appels directs par client et par minute glissante ([tools]
+# .direct_calls_per_minute, 0 = sans limite) : sans boucle ni max_calls, un
+# client pouvait enchaîner recherches et exécutions de code sans borne.
+DIRECT_PER_MINUTE = config.integer("tools.direct_calls_per_minute", 120)
+WINDOW = 60.0
+_direct: dict[str, collections.deque] = {}
+
+
+def direct_wait(client: str, calls: int = 1,
+                now: float | None = None) -> float:
+    """Réserve `calls` appels directs pour `client`. 0 : accepté (et
+    compté) ; sinon les secondes avant qu'une place se libère (rien n'est
+    compté)."""
+    if DIRECT_PER_MINUTE <= 0 or calls <= 0:
+        return 0.0
+    now = time.monotonic() if now is None else now
+    q = _direct.setdefault(client, collections.deque())
+    while q and q[0] <= now - WINDOW:
+        q.popleft()
+    if len(q) + calls > DIRECT_PER_MINUTE:
+        if calls > DIRECT_PER_MINUTE or not q:
+            return WINDOW
+        return max(q[len(q) + calls - DIRECT_PER_MINUTE - 1] + WINDOW - now,
+                   0.001)
+    q.extend([now] * calls)
+    # Les clients inactifs ne s'accumulent pas.
+    if len(_direct) > 4096:
+        for k in [k for k, v in _direct.items() if not v or v[-1] <= now - WINDOW]:
+            del _direct[k]
+    return 0.0
+
+
+def _too_many(delay: float):
+    retry = max(int(delay + 0.999), 1)
+    return retry, (f"trop d'appels directs d'outils : {DIRECT_PER_MINUTE} par "
+                   f"minute au plus ([tools].direct_calls_per_minute) ; "
+                   f"réessayer dans ~{retry}s")
 
 
 # ── Outils hébergés, appelés directement ────────────────────────────────
@@ -64,6 +106,13 @@ async def tools_run(name: str, request: Request):
                               "corps attendu : les arguments de l'outil, "
                               "en objet JSON")
     client = request_owner(request)
+    delay = direct_wait(client)
+    if delay:
+        retry, message = _too_many(delay)
+        log.warning("/v1/tools/%s : client au-delà de %d appels/min → 429",
+                    name, DIRECT_PER_MINUTE)
+        return error_response("openai", 429, "rate_limit_exceeded_proxy",
+                              message, headers={"Retry-After": str(retry)})
     result = await hosted.run(
         name, json.dumps(args, ensure_ascii=False), 0, endpoint="/v1/tools",
         client=client)
@@ -116,6 +165,18 @@ async def mcp_post(request: Request):
         return JSONResponse(mcp_server.error(None, mcp_server.PARSE_ERROR,
                                           "invalid JSON"), status_code=400)
     client = request_owner(request)
+    calls = sum(1 for m in (body if isinstance(body, list) else [body])
+                if isinstance(m, dict) and m.get("method") == "tools/call")
+    delay = direct_wait(client, calls)
+    if delay:
+        retry, message = _too_many(delay)
+        log.warning("MCP : client au-delà de %d appels/min → 429",
+                    DIRECT_PER_MINUTE)
+        first = body[0] if isinstance(body, list) and body else body
+        return JSONResponse(
+            mcp_server.error(first.get("id") if isinstance(first, dict)
+                             else None, mcp_server.INVALID_REQUEST, message),
+            status_code=429, headers={"Retry-After": str(retry)})
     out = await mcp_server.handle_body(body, tools.Hosted(), client)
     if out is None:
         return Response(status_code=202)

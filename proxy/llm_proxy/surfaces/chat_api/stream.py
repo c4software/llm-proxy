@@ -10,7 +10,8 @@ import uuid
 from ...core.settings import log
 from ...storage import files
 
-from .common import CHARS_PER_TOKEN, GAP, PREVIEW_CHARS, Context
+from ..robinet import Robinet, number
+from .common import GAP, PREVIEW_CHARS, Context
 from .memory import _key, _weight
 
 
@@ -24,25 +25,6 @@ def _id(prefix: str) -> str:
     return f"{prefix}_" + uuid.uuid4().hex[:24]
 
 
-def _number(v) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
-
-
-def _sum(a: dict, b: dict) -> dict:
-    """Somme de deux `usage`, champ à champ, sous-objets compris
-    (`prompt_tokens_details.cached_tokens`…) : chaque tour relit tout le
-    préfixe, et c'est bien ce qui a été consommé."""
-    out = dict(a)
-    for k, v in b.items():
-        if isinstance(v, dict):
-            out[k] = _sum(out[k] if isinstance(out.get(k), dict) else {}, v)
-        elif _number(v):
-            out[k] = (out[k] if _number(out.get(k)) else 0) + v
-        else:
-            out.setdefault(k, v)
-    return out
-
-
 def _sse(doc: dict) -> bytes:
     return b"data: " + json.dumps(doc, ensure_ascii=False).encode() + b"\n\n"
 
@@ -50,7 +32,7 @@ def _sse(doc: dict) -> bytes:
 DONE = b"data: [DONE]\n\n"
 
 
-class Translator:
+class Translator(Robinet):
     """Le robinet de réponse de /v1/chat/completions avec outils hébergés :
     même interface que responses_api.Translator, menée par
     tool_loop.hosted_loop.
@@ -136,21 +118,6 @@ class Translator:
                 event["status"] = "limit" if result.error == "limit" \
                     else "error"
         return self._block({"x_hosted_tool": event})
-
-    def feed(self, chunk: bytes) -> bytes:
-        self._buf += chunk
-        if not self.sse:
-            return b""
-        out = bytearray()
-        while True:
-            nl = self._buf.find(b"\n")
-            if nl < 0:
-                break
-            line = bytes(self._buf[:nl]).rstrip(b"\r")
-            del self._buf[:nl + 1]
-            if line.startswith(b"data:"):
-                out += self._data(line[5:].strip())
-        return bytes(out)
 
     def finish(self) -> bytes:
         if self._finished:
@@ -298,35 +265,11 @@ class Translator:
             return _sse(body) + DONE
         return json.dumps(body, ensure_ascii=False).encode()
 
-    def _last(self) -> dict | None:
-        """L'usage rendu au CLIENT : celui du dernier tour upstream. Son
-        prompt relit tous les tours précédents : c'est le contexte occupé,
-        ce que mesure la jauge d'un client (la somme la ferait déborder)."""
-        turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
-        return turns[-1] if turns else None
-
-    def _total(self) -> dict | None:
-        """L'usage CONSOMMÉ (quotas, statistiques, logs) : celui de
-        l'upstream s'il n'y a eu qu'un tour, la SOMME sinon."""
-        turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
-        total = None
-        for u in turns:
-            total = u if total is None else _sum(total, u)
-        return total
-
     def cached(self) -> int:
         details = (self._total() or {}).get("prompt_tokens_details")
-        if isinstance(details, dict) and _number(details.get("cached_tokens")):
+        if isinstance(details, dict) and number(details.get("cached_tokens")):
             return max(int(details["cached_tokens"]), 0)
         return 0
-
-    def tokens(self, fallback_prompt: int) -> tuple[int, int, bool]:
-        u = self._total() or {}
-        p, c = u.get("prompt_tokens"), u.get("completion_tokens")
-        if isinstance(p, int) or isinstance(c, int):
-            return (p if isinstance(p, int) else fallback_prompt,
-                    c if isinstance(c, int) else _est(self.out_chars), True)
-        return fallback_prompt, _est(self.out_chars), False
 
     # ── commun aux deux modes ──
     def _content(self, text) -> str:
@@ -535,6 +478,3 @@ class Translator:
                          **(self._head or {}), "choices": [], "usage": last})
         return bytes(out) + DONE
 
-
-def _est(chars: int) -> int:
-    return max(chars // CHARS_PER_TOKEN, 1) if chars else 0

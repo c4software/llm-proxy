@@ -11,6 +11,7 @@ import pytest
 from fakes import everywhere
 from fakes import (ANSWER_TURN, FakeUpstream, hosted_chat, search_then_answer,
                    stream)
+from llm_proxy.core import identity
 from llm_proxy.access import auth
 from llm_proxy.upstream import catalog, relaying
 from llm_proxy.ui import dashboard, usage_api
@@ -99,7 +100,7 @@ def test_login_checks_the_key_and_sets_the_cookie(ui):
         cookie.split(".")[0] + "==").decode("latin-1")
     session = ui.client.get("/ui/session").json()
     assert session["auth_required"] is True
-    assert session["client"] == tools.owner(KEY)[:8]
+    assert session["client"] == identity.owner(KEY)[:8]
     assert session["chat"]["enabled"] is True
     ui.client.post("/ui/logout", json={})
     assert ui.client.get("/ui/session").status_code == 401
@@ -168,7 +169,7 @@ def test_chat_counts_to_the_connected_key(ui):
     ui.client.post("/v1/chat/completions",
                    json={"model": "essai/qwen", "messages": []},
                    headers={"Authorization": "Bearer sk-bob"})
-    assert ui.clients == [tools.owner(KEY), tools.owner("sk-bob")]
+    assert ui.clients == [identity.owner(KEY), identity.owner("sk-bob")]
 
 
 def test_chat_announces_hosted_tool_runs(ui):
@@ -257,7 +258,7 @@ def test_chat_generates_an_image_with_an_image_model(ui, monkeypatch):
     r = ui.client.post("/ui/images/generations", json=body)
     assert r.status_code == 200 and r.json() == image
     assert ui.sent[-1] == {**body, "model": "flux"}
-    assert ui.clients == [tools.owner(KEY)]
+    assert ui.clients == [identity.owner(KEY)]
     assert ui.client.post("/ui/images/generations", content="{}").status_code == 415
     everywhere(monkeypatch, dashboard, "UI_CHAT", False)
     assert ui.client.post("/ui/images/generations", json=body).status_code == 404
@@ -320,7 +321,7 @@ def test_dashboard_reads_only_the_connected_key(ui, monkeypatch):
                   headers={"Authorization": f"Bearer {KEY}"})
     ui.client.get("/v1/organization/usage/completions?start_time=0"
                   "&api_key_ids=a,b", headers={"Authorization": f"Bearer {KEY}"})
-    assert seen == [[tools.owner(KEY)], None, ["a", "b"]]
+    assert seen == [[identity.owner(KEY)], None, ["a", "b"]]
 
 
 def test_cookie_is_secure_behind_a_tls_reverse_proxy(ui):

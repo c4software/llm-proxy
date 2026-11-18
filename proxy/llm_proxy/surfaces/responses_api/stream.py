@@ -6,7 +6,8 @@ chat/completions en événements Responses.
 import json
 import time
 
-from .common import CHARS_PER_TOKEN, REASONING_AS_SUMMARY, Context, _id
+from ..robinet import Robinet
+from .common import REASONING_AS_SUMMARY, Context, _id
 from .response import (
     CLIENT_CALLS,
     error_body,
@@ -25,7 +26,7 @@ from .response import (
 )
 
 
-class Translator:
+class Translator(Robinet):
     """Le robinet de réponse pour /v1/responses : même interface que
     stats.UsageCollector, mais les octets rendus sont la réponse
     Responses, pas ceux de l'upstream.
@@ -80,21 +81,6 @@ class Translator:
         self._blank = ""                  # blancs retenus avant un texte
 
     # ── interface robinet ──
-    def feed(self, chunk: bytes) -> bytes:
-        self._buf += chunk
-        if not self.sse:
-            return b""
-        out = bytearray()
-        while True:
-            nl = self._buf.find(b"\n")
-            if nl < 0:
-                break
-            line = bytes(self._buf[:nl]).rstrip(b"\r")
-            del self._buf[:nl + 1]
-            if line.startswith(b"data:"):
-                out += self._data(line[5:].strip())
-        return bytes(out)
-
     def finish(self) -> bytes:
         if self.sse:
             return self._end()
@@ -200,18 +186,11 @@ class Translator:
             "code": "server_error", "message": message}),
             ensure_ascii=False).encode()
 
-    def _last(self) -> dict | None:
-        """L'usage rendu au CLIENT, à la forme chat/completions : celui du
-        dernier tour upstream. Son prompt relit tous les tours précédents :
-        c'est le contexte occupé, ce que mesure la jauge d'un client."""
-        turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
-        return turns[-1] if turns else None
-
     def _total(self) -> dict | None:
         """L'usage CONSOMMÉ (quotas, statistiques, logs), à la forme
         chat/completions : celui de l'upstream s'il n'y a eu qu'un tour, la
         SOMME sinon — chaque tour relit tout le préfixe."""
-        turns = self._past + ([self.usage] if isinstance(self.usage, dict) else [])
+        turns = self._turns()
         if len(turns) <= 1:
             return turns[0] if turns else None
         usages = [_usage(u) for u in turns]
@@ -226,14 +205,6 @@ class Translator:
 
     def cached(self) -> int:
         return _cached(self._total())
-
-    def tokens(self, fallback_prompt: int) -> tuple[int, int, bool]:
-        u = self._total() or {}
-        p, c = u.get("prompt_tokens"), u.get("completion_tokens")
-        if isinstance(p, int) or isinstance(c, int):
-            return (p if isinstance(p, int) else fallback_prompt,
-                    c if isinstance(c, int) else _est(self.out_chars), True)
-        return fallback_prompt, _est(self.out_chars), False
 
     # ── flux ──
     def _event(self, name: str, data: dict) -> bytes:
@@ -469,6 +440,3 @@ class Translator:
                            {"response": self._snapshot(status)})
         return bytes(out)
 
-
-def _est(chars: int) -> int:
-    return max(chars // CHARS_PER_TOKEN, 1) if chars else 0

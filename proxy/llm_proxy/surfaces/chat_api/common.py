@@ -75,7 +75,7 @@ class Context:
         # proxy, lui, le demande toujours au backend (stats exactes).
         self.include_usage = False
         self.annotations = ANNOTATIONS
-        # Posés par restore() : où ranger, pour quel client (tools.owner),
+        # Posés par restore() : où ranger, pour quel client (identity.owner),
         # et le condensé des messages de la requête. `state` None = rien ne
         # sera rangé.
         self.memory: "Memory | None" = None

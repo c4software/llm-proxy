@@ -23,7 +23,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-from .. import tools
+from ..core import identity
 from ..core.httputil import dialect_of, error_response
 from ..core.settings import PROXY_API_KEYS, log
 from ..storage import files, stats
@@ -60,9 +60,9 @@ def auth_required() -> bool:
 def account_owner(uid: int) -> str:
     """Le client d'un COMPTE : ce que partagent toutes ses clés et la page
     connectée (mémoire, échanges d'outils), et le api_key_id des requêtes
-    du chat de la page. Un condensé comme tools.owner d'une clé — «\\0»
+    du chat de la page. Un condensé comme identity.owner d'une clé — «\\0»
     ne peut pas commencer une clé reçue dans un en-tête."""
-    return tools.owner(f"\0account:{uid}")
+    return identity.owner(f"\0account:{uid}")
 
 
 def request_owner(request: Request) -> str:
@@ -126,7 +126,7 @@ async def key_client(token: str) -> Who | None:
     les statistiques."""
     if not token:
         return None
-    digest = tools.owner(token)
+    digest = identity.owner(token)
     if valid_key(token):
         if not oidc.ENABLED:
             return Who(digest, digest, None)
@@ -219,8 +219,8 @@ async def require_proxy_key(request: Request, call_next):
 
 
 def toml_digests() -> set[str]:
-    """Les condensés des clés de proxy.api_keys (tools.owner)."""
-    return {tools.owner(k) for k in PROXY_API_KEYS}
+    """Les condensés des clés de proxy.api_keys (identity.owner)."""
+    return {identity.owner(k) for k in PROXY_API_KEYS}
 
 
 def ui_key(request: Request) -> str:
@@ -269,7 +269,7 @@ class UISession:
             days = oidc.SESSION_DAYS if oidc.ENABLED else 30
             self.inner[secure] = SessionMiddleware(
                 self.app,
-                secret_key=oidc.session_secret(tools.owner_secret()),
+                secret_key=oidc.session_secret(identity.owner_secret()),
                 session_cookie=oidc.SESSION_COOKIE,
                 max_age=int(days * 86400), same_site="lax",
                 https_only=secure)

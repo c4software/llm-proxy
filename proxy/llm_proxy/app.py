@@ -43,7 +43,6 @@ from .ui import (
     usage_api,
     voice_routes,
 )
-from .upstream import catalog
 
 app = FastAPI(title="albert-proxy", lifespan=lifespan)
 
@@ -73,7 +72,7 @@ async def setup_gate(request: Request, call_next):
 
 # Les routes des modules, le relais (son catch-all) EN DERNIER, qui sinon
 # les prendrait toutes.
-for module in (endpoints, catalog, usage_api, static_files, dashboard,
+for module in (endpoints, usage_api, static_files, dashboard,
                conversation_routes, voice_routes, config_view, health, tool_routes,
                linux_relay):
     app.include_router(module.router)

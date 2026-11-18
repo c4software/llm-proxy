@@ -21,7 +21,7 @@ from ...upstream.backends import BACKENDS, route_backend, unknown_prefix_message
 from ...access.auth import auth_required, request_user, ui_client
 from ...core.httputil import error_response, json_only, parse_json
 from ...surfaces.endpoints import chat, forward_post
-from ...upstream.catalog import CHAT_TYPES, IMAGE_TYPE, always_shown
+from ...upstream.catalog import CHAT_TYPES, IMAGE_TYPE
 from ...upstream.relaying import Call, forward, gate
 from ..usage_api import usage_page
 
@@ -81,7 +81,7 @@ async def ui_session(request: Request):
             "model": UI_CHAT_MODEL or None,
             "hosted_tools": chat_tools,
             "tools": chat_tool_groups() if chat_tools else [],
-            "always": always_shown() if chat_tools else [],
+            "always": chat_api.always_shown() if chat_tools else [],
             "image_sizes": list(tools.image_generation.SIZES),
             "image_size": tools.image_generation.SIZE,
             # Les passes proposées par modèle (motif → liste) ; un modèle

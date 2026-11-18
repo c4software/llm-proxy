@@ -467,7 +467,7 @@ def to_chat(p: dict, images: bool = False, hosted=None,
     dont la réponse aura besoin. `model` est recopié tel quel : l'appelant
     route sur son préfixe. `hosted` : l'annuaire des outils que le proxy
     exécute (tools.Hosted), ou None. `client` : à qui appartiennent les
-    résultats de la mémoire (tools.owner de sa clé ; «» = proxy ouvert,
+    résultats de la mémoire (identity.owner de sa clé ; «» = proxy ouvert,
     un seul client). Lève Refused pour ce qui ne peut pas être honoré."""
     for key in ("previous_response_id", "conversation"):
         if p.get(key):

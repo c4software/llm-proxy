@@ -7,6 +7,8 @@ quotas ; et l'arrêt, dans l'ordre inverse.
 """
 
 import asyncio
+import fcntl
+import os
 import time
 from contextlib import asynccontextmanager
 
@@ -21,7 +23,6 @@ from .storage import files, stats
 from .surfaces import anthropic_api, chat_api, responses_api
 from .upstream import albert
 from .upstream.backends import BACKENDS, FALLBACK_BACKEND, close_clients, open_clients
-from .upstream.catalog import always_shown
 
 
 def seed_fair_share() -> int:
@@ -43,9 +44,43 @@ def seed_fair_share() -> int:
     return fairshare.seed(rows)
 
 
+# Le verrou du processus sur ses données (voir single_process) : gardé
+# ouvert tant qu'il vit.
+_HOLD = None
+
+
+def single_process() -> None:
+    """Refuse un deuxième processus sur les mêmes données : tout l'état
+    vivant (partage équitable, limiteurs, mémoire des outils, fichiers,
+    caches) est en mémoire du processus — deux workers uvicorn (--workers,
+    WEB_CONCURRENCY) ou deux proxys sur le même dossier laisseraient
+    chacun passer sa part de quota. Un verrou exclusif (flock) à côté de
+    stats.db : le second s'arrête au démarrage, message clair."""
+    global _HOLD
+    if _HOLD is not None:
+        return
+    path = stats.DB_PATH + ".lock"
+    fh = open(path, "a+")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        raise SystemExit(
+            f"un autre processus du proxy tient déjà {path} : un seul "
+            "processus par dossier de données (pas de --workers / "
+            "WEB_CONCURRENCY > 1 — l'état des quotas et du partage "
+            "équitable est en mémoire)")
+    fh.seek(0)
+    fh.truncate()
+    fh.write(f"{os.getpid()}\n")
+    fh.flush()
+    _HOLD = fh
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("configuration : %s", config.CONFIG_PATH)
+    single_process()
     if config.SETUP:
         log.warning("PREMIER DÉMARRAGE : %s absent — API fermée (503), /ui génère "
                     "la configuration ; la poser là puis redémarrer", config.CONFIG_PATH)
@@ -131,7 +166,7 @@ async def lifespan(app: FastAPI):
     if chat_api.ALWAYS:
         known = {t.name for t in tools.REGISTRY}
         servers = {f"{chat_api.SERVER}{s.name}" for s in tools.mcp.SERVERS}
-        shown = always_shown()
+        shown = chat_api.always_shown()
         for name in chat_api.ALWAYS:
             if name in servers:
                 # Un serveur éteint ou sans outil pour l'instant : ses
@@ -230,10 +265,9 @@ async def lifespan(app: FastAPI):
                     for fam, cfg in albert.FAMILY_LIMITS.items()
                 ),
             )
-        elif albert.LIMITS_REFRESH > 0:
-            refresh_tasks.append(
-                asyncio.create_task(b.quota_state.refresh_loop(b))
-            )
+        if albert.LIMITS_REFRESH > 0:
+            refresh_tasks.append(asyncio.create_task(
+                b.quota_state.refresh_loop(b, loaded=bool(got_account))))
     log.info(
         "générique %d RPM / %d TPM | marge %.0f%% | attente max %ds | "
         "cartouche %.0fs | exemptés : %s",

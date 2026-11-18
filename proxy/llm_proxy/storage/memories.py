@@ -5,7 +5,7 @@ rangés par client, que le modèle lit et écrit par l'outil `memory`
 tableau de bord (/ui, section Mémoire).
 
 CLOISONNÉE PAR CLÉ : chaque fichier appartient au client dont la clé du
-proxy l'a écrit, et ne se lit qu'avec elle. Un client = tools.owner(clé),
+proxy l'a écrit, et ne se lit qu'avec elle. Un client = identity.owner(clé),
 le condensé que reçoit tout outil dans `call.client` : stable d'un
 démarrage à l'autre (son secret est gardé dans data/client.secret), et qui
 ne dit rien de la clé. La clé elle-même n'est jamais écrite. Proxy ouvert
@@ -34,10 +34,10 @@ courtes, appelées hors de la boucle d'événements (asyncio.to_thread).
 
 import posixpath
 import sqlite3
-import threading
 import time
 
 from ..core import config
+from ..core.sqlite_store import Store
 
 DB_PATH = config.resolve(config.text("tools.memory.database", "memory.db"))
 MAX_FILES = config.integer("tools.memory.max_files", 500)
@@ -58,14 +58,7 @@ class MemoryError_(Exception):
         self.code = code
 
 
-_lock = threading.Lock()
-
-
-def _connect() -> sqlite3.Connection:
-    # Résolu à l'appel : un test qui remplace DB_PATH ouvre SA base.
-    conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=10000")
+def _setup(conn: sqlite3.Connection) -> None:
     conn.execute("""CREATE TABLE IF NOT EXISTS files (
         owner TEXT NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL,
         created REAL NOT NULL, updated REAL NOT NULL, expires REAL,
@@ -73,22 +66,20 @@ def _connect() -> sqlite3.Connection:
     # Une base d'avant l'échéance : la colonne, vide (tout persistant).
     if "expires" not in {r[1] for r in conn.execute("PRAGMA table_info(files)")}:
         conn.execute("ALTER TABLE files ADD COLUMN expires REAL")
-    return conn
+
+
+_store = Store(lambda: DB_PATH, _setup)
 
 
 def _run(fn):
     """fn(conn) sous le verrou, dans une transaction, après avoir effacé
     les fichiers échus (de tous les clients) : ce qui suit ne les voit
     plus."""
-    with _lock:
-        conn = _connect()
-        try:
-            with conn:
-                conn.execute("DELETE FROM files WHERE expires IS NOT NULL "
-                             "AND expires <= ?", (time.time(),))
-                return fn(conn)
-        finally:
-            conn.close()
+    def run(conn):
+        conn.execute("DELETE FROM files WHERE expires IS NOT NULL "
+                     "AND expires <= ?", (time.time(),))
+        return fn(conn)
+    return _store.run(run)
 
 
 def normalize(path, directory: bool = False) -> str:

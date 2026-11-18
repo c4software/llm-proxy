@@ -19,8 +19,8 @@ from fakes import (ANSWER_DOC, ANSWER_TURN, FOUND, QUERY, SEARCH_DOC,
                    failed, feed, hosted_tools, search_then_answer, sse, stream,
                    tool_call, usage)
 from fakes import sse_events as events
+from llm_proxy.core import settings
 from llm_proxy.surfaces import anthropic_api as A
-from llm_proxy.surfaces import anthropic_api
 from llm_proxy.upstream import backends
 from llm_proxy.storage import stats
 from llm_proxy import tools
@@ -1388,7 +1388,7 @@ def test_app_pings_while_the_search_runs(proxy, monkeypatch):
         return SEARCHED
 
     proxy.hosted.by_name["web_search"].run = slow
-    everywhere(monkeypatch, anthropic_api, "PING_INTERVAL", 0.02)
+    monkeypatch.setattr(settings, "PING_INTERVAL", 0.02)
     searching(proxy)
     kinds = [e for e, _ in events(post(proxy).content)]
     assert "ping" in kinds and kinds[-1] == "message_stop"
@@ -1407,7 +1407,7 @@ def test_app_behind_quotas_goes_through_the_pinged_stream(proxy, monkeypatch):
     class Limiter:
         name = "essai"
 
-        async def acquire(self, cost, gone=None):
+        async def acquire(self, cost, gone=None, ticket=None):
             return 0.0
 
     backend = backends.BACKENDS["essai"]
