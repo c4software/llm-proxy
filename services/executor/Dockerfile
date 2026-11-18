@@ -12,9 +12,13 @@
 # image (`docker compose build --pull executor`), puis rejouer
 # `python -m executor.validate`.
 #
-# L'exécuteur sur python:3.13-slim-trixie : la base du proxy, et Debian 13
-# a podman 5.4, crun, uidmap et catatonit en paquets. Arch n'y est pas
-# reprise : ses newuidmap perdent leurs capacités de fichier dans l'image.
+# L'exécuteur sur Arch, comme les bacs : podman y suit les versions (6.2
+# en novembre 2026), compilé avec un Go récent. Debian 13 fige Go en 1.24.4
+# pour toute sa durée de vie, sans correctif de sécurité de sa bibliothèque
+# standard : son podman 5.4 restait signalé par les scanners (36 failles
+# critiques et hautes) sans aucune version à prendre. Les newuidmap d'Arch
+# perdent leurs capacités de fichier dans l'image : elles sont reposées
+# explicitement plus bas, comme dans dev-box.
 
 # ── 1. Le système de fichiers d'un bac ──────────────────────────────────
 # Seulement ce qui sert à un bac : ni Tailscale, ni sshd, ni podman, ni
@@ -93,26 +97,25 @@ RUN cd /tmp && HOME=/tmp python3 /usr/local/share/sandbox/check.py \
  && rm -rf /tmp/* /tmp/.[!.]* /root/.cache
 
 # ── 2. L'exécuteur ──────────────────────────────────────────────────────
-FROM python:3.13-slim-trixie
+FROM base-${TARGETARCH}
 
-ENV PYTHONUNBUFFERED=1 \
+ENV LANG=C.UTF-8 \
+    PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-# uidmap : un bac tourne sous un uid à lui, dans un userns à plusieurs
-# uid. catatonit : l'init de `podman run --init`, qui enterre les zombies
-# d'un programme tué par son délai. Ni fuse-overlayfs (magasin `vfs`) ni
-# passt/slirp4netns (un bac n'a pas de réseau). Les plugins CNI
-# (containernetworking-plugins, version 1.1.1 compilée avec un vieux Go,
-# signalée par les scanners) sont retirés : podman 5 passe par netavark, et
-# un bac n'a de toute façon pas de réseau ; podman reste installé.
-RUN apt-get update \
- && apt-get upgrade -y \
- && apt-get install -y --no-install-recommends \
-      podman crun uidmap catatonit libcap2-bin \
- && apt-get purge -y containernetworking-plugins \
- && rm -rf /var/lib/apt/lists/* \
- && test -x /usr/libexec/podman/catatonit \
+# shadow : newuidmap/newgidmap, un bac tourne sous un uid à lui, dans un
+# userns à plusieurs uid. catatonit (tiré par podman) : l'init de `podman
+# run --init`, qui enterre les zombies d'un programme tué par son délai.
+# libcap : setcap ; util-linux : setpriv (entrypoint.sh). Ni
+# fuse-overlayfs (magasin `vfs`) : un bac démarre de `--rootfs`. Pas de
+# plugins CNI chez Arch : podman passe par netavark, et un bac n'a de toute
+# façon pas de réseau. Python et pip : le serveur, dans le Python système.
+RUN pacman -Syu --noconfirm --needed --disable-sandbox \
+      podman crun catatonit shadow libcap util-linux python python-pip \
+ && pacman -Scc --noconfirm --disable-sandbox \
+ && rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/* \
+ && test -x /usr/lib/podman/catatonit \
  && podman --version
 # newuidmap/newgidmap par capacités de fichier, pas setuid : setuid, ils
 # écrivent uid_map sous l'uid 0, à qui le noyau demande CAP_SYS_ADMIN
@@ -125,7 +128,10 @@ RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + \
  && setcap cap_setgid=ep /usr/bin/newgidmap \
  && getcap /usr/bin/newuidmap /usr/bin/newgidmap | grep -c cap_set | grep -qx 2
 
-COPY containers/storage.conf /etc/containers/storage.conf
+# Le stockage en surcharge (storage.conf.d), lue après celles d'Arch : un
+# /etc/containers/storage.conf passe AVANT /usr/share/containers/
+# storage.conf.d/00-storage-arch.conf, qui remettrait `overlay`.
+COPY containers/storage.conf /etc/containers/storage.conf.d/10-executor.conf
 COPY containers/containers.conf /etc/containers/containers.conf.d/10-executor.conf
 
 # Plages d'uid/gid délégués, sans lesquelles podman sans root refuse de
@@ -139,10 +145,12 @@ ENV XDG_RUNTIME_DIR=/run/user/10001
 
 WORKDIR /app
 COPY requirements.txt .
-# pip 26.3 au moins : 26.2.2, celui de l'image python, embarque urllib3 2.7.0
-# et msgpack 1.1.2, à CVE hautes.
-RUN pip install --no-cache-dir --upgrade 'pip>=26.3' \
- && pip install --no-cache-dir -r requirements.txt
+# Dans le Python système (PEP 668, d'où --break-system-packages), comme les
+# bibliothèques des bacs. pip 26.3 au moins : les versions antérieures
+# embarquent urllib3 2.7.0 et msgpack 1.1.2, à CVE hautes ; s'efface dès
+# qu'Arch le rattrape.
+RUN pip install --no-cache-dir --break-system-packages --upgrade 'pip>=26.3' \
+ && pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 # --chown : « root » dans le userns de podman, pour que crun y pose ses
 # points de montage ; le programme d'un bac, uid sans droit, n'y écrit rien.

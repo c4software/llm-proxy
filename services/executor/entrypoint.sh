@@ -17,7 +17,10 @@
 #    pas — les zombies épuisent le plafond de processus et plus aucun bac
 #    ne se crée (« crun: clone: Resource temporarily unavailable »).
 set -eu
-INIT=/usr/libexec/podman/catatonit
+# Arch le pose sous /usr/lib/podman, Debian (images d'avant novembre 2026)
+# sous /usr/libexec/podman.
+INIT=/usr/lib/podman/catatonit
+[ -x "$INIT" ] || INIT=/usr/libexec/podman/catatonit
 rm -rf "${XDG_RUNTIME_DIR:?}"/* 2>/dev/null || true
 [ "$(id -u)" = 0 ] || exec "$INIT" -- "$@"
 
