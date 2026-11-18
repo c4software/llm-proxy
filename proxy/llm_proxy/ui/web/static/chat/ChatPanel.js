@@ -83,6 +83,9 @@ import { clones as voiceClones, load as loadClones } from "./voice/clones.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
+import * as api from "./api.js";
+import { apiMessages } from "./api.js";
+import { chipFor, recordCall, endStep, closeStep } from "./turn.js";
 
 export const ChatPanel = {
   components: { ArtifactPanel, AssetPanel, LinuxPanel, VoiceSettings, VoiceStudio },
@@ -152,6 +155,10 @@ export const ChatPanel = {
     const status = ref("");
     const settingsOpen = ref(false);
     const storageWarning = computed(() => S.state.storageWarning);
+    // Une conversation enregistrée ailleurs (autre onglet, appareil) depuis
+    // sa lecture : son enregistrement attend le choix de l'utilisateur.
+    const conflict = computed(() => S.state.conflict);
+    const resolveConflict = (choice) => S.resolveConflict(choice);
     // Des fichiers glissés sur le chat (useDropZone : entrées et sorties
     // des éléments enfants comptées).
     const dropZone = ref(null);
@@ -243,6 +250,13 @@ export const ChatPanel = {
     const narrow = VueUse.useMediaQuery("(max-width: 760px)");
     const input = ref(null);
     let controller = null;
+    // Une réponse (ou un résumé, une image, une voix…) commence : le chat
+    // passe en cours, et `stop()` l'arrête par ce contrôleur.
+    function startRun(text = "") {
+      streaming.value = true;
+      status.value = text;
+      return (controller = new AbortController());
+    }
     let pinned = true;                // le fil suit la fin de la réponse
 
     // Une réponse en cours : le menu ne change pas de conversation.
@@ -441,6 +455,12 @@ export const ChatPanel = {
       && folders.has(current.value.id) ? folders.get(current.value.id).count : 0));
     // Sans le sélecteur de dossier qui permet d'écrire (canPick) : un
     // dossier lu par useFileDialog, ses écritures téléchargées.
+    // Une conversation supprimée (ou partie avec un autre compte) : son
+    // dossier ouvert est lâché.
+    watch(() => S.state.convs.map((c) => c.id), (ids) => {
+      const alive = new Set(ids);
+      for (const id of [...folders.keys()]) if (!alive.has(id)) folders.delete(id);
+    });
     const folderDialog = VueUse.useFileDialog({ directory: true, multiple: true });
     folderDialog.onChange((files) => onFolder(files ? [...files] : []));
     const pickFolderFiles = () => folderDialog.open({ reset: true });
@@ -499,81 +519,11 @@ export const ChatPanel = {
       && current.value.model && (draft.value.trim() || pending.value.length));
     const queue = computed(() => (current.value && current.value.queue) || []);
 
-    // Le message tel que l'API le veut : texte seul, ou parties (texte,
-    // fichiers texte, images) quand il y a des pièces jointes. `state` :
-    // l'état du moment des outils (artifacts, dossier, réseau de la VM),
-    // joint quand il a changé depuis le tour précédent.
-    function apiContent(m, state = "") {
-      const files = (m.attachments || []).filter((a) => a.kind === "text");
-      const images = (m.attachments || []).filter((a) => a.kind === "image" && a.data);
-      let text = m.content || "";
-      for (const f of files) {
-        text += `\n\n<file name="${f.name.replace(/"/g, "'")}">\n${f.data}\n</file>`;
-      }
-      if (state) text += `\n\n[État du moment, ajouté par la page]\n${state}`;
-      if (!images.length) return text;
-      return [
-        ...(text ? [{ type: "text", text }] : []),
-        ...images.map((a) => ({ type: "image_url", image_url: { url: a.data } })),
-      ];
-    }
-
-    // `guidance` : les consignes des outils actifs (tools.guidance), à la
-    // suite du prompt système de la conversation — figées.
-    // Après un RÉSUMÉ (compact.js) : lui, au prompt système, et ce qui le
-    // suit — pas ce qui le précède.
-    // EN AJOUT SEUL (tools/contract.js) : une requête commence exactement
-    // comme la précédente — même prompt système, messages passés tels
-    // qu'ils ont été envoyés. L'état des outils, qui change, est gardé sur
-    // le message de l'utilisateur de son tour (`m.state`, fixé à l'envoi)
-    // et joint quand il diffère du précédent : rejoué à l'identique ensuite.
-    function apiMessages(conv, upto, guidance = "") {
-      const out = [];
-      const from = Compact.start(conv, upto);
-      const summary = from ? Compact.preamble(conv.messages[from - 1]) : "";
-      const system = [conv.system.trim(), summary, guidance].filter(Boolean).join("\n\n");
-      if (system) out.push({ role: "system", content: system });
-      let shown = "";
-      for (const m of conv.messages.slice(from, upto)) {
-        if (m.role === "summary") continue;
-        if (m.role === "user") {
-          const now = typeof m.state === "string" ? m.state : shown;
-          const joined = now === shown ? "" : now || "Rien de particulier (plus d'artifact, de dossier ouvert…).";
-          shown = now;
-          out.push({ role: "user", content: apiContent(m, joined) });
-        }
-        // Une réponse en erreur ou vide n'est pas renvoyée : le modèle ne
-        // l'a jamais écrite.
-        else if ((m.steps || []).length) {
-          // Une réponse qui a lu le dossier : ses appels et leurs résultats,
-          // puis son dernier texte — le modèle retrouve ce qu'il a lu.
-          out.push(...tools.stepMessages(m.steps));
-          if (m.final) out.push({ role: "assistant", content: m.final });
-        }
-        else if (m.content) out.push({ role: "assistant", content: m.content });
-        else if ((m.attachments || []).length) {
-          out.push({ role: "assistant", content: "(image générée : "
-            + m.attachments.map((a) => a.name).join(", ") + ")" });
-        }
-      }
-      return out;
-    }
-
-    // Les outils d'une requête. Incognito : rien de persistant, donc pas
-    // l'outil `memory` ; ce que le modèle ne sait pas faire (`caps`) n'est
-    // pas envoyé. Ceux de la page (tools/) : ceux des familles actives — le
-    // dossier s'il est ouvert —, et leurs consignes au prompt système.
-    function requestTools(conv, ctx) {
-      const can = modelCaps(modelEntry(conv.model));
-      const hosted = can.hostedTools ? conv.tools.filter((t) => available.value.has(t)
-        && !(conv.incognito && t === "memory")) : [];
-      if (!can.folder) ctx.ws = null;
-      const families = conv.device || defaultDevice();
-      const page = tools.specs(ctx, families)
-        .filter((t) => !can.pageTools || can.pageTools.includes(t.function.name));
-      return { hosted, page, guidance: tools.guidance(ctx, families),
-               state: tools.state(ctx, families) };
-    }
+    // Les messages et les outils d'une requête : chat/api.js (sans Vue,
+    // testé). Ici, ce que le composant sait du modèle et du catalogue.
+    const requestTools = (conv, ctx) => api.requestTools(conv, ctx, {
+      caps: modelCaps(modelEntry(conv.model)), available: available.value,
+      families: conv.device || defaultDevice() });
 
     // Ce qui part au modèle sans être dans le fil, pour le PROCHAIN
     // message : le prompt système composé (le sien, un résumé, les
@@ -711,9 +661,7 @@ export const ChatPanel = {
       const live = resumeMsg || conv.messages[conv.messages.length - 1];
       const upto = conv.messages.indexOf(live);
       conv.updated = Date.now();
-      streaming.value = true;
-      status.value = "";
-      const ctrl = controller = new AbortController();
+      const ctrl = startRun();
       // Un modèle qui répond lui-même, sur l'appareil (browser.js) : sans
       // le proxy ; la question à choix y est la même carte, la même pause.
       const entry = modelEntry(conv.model);
@@ -742,7 +690,7 @@ export const ChatPanel = {
       const effort = modelCaps(modelEntry(conv.model)).reasoning ? conv.reasoning || "auto" : "auto";
       if (["low", "medium", "high"].includes(effort)) body.reasoning_effort = effort;
       else if (effort === "none") body.chat_template_kwargs = { enable_thinking: false };
-      const ctx = toolCtx(conv, live);
+      const ctx = toolCtx(conv, live, ctrl.signal);
       const { hosted, page, guidance, state } = requestTools(conv, ctx);
       body.tools = [...hosted.map((type) => ({ type })), ...page];
       // L'état des outils au moment où l'utilisateur envoie son message :
@@ -783,11 +731,15 @@ export const ChatPanel = {
               live.usage = j.usage || null;
               return;
             }
-            await readStream(r.body, live, { calls, onCall: (slot) => writing(live, slot),
-                                             onMemory: () => { memoryStamp.value++; } });
+            const got = await readStream(r.body, live, { calls, onCall: (slot) => writing(live, slot),
+                                                         onMemory: () => { memoryStamp.value++; } });
+            // Un flux fini sans [DONE] : coupé en route (proxy, réseau) —
+            // ses appels peuvent être incomplets, rien n'est exécuté. Une
+            // réponse arrêtée par sa limite de tokens : à continuer.
+            live.cut = live.error ? "" : !got.done ? "stream" : got.finish === "length" ? "length" : "";
             const asked = calls.filter((c) => c && tools.isTool(c.name))
               .map((c) => ({ id: c.id || "call_" + uid(), name: c.name, arguments: c.arguments }));
-            if (!asked.length || live.error) {
+            if (!asked.length || live.error || live.cut === "stream") {
               if (live.steps) live.final = live.content.slice(start);
               break;
             }
@@ -795,13 +747,7 @@ export const ChatPanel = {
           }
           while (live.step.queue.length) {
             const c = live.step.queue[0];
-            let chip = live.tools.find((t) => t.id === c.id);
-            if (!chip) {
-              live.tools.push({ id: c.id, name: c.name, arguments: c.arguments, status: "running" });
-              chip = live.tools[live.tools.length - 1];
-            } else if (chip.status === "writing") {
-              Object.assign(chip, { arguments: c.arguments, status: "running" });
-            }
+            const chip = chipFor(live, c);
             let result;
             let image = "";
             // (Une carte déjà montrée reste la réponse, même si l'attente
@@ -831,19 +777,14 @@ export const ChatPanel = {
               image = got.image || "";
               if (got.artifact) openArtifact(got.artifact);
             }
-            Object.assign(chip, { status: result.startsWith("Error:") ? "error" : "done",
-                                  chars: result.length, preview: result.slice(0, 600) });
-            live.step.calls.push({ id: c.id, name: c.name, arguments: c.arguments, result,
-                                   ...(image ? { image } : {}) });
-            live.step.queue.shift();
+            recordCall(live, chip, c, result, image);
           }
-          (live.steps || (live.steps = [])).push({ content: live.step.content, calls: live.step.calls });
-          live.step = null;
-          if (live.content && !live.content.endsWith("\n")) live.content += "\n\n";
+          endStep(live);
         }
       } catch (e) {
         if (e.name !== "AbortError") live.error = "Connexion interrompue : " + e.message;
         else if (!live.content) live.error = "Arrêté.";
+        closeStep(live, e.name === "AbortError" ? "Arrêté par l'utilisateur." : "Non exécuté : connexion interrompue.");
       } finally {
         done(conv, live, ctrl, paused);
       }
@@ -871,11 +812,7 @@ export const ChatPanel = {
                         queue: [{ id: "call_" + uid(), name: tools.TOOL.ASK_USER, arguments: JSON.stringify(args) }] };
         }
         const c = live.step.queue[0];
-        let chip = live.tools.find((t) => t.id === c.id);
-        if (!chip) {
-          live.tools.push({ id: c.id, name: c.name, arguments: c.arguments, status: "running" });
-          chip = live.tools[live.tools.length - 1];
-        }
+        const chip = chipFor(live, c);
         let result;
         if (live.waiting && live.waiting.id === c.id) {
           if (live.waiting.result === undefined) return true;
@@ -891,13 +828,8 @@ export const ChatPanel = {
             return true;
           }
         }
-        Object.assign(chip, { status: result.startsWith("Error:") ? "error" : "done",
-                              chars: result.length, preview: result.slice(0, 600) });
-        live.step.calls.push({ id: c.id, name: c.name, arguments: c.arguments, result });
-        live.step.queue.shift();
-        (live.steps || (live.steps = [])).push({ content: live.step.content, calls: live.step.calls });
-        live.step = null;
-        if (live.content && !live.content.endsWith("\n")) live.content += "\n\n";
+        recordCall(live, chip, c, result);
+        endStep(live);
       }
     }
 
@@ -932,9 +864,9 @@ export const ChatPanel = {
 
     // Ce que les outils reçoivent du tour : la conversation, le message,
     // le dossier ouvert, ce que le modèle sait lire, un téléchargement.
-    function toolCtx(conv, live) {
+    function toolCtx(conv, live, signal = undefined) {
       return { conv, live, ws: folders.get(conv.id) || null,
-               vision: !!(modelEntry(conv.model) || {}).vision, download };
+               vision: !!(modelEntry(conv.model) || {}).vision, download, signal };
     }
     function settle(m, result) {
       const c = current.value;
@@ -1118,9 +1050,7 @@ export const ChatPanel = {
         sources: [], model: conv.model, usage: null, error: "", started: Date.now(), duration: 0,
         running: true, auto, focus, covered, before });
       const s = conv.messages[upto];
-      streaming.value = true;
-      status.value = auto ? "Contexte presque plein : résumé de la conversation…" : "Résumé de la conversation…";
-      const ctrl = controller = new AbortController();
+      const ctrl = startRun(auto ? "Contexte presque plein : résumé de la conversation…" : "Résumé de la conversation…");
       try {
         const msgs = await inline(apiMessages(conv, upto));
         const entry = modelEntry(conv.model);
@@ -1255,9 +1185,7 @@ export const ChatPanel = {
     // serveur ignore `n`), affichées à mesure ; `live.want` : le compte
     // attendu, pour l'indicateur du fil.
     async function drawImages(conv, live, source, count) {
-      streaming.value = true;
-      status.value = "";
-      const ctrl = controller = new AbortController();
+      const ctrl = startRun();
       const size = imageSizes.value.includes(conv.imageSize) ? conv.imageSize
         : (chat.value.image_size || imageSizes.value[0]);
       // Les passes, seulement si le modèle en propose et qu'un choix est fait.
@@ -1334,9 +1262,7 @@ export const ChatPanel = {
       conv.messages.push(msg);
       conv.updated = Date.now();
       const live = conv.messages[conv.messages.length - 1];
-      streaming.value = true;
-      status.value = "";
-      const ctrl = controller = new AbortController();
+      const ctrl = startRun();
       try {
         if (!ask || !ask.content.trim()) throw new Error("Écrire le texte à lire.");
         const clone = voiceClones.value.find((v) => v.id === conv.voiceClone);
@@ -1367,9 +1293,7 @@ export const ChatPanel = {
       conv.messages.push(msg);
       conv.updated = Date.now();
       const live = conv.messages[conv.messages.length - 1];
-      streaming.value = true;
-      status.value = "";
-      const ctrl = controller = new AbortController();
+      const ctrl = startRun();
       try {
         const sources = ((ask && ask.attachments) || []).filter((a) => a.kind === "audio" && a.data);
         const blobs = [];
@@ -1450,9 +1374,7 @@ export const ChatPanel = {
       c.messages.push(msg);
       c.updated = Date.now();
       const live = c.messages[c.messages.length - 1];
-      streaming.value = true;
-      status.value = "";
-      const ctrl = controller = new AbortController();
+      const ctrl = startRun();
       live.want = 1;
       try {
         const image = await dataUrl(a.data);
@@ -1511,6 +1433,27 @@ export const ChatPanel = {
     watch(inputVisible, (v) => { if (v) nextTick(refocus); });
 
     function stop() { if (controller) controller.abort(); }
+
+    // Une réponse coupée (limite de tokens, flux interrompu) : le modèle
+    // est prié de reprendre où il s'est arrêté, par un message à la suite.
+    function continueReply() {
+      const c = current.value;
+      if (streaming.value || !c) return;
+      const last = c.messages[c.messages.length - 1];
+      if (last) last.cut = "";
+      abandonWaiting(c);
+      ask(c, { id: uid(), content: "Continue exactement là où ta réponse s'est arrêtée, sans répéter ce qui précède.",
+               attachments: [] });
+    }
+    // Une réponse interrompue par un rechargement en plein tour : la boucle
+    // reprend sur le même message (ses tours d'outils clos, prepareConv).
+    function resumeInterrupted(m) {
+      const c = current.value;
+      if (streaming.value || !c || c.messages[c.messages.length - 1] !== m) return;
+      m.interrupted = false;
+      m.error = "";
+      respond(c, m);
+    }
 
     // La dernière réponse est remplacée, la question reste.
     function regenerate() {
@@ -1661,6 +1604,17 @@ export const ChatPanel = {
         const a = assets.value.find((x) => x.data === src);
         if (a) { zoom.value = a; return; }
       }
+      // Une image d'un autre site (Markdown) : chargée seulement au clic,
+      // jamais d'office — sa requête pourrait exfiltrer des données.
+      const load = e.target.closest("button.md-img-load");
+      if (load) {
+        const img = document.createElement("img");
+        img.src = load.dataset.src || "";
+        img.alt = load.dataset.alt || "";
+        img.referrerPolicy = "no-referrer";
+        load.replaceWith(img);
+        return;
+      }
       const b = e.target.closest("button.copy");
       if (!b) return;
       const code = b.closest(".code").querySelector("code");
@@ -1730,6 +1684,9 @@ export const ChatPanel = {
       }, REASON_PACE);
     });
     onUnmounted(() => clearInterval(pace));
+    // Le panneau quitté (déconnexion) : la réponse en cours s'arrête, sans
+    // laisser S.state.streaming levé.
+    onUnmounted(() => { if (controller) controller.abort(); S.state.streaming = false; });
 
     // Ce que l'appel d'outil cherchait, en une ligne.
     function argSummary(t) {
@@ -1766,6 +1723,23 @@ export const ChatPanel = {
       // Une carte du navigateur en cours au rechargement : ses boutons
       // reviennent (le flux de caméra, lui, est perdu).
       for (const m of c.messages || []) if (m.waiting && m.waiting.kind === "device") m.waiting.busy = false;
+      // Une réponse enregistrée EN PLEIN TOUR (page rechargée ou fermée
+      // pendant le flux) : ses puces en cours passent en erreur, son tour
+      // d'outils ouvert est clos, et elle se signale avec « Reprendre ».
+      // Pas pendant un flux de CET onglet (l'enregistrement d'un autre).
+      const last = (c.messages || [])[c.messages.length - 1];
+      if (last && last.role === "assistant" && !last.waiting && !(streaming.value && current.value === c)) {
+        const midway = (last.step && !last.waiting)
+          || (last.tools || []).some((t) => t.status === "running" || t.status === "writing")
+          || (last.started && !last.duration && !last.error && !last.image && !last.voice && !last.asr);
+        if (midway) {
+          for (const t of last.tools || []) {
+            if (t.status === "running" || t.status === "writing") t.status = "error";
+          }
+          closeStep(last, "Non exécuté : la page a été rechargée pendant la réponse.");
+          last.interrupted = true;
+        }
+      }
     }
     S.setPrepare(prepareConv);
 
@@ -1782,11 +1756,11 @@ export const ChatPanel = {
       });
     });
 
-    return { chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
+    return { continueReply, resumeInterrupted, chat, toolGroups, available, current, currentId, pendingConv, loadError, retryLoad,
              ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, imageSteps, imageLoras, upscaleOpt, upscaleFactor, upscaleStrength, strengthText, upscale,
              voiceMode, asrMode, rec, toggleRecord, genMode, voiceChoices, newVoice, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
-             storageWarning, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
+             storageWarning, conflict, resolveConflict, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
              toggleTool, pickFiles, pickFolderFiles, closeFolder, folderReady, folderCount, attachOpen,
              toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
              promptOpen, hiddenPrompt, hostedCost, familyCost, toolsCost, showPrompt,
@@ -1935,6 +1909,10 @@ export const ChatPanel = {
         que vous la quittez ou rechargez la page.</p>
       <p class="chat-warn" v-if="modelsError">{{ modelsError }}</p>
       <p class="chat-warn" v-if="storageWarning">{{ storageWarning }}</p>
+      <p class="chat-warn" v-if="conflict" role="alert">« {{ conflict.title }} » a été modifiée dans un autre onglet
+        ou sur un autre appareil ; ses changements ici ne sont plus enregistrés.
+        <button type="button" class="link" @click="resolveConflict('reload')">Reprendre l'autre version</button> ·
+        <button type="button" class="link" @click="resolveConflict('overwrite')">Garder celle-ci</button></p>
 
       <div class="thread" ref="thread" @scroll="onScroll" @click="onThreadClick">
         <div class="empty" v-if="!current.messages.length">
@@ -2086,6 +2064,15 @@ export const ChatPanel = {
                 ? " " + ((m.attachments || []).length + 1) + " / " + m.want : "" }}…</span>
               <span class="dim" v-else-if="m.voice">synthèse vocale{{ m.progress ? " · " + m.progress : "" }}…</span>
               <span class="dim" v-else-if="m.asr">transcription{{ m.progress ? " · " + m.progress : "" }}…</span></div>
+            <p class="msg-warn" v-if="m.interrupted && !streaming">Réponse interrompue : la page a été
+              rechargée pendant qu'elle s'écrivait.
+              <button type="button" class="link" v-if="i === current.messages.length - 1"
+                      @click="resumeInterrupted(m)">Reprendre</button></p>
+            <p class="msg-warn" v-else-if="m.cut && !(streaming && i === current.messages.length - 1)">{{ m.cut === "length"
+                ? "Réponse coupée : le modèle a atteint sa limite de longueur."
+                : "Réponse incomplète : le flux s'est arrêté avant la fin." }}
+              <button type="button" class="link" v-if="i === current.messages.length - 1 && !streaming"
+                      @click="continueReply">Continuer</button></p>
             <p class="msg-error" v-if="m.error">{{ m.error }}
               <button type="button" class="link" v-if="tooLong(m) && i === current.messages.length - 1 && !streaming"
                       @click="retryCompacted">Résumer la conversation et réessayer</button></p>

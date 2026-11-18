@@ -150,7 +150,7 @@ class RunPostgres extends PageTool {
     const id = conv.id || "";
     const base = args.reset || !id ? null : await sqlbase.load(key(id));
     const r = await exec({ driver, input: { sql, maxRows: MAX_ROWS, base, files }, runtime: "pglite",
-                           lib: { tabular }, timeout: TIMEOUT });
+                           lib: { tabular }, timeout: TIMEOUT, signal: ctx.signal });
     if (!r.ok) return failure(r.error);
     const { text, statements, tables, base: after } = r.value;
     const out = [text || `${statements} instruction${statements > 1 ? "s" : ""} exécutée${statements > 1 ? "s" : ""}, sans résultat.`];

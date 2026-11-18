@@ -127,6 +127,9 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
  * @property {boolean} [vision] le modèle de la conversation lit-il les images ?
  * @property {(file: {name: string, content: any}, type?: string) => void} [download]
  *                              faire télécharger un fichier à l'utilisateur
+ * @property {AbortSignal} [signal]  levé quand l'utilisateur arrête la réponse : un
+ *                              outil long s'arrête (les bacs suppriment leur cadre) ;
+ *                              tools.run cesse de l'attendre de toute façon
  */
 
 /** Le résultat d'un `run` : le texte pour le modèle, ou ce texte et ses

@@ -1,21 +1,30 @@
+// @ts-check
 /*
   Les appels JSON de la page à son proxy (même cookie de session).
 
-  call(méthode, url, corps?) → le JSON de la réponse. Une réponse en
-  erreur lève une Error dont le message est celui du proxy
+  call(méthode, url, corps?, options?) → le JSON de la réponse. Une
+  réponse en erreur lève une Error dont le message est celui du proxy
   (error.message), sinon « HTTP <statut> », et qui porte `status`.
+  options : `raw` (le corps déjà sérialisé, à la place de `corps`),
+  `headers` (en plus), `keepalive` (la requête survit à la page quittée ;
+  le navigateur la refuse au-delà de 64 Kio, elle part alors sans).
 */
-export async function call(method, url, body) {
+const KEEPALIVE_MAX = 60_000;
+/** @param {string} method @param {string} url @param {any} [body]
+ * @param {{raw?: string, headers?: Record<string, string>, keepalive?: boolean}} [options] */
+export async function call(method, url, body, { raw, headers = {}, keepalive = false } = {}) {
+  const text = raw !== undefined ? raw : body !== undefined ? JSON.stringify(body) : undefined;
   const r = await fetch(url, {
     method,
     headers: { accept: "application/json",
-               ...(body !== undefined ? { "content-type": "application/json" } : {}) },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+               ...(text !== undefined ? { "content-type": "application/json" } : {}), ...headers },
+    body: text,
+    keepalive: keepalive && (text === undefined || text.length < KEEPALIVE_MAX),
   });
   let json = null;
   try { json = await r.json(); } catch { /* corps vide */ }
   if (!r.ok) {
-    const err = new Error((json && json.error && json.error.message) || `HTTP ${r.status}`);
+    const err = /** @type {Error & {status?: number}} */ (new Error((json && json.error && json.error.message) || `HTTP ${r.status}`));
     err.status = r.status;
     throw err;
   }

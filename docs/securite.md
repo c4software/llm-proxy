@@ -52,6 +52,23 @@ Même avec l'auth active :
   - `GET /ui/auth`, `GET /ui/auth/login` et le retour OIDC ;
   - `POST /ui/login`, `POST /ui/logout`.
 
+## La page
+
+- **En-têtes** de `/ui` : `X-Frame-Options: SAMEORIGIN` (pas de cadrage
+  par un autre site), `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: same-origin`. **Pas de `Content-Security-Policy`** :
+  Vue, en build global, compile ses gabarits à la volée, et surtout les
+  cadres `srcdoc` (artifacts, bacs, VM Linux) héritent de la politique de
+  la page — une `script-src` stricte casserait leur code, en ligne par
+  construction. Chacun pose la sienne en tête de son document.
+- **Markdown** : tout le texte est échappé avant l'analyse ; le caractère
+  NUL, jeton interne du rendu, est retiré à l'entrée et refusé dans une
+  URL. Les images d'un autre site ne se chargent qu'au clic
+  ([chat](chat.md)).
+- **Artifacts** : la politique de contenu passe avant le contenu, quel
+  qu'il soit ; la capture rendue par un artifact n'est gardée que si
+  c'est une image JPEG ou PNG en base64, bornée.
+
 ## Outils hébergés et exécution de code
 
 - Avec les [outils hébergés](outils-heberges.md), le proxy **émet des

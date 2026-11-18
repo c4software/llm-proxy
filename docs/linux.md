@@ -156,7 +156,11 @@ ni le loopback, ni les conteneurs voisins, quel que soit
 juge l'adresse, pas un domaine (`[tools.net]` et ses listes de domaines ne
 s'y appliquent pas). Ports refusés : `[ui].linux_relay_blocked_ports` (25
 par défaut). UDP refusé. Bornes : 64 flux par VM, 4 relais ouverts par
-compte. Chaque connexion est écrite au journal (compte, cible).
+compte, `[ui].linux_relay_max_bytes` octets par compte sur 24 h, dans les
+deux sens (2 Go par défaut ; atteints, ses connexions sont fermées
+jusqu'à la fenêtre suivante), et une connexion sans trafic pendant
+`[ui].linux_relay_idle_seconds` (900 s) est fermée. 0 lève l'une ou
+l'autre borne. Chaque connexion est écrite au journal (compte, cible).
 
 Le droit est relu à chaque connexion du WebSocket : un compte bloqué perd
 le relais à la reconnexion suivante.

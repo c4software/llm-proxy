@@ -36,7 +36,7 @@
 import { TOOL, FAMILY, PageTool, defineFamily, failure, clip } from "../contract.js";
 import * as text from "../text.js";
 import * as bridge from "../../artifact-bridge.js";
-import { debugOn } from "../../artifacts.js";
+import { debugOn, shotImage } from "../../artifacts.js";
 
 const MAX_ARTIFACT = 5e5;      // caractères d'un artifact
 const TYPES = ["html", "markdown", "svg", "mermaid", "code"];
@@ -357,9 +357,12 @@ class InspectArtifact extends PageTool {
     if (args.screenshot) {
       try {
         const shot = await bridge.call(art.id, art.versions.length, "shot");
-        if (shot.error) out.push("Capture impossible : " + shot.error);
+        // La réponse vient du cadre (non fiable) : une image vérifiée, ou rien.
+        const ok = shot.error ? null : shotImage(shot);
+        if (shot.error) out.push("Capture impossible : " + String(shot.error).slice(0, 500));
+        else if (!ok) out.push("Capture refusée : l'artifact n'a pas rendu une image JPEG ou PNG valide.");
         else if (!ctx.vision) out.push("Capture prise, non jointe : le modèle de la conversation ne lit pas les images.");
-        else { image = shot.image; out.push(`Capture de la page (${shot.size[0]} × ${shot.size[1]} px) jointe à ce résultat.`); }
+        else { image = ok.image; out.push(`Capture de la page (${ok.size[0]} × ${ok.size[1]} px) jointe à ce résultat.`); }
       } catch (e) {
         out.push("Capture impossible : " + e.message);
       }

@@ -13,15 +13,14 @@ déclencher.
 """
 
 import asyncio
-import base64
-import binascii
 
 from fastapi import APIRouter, Request, Response
 
 from ..access.auth import ui_client
 from ..core.httputil import error_response, json_only, parse_json
 from ..storage import voices
-from .conversation_routes import DATA_URL, closed, run
+from . import dataurl
+from .conversation_routes import closed, run
 
 router = APIRouter()
 
@@ -41,14 +40,11 @@ async def ui_voice_save(request: Request, vid: str):
     if (bad := json_only(request)) is not None:
         return bad
     body = parse_json(await request.body())
-    found = DATA_URL.match(str(body.get("data") or "")) if isinstance(body, dict) else None
-    if found is None:
+    wav = dataurl.decode(body.get("data")) if isinstance(body, dict) else None
+    if wav is None:
         return error_response("openai", 400, "invalid_request_error",
-                              "corps JSON attendu : {name, text, duration, source, data (data URL)}")
-    try:
-        wav = base64.b64decode(found.group(2))
-    except (binascii.Error, ValueError):
-        return error_response("openai", 400, "invalid_request_error", "`data` illisible")
+                              "corps JSON attendu : {name, text, duration, source, data (data URL "
+                              "en base64)}")
     got, bad = await run(voices.save, ui_client(request), vid, body, wav)
     return bad if bad is not None else got
 

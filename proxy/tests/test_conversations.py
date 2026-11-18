@@ -87,12 +87,11 @@ def test_suppression_rend_la_place():
     for i in range(20):
         conversations.add_asset("a", "c1", f"{i}.png", PNG + b"\0" * 100_000)
     conversations.delete("a", "c1")
-    conn = conversations._connect()
-    try:
-        assert conn.execute("PRAGMA auto_vacuum").fetchone() == (2,)   # INCREMENTAL
-        assert conn.execute("PRAGMA freelist_count").fetchone() == (0,)
-    finally:
-        conn.close()
+    vacuum, free = conversations._run(lambda conn: (
+        conn.execute("PRAGMA auto_vacuum").fetchone(),
+        conn.execute("PRAGMA freelist_count").fetchone()))
+    assert vacuum == (2,)                                           # INCREMENTAL
+    assert free == (0,)
 
 
 def test_routes_du_compte_connecte(proxy):
@@ -102,7 +101,7 @@ def test_routes_du_compte_connecte(proxy):
     url = r.json()["url"]
     assert url.startswith("/ui/assets/") and r.json()["type"] == "image/png"
     doc = conv(messages=[{"role": "assistant", "attachments": [{"kind": "image", "data": url}]}])
-    assert proxy.put("/ui/conversations/c1", json=doc).json() == {"id": "c1", "saved": True}
+    assert proxy.put("/ui/conversations/c1", json=doc).json() == {"id": "c1", "saved": True, "rev": 1}
     j = proxy.get("/ui/conversations").json()
     assert j["data"] == [doc] and j["usage"]["conversations"] == 1
     got = proxy.get(url)
@@ -125,6 +124,43 @@ def test_routes_du_compte_connecte(proxy):
     assert proxy.get(url).status_code == 404
 
 
+def test_revision_refuse_un_ecrit_perime(proxy):
+    """Deux onglets sur la même conversation : celui qui écrit sur une
+    révision dépassée reçoit 409 (et la révision courante) au lieu
+    d'écraser l'autre ; sans If-Match (une page d'avant), pas de contrôle."""
+    proxy.post("/ui/login", json={"key": "sk-a"})
+    assert proxy.put("/ui/conversations/c1", json=conv()).json()["rev"] == 1
+    got = proxy.get("/ui/conversations/c1").json()
+    assert got["rev"] == 1
+    a = proxy.put("/ui/conversations/c1", json=conv(title="A"), headers={"if-match": "1"})
+    assert a.json()["rev"] == 2
+    b = proxy.put("/ui/conversations/c1", json=conv(title="B"), headers={"if-match": "1"})
+    assert b.status_code == 409 and b.headers["etag"] == '"2"'
+    assert proxy.get("/ui/conversations/c1").json()["title"] == "A"
+    assert proxy.put("/ui/conversations/c1", json=conv(title="B")).json()["rev"] == 3
+    # La révision envoyée dans le document n'y est pas gardée.
+    proxy.put("/ui/conversations/c1", json=conv(rev=99), headers={"if-match": "3"})
+    assert conversations.get("a", "c1") is None            # cloisonné par compte
+    assert proxy.get("/ui/conversations?summary=1").json()["data"][0]["rev"] == 4
+    assert proxy.put("/ui/conversations/c1", json=conv(), headers={"if-match": "x"}).status_code == 400
+
+
+def test_base_d_avant_recoit_la_revision(monkeypatch, tmp_path):
+    import sqlite3
+    path = str(tmp_path / "ancienne.db")
+    conn = sqlite3.connect(path)
+    conn.execute("""CREATE TABLE conversations (
+        owner TEXT NOT NULL, id TEXT NOT NULL, title TEXT NOT NULL,
+        created REAL NOT NULL, updated REAL NOT NULL, doc TEXT NOT NULL,
+        PRIMARY KEY (owner, id))""")
+    conn.execute("INSERT INTO conversations VALUES ('a', 'c1', 't', 1, 1, '{\"id\": \"c1\"}')")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(conversations, "DB_PATH", path)
+    assert conversations.get("a", "c1") == {"id": "c1", "rev": 0}
+    assert conversations.save("a", "c1", conv(), base=0) == 1
+
+
 def test_chat_ferme(proxy, monkeypatch):
     everywhere(monkeypatch, dashboard, "UI_CHAT", False)
     proxy.post("/ui/login", json={"key": "sk-a"})
@@ -141,9 +177,9 @@ def test_resumes_par_pages_une_seule_et_recherche(proxy):
     j = proxy.get("/ui/conversations?summary=1&limit=2").json()
     assert j["data"] == [
         {"id": "c4", "title": "Conv 4", "created": 1_700_000_000_000,
-         "updated": 1_700_000_004_000, "count": 5},
+         "updated": 1_700_000_004_000, "count": 5, "rev": 1},
         {"id": "c3", "title": "Conv 3", "created": 1_700_000_000_000,
-         "updated": 1_700_000_003_000, "count": 4}]
+         "updated": 1_700_000_003_000, "count": 4, "rev": 1}]
     assert j["next"] == 2 and j["usage"]["conversations"] == 5
     j = proxy.get("/ui/conversations?summary=1&limit=2&offset=4").json()
     assert [c["id"] for c in j["data"]] == ["c0"] and j["next"] is None

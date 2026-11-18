@@ -24,6 +24,14 @@ navigateur) : le relais reçoit surtout des adresses, et c'est l'adresse
 qu'il juge, pas un domaine. Ports refusés : [ui].linux_relay_blocked_ports
 (25 par défaut : pas de courrier sortant depuis l'adresse du proxy).
 
+Combien : [ui].linux_relay_max_bytes, les octets qu'un client (son compte,
+ou le condensé de sa clé) fait passer par le relais, dans les deux sens,
+sur une fenêtre de BUDGET_WINDOW (24 h) ; atteints, ses flux sont fermés
+(THROTTLED) et les suivants refusés jusqu'à la fenêtre d'après. 0 : sans
+plafond. Un flux sans un octet dans un sens ni dans l'autre pendant
+[ui].linux_relay_idle_seconds est fermé, comme un WebSocket sans flux
+(v86 rouvre la connexion au besoin). 0 : sans délai.
+
 Le protocole (v1, sans l'extension v2) : chaque message binaire est
 [type u8][flux u32 LE][charge]. CONNECT (1) : type de flux u8 (1 = TCP ;
 UDP refusé), port u16 LE, nom ; DATA (2) : des octets ; CONTINUE (3) :
@@ -63,6 +71,9 @@ MAX_STREAMS = 64                 # flux ouverts par WebSocket
 MAX_RELAYS = 4                   # WebSockets ouverts par client
 CONNECT_TIMEOUT = 15.0           # s, résolution et connexion
 READ_CHUNK = 16384
+MAX_BYTES = config.integer("ui.linux_relay_max_bytes", 2_000_000_000)
+IDLE_SECONDS = config.integer("ui.linux_relay_idle_seconds", 900)
+BUDGET_WINDOW = 24 * 3600        # s
 
 CONNECT, DATA, CONTINUE, CLOSE = 1, 2, 3, 4
 TCP = 1
@@ -72,6 +83,24 @@ INVALID, UNREACHABLE, TIMEOUT, REFUSED = 0x41, 0x42, 0x43, 0x44
 BLOCKED, THROTTLED = 0x48, 0x49
 
 _open: dict[str, int] = {}       # client → WebSockets ouverts
+_spent: dict[str, list] = {}     # client → [début de la fenêtre, octets]
+
+
+def spend(owner: str, n: int, now: float | None = None) -> bool:
+    """Compte `n` octets du client ; False quand son plafond est atteint
+    (MAX_BYTES sur BUDGET_WINDOW)."""
+    if MAX_BYTES <= 0:
+        return True
+    now = time.time() if now is None else now
+    window = _spent.get(owner)
+    if window is None or now - window[0] >= BUDGET_WINDOW:
+        window = _spent[owner] = [now, 0]
+    window[1] += n
+    return window[1] <= MAX_BYTES
+
+
+def exhausted(owner: str) -> bool:
+    return not spend(owner, 0)
 
 
 def _key() -> bytes:
@@ -156,6 +185,7 @@ class Stream:
         self.queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self.task: asyncio.Task | None = None
         self.writer: asyncio.StreamWriter | None = None
+        self.seen = time.monotonic()  # le dernier octet, dans un sens ou l'autre
 
 
 class Relay:
@@ -164,6 +194,8 @@ class Relay:
         self.owner = owner
         self.streams: dict[int, Stream] = {}
         self.lock = asyncio.Lock()
+        self.seen = time.monotonic()    # la dernière activité du WebSocket
+        self.capped = False             # plafond atteint : dit une fois au journal
 
     async def send(self, kind: int, sid: int, payload: bytes = b"") -> None:
         async with self.lock:
@@ -177,8 +209,40 @@ class Relay:
             except Exception:
                 pass
 
+    async def over_budget(self, n: int) -> bool:
+        """Compte `n` octets ; plafond atteint : tous les flux sont fermés."""
+        if spend(self.owner, n):
+            return False
+        if not self.capped:
+            self.capped = True
+            log.warning("relais Linux %s : plafond de %d octets atteint "
+                        "([ui].linux_relay_max_bytes)", self.owner[:8], MAX_BYTES)
+        for sid in list(self.streams):
+            stream = self.streams.get(sid)
+            await self.close_stream(sid, THROTTLED)
+            if stream and stream.task:
+                stream.task.cancel()
+        return True
+
+    async def watch_idle(self) -> None:
+        """Ferme les flux muets depuis IDLE_SECONDS, et le WebSocket quand
+        il n'en a plus aucun depuis autant."""
+        step = max(1.0, min(30.0, IDLE_SECONDS / 4))
+        while True:
+            await asyncio.sleep(step)
+            now = time.monotonic()
+            for sid, stream in list(self.streams.items()):
+                if now - stream.seen >= IDLE_SECONDS:
+                    await self.close_stream(sid, TIMEOUT)
+                    if stream.task:
+                        stream.task.cancel()
+            if not self.streams and now - self.seen >= IDLE_SECONDS:
+                await self.ws.close(code=1000)
+                return
+
     async def run(self) -> None:
         await self.send(CONTINUE, 0, struct.pack("<I", BUFFER))
+        watcher = asyncio.create_task(self.watch_idle()) if IDLE_SECONDS > 0 else None
         try:
             while True:
                 msg = await self.ws.receive()
@@ -189,10 +253,14 @@ class Relay:
                     continue
                 kind, sid = struct.unpack_from("<BI", data)
                 body = data[5:]
+                self.seen = time.monotonic()
                 if kind == CONNECT:
                     await self.connect(sid, body)
                 elif kind == DATA and sid in self.streams:
                     stream = self.streams[sid]
+                    stream.seen = self.seen
+                    if await self.over_budget(len(body)):
+                        continue
                     if stream.queue.qsize() > 2 * BUFFER:
                         await self.close_stream(sid, THROTTLED)
                         stream.task.cancel()
@@ -201,6 +269,8 @@ class Relay:
                 elif kind == CLOSE and sid in self.streams:
                     self.streams.pop(sid).task.cancel()
         finally:
+            if watcher:
+                watcher.cancel()
             for stream in self.streams.values():
                 stream.task.cancel()
             self.streams.clear()
@@ -211,7 +281,7 @@ class Relay:
         if body[0] != TCP:
             await self.send(CLOSE, sid, bytes([INVALID]))
             return
-        if len(self.streams) >= MAX_STREAMS:
+        if len(self.streams) >= MAX_STREAMS or exhausted(self.owner):
             await self.send(CLOSE, sid, bytes([THROTTLED]))
             return
         port = struct.unpack_from("<H", body, 1)[0]
@@ -264,7 +334,11 @@ class Relay:
         reason = VOLUNTARY
         try:
             while chunk := await reader.read(READ_CHUNK):
-                if sid not in self.streams:
+                stream = self.streams.get(sid)
+                if stream is None:
+                    return
+                stream.seen = self.seen = time.monotonic()
+                if await self.over_budget(len(chunk)):
                     return
                 await self.send(DATA, sid, chunk)
         except (ConnectionError, OSError):

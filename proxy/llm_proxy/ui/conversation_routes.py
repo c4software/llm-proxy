@@ -10,7 +10,9 @@ ne peut pas les déclencher.
                                     ?q=… : les résumés de celles qui
                                     contiennent chaque mot
   GET    /ui/conversations/{id}     une conversation (le document entier)
-  PUT    /ui/conversations/{id}     crée ou remplace (le document entier)
+  PUT    /ui/conversations/{id}     crée ou remplace (le document entier) →
+                                    {id, saved, rev} ; If-Match: <rev> : 409
+                                    si elle a changé depuis (autre onglet)
   DELETE /ui/conversations/{id}     supprime, images comprises
   POST   /ui/assets                 garde une image ou un audio : {conversation, name,
                                     data (data URL)} → {id, url}
@@ -18,20 +20,16 @@ ne peut pas les déclencher.
 """
 
 import asyncio
-import base64
-import binascii
-import re
 
 from fastapi import APIRouter, Request, Response
 
 from ..access.auth import ui_client
 from ..core.httputil import error_response, json_only, parse_json
 from ..storage import conversations
-from . import dashboard
+from . import dashboard, dataurl
 
 router = APIRouter()
 
-DATA_URL = re.compile(r"data:([\w.+-]+/[\w.+-]+)?(?:;[\w=.+-]+)*;base64,([A-Za-z0-9+/=\s]+)\Z")
 
 
 def closed() -> Response | None:
@@ -47,6 +45,9 @@ async def run(fn, *args):
         return await asyncio.to_thread(fn, *args), None
     except conversations.HistoryError as exc:
         return None, error_response("openai", exc.status, "invalid_request_error", str(exc))
+    except conversations.Conflict as exc:
+        return None, error_response("openai", 409, "conflict", str(exc),
+                                    headers={"etag": f'"{exc.rev}"'})
 
 
 MAX_PAGE = 200
@@ -99,9 +100,16 @@ async def ui_conversation_save(request: Request, cid: str):
         return off
     if (bad := json_only(request)) is not None:
         return bad
-    _, bad = await run(conversations.save, ui_client(request), cid,
-                       parse_json(await request.body()))
-    return bad if bad is not None else {"id": cid, "saved": True}
+    base = request.headers.get("if-match")
+    if base is not None:
+        try:
+            base = int(base.strip().strip('"'))
+        except ValueError:
+            return error_response("openai", 400, "invalid_request_error",
+                                  "If-Match : une révision (entier) attendue")
+    rev, bad = await run(conversations.save, ui_client(request), cid,
+                         parse_json(await request.body()), base)
+    return bad if bad is not None else {"id": cid, "saved": True, "rev": rev}
 
 
 @router.delete("/ui/conversations/{cid}")
@@ -121,14 +129,11 @@ async def ui_asset_add(request: Request):
     if (bad := json_only(request)) is not None:
         return bad
     body = parse_json(await request.body())
-    found = DATA_URL.match(str(body.get("data") or "")) if isinstance(body, dict) else None
-    if found is None:
+    data = dataurl.decode(body.get("data")) if isinstance(body, dict) else None
+    if data is None:
         return error_response("openai", 400, "invalid_request_error",
-                              "corps JSON attendu : {conversation, name, data (data URL)}")
-    try:
-        data = base64.b64decode(found.group(2))
-    except (binascii.Error, ValueError):
-        return error_response("openai", 400, "invalid_request_error", "`data` illisible")
+                              "corps JSON attendu : {conversation, name, data (data URL "
+                              "en base64)}")
     got, bad = await run(conversations.add_asset, ui_client(request),
                          body.get("conversation"), str(body.get("name") or ""), data)
     return bad if bad is not None else got

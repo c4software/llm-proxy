@@ -575,9 +575,14 @@ Trois vérifications empêchent les dérives :
   `@override` sur une méthode que `PageTool` n'a pas, une clé inconnue
   dans `super({...})` ou une carte qui rend `{resultat}` au lieu de
   `{result}` sont des erreurs.
-- **`npm run check`** lance les deux hors du navigateur : TypeScript,
-  puis le registre chargé par Node (`proxy/wasm/check-tools.mjs`).
-  pytest le lance aussi ; le test est ignoré sans Node.
+- **Les tests de la logique pure** (`proxy/wasm/tests/*.test.mjs`,
+  `node --test`) : le rendu Markdown sûr, le document d'un artifact et
+  sa capture, l'enregistrement des conversations (avec le vrai Vue et un
+  proxy simulé), les messages d'une requête (chat/api.js, « ajout seul »)
+  et les tours d'outils (chat/turn.js). `npm test` les lance seuls.
+- **`npm run check`** lance le tout hors du navigateur : TypeScript, le
+  registre chargé par Node (`proxy/wasm/check-tools.mjs`), puis les
+  tests. pytest le lance aussi ; le test est ignoré sans Node.
 
 ```bash
 cd proxy/wasm && npm ci && npm run check

@@ -107,7 +107,7 @@ export class CheckTypescript extends PageTool {
     let input;
     try { input = await project(ctx, wanted, override); } catch (e) { return failure(e.message + "."); }
     if (!input.roots.length) return failure("aucun fichier TypeScript à vérifier.");
-    const r = await exec({ driver, input, runtime: "typescript", timeout: TIMEOUT });
+    const r = await exec({ driver, input, runtime: "typescript", timeout: TIMEOUT, signal: ctx.signal });
     if (!r.ok) return failure(r.error);
     const { diagnostics, total, checked, notes, version } = r.value;
     const head = `Vérifié : ${checked} fichier${checked > 1 ? "s" : ""} (TypeScript ${version}`

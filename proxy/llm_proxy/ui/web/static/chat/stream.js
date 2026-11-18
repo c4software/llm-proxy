@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Le FLUX d'une réponse du chat (SSE de /ui/chat/completions) :
   readStream lit les événements `data:` un à un ; take les applique au
@@ -8,11 +9,16 @@
   rassemblés morceau par morceau dans `hooks.calls` (index → {id, name,
   arguments}) ; `hooks.onCall(slot)` à chaque morceau — un artifact peut
   mettre des minutes à s'écrire.
+
+  readStream rend { done, finish } : `done`, le flux s'est clos par
+  `[DONE]` (sinon il a été coupé en route) ; `finish`, le dernier
+  finish_reason (« length » : la limite de tokens atteinte).
 */
 export async function readStream(stream, live, hooks = {}) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buf = "";
+  const end = { done: false, finish: "" };
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -23,12 +29,15 @@ export async function readStream(stream, live, hooks = {}) {
       buf = buf.slice(nl + 1);
       if (!line.startsWith("data:")) continue;   // «: ping» et le reste
       const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
+      if (data === "[DONE]") { end.done = true; continue; }
+      if (!data) continue;
       let doc;
       try { doc = JSON.parse(data); } catch { continue; }
       take(doc, live, hooks);
+      for (const choice of doc.choices || []) if (choice.finish_reason) end.finish = choice.finish_reason;
     }
   }
+  return end;
 }
 
 export function take(doc, live, hooks = {}) {

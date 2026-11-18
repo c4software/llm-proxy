@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Le RENDU d'un artifact (tools/page/artifacts.js), pour le panneau
   latéral (ArtifactPanel.js) : son document, et son nom de fichier.
@@ -61,7 +62,7 @@ function bridge() {
     console[level] = (...a) => { note(level, a.map(fmt).join(" ")); orig(...a); };
   }
   addEventListener("error", (e) => {
-    const t = e.target;
+    const t = /** @type {any} */ (e.target);
     if (t && t !== window && (t.src || t.href)) note("error", "Ressource non chargée : " + (t.src || t.href));
     else note("error", (e.message || "Erreur") + (e.lineno ? " (ligne " + e.lineno + ", colonne " + e.colno + ")" : ""));
   }, true);
@@ -148,9 +149,10 @@ function bridge() {
         await new Promise((r) => setTimeout(r, 60));           // les effets d'un clic
         reply({ value: value === undefined ? undefined : fmt(value), logs: logs.filter((l) => l.n > since) });
       } else if (d.op === "shot") {
-        if (!window.htmlToImage) (0, eval)(d.lib);
+        const w = /** @type {any} */ (window);
+        if (!w.htmlToImage) (0, eval)(d.lib);
         const bg = getComputedStyle(document.body).backgroundColor;
-        const canvas = await window.htmlToImage.toCanvas(document.documentElement, {
+        const canvas = await w.htmlToImage.toCanvas(document.documentElement, {
           backgroundColor: bg === "rgba(0, 0, 0, 0)" ? "#ffffff" : bg, pixelRatio: 1,
           width: innerWidth, height: Math.min(document.documentElement.scrollHeight, 4000) });
         reply({ image: canvas.toDataURL("image/jpeg", 0.85), size: [canvas.width, canvas.height] });
@@ -166,10 +168,13 @@ export function artifactDoc(version, { network = false, debug = false } = {}) {
   const { type, content } = version;
   const META = meta(network ? OPEN_CSP : CSP) + (debug ? BRIDGE : "");
   if (type === "html") {
-    // La politique en tête de SA page : avant tout ce qu'elle charge.
-    if (/<head[^>]*>/i.test(content)) return content.replace(/<head[^>]*>/i, (h) => h + META);
-    if (/<html[^>]*>/i.test(content)) return content.replace(/<html[^>]*>/i, (h) => h + "<head>" + META + "</head>");
-    return `<!doctype html><html><head>${META}</head><body>${content}</body></html>`;
+    // La politique TOUJOURS en premier, avant le moindre octet de
+    // l'artifact : chercher son <head> ne suffit pas (`<header>`, un
+    // commentaire, un script placé avant). Ce que l'artifact a ensuite
+    // en tête est rangé par l'analyseur HTML dans le même <head> (son
+    // doctype et son <head> sont ignorés, les attributs de son <html>
+    // fusionnés) : rendu inchangé, toujours en mode standard.
+    return `<!doctype html>${META}${content}`;
   }
   const body = type === "markdown" ? Markdown.render(content)
     : type === "svg" ? content
@@ -186,4 +191,19 @@ export function artifactFile(art, version) {
   const extOf = { html: "html", markdown: "md", svg: "svg", mermaid: "mmd", code: "txt" };
   const base = art.id || "artifact";
   return { name: `${base}.${extOf[version.type] || "txt"}`, content: version.content };
+}
+
+// La CAPTURE rendue par le pont d'un artifact : elle vient du cadre, donc
+// de code non fiable — l'artifact peut répondre à la place du pont. Elle
+// ne part au modèle et à l'affichage que si c'est bien une image JPEG ou
+// PNG en base64, de taille bornée ; sinon null.
+export const MAX_SHOT_CHARS = 8 * 1024 * 1024;
+const SHOT = /^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$/;
+/** @param {any} shot @returns {{ image: string, size: [number, number] } | null} */
+export function shotImage(shot) {
+  if (!shot || typeof shot.image !== "string" || shot.image.length > MAX_SHOT_CHARS
+      || !SHOT.test(shot.image)) return null;
+  const [w, h] = Array.isArray(shot.size) ? shot.size.map(Number) : [];
+  const dim = (n) => Number.isFinite(n) && n > 0 && n < 100000 ? Math.round(n) : 0;
+  return { image: shot.image, size: [dim(w), dim(h)] };
 }

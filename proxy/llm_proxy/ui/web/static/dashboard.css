@@ -645,6 +645,10 @@ body:has(> #app:not([v-cloak])) > .boot { display: none; }
   margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; font-size: 13.5px;
   color: var(--err); background: color-mix(in srgb, var(--err) 9%, transparent);
 }
+.msg-warn {
+  margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; font-size: 13.5px;
+  color: var(--muted); background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
 
 /* Markdown des réponses (lib/markdown.js). */
 .md { overflow-wrap: anywhere; }
@@ -662,6 +666,7 @@ body:has(> #app:not([v-cloak])) > .boot { display: none; }
 .md h4, .md h5, .md h6 { font-size: 16px; }
 .md a { color: var(--accent); }
 .md img { max-width: 100%; border-radius: 10px; display: block; }
+.md .md-img-load { font: inherit; font-size: 13px; color: var(--muted); background: none; border: 1px dashed currentColor; border-radius: 8px; padding: 4px 10px; cursor: pointer; }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 1.2em 0; }
 .md blockquote { padding: 0 0 0 14px; border-left: 3px solid var(--line); color: var(--muted); }
 .md .code { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--track); }

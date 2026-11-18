@@ -132,7 +132,7 @@ class RunJavascript extends PageTool {
     try { files = await inputs(ctx, paths(args)); } catch (e) { return failure(e.message + "."); }
     const typescript = args.language === "typescript";
     const runtime = [...(/\bchart\s*\(/.test(code) ? ["chart"] : []), ...(typescript ? ["sucrase"] : [])];
-    const r = await exec({ driver, input: { code, files, typescript }, runtime, timeout: TIMEOUT });
+    const r = await exec({ driver, input: { code, files, typescript }, runtime, timeout: TIMEOUT, signal: ctx.signal });
     const out = [];
     let image = "";
     let keep = [];

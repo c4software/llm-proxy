@@ -3,11 +3,8 @@ Le CHAT de la page et ce qu'il appelle : la session (ce que la page sait
 d'elle), les modèles, /ui/chat/completions, les images, la voix, l'usage.
 """
 
-import base64
-import binascii
 import json
 import os
-import re
 import httpx2
 from fastapi import Request
 from ... import tools
@@ -26,7 +23,7 @@ from ...upstream.relaying import Call, forward, gate
 from ..usage_api import usage_page
 
 from .accounts import ui_login_mode
-from .. import linux_relay, page_tools
+from .. import dataurl, linux_relay, page_tools
 from .page import UI_CHAT, UI_CHAT_MODEL, router
 
 
@@ -210,9 +207,6 @@ async def ui_voices(request: Request):
     return await relay_routes.audio_voices(request)
 
 
-DATA_URL = re.compile(r"data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)\Z")
-
-
 @router.post("/ui/images/edits")
 async def ui_images_edits(request: Request):
     """La retouche d'une image du chat : un corps JSON (`model`, `prompt`,
@@ -229,17 +223,12 @@ async def ui_images_edits(request: Request):
     if not isinstance(payload, dict):
         return error_response("openai", 400, "invalid_request_error",
                               "corps JSON attendu")
-    found = DATA_URL.match(str(payload.get("image") or ""))
+    image = dataurl.decode(payload.get("image"))
     prompt = payload.get("prompt")
-    if found is None or not isinstance(prompt, str) or not prompt.strip():
+    if image is None or not isinstance(prompt, str) or not prompt.strip():
         return error_response("openai", 400, "invalid_request_error",
                               "`prompt` et `image` (data URL d'une image) "
                               "attendus")
-    try:
-        image = base64.b64decode(found.group(2))
-    except (binascii.Error, ValueError):
-        return error_response("openai", 400, "invalid_request_error",
-                              "`image` illisible")
     kind = files.sniff(image) or ("image/webp" if image[8:12] == b"WEBP"
                                   else None)
     if kind is None:
@@ -295,10 +284,6 @@ async def _relay_form(request: Request, payload: dict, fields: dict,
     return await forward(call, relayed, normalized.lstrip("/"), raw)
 
 
-AUDIO_URL = re.compile(r"data:(audio/[\w.+-]+)(?:;[\w.+-]+=[\w.+-]+)*;base64,"
-                       r"([A-Za-z0-9+/=\s]+)\Z")
-
-
 @router.post("/ui/audio/transcriptions")
 async def ui_transcriptions(request: Request):
     """La transcription d'un audio du chat (modèle de transcription choisi
@@ -314,15 +299,10 @@ async def ui_transcriptions(request: Request):
     if not isinstance(payload, dict):
         return error_response("openai", 400, "invalid_request_error",
                               "corps JSON attendu")
-    found = AUDIO_URL.match(str(payload.get("file") or ""))
-    if found is None:
+    data = dataurl.decode(payload.get("file"))
+    if data is None:
         return error_response("openai", 400, "invalid_request_error",
                               "`file` (data URL d'un audio) attendu")
-    try:
-        data = base64.b64decode(found.group(2))
-    except (binascii.Error, ValueError):
-        return error_response("openai", 400, "invalid_request_error",
-                              "`file` illisible")
     kind = files.sniff_audio(data)
     if kind is None:
         return error_response("openai", 400, "invalid_request_error",

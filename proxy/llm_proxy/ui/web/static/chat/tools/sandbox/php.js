@@ -45,7 +45,7 @@ class RunPhp extends PageTool {
     if (!/^\s*<\?php/.test(code)) code = "<?php\n" + code;
     let files;
     try { files = await inputs(ctx, paths(args)); } catch (e) { return failure(e.message + "."); }
-    const r = await exec({ driver, input: { code, files }, runtime: "php", timeout: TIMEOUT });
+    const r = await exec({ driver, input: { code, files }, runtime: "php", timeout: TIMEOUT, signal: ctx.signal });
     if (!r.ok) return failure(r.error);
     const { stdout, stderr, exitCode, outputs } = r.value;
     const out = [stdout ? "Sortie :\n" + stdout : "(aucune sortie)"];

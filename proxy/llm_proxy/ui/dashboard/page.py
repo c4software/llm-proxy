@@ -33,6 +33,23 @@ UI_CHAT = config.flag("ui.chat", False)
 UI_CHAT_MODEL = config.text("ui.chat_model", "").strip()
 
 
+# Les en-têtes de sécurité de la page. Pas de Content-Security-Policy :
+# - la page charge Vue en build global, qui compile ses gabarits à la
+#   volée (il lui faudrait 'unsafe-eval') et a un script en ligne ;
+# - surtout, les cadres `srcdoc` (artifacts, bacs, VM Linux) HÉRITENT de
+#   la politique de la page : une script-src stricte casserait leur code,
+#   qui est en ligne par construction. Chacun pose la sienne dans son
+#   document (chat/artifacts.js, tools/sandbox/bac.js).
+# Le cadrage est refusé par X-Frame-Options plutôt que par
+# `frame-ancestors`, pour la même raison : un en-tête CSP, même réduit à
+# cette directive, serait hérité par ces cadres.
+SECURITY_HEADERS = {
+    "X-Frame-Options": "SAMEORIGIN",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+}
+
+
 @router.get("/ui", response_class=HTMLResponse)
 async def ui_page(request: Request):
     """Tableau de bord : page statique. Les chiffres sont lus côté client
@@ -41,8 +58,8 @@ async def ui_page(request: Request):
         html = static_files.preloads(static_files.versioned(fh.read()))
     # La page elle-même n'est jamais gardée : c'est elle qui porte les URL
     # versionnées de ses fichiers.
-    response = HTMLResponse(html, headers={"Cache-Control": "no-cache"})
-    return response
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache",
+                                       **SECURITY_HEADERS})
 
 
 def drop_legacy_cookie(response: Response, request: Request) -> None:
@@ -81,7 +98,8 @@ self.addEventListener("fetch", (event) => {
 async def ui_service_worker():
     return Response(SERVICE_WORKER, media_type="text/javascript",
                     headers={"Service-Worker-Allowed": UI_PREFIX,
-                             "Cache-Control": "no-cache"})
+                             "Cache-Control": "no-cache",
+                             "X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/ui/login")

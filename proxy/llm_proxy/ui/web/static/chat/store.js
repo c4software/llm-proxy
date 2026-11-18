@@ -1,4 +1,6 @@
+// @ts-check
 import { when } from "../lib/format.js";
+import { download } from "../lib/files.js";
 import * as history from "./history.js";
 import { forget as forgetTools } from "./tools/index.js";
 
@@ -20,12 +22,14 @@ export const ChatStore = (() => {
     confirming: null,               // id de la conversation à supprimer
     renaming: null, renameText: "",
     storageWarning: "",
+    conflict: null,                 // { id, title } : modifiée ailleurs, enregistrement suspendu
     query: "",                      // la recherche du menu latéral
   });
   // Ce qu'une conversation neuve reçoit (modèle, outils) : posé par le chat,
   // qui connaît le catalogue et la session.
   let defaults = () => ({ model: "", tools: [] });
   // Ce que le chat règle sur une conversation lue du proxy.
+  /** @type {(conv: any) => void} */
   let prepare = () => {};
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   // Le menu tient des RÉSUMÉS (`stub` : id, titre, dates, `count` messages),
@@ -57,6 +61,10 @@ export const ChatStore = (() => {
   // menu et la conversation affichée sont là.
   let ready = Promise.resolve();
   const saved = new Map();          // id → le JSON envoyé en dernier
+  // id → la révision du proxy sur laquelle s'appuie la conversation
+  // (conversations.py) : un enregistrement sur une révision dépassée — un
+  // autre onglet l'a remplacée — est refusé (409) au lieu d'écraser.
+  const revs = new Map();
   let wanted = null;                // l'id de l'adresse (#chat/<id>), avant la liste
 
   // Des résumés ajoutés au menu ; une conversation déjà là ne change pas.
@@ -69,8 +77,13 @@ export const ChatStore = (() => {
   }
   // Une conversation entière, à la place de son résumé.
   function adopt(doc) {
-    saved.set(doc.id, JSON.stringify(doc));
+    if (Number.isInteger(doc.rev)) revs.set(doc.id, doc.rev);
+    delete doc.rev;                 // tenue à part, pas dans le document
+    // Ce que `prepare` complète (réglages par défaut, réponse interrompue)
+    // n'est pas une modification : rien ne repart pour lui seul — un
+    // onglet qui ne fait que LIRE n'écrase pas celui qui écrit.
     prepare(doc);
+    saved.set(doc.id, JSON.stringify(doc));
     const i = state.convs.findIndex((c) => c.id === doc.id);
     if (i < 0) state.convs.push(doc);
     else if (state.convs[i].stub) state.convs.splice(i, 1, doc);
@@ -118,6 +131,9 @@ export const ChatStore = (() => {
     state.key = key;
     state.listing = true;
     saved.clear();
+    revs.clear();
+    state.conflict = null;
+    history.forgetCache();
     // La conversation de l'adresse est lue EN MÊME TEMPS que la première
     // page du menu : elle peut être bien plus loin dans la liste.
     const first = wanted;
@@ -176,38 +192,78 @@ export const ChatStore = (() => {
 
   // Enregistrement différé : un flux modifie le message des dizaines de
   // fois par seconde, le proxy n'a besoin que d'un état de temps en
-  // temps. Seules partent les conversations qui ont changé — jamais une
-  // conversation incognito, ni une conversation encore vide.
-  let saveTimer = null, running = null, again = false;
+  // temps — toutes les SAVE_MS, STREAM_SAVE_MS pendant un flux (chaque
+  // enregistrement sérialise et envoie le document entier). Seules
+  // partent les conversations qui ont changé — jamais une conversation
+  // incognito, ni une conversation encore vide, ni une conversation en
+  // conflit (state.conflict : l'utilisateur choisit).
+  const SAVE_MS = 1000, STREAM_SAVE_MS = 5000;
+  let saveTimer = null, running = null, again = false, leaving = false;
   const kept = (c) => !c.stub && !c.incognito && c.messages.length;
   async function persist() {
+    clearTimeout(saveTimer);
     saveTimer = null;
     if (running) { again = true; return running; }
+    const keepalive = leaving;
+    leaving = false;
     running = (async () => {
       for (const c of toRaw(state.convs)) {
-        if (!kept(c) || saved.get(c.id) === JSON.stringify(c)) continue;
+        if (!kept(c) || (state.conflict && state.conflict.id === c.id)
+            || saved.get(c.id) === JSON.stringify(c)) continue;
         try {
-          await history.save(c);
-          saved.set(c.id, JSON.stringify(c));
+          const r = await history.save(c, { rev: revs.has(c.id) ? revs.get(c.id) : null, keepalive });
+          saved.set(c.id, r.text);
+          if (r.rev !== null) revs.set(c.id, r.rev);
           state.storageWarning = "";
         } catch (e) {
-          state.storageWarning = `« ${c.title} » n'est pas enregistrée : ${e.message}`;
+          if (e.status === 409) state.conflict = { id: c.id, title: c.title };
+          else state.storageWarning = `« ${c.title} » n'est pas enregistrée : ${e.message}`;
         }
       }
     })();
     try { await running; } finally { running = null; }
     if (again) { again = false; return persist(); }
   }
-  watch(() => state.convs, () => {
-    if (!saveTimer) saveTimer = setTimeout(persist, 1000);
-  }, { deep: true });
-  // La page quittée ou cachée : ce qui reste part tout de suite.
+  function schedule(ms) {
+    if (!saveTimer) saveTimer = setTimeout(persist, ms);
+  }
+  watch(() => state.convs, () => schedule(state.streaming ? STREAM_SAVE_MS : SAVE_MS), { deep: true });
+  // Le flux fini : la réponse complète part sans attendre le délai du flux.
+  watch(() => state.streaming, (now) => {
+    if (!now && saveTimer) { clearTimeout(saveTimer); saveTimer = null; schedule(300); }
+  });
+  // La page quittée ou cachée : ce qui reste part tout de suite, en
+  // `keepalive` (la requête survit à la fermeture de l'onglet).
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden" && saveTimer) {
-      clearTimeout(saveTimer);
+      leaving = true;
       persist();
     }
   });
+
+  // Le CONFLIT (state.conflict) : la conversation a été enregistrée
+  // ailleurs depuis qu'elle a été lue ici. `reload` reprend la version du
+  // proxy (les changements de cet onglet sont perdus), `overwrite`
+  // enregistre celle-ci par-dessus.
+  async function resolveConflict(choice) {
+    const k = state.conflict;
+    if (!k || state.streaming) return;
+    if (choice === "overwrite") {
+      revs.delete(k.id);              // sans révision : pas de contrôle
+      state.conflict = null;
+      return persist();
+    }
+    try {
+      const doc = await history.one(k.id);
+      state.conflict = null;
+      const i = state.convs.findIndex((c) => c.id === k.id);
+      if (!doc) { if (i >= 0) state.convs.splice(i, 1); saved.delete(k.id); revs.delete(k.id); return; }
+      if (i >= 0) state.convs.splice(i, 1, { ...doc, stub: true });   // remplacé par adopt
+      adopt(doc);
+    } catch (e) {
+      state.storageWarning = "Conversation non relue : " + e.message;
+    }
+  }
 
   function newConv(incognito = false) {
     if (state.streaming) return;
@@ -261,6 +317,8 @@ export const ChatStore = (() => {
     const gone = state.convs.find((c) => c.id === id);
     state.convs = state.convs.filter((c) => c.id !== id);
     forgetTools(id);                 // ce que les outils gardaient pour elle (la base SQL…)
+    if (state.conflict && state.conflict.id === id) state.conflict = null;
+    revs.delete(id);
     if (gone && !gone.incognito && (gone.stub || saved.has(id))) {
       saved.delete(id);
       state.total = Math.max(0, state.total - 1);
@@ -314,18 +372,12 @@ export const ChatStore = (() => {
         out.push(...m.sources.map((x) => `- [${x.title || x.url}](${x.url})`), "");
       }
     }
-    const blob = new Blob([out.join("\n")], { type: "text/markdown;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = (fold(c.title).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "conversation") + ".md";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    const name = (fold(c.title).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "conversation") + ".md";
+    download({ name, content: out.join("\n") }, "text/markdown;charset=utf-8");
   }
 
 
   return { state, sorted, filtered, current, pending, count, open, loadMore, fetchCurrent,
-           newConv, persist, select, want, remove, startRename, endRename, exportMd, when, uid,
+           newConv, persist, resolveConflict, select, want, remove, startRename, endRename, exportMd, when, uid,
            setDefaults(fn) { defaults = fn; }, setPrepare(fn) { prepare = fn; } };
 })();

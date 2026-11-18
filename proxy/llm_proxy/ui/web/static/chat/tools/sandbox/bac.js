@@ -11,7 +11,7 @@
   par proxy/wasm) n'est téléchargé qu'au premier appel, par la PAGE — le bac n'a pas le
   droit de le faire —, gardé en mémoire, puis passé au bac à chaque appel.
 
-  exec({driver, input, runtime, timeout, lib}) → {ok, value, error, logs}
+  exec({driver, input, runtime, timeout, lib, signal}) → {ok, value, error, logs}
     driver    une fonction async (input, {mod, wasm, bins, mods, lib}) →
               valeur, exécutée dans le Worker : passée en TEXTE, elle ne
               voit rien de ce module ; `mod` est le module du (premier)
@@ -21,6 +21,8 @@
     runtime   le nom d'un runtime de RUNTIMES, une liste de noms, ou rien
     lib       des fonctions d'aide {nom: fonction}, passées en texte comme
               `driver` (aucune ne voit ce module) : `lib.nom` dans le Worker
+    signal    l'arrêt de la réponse (ctx.signal) : le cadre est supprimé
+              aussitôt, comme au délai dépassé
     logs      ce que le code a écrit sur la console
 */
 
@@ -86,7 +88,11 @@ function load(name) {
   return runtimes.get(name);
 }
 
-export async function exec({ driver, input, runtime, timeout, lib = {} }) {
+/** @param {{driver: Function, input: any, runtime?: string | string[], timeout: number,
+ *   lib?: Record<string, Function>, signal?: AbortSignal}} o */
+export async function exec({ driver, input, runtime, timeout, lib = {}, signal }) {
+  const stopped = { ok: false, logs: [], error: "arrêté par l'utilisateur." };
+  if (signal && signal.aborted) return stopped;
   const names = !runtime ? [] : Array.isArray(runtime) ? runtime : [runtime];
   const rts = [];
   for (const name of names) {
@@ -102,8 +108,10 @@ export async function exec({ driver, input, runtime, timeout, lib = {} }) {
     frame.setAttribute("sandbox", "allow-scripts");
     frame.style.display = "none";
     let timer = null;
+    const onAbort = () => finish(stopped);
     const finish = (reply) => {
       clearTimeout(timer);
+      if (signal) signal.removeEventListener("abort", onAbort);
       window.removeEventListener("message", onMessage);
       frame.remove();
       resolve(reply);
@@ -120,6 +128,7 @@ export async function exec({ driver, input, runtime, timeout, lib = {} }) {
       frame.contentWindow.postMessage(msg, "*", sent.flatMap((r) => Object.values(r.bins)));
     }
     window.addEventListener("message", onMessage);
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
     timer = setTimeout(() => finish({ ok: false, logs: [], error: `arrêté après ${timeout / 1000} s.` }), timeout);
     frame.srcdoc = FRAME;
     document.body.appendChild(frame);

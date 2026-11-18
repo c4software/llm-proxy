@@ -505,6 +505,12 @@ conversations_database = "conversations.db"
 linux_relay = []
 # Ports refusés par le relais (25 : pas de courrier sortant depuis le serveur).
 linux_relay_blocked_ports = [25]
+# Octets qu'un client (compte, ou clé) fait passer par le relais, dans les
+# deux sens, sur 24 h ; atteints, ses connexions sont fermées jusqu'à la
+# fenêtre suivante. 0 = sans plafond.
+linux_relay_max_bytes = 2000000000
+# Une connexion du relais sans trafic pendant ce délai (s) est fermée. 0 = jamais.
+linux_relay_idle_seconds = 900
 # Bornes (octets) : une conversation, une image, l'historique d'un compte.
 conversation_max_bytes = 20000000
 asset_max_bytes = 20000000

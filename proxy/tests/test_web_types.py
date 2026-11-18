@@ -1,8 +1,9 @@
 """Le code de la page (web/static), vérifié par l'outillage de
 proxy/wasm (npm run check) : ses types (les fichiers en `// @ts-check`,
-selon proxy/wasm/tsconfig.json), et le registre des outils de la page
-contre leur interface (proxy/wasm/check-tools.mjs). Ignoré sans Node ou
-sans `npm ci` dans proxy/wasm."""
+selon proxy/wasm/tsconfig.json), le registre des outils de la page
+contre leur interface (proxy/wasm/check-tools.mjs), et les tests de sa
+logique pure (proxy/wasm/tests, `node --test`). Ignoré sans Node ou
+sans `npm ci` dans proxy/wasm (les tests Node, sans Node seulement)."""
 
 import os
 import shutil
@@ -34,3 +35,14 @@ def test_page_tools_follow_their_interface():
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "conformes" in r.stdout
+
+
+def test_page_logic_tests_pass():
+    """Les tests Node de la page (proxy/wasm/tests) : rendu Markdown sûr,
+    document d'un artifact, enregistrement des conversations…"""
+    path = shutil.which("node")
+    if not path:
+        pytest.skip("Node absent")
+    r = subprocess.run([path, "--test", "tests/"], cwd=WASM,
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr

@@ -25,6 +25,13 @@ disque (sans cela, le fichier ne rétrécit jamais). Une base créée avant
 ce réglage le prend une fois pour toutes, proxy arrêté :
   sqlite3 data/conversations.db "PRAGMA auto_vacuum=INCREMENTAL; VACUUM;"
 
+Chaque conversation a une RÉVISION (`rev`), comptée par le proxy : un
+enregistrement qui dit sur laquelle il s'appuie (If-Match) est refusé
+(409) si un autre onglet ou appareil l'a remplacée entre-temps — sans
+elle, le dernier qui écrit gagnerait en silence. Un enregistrement qui
+ne la donne pas (une page d'avant) passe comme avant. Une base d'avant
+reçoit la colonne à sa première ouverture (révision 0).
+
 Bornes par compte (taille d'un document, d'une image, du tout), pour
 qu'une page qui boucle ne remplisse pas le disque. SQLite, comme la
 mémoire (memories.py) : une connexion par opération sous un verrou,
@@ -35,11 +42,11 @@ import json
 import re
 import secrets
 import sqlite3
-import threading
 import time
 import unicodedata
 
 from ..core import config
+from ..core.sqlite_store import Store
 from . import files
 
 DB_PATH = config.resolve(config.text("ui.conversations_database", "conversations.db"))
@@ -54,6 +61,14 @@ _ID = re.compile(r"[A-Za-z0-9_-]{1,%d}\Z" % MAX_ID)
 _CITED = re.compile(re.escape(ASSET_PATH) + r"([A-Za-z0-9_-]{1,%d})" % MAX_ID)
 
 
+class Conflict(Exception):
+    """La conversation a changé depuis la révision annoncée (409)."""
+
+    def __init__(self, rev: int):
+        super().__init__(f"conversation modifiée ailleurs (révision {rev})")
+        self.rev = rev
+
+
 class HistoryError(Exception):
     """Une opération refusée ; le message est pour la page. `status` : le
     code HTTP à rendre (400 requête, 404 inconnu, 413 bornes atteintes)."""
@@ -63,17 +78,7 @@ class HistoryError(Exception):
         self.status = status
 
 
-_lock = threading.Lock()
-
-
-def _connect() -> sqlite3.Connection:
-    # Résolu à l'appel : un test qui remplace DB_PATH ouvre SA base.
-    conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
-    # Pris à la création de la base seulement (avant le passage en WAL,
-    # qui écrit déjà son en-tête) ; sinon sans effet jusqu'à un VACUUM.
-    conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=10000")
+def _setup(conn: sqlite3.Connection) -> None:
     conn.execute("""CREATE TABLE IF NOT EXISTS conversations (
         owner TEXT NOT NULL, id TEXT NOT NULL, title TEXT NOT NULL,
         created REAL NOT NULL, updated REAL NOT NULL, doc TEXT NOT NULL,
@@ -86,7 +91,16 @@ def _connect() -> sqlite3.Connection:
                  "ON assets (owner, conversation)")
     conn.execute("CREATE INDEX IF NOT EXISTS conversations_recent "
                  "ON conversations (owner, updated DESC)")
-    return conn
+    # Une base d'avant les révisions : la colonne, à 0.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
+    if "rev" not in cols:
+        conn.execute("ALTER TABLE conversations ADD COLUMN rev INTEGER NOT NULL DEFAULT 0")
+
+
+# auto_vacuum : pris à la création de la base seulement (avant le passage
+# en WAL, qui écrit déjà son en-tête) ; sinon sans effet jusqu'à un VACUUM.
+_store = Store(lambda: DB_PATH, _setup,
+               before=("PRAGMA auto_vacuum=INCREMENTAL",))
 
 
 def _reclaim(conn) -> None:
@@ -97,13 +111,7 @@ def _reclaim(conn) -> None:
 
 def _run(fn):
     """fn(conn) sous le verrou, dans une transaction."""
-    with _lock:
-        conn = _connect()
-        try:
-            with conn:
-                return fn(conn)
-        finally:
-            conn.close()
+    return _store.run(fn)
 
 
 def _check_id(cid) -> str:
@@ -145,14 +153,14 @@ def list_all(owner: str) -> list[dict]:
 
 # Le résumé d'une conversation pour le menu : sans ses messages.
 _SUMMARY = ("SELECT id, title, created, updated, "
-            "coalesce(json_array_length(doc, '$.messages'), 0) FROM conversations ")
+            "coalesce(json_array_length(doc, '$.messages'), 0), rev FROM conversations ")
 
 
 def _summary(row) -> dict:
-    cid, title, created, updated, count = row
+    cid, title, created, updated, count, rev = row
     # Les dates de la page : des millisecondes.
     return {"id": cid, "title": title, "created": round(created * 1000),
-            "updated": round(updated * 1000), "count": count}
+            "updated": round(updated * 1000), "count": count, "rev": rev}
 
 
 def summaries(owner: str, limit: int, offset: int = 0) -> list[dict]:
@@ -164,15 +172,21 @@ def summaries(owner: str, limit: int, offset: int = 0) -> list[dict]:
 
 
 def get(owner: str, cid: str) -> dict | None:
-    """Le document complet d'une conversation, None si inconnue."""
+    """Le document complet d'une conversation, sa révision en `rev` ; None
+    si inconnue."""
     _check_id(cid)
     row = _run(lambda c: c.execute(
-        "SELECT doc FROM conversations WHERE owner = ? AND id = ?",
+        "SELECT doc, rev FROM conversations WHERE owner = ? AND id = ?",
         (owner, cid)).fetchone())
+    if not row:
+        return None
     try:
-        return json.loads(row[0]) if row else None
+        doc = json.loads(row[0])
     except ValueError:
         return None
+    if isinstance(doc, dict):
+        doc["rev"] = row[1]
+    return doc
 
 
 def fold(text) -> str:
@@ -188,10 +202,10 @@ def search(owner: str, query: str, limit: int) -> list[dict]:
     if not words:
         return []
     rows = _run(lambda c: c.execute(
-        "SELECT id, title, created, updated, doc FROM conversations "
+        "SELECT id, title, created, updated, doc, rev FROM conversations "
         "WHERE owner = ? ORDER BY updated DESC, id", (owner,)).fetchall())
     out = []
-    for cid, title, created, updated, doc in rows:
+    for cid, title, created, updated, doc, rev in rows:
         try:
             messages = json.loads(doc).get("messages") or []
         except (ValueError, AttributeError):
@@ -200,7 +214,7 @@ def search(owner: str, query: str, limit: int) -> list[dict]:
             m["content"] for m in messages
             if isinstance(m, dict) and isinstance(m.get("content"), str)))
         if all(w in text for w in words):
-            out.append(_summary((cid, title, created, updated, len(messages))))
+            out.append(_summary((cid, title, created, updated, len(messages), rev)))
             if len(out) >= limit:
                 break
     return out
@@ -215,12 +229,15 @@ def usage(owner: str) -> dict:
     return _run(q)
 
 
-def save(owner: str, cid: str, doc) -> None:
-    """Crée ou remplace la conversation `cid` ; efface ses images que le
-    document ne cite plus (passé ORPHAN_GRACE)."""
+def save(owner: str, cid: str, doc, base: int | None = None) -> int:
+    """Crée ou remplace la conversation `cid` → sa nouvelle révision ;
+    efface ses images que le document ne cite plus (passé ORPHAN_GRACE).
+    `base` : la révision sur laquelle s'appuie la page — une autre en base
+    lève Conflict ; None, pas de contrôle (une page d'avant)."""
     _check_id(cid)
     if not isinstance(doc, dict) or doc.get("id") != cid:
         raise HistoryError("document attendu, d'`id` égal à celui de l'adresse")
+    doc.pop("rev", None)             # tenue par le proxy, pas par le document
     if doc.get("incognito"):
         raise HistoryError("une conversation incognito n'est pas gardée")
     text = json.dumps(doc, ensure_ascii=False, separators=(",", ":"))
@@ -235,15 +252,20 @@ def save(owner: str, cid: str, doc) -> None:
     cited = set(_CITED.findall(text))
 
     def q(c):
-        old = c.execute("SELECT length(doc) FROM conversations WHERE owner = ? "
+        old = c.execute("SELECT length(doc), rev FROM conversations WHERE owner = ? "
                         "AND id = ?", (owner, cid)).fetchone()
+        current = old[1] if old else 0
+        if base is not None and base != current:
+            raise Conflict(current)
         if _used(c, owner) - (old[0] if old else 0) + size > MAX_TOTAL_BYTES:
             raise HistoryError("historique plein : supprimez d'anciennes "
                                "conversations", 413)
-        c.execute("INSERT INTO conversations (owner, id, title, created, updated, doc) "
-                  "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (owner, id) DO UPDATE SET "
-                  "title = excluded.title, updated = excluded.updated, doc = excluded.doc",
-                  (owner, cid, title, created, updated, text))
+        rev = current + 1
+        c.execute("INSERT INTO conversations (owner, id, title, created, updated, doc, rev) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (owner, id) DO UPDATE SET "
+                  "title = excluded.title, updated = excluded.updated, doc = excluded.doc, "
+                  "rev = excluded.rev",
+                  (owner, cid, title, created, updated, text, rev))
         stale = [aid for aid, in c.execute(
             "SELECT id FROM assets WHERE owner = ? AND conversation = ? AND created < ?",
             (owner, cid, now - ORPHAN_GRACE)) if aid not in cited]
@@ -251,7 +273,8 @@ def save(owner: str, cid: str, doc) -> None:
                       [(owner, aid) for aid in stale])
         if stale:
             _reclaim(c)
-    _run(q)
+        return rev
+    return _run(q)
 
 
 def _stamp(value, default: float) -> float:

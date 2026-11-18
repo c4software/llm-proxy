@@ -1,3 +1,4 @@
+// @ts-check
 /*
   L'HISTORIQUE du chat, gardé par le proxy et lié au compte connecté
   (conversations.py) : le même compte retrouve ses conversations sur tout
@@ -7,7 +8,9 @@
                      dates, nombre de messages), sans les messages
     one(id)          une conversation entière (null : inconnue)
     search(q)        les résumés de celles qui contiennent chaque mot
-    save(conv)       le document entier, après avoir envoyé ses images
+    save(conv, o)    le document entier, après avoir envoyé ses images →
+                     { text : le JSON envoyé, rev : sa révision } ;
+                     o.rev : celle sur laquelle il s'appuie (409 sinon)
     drop(id)         supprime (images comprises)
 
   Les IMAGES (jointes, générées) et l'AUDIO (réponse d'un modèle de
@@ -54,7 +57,7 @@ async function upload(conv) {
   const put = async (data, name) => {
     if (!sent.has(data)) {
       const r = await call("POST", "/ui/assets", { conversation: conv.id, name, data });
-      cache.set(r.url, data);
+      remember(r.url, data);
       sent.set(data, r.url);
     }
     return sent.get(data);
@@ -78,9 +81,15 @@ async function upload(conv) {
   }
 }
 
-export async function save(conv) {
+// Sérialisé UNE fois, après l'envoi des images (qui y remplacent leurs
+// données) : ce qui est mémorisé comme enregistré est exactement ce qui
+// est parti, pas ce que la conversation est devenue pendant l'envoi.
+export async function save(conv, { rev = null, keepalive = false } = {}) {
   await upload(conv);
-  await call("PUT", "/ui/conversations/" + encodeURIComponent(conv.id), conv);
+  const text = JSON.stringify(conv);
+  const r = await call("PUT", "/ui/conversations/" + encodeURIComponent(conv.id), undefined, {
+    raw: text, keepalive, headers: rev !== null ? { "if-match": String(rev) } : {} });
+  return { text, rev: r && Number.isInteger(r.rev) ? r.rev : null };
 }
 
 export async function drop(id) {
@@ -88,10 +97,28 @@ export async function drop(id) {
 }
 
 // ── vers le modèle ──────────────────────────────────────────────────────
-const cache = new Map();            // adresse → data URL
+// adresse → data URL, borné : les plus anciennes sortent au-delà de
+// CACHE_MAX caractères (une Map garde l'ordre d'insertion ; relue, une
+// entrée repasse en dernier).
+const cache = new Map();
+const CACHE_MAX = 64 * 1024 * 1024;
+let cached = 0;
+function remember(url, data) {
+  if (cache.has(url)) cached -= cache.get(url).length;
+  cache.delete(url);
+  cache.set(url, data);
+  cached += data.length;
+  for (const [k, v] of cache) {
+    if (cached <= CACHE_MAX || k === url) break;
+    cache.delete(k);
+    cached -= v.length;
+  }
+}
+// Un autre compte connecté : rien de l'ancien ne reste.
+export function forgetCache() { cache.clear(); cached = 0; }
 export async function dataUrl(url) {
   if (!isAsset(url)) return url;
-  if (cache.has(url)) return cache.get(url);
+  if (cache.has(url)) { const hit = cache.get(url); remember(url, hit); return hit; }
   const r = await fetch(url);
   if (!r.ok) throw new Error(`Image de l'historique introuvable (HTTP ${r.status}).`);
   const blob = await r.blob();
@@ -101,7 +128,7 @@ export async function dataUrl(url) {
     fr.onerror = () => reject(fr.error);
     fr.readAsDataURL(blob);
   });
-  cache.set(url, out);
+  remember(url, out);
   return out;
 }
 

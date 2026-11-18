@@ -65,6 +65,16 @@ def test_page_opens_without_key_and_session_asks_for_one(ui):
     assert ui.client.get("/ui/usage?start_time=0").status_code == 401
 
 
+def test_page_refuses_framing_and_sniffing_without_a_csp(ui):
+    """Les en-têtes de sécurité de la page — et pas de CSP : les cadres
+    srcdoc (artifacts, bacs) en hériteraient (dashboard/page.py)."""
+    r = ui.client.get("/ui")
+    assert r.headers["x-frame-options"] == "SAMEORIGIN"
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["referrer-policy"] == "same-origin"
+    assert "content-security-policy" not in r.headers
+
+
 def test_unchanged_static_file_is_revalidated_without_its_content(ui):
     """Un fichier sans préfixe versionné (les runtimes WASM) : son ETag
     inchangé rend 304, vide."""

@@ -67,7 +67,7 @@ import * as sql from "./sandbox/sql.js";
 import * as postgres from "./sandbox/postgres.js";
 import * as linux from "./sandbox/linux.js";
 
-export { TOOL, FAMILY } from "./contract.js";
+export { TOOL, FAMILY, failure } from "./contract.js";
 
 /** @typedef {import("./contract.js").Family} Family */
 /** @typedef {import("./contract.js").Ctx} Ctx */
@@ -213,8 +213,22 @@ function keep(name, got, ctx) {
   }
 }
 
+// La promesse `p`, ou une AbortError dès que `signal` est levé — l'outil
+// qui ne l'écoute pas est abandonné, pas attendu.
+/** @template T @param {Promise<T>} p @param {AbortSignal} signal @returns {Promise<T>} */
+function abortable(p, signal) {
+  const stop = () => new DOMException("arrêté par l'utilisateur", "AbortError");
+  if (signal.aborted) return Promise.reject(stop());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(stop());
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 /** Un outil qui s'exécute aussitôt → {result, image?, artifact?}. Une
- * exception est une erreur pour le modèle.
+ * exception est une erreur pour le modèle — sauf l'arrêt de la réponse
+ * (ctx.signal), une AbortError qui remonte au tour.
  * @param {string} name @param {string} json @param {Ctx} ctx */
 export async function run(name, json, ctx) {
   const t = TOOLS.get(name);
@@ -222,12 +236,14 @@ export async function run(name, json, ctx) {
   if (OFF.tools.has(name)) return { result: failure(`l'outil « ${name} » est désactivé sur ce proxy.`) };
   const args = parseArgs(json);
   if (args === null) return { result: failure("arguments illisibles (JSON attendu).") };
+  const signal = ctx && ctx.signal;
   try {
-    const got = await t.run(args, ctx);
+    const got = await (signal ? abortable(Promise.resolve(t.run(args, ctx)), signal) : t.run(args, ctx));
     if (typeof got === "string") return { result: got };
     keep(name, got, ctx);
     return got;
   } catch (e) {
+    if (signal && signal.aborted && e && e.name === "AbortError") throw e;
     return { result: failure(e.message) };
   }
 }

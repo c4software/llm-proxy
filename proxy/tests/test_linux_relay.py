@@ -128,3 +128,30 @@ def test_accounts_are_checked_by_address(monkeypatch):
     assert not relay.allowed({**me, "email": "autre@exemple.fr"})
     assert not relay.allowed({**me, "role": "blocked"})
     assert not relay.allowed(None)
+
+
+def test_byte_budget_closes_streams_and_refuses_new_ones(opened, echo, monkeypatch):
+    """Le plafond d'octets du client ([ui].linux_relay_max_bytes) : atteint,
+    son flux est fermé (THROTTLED), le suivant refusé ; la fenêtre suivante
+    le rend."""
+    monkeypatch.setattr(relay, "is_public", lambda ip: True)
+    monkeypatch.setattr(relay, "MAX_BYTES", 10)
+    monkeypatch.setattr(relay, "_spent", {})
+    with opened.client.websocket_connect(relay_path(opened.client)) as ws:
+        ws.receive_bytes()
+        ws.send_bytes(connect(1, echo))
+        ws.send_bytes(frame(relay.DATA, 1, b"x" * 11))
+        assert parse(ws.receive_bytes()) == (relay.CLOSE, 1, bytes([relay.THROTTLED]))
+        ws.send_bytes(connect(2, echo))
+        assert parse(ws.receive_bytes()) == (relay.CLOSE, 2, bytes([relay.THROTTLED]))
+    owner = next(iter(relay._spent))
+    assert relay.spend(owner, 1, now=relay._spent[owner][0] + relay.BUDGET_WINDOW)
+
+
+def test_idle_stream_is_closed(opened, echo, monkeypatch):
+    monkeypatch.setattr(relay, "is_public", lambda ip: True)
+    monkeypatch.setattr(relay, "IDLE_SECONDS", 1)
+    with opened.client.websocket_connect(relay_path(opened.client)) as ws:
+        ws.receive_bytes()
+        ws.send_bytes(connect(1, echo))
+        assert parse(ws.receive_bytes()) == (relay.CLOSE, 1, bytes([relay.TIMEOUT]))
