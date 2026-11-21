@@ -35,6 +35,7 @@ class ToolName(StrEnum):
     IMAGE_GENERATION = "image_generation"
     MEMORY = "memory"
     WEBHOOK = "webhook"
+    REPOSITORY = "repository"
 
 # Les codes d'erreur, liste FERMÉE. Un outil n'en rend pas d'autre (un
 # code inconnu est ramené à `unavailable` par l'exécuteur) ; chaque

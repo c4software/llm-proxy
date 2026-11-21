@@ -8,14 +8,17 @@ liés au même client que son historique (auth.ui_client) :
             (une nouvelle à chaque fois, ou toujours la même) et y fait
             répondre le modèle du webhook (ui/webhook_turn.py) — ou, en
             passe plat (`target` « none »), ne range rien et n'envoie la
-            réponse qu'au sortant. Le jeton est gardé (le lien se recopie
-            dans la page) ; il est retrouvé par son condensé.
+            réponse qu'au sortant. Le jeton est gardé EN CLAIR (la page
+            réaffiche l'adresse : bouton Adresse) et retrouvé par son
+            condensé ; une copie de la base donne donc des adresses
+            utilisables, comme les URL des sortants.
   sortants  une URL compatible Slack (Slack, Mattermost, Rocket.Chat,
             Discord en /slack…) où le proxy POSTe {"text": …}, et
-            {"channel": …} si un salon est défini : la
-            réponse à un webhook entrant qui la nomme (`reply`), et
-            l'outil hébergé `webhook` (tools/webhook.py), que le modèle
-            appelle de n'importe quelle conversation du compte.
+            {"channel": …} si un salon est défini : la réponse à un
+            webhook entrant qui la nomme (`reply`) ; et, s'il est EXPOSÉ
+            à l'outil (`tool`, décoché par défaut), ce que le modèle y
+            poste par l'outil hébergé `webhook` (tools/webhook.py), de
+            n'importe quelle conversation du compte.
 
 Un entrant garde aussi QUI l'a créé (son compte, son api_key_id) : ses
 requêtes sont comptées à ce client, et refusées si le compte est bloqué
@@ -29,14 +32,13 @@ import time
 from urllib.parse import urlsplit
 
 from ..core import config, identity
-from . import conversations
+from . import conversations, owned
 
 MAX_PER_USER = config.integer("webhooks.max_per_user", 20)
-MAX_NAME = 80
 MAX_MODEL = 200
 MAX_SYSTEM = 20_000
-MAX_URL = 2000
 MAX_TOOLS = 40
+MAX_CHANNEL = 80
 # « none » : le passe plat — rien n'est rangé, la réponse ne va qu'au sortant.
 TARGETS = ("new", "conversation", "none")
 # Le préfixe d'un jeton : de quoi le reconnaître dans un journal ou un
@@ -47,11 +49,10 @@ _IN = ("id, name, hint, model, model_override, system, tools, target, "
        "conversation, reply, account, api_key_id, created, last_used, calls, "
        "last_error, token != ''")
 _OUT = "id, name, url, channel, tool, created, last_used, calls, last_error"
-MAX_CHANNEL = 80
 
 
-class WebhookError(conversations.HistoryError):
-    """Une opération refusée ; le message est pour la page."""
+# Une opération refusée : celle des magasins par compte (owned.py).
+WebhookError = owned.OwnedError
 
 
 def _tables(c) -> None:
@@ -70,45 +71,20 @@ def _tables(c) -> None:
         calls INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
         channel TEXT NOT NULL DEFAULT '', tool INTEGER NOT NULL DEFAULT 1,
         PRIMARY KEY (owner, id))""")
-    # Une base d'avant le salon (v2026.11.21) ou le jeton gardé
-    # (v2026.11.21.1) : les colonnes, vides.
-    if conversations.DB_PATH not in _migrated:
-        for table, column, kind in (("webhooks_out", "channel", "TEXT NOT NULL DEFAULT ''"),
-                                    ("webhooks_in", "token", "TEXT NOT NULL DEFAULT ''"),
-                                    ("webhooks_out", "tool", "INTEGER NOT NULL DEFAULT 1")):
-            cols = {row[1] for row in c.execute(f"PRAGMA table_info({table})")}
-            if column not in cols:
-                c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
-        _migrated.add(conversations.DB_PATH)
+    # Une base d'avant : `channel` absent en v2026.11.21, `token` et `tool`
+    # absents jusqu'à v2026.11.21.1. Les sortants de ces bases restent
+    # exposés à l'outil (DEFAULT 1), comme ils l'étaient alors ; un sortant
+    # créé ne l'est que si on le coche (create_out donne toujours `tool`).
+    owned.add_columns(c, "webhooks_out", {"channel": "TEXT NOT NULL DEFAULT ''",
+                                          "tool": "INTEGER NOT NULL DEFAULT 1"})
+    owned.add_columns(c, "webhooks_in", {"token": "TEXT NOT NULL DEFAULT ''"})
 
 
-_migrated: set[str] = set()
-
-
-def _run(fn):
-    def q(c):
-        _tables(c)
-        return fn(c)
-    return conversations._run(q)
-
-
-def _ms(ts):
-    """Une date pour la page : des secondes (lib/format.js, stamp), comme
-    les clés."""
-    return round(ts) if ts else None
+_run = owned.runner(_tables)
 
 
 def _check_id(wid) -> str:
-    if not isinstance(wid, str) or not conversations._ID.match(wid):
-        raise WebhookError("identifiant de webhook invalide")
-    return wid
-
-
-def _name(value) -> str:
-    name = " ".join(str(value or "").split())[:MAX_NAME]
-    if not name:
-        raise WebhookError("un nom est attendu")
-    return name
+    return owned.check_id(wid, "webhook")
 
 
 def _digest(token: str) -> str:
@@ -128,8 +104,8 @@ def _in_meta(row) -> dict:
             "model_override": bool(override), "system": system,
             "tools": json.loads(tools), "target": target,
             "conversation": conv, "reply": reply, "account": account,
-            "api_key_id": api_key_id, "created": _ms(created),
-            "last_used": _ms(last_used), "calls": calls,
+            "api_key_id": api_key_id, "created": owned.seconds(created),
+            "last_used": owned.seconds(last_used), "calls": calls,
             "last_error": last_error,
             # Le lien se relit (token_in) ; faux pour un entrant d'avant
             # v2026.11.21.2, dont seul le condensé est gardé : à régénérer.
@@ -138,8 +114,7 @@ def _in_meta(row) -> dict:
 
 def _in_fields(body, c, owner: str) -> dict:
     """Les champs réglables d'un entrant, vérifiés."""
-    if not isinstance(body, dict):
-        raise WebhookError("corps JSON attendu")
+    owned.body(body)
     model = str(body.get("model") or "").strip()[:MAX_MODEL]
     system = str(body.get("system") or "")
     if len(system) > MAX_SYSTEM:
@@ -150,8 +125,8 @@ def _in_fields(body, c, owner: str) -> dict:
         raise WebhookError("`tools` : une liste de types d'outils hébergés")
     target = body.get("target") or "new"
     if target not in TARGETS:
-        raise WebhookError("`target` : « new » (une conversation par message) "
-                           "ou « conversation » (toujours la même)")
+        raise WebhookError("`target` : « new » (une conversation par message), "
+                           "« conversation » (toujours la même) ou « none » (passe plat)")
     conv = str(body.get("conversation") or "") if target == "conversation" else ""
     if conv:
         conversations._check_id(conv)
@@ -162,7 +137,7 @@ def _in_fields(body, c, owner: str) -> dict:
     if reply and not c.execute("SELECT 1 FROM webhooks_out WHERE owner = ? AND id = ?",
                                (owner, reply)).fetchone():
         raise WebhookError("webhook sortant de réponse inconnu")
-    return {"name": _name(body.get("name")), "model": model,
+    return {"name": owned.name(body.get("name")), "model": model,
             "model_override": int(bool(body.get("model_override"))),
             "system": system, "tools": json.dumps(list(dict.fromkeys(tools))),
             "target": target, "conversation": conv, "reply": reply}
@@ -182,10 +157,7 @@ def create_in(owner: str, body, account: int | None, api_key_id: str) -> tuple[d
 
     def q(c):
         f = _in_fields(body, c, owner)
-        n, = c.execute("SELECT count(*) FROM webhooks_in WHERE owner = ?",
-                       (owner,)).fetchone()
-        if n >= MAX_PER_USER:
-            raise WebhookError(f"{MAX_PER_USER} webhooks entrants au plus", 413)
+        owned.room(c, "webhooks_in", owner, MAX_PER_USER, "webhooks entrants")
         c.execute("INSERT INTO webhooks_in (owner, id, digest, token, hint, name, model, "
                   "model_override, system, tools, target, conversation, reply, "
                   "account, api_key_id, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
@@ -200,6 +172,8 @@ def create_in(owner: str, body, account: int | None, api_key_id: str) -> tuple[d
 
 
 def update_in(owner: str, wid: str, body) -> dict:
+    """Remplace TOUS les réglages de l'entrant (la page les envoie tous) :
+    un champ absent reprend sa valeur par défaut."""
     _check_id(wid)
 
     def q(c):
@@ -277,10 +251,11 @@ def used_in(owner: str, wid: str, error: str = "") -> None:
 
 def set_conversation(owner: str, wid: str, cid: str) -> None:
     """La conversation dédiée qu'un entrant « toujours la même » vient de
-    créer (s'il n'en a pas reçu une autre entre-temps)."""
+    créer : la première, ou une nouvelle quand la sienne a été supprimée.
+    Ses tours passent l'un après l'autre (webhook_turn._locks)."""
     _run(lambda c: c.execute(
         "UPDATE webhooks_in SET conversation = ? WHERE owner = ? AND id = ? "
-        "AND target = 'conversation' AND conversation = ''", (cid, owner, wid)))
+        "AND target = 'conversation'", (cid, owner, wid)))
 
 
 # ── sortants ────────────────────────────────────────────────────────────
@@ -298,19 +273,24 @@ def _out_meta(row, full: bool = False) -> dict:
     return {"id": wid, "name": name, "url": url if full else mask(url), "channel": channel,
             # Offert à l'outil `webhook` du modèle ; sinon, réponses des entrants seulement.
             "tool": bool(tool),
-            "created": _ms(created), "last_used": _ms(last_used),
+            "created": owned.seconds(created), "last_used": owned.seconds(last_used),
             "calls": calls, "last_error": last_error}
 
 
 def _url(value) -> str:
-    url = str(value or "").strip()
-    if len(url) > MAX_URL or not url.lower().startswith(("https://", "http://")):
-        raise WebhookError("une URL http(s) est attendue")
+    url = owned.http_url(value)
     if urlsplit(url).path.startswith("/hooks/" + TOKEN_PREFIX):
         # Un sortant vers un entrant d'un proxy : chaque réponse en ferait
         # un nouveau message, sans fin.
         raise WebhookError("un webhook sortant ne peut pas viser un webhook entrant du proxy")
     return url
+
+
+def _flag(value) -> bool:
+    """`tool` : un booléen JSON, rien d'autre (1, "true" refusés)."""
+    if not isinstance(value, bool):
+        raise WebhookError("`tool` : true ou false")
+    return value
 
 
 def _channel(value) -> str:
@@ -331,20 +311,17 @@ def list_out(owner: str, full: bool = False) -> list[dict]:
 
 
 def create_out(owner: str, body) -> dict:
-    if not isinstance(body, dict):
-        raise WebhookError("corps JSON attendu")
-    name, url = _name(body.get("name")), _url(body.get("url"))
+    owned.body(body)
+    name, url = owned.name(body.get("name")), _url(body.get("url"))
     channel = _channel(body.get("channel"))
-    tool = int(body.get("tool", True) is not False)
+    # Pas exposé à l'outil sauf demande : un salon n'est pas offert au modèle
+    # sans qu'on l'ait choisi.
+    tool = int(_flag(body.get("tool", False)))
     wid = secrets.token_urlsafe(12)
 
     def q(c):
-        n, = c.execute("SELECT count(*) FROM webhooks_out WHERE owner = ?",
-                       (owner,)).fetchone()
-        if n >= MAX_PER_USER:
-            raise WebhookError(f"{MAX_PER_USER} webhooks sortants au plus", 413)
-        if c.execute("SELECT 1 FROM webhooks_out WHERE owner = ? AND name = ?",
-                     (owner, name)).fetchone():
+        owned.room(c, "webhooks_out", owner, MAX_PER_USER, "webhooks sortants")
+        if owned.taken(c, "webhooks_out", owner, name):
             raise WebhookError("un webhook sortant porte déjà ce nom")
         c.execute("INSERT INTO webhooks_out (owner, id, name, url, channel, tool, created) "
                   "VALUES (?, ?, ?, ?, ?, ?, ?)", (owner, wid, name, url, channel, tool,
@@ -358,18 +335,17 @@ def update_out(owner: str, wid: str, body) -> dict:
     """Le nom, le salon, et l'URL si elle est donnée (la page ne la
     connaît pas : absente, elle reste)."""
     _check_id(wid)
-    if not isinstance(body, dict):
-        raise WebhookError("corps JSON attendu")
-    name = _name(body.get("name"))
+    owned.body(body)
+    name = owned.name(body.get("name"))
     channel = _channel(body.get("channel"))
-    tool = int(body.get("tool", True) is not False)
+    # Absent (un ancien onglet, un script) : inchangé, comme l'URL.
+    tool = None if "tool" not in body else int(_flag(body["tool"]))
     url = _url(body["url"]) if body.get("url") else None
 
     def q(c):
-        if c.execute("SELECT 1 FROM webhooks_out WHERE owner = ? AND name = ? AND id != ?",
-                     (owner, name, wid)).fetchone():
+        if owned.taken(c, "webhooks_out", owner, name, wid):
             raise WebhookError("un webhook sortant porte déjà ce nom")
-        n = c.execute("UPDATE webhooks_out SET name = ?, channel = ?, tool = ?, "
+        n = c.execute("UPDATE webhooks_out SET name = ?, channel = ?, tool = coalesce(?, tool), "
                       "url = coalesce(?, url) WHERE owner = ? AND id = ?",
                       (name, channel, tool, url, owner, wid)).rowcount
         if not n:
@@ -380,10 +356,17 @@ def update_out(owner: str, wid: str, body) -> dict:
 
 
 def delete_out(owner: str, wid: str) -> int:
-    """Supprime un sortant ; les entrants qui y répondaient n'y répondent plus."""
+    """Supprime un sortant ; les entrants qui y répondaient n'y répondent
+    plus. Refusé (409) s'il est le sortant d'un passe plat, qui n'aurait
+    plus où répondre."""
     _check_id(wid)
 
     def q(c):
+        used = [n for n, in c.execute("SELECT name FROM webhooks_in WHERE owner = ? AND "
+                                      "reply = ? AND target = 'none'", (owner, wid))]
+        if used:
+            raise WebhookError("sortant de réponse du passe plat « " + " », « ".join(used)
+                               + " » : changez d'abord ce webhook entrant", 409)
         c.execute("UPDATE webhooks_in SET reply = '' WHERE owner = ? AND reply = ?",
                   (owner, wid))
         return c.execute("DELETE FROM webhooks_out WHERE owner = ? AND id = ?",
@@ -393,6 +376,7 @@ def delete_out(owner: str, wid: str) -> int:
 
 def get_out(owner: str, wid: str) -> dict | None:
     """Un sortant, URL comprise (pour l'envoi) ; None si inconnu."""
+    _check_id(wid)
     row = _run(lambda c: c.execute(
         f"SELECT {_OUT} FROM webhooks_out WHERE owner = ? AND id = ?",
         (owner, wid)).fetchone())

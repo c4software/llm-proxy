@@ -39,7 +39,7 @@ l'historique, et sauvegardées avec lui.
 | Modèle | Le modèle qui répond. Vide : celui de la conversation, sinon `[ui].chat_model` |
 | Le message peut en demander un autre | Le champ `model` du corps est alors accepté. Sinon, un corps qui le donne reçoit `403 action_prohibited` |
 | Prompt système | Facultatif. Il remplace celui de la conversation pour les réponses du webhook. Il est aussi posé sur la conversation que le webhook crée |
-| Outils hébergés | Les outils présentés au modèle (recherche web, code, mémoire, `webhook`…). Aucun coché : ceux de la conversation. Les outils de la page (navigateur, appareil) n'existent pas ici, faute de navigateur |
+| Outils hébergés | Les outils présentés au modèle (recherche web, code, [dépôts](depots.md), mémoire, `webhook`…). Aucun coché : ceux de la conversation. Les outils de la page (navigateur, appareil) n'existent pas ici, faute de navigateur |
 | Conversation | **Une nouvelle à chaque message** ; **toujours la même** : une conversation existante choisie dans la liste, ou une conversation dédiée créée au premier message ; ou **aucune, passe plat** : rien n'est gardé, le modèle ne reçoit que le message (et le prompt système du webhook) et sa réponse va seulement au sortant, qui est alors obligatoire |
 | Réponse envoyée à | Un webhook sortant du compte, ou aucun (la réponse reste alors dans la conversation) |
 
@@ -90,27 +90,37 @@ Comme Slack, l'appel reçoit `200 ok` tout de suite. Le modèle répond
 ensuite, en tâche de fond :
 
 1. le message entre dans la conversation, marqué comme reçu par le
-   webhook ;
+   webhook, avec une réponse **en cours** ;
 2. le proxy envoie au modèle l'échange que la page enverrait : prompt
    système, dernier résumé, messages et tours d'outils, fichiers joints,
    images de l'historique. La requête passe par `/ui/chat/completions` au
    nom du compte qui a créé le webhook : ses statistiques, sa part du
    partage équitable, sa mémoire ;
-3. la réponse rejoint la conversation, puis part vers le webhook sortant
-   choisi, convertie en mrkdwn. Une erreur (backend hors ligne…) part
-   aussi, préfixée « Erreur : ».
+3. la réponse prend la place de celle en cours, puis part vers le webhook
+   sortant choisi, convertie en mrkdwn. Une erreur (backend hors ligne…)
+   part aussi, préfixée « Erreur : ».
+
+En **passe plat**, rien n'est rangé : le modèle reçoit le seul message (et
+le prompt système du webhook), sans historique, et sa réponse va au
+sortant. Le sortant d'un passe plat ne peut pas être supprimé (409) tant
+que le passe plat s'en sert.
 
 Deux messages d'un webhook « toujours la même conversation » sont traités
 l'un après l'autre : le second voit la réponse au premier. Si le tour
 échoue en route (historique plein, panne), l'erreur part quand même au
-sortant et au `response_url`. Une conversation supprimée dans la page
-pendant le tour n'est pas recréée pour la seule réponse.
+sortant et au `response_url`, et la réponse en cours devient cette erreur :
+rien ne reste « en cours ». Une conversation supprimée dans la page pendant
+le tour n'est pas recréée pour la seule réponse, et une question retirée
+(message modifié) ne reçoit pas de réponse ajoutée à la fin. Supprimée
+entre deux messages, la conversation d'un webhook « toujours la même » est
+remplacée par une nouvelle, dédiée.
 
-Dès la réception, la question et une réponse **en cours** sont rangées
-dans la conversation : la page affiche l'indicateur de saisie (« réponse en
-cours, menée par le proxy ») et relit la conversation toutes les 3 secondes
-jusqu'à la réponse, qui prend sa place. Une réponse restée en cours plus de
-30 minutes (proxy redémarré pendant le tour) s'affiche en erreur.
+Pendant la réponse en cours, la page affiche l'indicateur de saisie
+(« réponse en cours, menée par le proxy ») et relit la conversation toutes
+les 3 secondes jusqu'à la réponse. Elle n'y écrit pas pendant ce temps
+(envoyer, modifier, régénérer) : elle écrirait sur une version dépassée.
+Une réponse restée en cours plus de 30 minutes (proxy redémarré pendant le
+tour) s'affiche en erreur, au chargement comme pendant l'attente.
 
 Une page ouverte sur le chat relit la liste des conversations toutes les
 20 secondes et au retour sur l'onglet. Une conversation nouvelle y entre,
@@ -171,11 +181,12 @@ nouveau message.
 
 Quand les webhooks sont actifs, le chat propose l'outil **Webhooks** (menu
 Outils). Il ne voit que les sortants **exposés à l'outil** (case du
-formulaire, cochée par défaut) : un sortant décoché ne sert qu'aux réponses
+formulaire, décochée par défaut) : un sortant décoché ne sert qu'aux réponses
 des webhooks entrants. Le modèle l'appelle avec un texte et, si le compte en a plusieurs,
 le nom d'un sortant : « poste le résumé sur Équipe ». Son prompt lui
 interdit de l'appeler de lui-même. Il ne voit jamais les URL : seulement
-les noms des sortants du compte, et seulement s'il en nomme un inconnu.
+les noms des sortants exposés, rendus sur erreur (un nom inconnu, ou
+plusieurs sortants sans nom donné).
 
 Comme tout outil hébergé, il est aussi offert à un client de l'API qui le
 déclare (`{"type": "webhook"}` sur `/v1/chat/completions`), avec les
@@ -184,7 +195,10 @@ sortants du compte de sa clé.
 ## Sécurité
 
 - Le jeton d'un entrant est la seule protection de `/hooks/<jeton>` : il
-  ne doit circuler que vers le service qui l'utilise.
+  ne doit circuler que vers le service qui l'utilise. Il est gardé en clair
+  dans `data/conversations.db` (le bouton Adresse le réaffiche), comme les
+  URL des sortants : une copie de la base, ou de sa sauvegarde, donne des
+  adresses utilisables.
 - Les réponses sont faites au nom du créateur. Le proxy vérifie, à chaque
   message, que son compte est actif (comptes OIDC) ou que sa clé est
   encore dans `proxy.api_keys`. Un webhook créé quand le proxy était ouvert

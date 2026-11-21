@@ -27,6 +27,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx2
 
 from ..core import config
+from ..core.httputil import origin
 from .contract import ToolError
 
 # Clés lues dans [tools.web_fetch] faute d'être dans [tools.net], et clés
@@ -189,11 +190,7 @@ def check(url: str, settings=None) -> None:
     `allowed_domains` / `blocked_domains`) — qui s'AJOUTENT aux premières,
     elles n'en lèvent rien. Lève ToolError `not_allowed`."""
     settings = settings or {}
-    for rx, message in BLOCKED_URLS:
-        if rx.search(url):
-            raise ToolError("not_allowed", message or (
-                f"{urlsplit(url).hostname or url} is a blocked address, which "
-                f"this proxy does not read."))
+    _blocked_url(url)
     if any(not domain_match(url, allowed)
            for allowed in (ALLOWED_DOMAINS, settings.get("allowed_domains"))
            if allowed) \
@@ -206,12 +203,13 @@ def check(url: str, settings=None) -> None:
 
 async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
                transport, *, method: str = "GET", content: bytes | None = None,
-               content_type: str = "", allow_private: bool | None = None
-               ) -> tuple[httpx2.Response, bytes]:
+               content_type: str = "", allow_private: bool | None = None,
+               auth: dict | None = None) -> tuple[httpx2.Response, bytes]:
     """Un saut : résolution contrôlée, connexion vers l'adresse vérifiée
     (Host et SNI portent le nom), corps lu jusqu'à `limit` — voir
     download(). `method`, `content` : un POST (post()) ; `allow_private` :
-    None = [tools.net].allow_private."""
+    None = [tools.net].allow_private ; `auth` : des en-têtes de plus
+    (download ne les donne qu'à l'origine de départ)."""
     scheme, ip, port = await public_target(
         url, ALLOW_PRIVATE if allow_private is None else allow_private)
     parts = urlsplit(url)
@@ -240,6 +238,7 @@ async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
     }
     if content_type:
         headers["Content-Type"] = content_type
+    headers.update(auth or {})
     # trust_env=False : sans lui httpx2 lirait HTTP_PROXY / ALL_PROXY, et
     # « la connexion part vers l'adresse vérifiée » deviendrait « un proxy
     # s'y connecte pour nous ».
@@ -259,7 +258,8 @@ async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
                     body += chunk
                     # Relue à chaque bloc : les premiers octets peuvent
                     # changer la borne (un PDF), ou arrêter la lecture.
-                    bound = limit(r, bytes(body))
+                    # Sans copie : une archive de 50 Mo arrive en milliers de blocs.
+                    bound = limit(r, body)
                     if len(body) >= bound:
                         break
         finally:
@@ -269,7 +269,9 @@ async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
 
 async def download(url: str, settings=None, *, timeout: float, limit,
                    user_agent: str, accept: str = "*/*",
-                   transport=None) -> tuple[str, httpx2.Response, bytes]:
+                   transport=None, auth: dict | None = None,
+                   allow_private: bool | None = None,
+                   domains: bool = True) -> tuple[str, httpx2.Response, bytes]:
     """LE téléchargement d'une cible choisie par le modèle : (URL
     réellement lue, réponse, corps). À chaque saut de redirection
     (MAX_REDIRECTS au plus) : les listes de domaines (check), puis
@@ -283,7 +285,16 @@ async def download(url: str, settings=None, *, timeout: float, limit,
     coupé à elle. La fonction peut lever ToolError (un fichier annoncé
     trop gros), rendre 0 (rien à lire de cette réponse) ou la taille déjà
     lue (assez vu). À l'outil de dire ensuite ce qu'un corps coupé veut
-    dire pour lui.
+    dire pour lui. Elle voit aussi chaque réponse de redirection (à
+    laisser passer : 0) et peut refuser un statut avec son propre message.
+
+    Pour une adresse que le modèle ne choisit PAS (la forge d'une source de
+    dépôts, storage/repos.py) : `auth`, des en-têtes d'authentification,
+    envoyés au seul saut qui reste sur l'origine de `url` (schéma, hôte,
+    port) — jamais à l'hôte d'une redirection ; `allow_private` (None =
+    [tools.net].allow_private) ; `domains` False : seules les listes de
+    REFUS de [tools.net] valent, pas `allowed_domains` (une liste de sites
+    à lire, pas de forges).
 
     Lève ToolError, et elle seule : `not_allowed` (domaine, adresse
     privée), `invalid_input` (URL), `not_accessible` (hôte inconnu,
@@ -291,11 +302,16 @@ async def download(url: str, settings=None, *, timeout: float, limit,
     `too_many_requests` (HTTP 429)."""
     bound = limit if callable(limit) else lambda r, body: limit
     user_agent = USER_AGENT or user_agent
+    home = origin(url)
     try:
         for _ in range(MAX_REDIRECTS + 1):
-            check(url, settings)
+            if domains:
+                check(url, settings)
+            else:
+                refused(url)
             r, body = await _hop(url, timeout, bound, user_agent, accept,
-                                 transport)
+                                 transport, allow_private=allow_private,
+                                 auth=auth if origin(url) == home else None)
             if r.status_code in (301, 302, 303, 307, 308) \
                     and r.headers.get("location"):
                 url = urljoin(url, r.headers["location"])
@@ -308,21 +324,36 @@ async def download(url: str, settings=None, *, timeout: float, limit,
     # InvalidURL n'est PAS une HTTPError : caractère de contrôle dans le
     # chemin, URL trop longue — y compris dans un Location de redirection.
     except (httpx2.HTTPError, httpx2.InvalidURL) as exc:
-        raise ToolError("not_accessible", f"could not fetch {url} "
+        raise ToolError("not_accessible", f"could not fetch {_shown(url, auth)} "
                                           f"({type(exc).__name__}).")
     if r.status_code >= 400:
         raise ToolError(
             "too_many_requests" if r.status_code == 429 else "not_accessible",
-            f"{url} returned HTTP {r.status_code}.")
+            f"{_shown(url, auth)} returned HTTP {r.status_code}.")
     return url, r, body
 
 
-def _refused(url: str) -> None:
-    """Les listes de REFUS de [tools.net] seules (pour post)."""
+def _shown(url: str, auth) -> str:
+    """L'URL d'un message d'erreur. Authentifiée, sans sa requête : une
+    redirection peut y porter un jeton temporaire (codeload de GitHub)."""
+    return url.split("?", 1)[0] if auth else url
+
+
+def _blocked_url(url: str) -> None:
+    """[tools.net].blocked_urls : commun à check et à refused."""
     for rx, message in BLOCKED_URLS:
         if rx.search(url):
             raise ToolError("not_allowed", message or (
-                f"{urlsplit(url).hostname or url} is a blocked address."))
+                f"{urlsplit(url).hostname or url} is a blocked address, which "
+                f"this proxy does not read."))
+
+
+def refused(url: str) -> None:
+    """Les seules listes de REFUS de [tools.net] (`blocked_urls`,
+    `blocked_domains`), pour une adresse que le modèle ne choisit pas : un
+    webhook sortant (post), une forge (download(domains=False), et le fetch
+    git de tools/repository.py)."""
+    _blocked_url(url)
     if domain_match(url, BLOCKED_DOMAINS):
         raise ToolError("not_allowed", f"{urlsplit(url).hostname or url} is a "
                                        f"blocked domain.")
@@ -340,7 +371,7 @@ async def post(url: str, content: bytes, content_type: str, *, timeout: float,
 
     Lève ToolError : `not_allowed` (domaine refusé, adresse privée), `invalid_input`
     (URL), `not_accessible` (hôte inconnu, erreur de transport)."""
-    _refused(url)
+    refused(url)
     try:
         r, body = await _hop(url, timeout, lambda r, b: limit, user_agent,
                              "*/*", transport, method="POST", content=content,

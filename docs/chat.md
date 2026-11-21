@@ -15,7 +15,9 @@ ses outils, ses artifacts et ses fichiers produits.
 
 Un [webhook entrant](webhooks.md) écrit aussi dans l'historique : ses
 messages y sont marqués « reçu par le webhook … », et la page relit la
-liste toutes les 20 secondes pour les montrer.
+liste toutes les 20 secondes pour les montrer. Pendant qu'il répond, la
+conversation affiche une réponse en cours, menée par le proxy, relue toutes
+les 3 secondes ; la page n'y écrit pas avant la réponse.
 
 - Dans le menu latéral : renommer, supprimer, **rechercher** (chaque
   mot, sans casse ni accents, dans le titre ou les messages ; le proxy
@@ -364,6 +366,8 @@ Avec `[chat] hosted_tools = true`, la section *Proxy* propose les
 - *Code*, *Images*, *Mémoire* (l'outil `memory`) ;
 - *Webhooks* (l'outil `webhook`) : poster sur un webhook sortant du
   compte, à la demande. Voir [Webhooks](webhooks.md) ;
+- *Dépôts* (l'outil `repository`) : lire un projet d'une forge (arborescence,
+  fichier, recherche). Voir [Dépôts](depots.md) ;
 - un par serveur MCP configuré : `{"type": "mcp:<serveur>"}`.
 
 Les cases **font foi** : `[chat].always` ne s'ajoute pas aux requêtes du

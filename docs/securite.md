@@ -45,7 +45,10 @@ Même avec l'auth active :
 - `GET /v1/files/<jeton>/<nom>` : le jeton du lien vaut droit d'accès.
 - `POST /hooks/<jeton>` : un [webhook entrant](webhooks.md), dont le jeton
   vaut droit d'accès. Il répond au nom du compte qui l'a créé, tant que ce
-  compte est actif ou que sa clé du TOML est encore là.
+  compte est actif ou que sa clé du TOML est encore là. Le jeton est gardé
+  en clair dans `data/conversations.db`, comme les URL des webhooks
+  sortants et les jetons des [sources de dépôts](depots.md) : la sauvegarde
+  de `data/` les contient.
 - `GET /healthz`, réduit à `{"status": "ok"}`. Le détail (backends et
   leurs URL, outils, caches) exige une clé, ou la session de la page par
   `GET /ui/health`.
@@ -54,6 +57,16 @@ Même avec l'auth active :
   - ses fichiers : `/ui/static/*`, `/ui/sw.js` ;
   - `GET /ui/auth`, `GET /ui/auth/login` et le retour OIDC ;
   - `POST /ui/login`, `POST /ui/logout`.
+
+## Dépôts
+
+L'outil `repository` ([Dépôts](depots.md)) fait télécharger au proxy
+une adresse fournie par un compte (sa source), sans règle d'adresse : une
+forge du réseau interne est joignable, et tout compte peut définir une
+source. À n'activer (`[repos].enabled`) que là où les comptes sont de
+confiance. Le jeton d'une source n'est rendu ni à la page, ni au modèle,
+ni dans une URL, et ne
+suit pas une redirection vers un autre hôte.
 
 ## La page
 

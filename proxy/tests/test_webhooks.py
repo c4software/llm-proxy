@@ -232,10 +232,10 @@ def test_outil_webhook(posted):
     call = Call(client="a")
     with pytest.raises(ToolError, match="no outgoing webhook"):
         go(slack.TOOL.run({"text": "x"}, call))
-    webhooks.create_out("a", {"name": "Équipe", "url": "https://chat.example/1"})
+    webhooks.create_out("a", {"name": "Équipe", "url": "https://chat.example/1", "tool": True})
     got = go(slack.TOOL.run({"text": "Salut **toi**"}, call))
     assert "Équipe" in got.text and posted[-1] == ("https://chat.example/1", {"text": "Salut *toi*"})
-    webhooks.create_out("a", {"name": "Ops", "url": "https://chat.example/2"})
+    webhooks.create_out("a", {"name": "Ops", "url": "https://chat.example/2", "tool": True})
     with pytest.raises(ToolError, match="several"):
         go(slack.TOOL.run({"text": "x"}, call))
     go(slack.TOOL.run({"text": "x", "webhook": "ops"}, call))
@@ -339,12 +339,12 @@ def test_response_url_jamais_privee(proxy, monkeypatch):
 
 def test_salon_du_sortant(posted):
     out = webhooks.create_out("a", {"name": "S", "url": "https://chat.example/h",
-                                    "channel": " #alertes "})
+                                    "channel": " #alertes ", "tool": True})
     assert out["channel"] == "#alertes"
     go(slack.TOOL.run({"text": "x"}, Call(client="a")))
     assert posted[-1][1] == {"text": "x", "channel": "#alertes"}
     # Modifié sans URL : l'URL reste, le salon change ; vide, plus de `channel`.
-    webhooks.update_out("a", out["id"], {"name": "S", "channel": ""})
+    webhooks.update_out("a", out["id"], {"name": "S", "channel": ""})   # `tool` absent : inchangé
     go(slack.TOOL.run({"text": "y"}, Call(client="a")))
     assert posted[-1] == ("https://chat.example/h", {"text": "y"})
 
@@ -425,9 +425,80 @@ def test_sortant_non_expose_a_l_outil(posted):
     webhooks.create_out("a", {"name": "Privé", "url": "https://chat.example/p", "tool": False})
     with pytest.raises(ToolError, match="no outgoing webhook available"):
         go(slack.TOOL.run({"text": "x"}, Call(client="a")))
-    o = webhooks.create_out("a", {"name": "Public", "url": "https://chat.example/q"})
+    assert webhooks.create_out("a", {"name": "Défaut", "url": "https://chat.example/d"})["tool"] is False
+    o = webhooks.create_out("a", {"name": "Public", "url": "https://chat.example/q", "tool": True})
     assert o["tool"] is True
     go(slack.TOOL.run({"text": "x"}, Call(client="a")))
     assert posted[-1][0] == "https://chat.example/q"
     with pytest.raises(ToolError, match="Public"):        # Privé n'est pas proposé
         go(slack.TOOL.run({"text": "x", "webhook": "Privé"}, Call(client="a")))
+
+
+def test_passe_plat_garde_son_sortant(proxy, posted):
+    """Le sortant d'un passe plat ne se supprime pas (409) ; un passe plat
+    resté sans sortant n'appelle pas le modèle."""
+    out = webhooks.create_out("", {"name": "S", "url": "https://chat.example/h"})
+    hook, _ = webhooks.create_in("", {"name": "P", "model": "essai/m", "target": "none",
+                                      "reply": out["id"]}, None, "")
+    with pytest.raises(webhooks.WebhookError, match="passe plat") as exc:
+        webhooks.delete_out("", out["id"])
+    assert exc.value.status == 409
+    conversations._run(lambda c: c.execute("UPDATE webhooks_in SET reply = ''"))
+    go(webhook_turn.handle("", hook, "x", {}))
+    assert proxy.sent == [] and posted == []
+    assert "ignoré" in webhooks.get_in("", hook["id"])["last_error"]
+
+
+def test_reponse_non_rangee_ne_reste_pas_en_cours(proxy, posted, monkeypatch):
+    """Si la réponse ne peut pas être rangée, une réponse courte en erreur
+    prend la place de celle « en cours »."""
+    hook, _ = webhooks.create_in("", {"name": "H", "model": "essai/m"}, None, "")
+    real, calls = webhook_turn._replace, []
+
+    def flaky(owner, cid, question, message):
+        calls.append(message)
+        if len(calls) == 1:
+            raise conversations.HistoryError("historique plein", 413)
+        return real(owner, cid, question, message)
+    monkeypatch.setattr(webhook_turn, "_replace", flaky)
+    proxy.replies = [answer("une très longue réponse")]
+    go(webhook_turn.handle("", hook, "x", {}))
+    a = conversations.list_all("")[0]["messages"][-1]
+    assert "serverTurn" not in a and a["error"].startswith("réponse non rangée")
+    assert "historique plein" in webhooks.get_in("", hook["id"])["last_error"]
+
+
+def test_question_retiree_reponse_non_ajoutee(proxy, posted, monkeypatch):
+    """La page a retiré la question (message modifié) : la réponse du
+    webhook n'est pas ajoutée seule à la fin."""
+    hook, _ = webhooks.create_in("", {"name": "H", "model": "essai/m"}, None, "")
+    real = webhook_turn.complete
+
+    async def page_edits(owner, h, body):
+        [conv] = conversations.list_all("")
+        conv["messages"] = []
+        conversations.save("", conv["id"], conv)
+        return await real(owner, h, body)
+    monkeypatch.setattr(webhook_turn, "complete", page_edits)
+    proxy.replies = [answer("ok")]
+    go(webhook_turn.handle("", hook, "x", {}))
+    assert conversations.list_all("")[0]["messages"] == []
+    assert "retirée" in webhooks.get_in("", hook["id"])["last_error"]
+
+
+def test_conversation_dediee_supprimee_recreee(proxy, posted):
+    hook, _ = webhooks.create_in("", {"name": "F", "model": "essai/m", "target": "conversation"},
+                                 None, "")
+    proxy.replies = [answer("un"), answer("deux")]
+    go(webhook_turn.handle("", hook, "premier", {}))
+    first = webhooks.get_in("", hook["id"])["conversation"]
+    conversations.delete("", first)
+    go(webhook_turn.handle("", hook, "second", {}))
+    second = webhooks.get_in("", hook["id"])["conversation"]
+    assert second and second != first
+    assert [m["content"] for m in conversations.get("", second)["messages"]] == ["second", "deux"]
+
+
+def test_tool_est_un_booleen():
+    with pytest.raises(webhooks.WebhookError, match="true ou false"):
+        webhooks.create_out("a", {"name": "S", "url": "https://chat.example/h", "tool": "true"})

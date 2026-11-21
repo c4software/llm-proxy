@@ -194,6 +194,7 @@ enabled = true
 max_matches = 20
 context = 1
 # Délai (s) de la recherche du motif (une regex catastrophique est coupée).
+# Vaut aussi pour `grep` de l'outil `repository` ([repos]), fichier par fichier.
 regex_timeout = 1.0
 
 # Garde-fou de TÉLÉCHARGEMENT, commun à tout ce que le proxy va chercher à
@@ -540,6 +541,49 @@ calls_per_minute = 30
 max_running = 3
 # Caractères au plus du texte d'un message reçu (au-delà : 400 msg_too_long).
 max_text_chars = 100000
+
+
+
+# ── Dépôts : l'outil `repository` ───────────────────────────────────────
+# Lit un projet d'une forge (GitLab, GitHub, Gitea/Forgejo, tout git en
+# HTTPS) : arborescence, fichier, recherche ; rien n'est exécuté. Le proxy
+# le télécharge avec le jeton de la source et le garde en mémoire un moment.
+# Chaque compte définit ses sources (Configuration → Dépôts) ; l'admin peut
+# en partager ci-dessous. AUCUNE règle d'adresse : une source peut viser une
+# forge du réseau interne. Voir docs/depots.md.
+[repos]
+# false (défaut) = ni outil, ni partie Dépôts.
+enabled = false
+# Sources au plus par compte.
+max_per_user = 20
+# Octets au plus d'une archive téléchargée (compressée).
+max_bytes = 50000000
+# Octets au plus d'un projet décompressé, gardé en mémoire (fichiers de plus
+# de 2 Mo listés, mais ni lus ni cherchés).
+max_unpacked_bytes = 200000000
+# Délai (s) du téléchargement entier, ou du clone git.
+timeout = 120
+# Un projet téléchargé est gardé ce temps (s), par compte, source, projet et
+# référence : les commandes suivantes ne le retéléchargent pas.
+cache_ttl = 1800
+# Octets au plus de tous les projets gardés (RAM du proxy).
+cache_bytes = 400000000
+
+# Sources PARTAGÉES, offertes à tous les comptes (une source d'un compte
+# du même nom la masque pour lui). Champs (un par ligne) :
+#   forge — "gitlab", "github", "gitea" (Forgejo aussi) ou "git" (clone
+#     HTTPS, pour toute autre forge) ;
+#   url — l'adresse de la forge (https://gitlab.exemple.fr) ; github :
+#     https://github.com par défaut, ou celle d'un GitHub Enterprise ;
+#   token — le jeton, en «${VAR}» du .env (lecture du dépôt suffit) ;
+#   username — forge "git" seulement : l'utilisateur du jeton (défaut «git») ;
+#   projects — motifs des projets permis (["playmoweb/*"]) ; vide = tous ;
+#   enabled — false : la source n'est pas offerte.
+# [repos.sources.pmw]
+# forge = "gitlab"
+# url = "https://gitlab.exemple.fr"
+# token = "${GITLAB_TOKEN}"
+# projects = ["playmoweb/*"]
 
 
 # ── Partage équitable ───────────────────────────────────────────────────

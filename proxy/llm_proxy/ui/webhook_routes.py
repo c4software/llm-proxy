@@ -21,16 +21,19 @@ le chat de la page).
 Sous /ui, ceux du compte connecté (jamais d'un autre) ; écritures en JSON
 (json_only) :
 
-  GET    /ui/webhooks                     {incoming, outgoing}
+  GET    /ui/webhooks                     {incoming, outgoing, path (/hooks/),
+                                          max (par compte)}
   POST   /ui/webhooks/in                  crée → {webhook, token}
-  PUT    /ui/webhooks/in/{id}             modifie
-  GET    /ui/webhooks/in/{id}/token       le jeton (le lien que la page copie)
+  PUT    /ui/webhooks/in/{id}             modifie (tous les réglages)
+  GET    /ui/webhooks/in/{id}/token       le jeton (l'adresse que la page
+                                          réaffiche)
   POST   /ui/webhooks/in/{id}/rotate      nouveau jeton → {webhook, token}
   DELETE /ui/webhooks/in/{id}
-  POST   /ui/webhooks/out                 crée (nom, url)
-  PUT    /ui/webhooks/out/{id}            modifie (url absente : inchangée)
+  POST   /ui/webhooks/out                 crée {name, url, channel?, tool?}
+  PUT    /ui/webhooks/out/{id}            modifie (url ou tool absents :
+                                          inchangés)
   POST   /ui/webhooks/out/{id}/test       envoie un message d'essai
-  DELETE /ui/webhooks/out/{id}
+  DELETE /ui/webhooks/out/{id}            409 s'il sert à un passe plat
 """
 
 import asyncio
@@ -47,10 +50,11 @@ from ..access.auth import HOOK_PREFIX, ui_client
 from ..core import config
 from ..core.httputil import error_response, json_only, parse_json
 from ..core.settings import log
-from ..storage import conversations, stats, webhooks
+from ..storage import stats, webhooks
 from ..tools import webhook as slack
 from ..upstream.backends import route_backend
 from . import dashboard, webhook_turn
+from .conversation_routes import run
 
 router = APIRouter()
 
@@ -187,14 +191,6 @@ def _closed():
     return None
 
 
-async def _run(fn, *args):
-    """Une opération du magasin → (résultat, None) ou (None, réponse)."""
-    try:
-        return await asyncio.to_thread(fn, *args), None
-    except conversations.HistoryError as exc:     # WebhookError comprise
-        return None, error_response("openai", exc.status, "invalid_request_error", str(exc))
-
-
 async def _body(request: Request):
     if (bad := _closed()) is not None:
         return None, bad
@@ -208,10 +204,7 @@ async def ui_webhooks(request: Request):
     if (bad := _closed()) is not None:
         return bad
     owner = ui_client(request)
-    incoming = await asyncio.to_thread(webhooks.list_in, owner)
-    for h in incoming:
-        h.pop("account", None)
-        h.pop("api_key_id", None)
+    incoming = [_public(h) for h in await asyncio.to_thread(webhooks.list_in, owner)]
     return {"incoming": incoming,
             "outgoing": await asyncio.to_thread(webhooks.list_out, owner),
             "path": HOOK_PREFIX, "max": webhooks.MAX_PER_USER}
@@ -226,8 +219,8 @@ async def ui_webhook_in_create(request: Request):
     body, bad = await _body(request)
     if bad is not None:
         return bad
-    got, bad = await _run(webhooks.create_in, ui_client(request), body,
-                          fairshare.ACCOUNT.get(), stats.CLIENT.get() or ui_client(request))
+    got, bad = await run(webhooks.create_in, ui_client(request), body,
+                         fairshare.ACCOUNT.get(), stats.CLIENT.get() or ui_client(request))
     if bad is not None:
         return bad
     hook, token = got
@@ -239,7 +232,7 @@ async def ui_webhook_in_update(request: Request, wid: str):
     body, bad = await _body(request)
     if bad is not None:
         return bad
-    hook, bad = await _run(webhooks.update_in, ui_client(request), wid, body)
+    hook, bad = await run(webhooks.update_in, ui_client(request), wid, body)
     return bad if bad is not None else {"webhook": _public(hook)}
 
 
@@ -248,7 +241,7 @@ async def ui_webhook_in_rotate(request: Request, wid: str):
     _, bad = await _body(request)
     if bad is not None:
         return bad
-    got, bad = await _run(webhooks.rotate_in, ui_client(request), wid)
+    got, bad = await run(webhooks.rotate_in, ui_client(request), wid)
     if bad is not None:
         return bad
     hook, token = got
@@ -260,7 +253,7 @@ async def ui_webhook_in_token(request: Request, wid: str):
     """Le jeton d'un entrant du compte : le lien que la page copie."""
     if (bad := _closed()) is not None:
         return bad
-    token, bad = await _run(webhooks.token_in, ui_client(request), wid)
+    token, bad = await run(webhooks.token_in, ui_client(request), wid)
     if bad is not None:
         return bad
     if token is None:
@@ -276,8 +269,14 @@ async def ui_webhook_in_token(request: Request, wid: str):
 async def ui_webhook_in_delete(request: Request, wid: str):
     if (bad := _closed()) is not None:
         return bad
-    n, bad = await _run(webhooks.delete_in, ui_client(request), wid)
-    return bad if bad is not None else {"id": wid, "deleted": bool(n)}
+    owner = ui_client(request)
+    n, bad = await run(webhooks.delete_in, owner, wid)
+    if bad is not None:
+        return bad
+    if n:
+        _recent.pop(wid, None)
+        webhook_turn.forget(owner, wid)
+    return {"id": wid, "deleted": bool(n)}
 
 
 @router.post("/ui/webhooks/out")
@@ -285,7 +284,7 @@ async def ui_webhook_out_create(request: Request):
     body, bad = await _body(request)
     if bad is not None:
         return bad
-    hook, bad = await _run(webhooks.create_out, ui_client(request), body)
+    hook, bad = await run(webhooks.create_out, ui_client(request), body)
     return bad if bad is not None else {"webhook": hook}
 
 
@@ -294,7 +293,7 @@ async def ui_webhook_out_update(request: Request, wid: str):
     body, bad = await _body(request)
     if bad is not None:
         return bad
-    hook, bad = await _run(webhooks.update_out, ui_client(request), wid, body)
+    hook, bad = await run(webhooks.update_out, ui_client(request), wid, body)
     return bad if bad is not None else {"webhook": hook}
 
 
@@ -304,7 +303,7 @@ async def ui_webhook_out_test(request: Request, wid: str):
     if bad is not None:
         return bad
     owner = ui_client(request)
-    hook, bad = await _run(webhooks.get_out, owner, wid)
+    hook, bad = await run(webhooks.get_out, owner, wid)
     if bad is not None:
         return bad
     if hook is None:
@@ -319,5 +318,5 @@ async def ui_webhook_out_test(request: Request, wid: str):
 async def ui_webhook_out_delete(request: Request, wid: str):
     if (bad := _closed()) is not None:
         return bad
-    n, bad = await _run(webhooks.delete_out, ui_client(request), wid)
+    n, bad = await run(webhooks.delete_out, ui_client(request), wid)
     return bad if bad is not None else {"id": wid, "deleted": bool(n)}

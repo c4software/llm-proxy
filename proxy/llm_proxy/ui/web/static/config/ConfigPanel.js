@@ -5,6 +5,7 @@
     ClientsPart.js    les fichiers à poser pour brancher un client
     KeysPart.js       ses clés (comptes OIDC)
     WebhooksPart.js   ses webhooks entrants et sortants (si actifs)
+    ReposPart.js      ses sources de dépôts (si [repos] est actif)
     ../memory/        ce que l'outil `memory` a gardé (si actif)
     AccountsPart.js   les comptes et leur part, la sauvegarde (admin)
     ProxyPart.js      toute la configuration du proxy (admin, ou proxy
@@ -18,6 +19,7 @@
 import { ClientsPart } from "./ClientsPart.js";
 import { KeysPart } from "./KeysPart.js";
 import { WebhooksPart } from "./WebhooksPart.js";
+import { ReposPart } from "./ReposPart.js";
 import { AccountsPart } from "./AccountsPart.js";
 import { ProxyPart } from "./ProxyPart.js";
 import { useAccount, useUsers } from "./shared.js";
@@ -26,7 +28,7 @@ const { computed, onMounted } = Vue;
 const STORE_PART = "llm-proxy-config-part";
 
 export const ConfigPanel = {
-  components: { ClientsPart, KeysPart, WebhooksPart, AccountsPart, ProxyPart },
+  components: { ClientsPart, KeysPart, WebhooksPart, ReposPart, AccountsPart, ProxyPart },
   props: {
     session: { type: Object, required: true },
     health: { type: Object, default: null },
@@ -39,6 +41,7 @@ export const ConfigPanel = {
       ...(account.value ? [{ id: "keys", label: "Clés" }] : []),
       ...(props.session.memory ? [{ id: "memory", label: "Mémoire" }] : []),
       ...(props.session.webhooks ? [{ id: "webhooks", label: "Webhooks" }] : []),
+      ...(props.session.repos ? [{ id: "repos", label: "Dépôts" }] : []),
       ...(isAdmin.value ? [{ id: "accounts", label: "Comptes" }] : []),
       ...(!account.value || isAdmin.value ? [{ id: "proxy", label: "Proxy" }] : []),
     ]);
@@ -69,6 +72,7 @@ export const ConfigPanel = {
                   @goto="setPart"></clients-part>
     <keys-part v-else-if="part === 'keys'" :session="session" @goto="setPart"></keys-part>
     <webhooks-part v-else-if="part === 'webhooks'" :session="session"></webhooks-part>
+    <repos-part v-else-if="part === 'repos'"></repos-part>
     <div class="config-keys" v-else-if="part === 'memory'">
       <memory-panel expanded></memory-panel>
     </div>

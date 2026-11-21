@@ -6,6 +6,7 @@ Ne connaît que FastAPI : la forme d'erreur Anthropic est définie ici.
 """
 
 import json
+from urllib.parse import urlsplit
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -83,3 +84,16 @@ def anthropic_disabled(dialect: str) -> JSONResponse:
         "surface Anthropic désactivée sur ce proxy ([anthropic].enabled "
         "dans config.toml)",
     )
+
+
+def origin(url: str) -> tuple:
+    """(schéma, hôte, port) d'une URL, port par défaut compris : ce qui doit
+    rester le même pour qu'un jeton la suive (une redirection, une source
+    de dépôts modifiée). Un port illisible compte pour None."""
+    p = urlsplit(url)
+    try:
+        port = p.port
+    except ValueError:
+        port = None
+    return (p.scheme.lower(), (p.hostname or "").lower(),
+            port or (443 if p.scheme.lower() == "https" else 80))

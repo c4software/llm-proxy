@@ -3,15 +3,19 @@
 (storage/webhooks.py) — une URL compatible Slack, où part
 {"text": "<message en mrkdwn>"}. Le compte les définit lui-même
 (Configuration → Webhooks) ; le modèle ne choisit jamais une URL, seulement
-le NOM d'un webhook de `call.client`. Il ne peut donc écrire que là où le
-compte l'a permis.
+le NOM d'un webhook de `call.client` EXPOSÉ à l'outil (case du sortant,
+décochée par défaut). Il ne peut donc écrire que là où le compte l'a
+permis. Les noms disponibles ne lui sont dits que sur erreur (nom inconnu,
+ou plusieurs sortants sans nom donné).
 
 Aussi ce qu'en a besoin la réception (ui/webhook_turn.py) : le format
-Slack dans les deux sens.
+Slack dans les deux sens, et l'envoi.
 
   send(url, text, extra)   POST {"text": mrkdwn, …extra} (net.post : les
                            adresses publiques seulement, sauf
                            [webhooks].allow_private) ; lève ToolError
+  post(owner, hook, text)  send sur un sortant du compte, dans son salon,
+                           l'issue notée sur lui → «» ou l'erreur
   to_mrkdwn(markdown)      le Markdown du modèle → le mrkdwn de Slack
   from_slack(payload)      le texte d'un message Slack reçu (text, blocks,
                            attachments), en Markdown

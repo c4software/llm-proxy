@@ -9,18 +9,16 @@ La page est lue par web_fetch.load : mêmes garde-fous, même conversion
 en texte, même cache web — chercher, puis lire par `web_fetch` à l'offset
 d'une correspondance, ne retélécharge pas la page.
 
-Le motif est une expression régulière, écrite par le modèle : elle passe
-par la bibliothèque `regex` et non `re`, parce que `regex` a un délai
-(`timeout`). Une expression à retour arrière catastrophique — `(a+)+$` —
-est coupée au bout de REGEX_TIMEOUT au lieu de bloquer le proxy. La
-recherche tourne dans un fil (`concurrent=True` rend le GIL) : la boucle
-asyncio ne l'attend pas.
+Le motif est une expression régulière, écrite par le modèle : compilée et
+bornée par tools/pattern.py (délai, longueur), comme celle de
+`repository`.
 """
 
 import asyncio
 import bisect
 
 from ..core import config
+from . import pattern as patterns
 from . import provenance, web_fetch
 from .contract import Call, Responses, Result, Source, Tool, ToolError, ToolName
 
@@ -33,12 +31,6 @@ MAX_MATCHES_LIMIT = 50
 # modèle ne précise pas `context` ; au plus MAX_CONTEXT.
 CONTEXT = config.integer("tools.web_grep.context", 1)
 MAX_CONTEXT = 5
-# Délai (s) de la recherche du motif dans la page, lecture non comprise.
-REGEX_TIMEOUT = config.num("tools.web_grep.regex_timeout", 1.0)
-# Une ligne de texte peut être un paragraphe entier : coupée autour de la
-# correspondance (ou à son début, pour une ligne de contexte).
-LINE_CHARS = 300
-MAX_PATTERN = 500
 
 NAME = ToolName.WEB_GREP
 
@@ -55,26 +47,12 @@ def _bounded(value, default: int, low: int, high: int) -> int:
     return min(max(value, low), high)
 
 
-def _clip(line: str, start: int = 0, end: int = 0) -> str:
-    """La ligne coupée à LINE_CHARS, autour de [start, end) s'il est
-    donné (la correspondance), depuis son début sinon."""
-    if len(line) <= LINE_CHARS:
-        return line
-    if end <= start:
-        return line[:LINE_CHARS] + "…"
-    margin = max((LINE_CHARS - (end - start)) // 2, 0)
-    a = max(start - margin, 0)
-    b = min(a + LINE_CHARS, len(line))
-    a = max(b - LINE_CHARS, 0)
-    return ("…" if a else "") + line[a:b] + ("…" if b < len(line) else "")
-
-
 def find(text: str, pattern, max_matches: int, context: int) -> tuple[list[str], int]:
     """Les lignes de `text` qui répondent au motif compilé, en blocs avec
     leur contexte → (lignes rendues, nombre total de lignes qui répondent).
     Chaque ligne rendue : «> offset  texte» pour une correspondance,
     «  offset  texte» pour le contexte, «--» entre deux blocs. Lève
-    TimeoutError si le motif dépasse REGEX_TIMEOUT."""
+    TimeoutError si le motif dépasse patterns.TIMEOUT."""
     lines = text.split("\n")
     starts, pos = [], 0
     for line in lines:
@@ -84,7 +62,7 @@ def find(text: str, pattern, max_matches: int, context: int) -> tuple[list[str],
     # sépare ses paragraphes par des lignes blanches.
     full = [i for i, line in enumerate(lines) if line.strip()]
     hits: dict[int, tuple[int, int]] = {}      # ligne → (début, fin) dans la ligne
-    for m in pattern.finditer(text, timeout=REGEX_TIMEOUT, concurrent=True):
+    for m in pattern.finditer(text, timeout=patterns.TIMEOUT, concurrent=True):
         i = bisect.bisect_right(starts, m.start()) - 1
         if i in hits or not lines[i].strip():
             continue
@@ -102,9 +80,9 @@ def find(text: str, pattern, max_matches: int, context: int) -> tuple[list[str],
                 != bisect.bisect_left(full, last) + 1:
             out.append("--")
         if i in shown:
-            out.append(f"> {starts[i]}  {_clip(lines[i], *hits[i])}")
+            out.append(f"> {starts[i]}  {patterns.clip(lines[i], *hits[i])}")
         else:
-            out.append(f"  {starts[i]}  {_clip(lines[i])}")
+            out.append(f"  {starts[i]}  {patterns.clip(lines[i])}")
         last = i
     return out, total
 
@@ -161,25 +139,12 @@ class WebGrep(Tool):
                 "pattern": str(args.get("pattern") or "")}
 
     async def run(self, args: dict, call: Call, transport=None) -> Result:
-        # Importé ici : le proxy démarre sans `regex`.
-        import regex
-
         asked = args.get("url")
         url = web_fetch.target(asked)
         provenance.check(url, call)
         source = args.get("pattern")
-        if not isinstance(source, str) or not source.strip():
-            raise ToolError("invalid_input", "`pattern` is required.")
-        if len(source) > MAX_PATTERN:
-            raise ToolError("invalid_input",
-                            f"`pattern` is longer than {MAX_PATTERN} characters.")
-        flags = regex.MULTILINE | regex.V0
-        if args.get("case_sensitive") is not True:
-            flags |= regex.IGNORECASE
-        try:
-            pattern = regex.compile(source, flags)
-        except regex.error as exc:
-            raise ToolError("invalid_input", f"invalid regular expression ({exc}).")
+        pattern = patterns.compile(source,
+                                   ignore_case=args.get("case_sensitive") is not True)
         max_matches = _bounded(args.get("max_matches"), MAX_MATCHES, 1,
                                MAX_MATCHES_LIMIT)
         context = _bounded(args.get("context"), CONTEXT, 0, MAX_CONTEXT)
@@ -190,7 +155,7 @@ class WebGrep(Tool):
                 find, text, pattern, max_matches, context)
         except TimeoutError:
             raise ToolError("failed", (
-                f"the pattern took more than {REGEX_TIMEOUT:g} s on this "
+                f"the pattern took more than {patterns.TIMEOUT:g} s on this "
                 f"page; use a simpler expression."))
         head = [f"URL: {page[0]}"]
         if title:

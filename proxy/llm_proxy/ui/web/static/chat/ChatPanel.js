@@ -106,7 +106,7 @@ export const ChatPanel = {
     const TOOL_LABELS = {
       web_search: "Web", code_execution: "Code", code_interpreter: "Code",
       image_generation: "Images", memory: "Mémoire", ocr: "OCR",
-      transcribe: "Transcription", webhook: "Webhooks",
+      transcribe: "Transcription", webhook: "Webhooks", repository: "Dépôts",
     };
 
     const chat = computed(() => props.session.chat || {});
@@ -518,7 +518,12 @@ export const ChatPanel = {
 
     // ── envoi ───────────────────────────────────────────────────────────
     // Pendant une réponse, « envoyer » met en file : seul le contenu compte.
-    const canSend = computed(() => current.value
+    // Une réponse que le PROXY écrit dans la conversation affichée (un
+    // webhook, webhook_turn.py : `serverTurn`). Pendant elle, la page
+    // n'écrit pas dans la conversation (envoyer, modifier, régénérer) : elle
+    // écrirait sur une révision dépassée (409).
+    const serverBusy = computed(() => !!(current.value && current.value.messages.some((m) => m.serverTurn)));
+    const canSend = computed(() => current.value && !serverBusy.value
       && current.value.model && (draft.value.trim() || pending.value.length));
     const queue = computed(() => (current.value && current.value.queue) || []);
 
@@ -1441,7 +1446,7 @@ export const ChatPanel = {
     // est prié de reprendre où il s'est arrêté, par un message à la suite.
     function continueReply() {
       const c = current.value;
-      if (streaming.value || !c) return;
+      if (streaming.value || serverBusy.value || !c) return;
       const last = c.messages[c.messages.length - 1];
       if (last) last.cut = "";
       abandonWaiting(c);
@@ -1461,7 +1466,7 @@ export const ChatPanel = {
     // La dernière réponse est remplacée, la question reste.
     function regenerate() {
       const c = current.value;
-      if (streaming.value || !c) return;
+      if (streaming.value || serverBusy.value || !c) return;
       const last = c.messages[c.messages.length - 1];
       if (last && last.role === "assistant") c.messages.pop();
       if (c.messages.length) respond(c);
@@ -1476,7 +1481,7 @@ export const ChatPanel = {
     const editing = ref(null);       // l'indice du message modifié
     function edit(i) {
       const c = current.value;
-      if (streaming.value || !c || !c.messages[i] || c.messages[i].role !== "user") return;
+      if (streaming.value || serverBusy.value || !c || !c.messages[i] || c.messages[i].role !== "user") return;
       const m = c.messages[i];
       editing.value = i;
       draft.value = m.content;
@@ -1713,6 +1718,18 @@ export const ChatPanel = {
     const when = S.when;
     const host = (url) => { try { return new URL(url).host; } catch { return url; } };
 
+    // Une réponse du proxy restée « en cours » au-delà de SERVER_STALE : le
+    // proxy a redémarré pendant le tour, elle ne viendra plus. Jugé à la
+    // lecture (prepareConv) et pendant l'attente (la relecture de 3 s).
+    function expireServerTurns(c) {
+      for (const m of c.messages || []) {
+        if (m.serverTurn && Date.now() - (m.started || 0) > SERVER_STALE) {
+          delete m.serverTurn;
+          m.error = "Réponse du webhook interrompue (proxy redémarré pendant le tour ?).";
+          m.duration = 0.001;
+        }
+      }
+    }
     // Une conversation lue du proxy (à l'ouverture, ou plus tard depuis le
     // menu) : ses réglages manquants.
     function prepareConv(c) {
@@ -1726,20 +1743,12 @@ export const ChatPanel = {
       // Une carte du navigateur en cours au rechargement : ses boutons
       // reviennent (le flux de caméra, lui, est perdu).
       for (const m of c.messages || []) if (m.waiting && m.waiting.kind === "device") m.waiting.busy = false;
+      expireServerTurns(c);
       // Une réponse enregistrée EN PLEIN TOUR (page rechargée ou fermée
       // pendant le flux) : ses puces en cours passent en erreur, son tour
       // d'outils ouvert est clos, et elle se signale avec « Reprendre ».
-      // Pas pendant un flux de CET onglet (l'enregistrement d'un autre).
-      // Une réponse que le PROXY écrit (un webhook, webhook_turn.py) : en
-      // cours, pas interrompue — sauf restée telle au-delà de SERVER_STALE
-      // (proxy redémarré pendant le tour).
-      for (const m of c.messages || []) {
-        if (m.serverTurn && Date.now() - (m.started || 0) > SERVER_STALE) {
-          delete m.serverTurn;
-          m.error = "Réponse du webhook interrompue (proxy redémarré pendant le tour ?).";
-          m.duration = 0.001;
-        }
-      }
+      // Pas pendant un flux de CET onglet (l'enregistrement d'un autre),
+      // ni pour une réponse que le proxy écrit (serverTurn).
       const last = (c.messages || [])[c.messages.length - 1];
       if (last && last.role === "assistant" && !last.waiting && !last.serverTurn
           && !(streaming.value && current.value === c)) {
@@ -1761,12 +1770,15 @@ export const ChatPanel = {
     // (un message reçu, sa réponse) : la liste et la conversation ouverte
     // suivent, de temps en temps et au retour sur l'onglet (store.sync).
     // Une réponse du proxy en cours dans la conversation affichée : relue
-    // toutes les 3 s, jusqu'à ce qu'elle arrive.
-    const serverBusy = computed(() => !!(current.value && current.value.messages.some((m) => m.serverTurn)));
+    // toutes les 3 s, jusqu'à ce qu'elle arrive — ou qu'elle soit périmée.
     if (props.session.webhooks) {
       const sync = () => { if (document.visibilityState === "visible") S.sync(); };
       VueUse.useIntervalFn(sync, 20000);
-      VueUse.useIntervalFn(() => { if (serverBusy.value) sync(); }, 3000);
+      VueUse.useIntervalFn(() => {
+        if (!serverBusy.value) return;
+        expireServerTurns(current.value);
+        sync();
+      }, 3000);
       VueUse.useEventListener(document, "visibilitychange", sync);
     }
 

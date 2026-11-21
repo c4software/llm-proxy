@@ -30,7 +30,7 @@ from .config import EXAMPLE_PATH
 
 # Les tables dont les clés de second niveau sont des NOMS (un backend, une
 # famille de modèles…) : leurs réglages se décrivent une fois, pour tous.
-FREE = ("backends", "quotas.family_limits")
+FREE = ("backends", "quotas.family_limits", "repos.sources")
 # Les tables MIXTES : des réglages à elles ([tools.mcp].timeout) et des
 # sous-tables nommées ([tools.mcp.<serveur>]) ; seul un chemin à deux
 # niveaux (tools.mcp.docs.url) y devient générique.

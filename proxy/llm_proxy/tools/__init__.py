@@ -50,6 +50,7 @@ from . import (  # noqa: F401
     web_grep,
     web_search,
     webcache,
+    repository,
     webhook,
 )
 from .contract import (  # noqa: F401
@@ -94,6 +95,7 @@ register(code_execution.TOOL)
 register(image_generation.TOOL)
 register(memory.TOOL)
 register(webhook.TOOL)
+register(repository.TOOL)
 
 # Chaque outil natif de ToolName est inscrit : une entrée sans outil est
 # une erreur de démarrage, pas un outil qui manque en silence.

@@ -280,6 +280,9 @@ Les postes les prennent ici aussi, sur la branche `master` :
 **Clés** et **Comptes** : avec les [comptes OIDC](#comptes-oidc)
 seulement.
 
+**Dépôts** : avec `[repos].enabled`. Chacun y déclare ses sources (forge,
+adresse, jeton, projets permis) pour l'outil `repository`. Voir [Dépôts](depots.md).
+
 **Webhooks** : avec `[webhooks].enabled` et `[ui].chat`. Chacun y définit
 ses webhooks entrants (un message reçu au format Slack, auquel le modèle
 répond dans une conversation du chat) et sortants (une URL compatible

@@ -80,10 +80,11 @@ WORKDIR /app
 # pas ([tools.transcribe].convert) ; sans lui, ces fichiers sont refusés.
 # upgrade : l'image python:3.13-slim n'est pas republiée à chaque correctif
 # de sécurité Debian (zlib1g deb13u1 en novembre 2026) ; on les prend au build,
-# comme l'exécuteur.
+# comme l'exécuteur. git : l'outil repository, pour une source « git »
+# (les forges passent par leur API d'archives).
 RUN apt-get update \
  && apt-get upgrade -y \
- && apt-get install -y --no-install-recommends ffmpeg \
+ && apt-get install -y --no-install-recommends ffmpeg git \
  && rm -rf /var/lib/apt/lists/*
 
 COPY proxy/requirements.txt .

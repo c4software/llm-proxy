@@ -5,12 +5,15 @@
     entrants  une adresse secrète (POST /hooks/<jeton>, format Slack) :
               son modèle (fixé, ou demandé par le corps si permis), son
               prompt système facultatif, ses outils hébergés, sa
-              conversation (une nouvelle à chaque message, ou toujours la
-              même) et le sortant où part la réponse. L'adresse n'est
-              montrée qu'à la création et à la régénération du jeton.
-    sortants  une URL compatible Slack : la réponse d'un entrant, et
-              l'outil `webhook` du chat. L'URL n'est jamais relue (elle
-              vaut droit d'écrire) : la page n'en voit que l'hôte.
+              conversation (une nouvelle à chaque message, toujours la
+              même, ou aucune : le passe plat) et le sortant où part la
+              réponse. L'adresse se réaffiche (bouton Adresse : relue au
+              proxy, GET …/token).
+    sortants  une URL compatible Slack, un salon facultatif, et s'il est
+              exposé à l'outil `webhook` du chat (décoché par défaut) ;
+              sinon il ne sert qu'aux réponses des entrants. L'URL n'est
+              jamais relue (elle vaut droit d'écrire) : la page n'en voit
+              que l'hôte.
 */
 import { call } from "../lib/http.js";
 import { stamp as when } from "../lib/format.js";
@@ -33,8 +36,8 @@ export const WebhooksPart = {
     const error = ref("");
     const form = reactive(blankIn());
     const editing = ref(false);         // le formulaire d'un entrant est ouvert
-    const fresh = ref(null);            // { name, url } : l'adresse, montrée à la création
-    const outForm = reactive({ id: null, name: "", url: "", channel: "", tool: true });
+    const fresh = ref(null);            // { name, url } : l'adresse affichée (création, Adresse)
+    const outForm = reactive({ id: null, name: "", url: "", channel: "", tool: false });
     const outEditing = ref(false);
     const armed = ref(null);            // suppression : deuxième clic attendu
     const testing = ref(null);
@@ -125,7 +128,7 @@ export const WebhooksPart = {
     // ── sortants ─────────────────────────────────────────────────────
     function openOut(o = null) {
       Object.assign(outForm, { id: o ? o.id : null, name: o ? o.name : "", url: "",
-                               channel: o ? o.channel || "" : "", tool: o ? o.tool !== false : true });
+                               channel: o ? o.channel || "" : "", tool: o ? !!o.tool : false });
       outEditing.value = true;
     }
     async function saveOut() {
@@ -155,7 +158,7 @@ export const WebhooksPart = {
              openOut, saveOut, test, curl, copied, copy, showLink, when };
   },
   template: `
-    <div class="config-keys webhooks">
+    <div class="config-keys owned">
       <p class="err" v-if="error" role="status">{{ error }}</p>
 
       <section class="panel key-fresh" v-if="fresh">
@@ -176,7 +179,7 @@ export const WebhooksPart = {
           <button type="button" class="btn" v-if="!editing" @click="openIn()">Nouveau</button></div>
         <p class="note">Un message reçu (<code>{"text": "…"}</code>, comme Slack) va dans une conversation
           du chat, et le modèle y répond, à votre nom. La réponse part vers le webhook sortant choisi.</p>
-        <form class="webhook-form" v-if="editing" @submit.prevent="saveIn">
+        <form class="item-form" v-if="editing" @submit.prevent="saveIn">
           <label>Nom <input v-model="form.name" maxlength="80" required placeholder="Alertes, Zabbix, formulaire…"></label>
           <label>Modèle
             <select v-model="form.model">
@@ -216,7 +219,7 @@ export const WebhooksPart = {
               <option value="">— aucun webhook sortant (la conversation seulement) —</option>
               <option v-for="o in outgoing" :key="o.id" :value="o.id">{{ o.name }}</option>
             </select></label>
-          <div class="webhook-actions">
+          <div class="item-actions">
             <button type="submit" class="btn">{{ form.id ? "Enregistrer" : "Créer" }}</button>
             <button type="button" class="btn ghost" @click="editing = false">Annuler</button>
           </div>
@@ -233,7 +236,7 @@ export const WebhooksPart = {
               <td>{{ h.reply ? outName(h.reply) : "—" }}</td>
               <td>{{ when(h.last_used) }}<span class="dim" v-if="h.calls"> · {{ h.calls }}</span>
                 <div class="err" v-if="h.last_error">{{ h.last_error }}</div></td>
-              <td><div class="webhook-row-actions">
+              <td><div class="row-actions">
                 <button type="button" class="btn ghost" @click="showLink(h)"
                         :title="h.copyable ? 'Afficher l’adresse du webhook, à copier' : 'Créé avant que l’adresse soit gardée : le régénérer pour pouvoir l’afficher'"
                         >Adresse</button>
@@ -254,7 +257,7 @@ export const WebhooksPart = {
         <p class="note">Une URL compatible Slack (Slack, Mattermost, Rocket.Chat, Discord en <code>/slack</code>…),
           où le proxy poste <code>{"text": "…"}</code> : la réponse d'un webhook entrant, et ce que le modèle
           envoie par l'outil « Webhooks » du chat, quand vous le lui demandez.</p>
-        <form class="webhook-form" v-if="outEditing" @submit.prevent="saveOut">
+        <form class="item-form" v-if="outEditing" @submit.prevent="saveOut">
           <label>Nom <span class="dim">(c'est par lui que le modèle le désigne)</span>
             <input v-model="outForm.name" maxlength="80" required placeholder="Équipe, Ops…"></label>
           <label>URL <span class="dim" v-if="outForm.id">(vide : inchangée)</span>
@@ -266,7 +269,7 @@ export const WebhooksPart = {
               suivent ; un webhook d'app Slack poste toujours dans le salon choisi à sa création.</span></label>
           <label class="check"><input type="checkbox" v-model="outForm.tool">
             exposé à l'outil « Webhooks » du chat <span class="dim">(sinon : réponses des webhooks entrants seulement)</span></label>
-          <div class="webhook-actions">
+          <div class="item-actions">
             <button type="submit" class="btn">{{ outForm.id ? "Enregistrer" : "Créer" }}</button>
             <button type="button" class="btn ghost" @click="outEditing = false">Annuler</button>
           </div>
@@ -281,7 +284,7 @@ export const WebhooksPart = {
               <td>{{ when(o.last_used) }}<span class="dim" v-if="o.calls"> · {{ o.calls }}</span>
                 <div class="err" v-if="o.last_error">{{ o.last_error }}</div>
                 <div class="dim" v-else-if="tested[o.id]">essai : {{ tested[o.id] }}</div></td>
-              <td><div class="webhook-row-actions">
+              <td><div class="row-actions">
                 <button type="button" class="btn ghost" :disabled="testing === o.id" @click="test(o)">Essayer</button>
                 <button type="button" class="btn ghost" @click="openOut(o)">Modifier</button>
                 <button type="button" class="btn danger" :class="{ armed: armed === 'out:' + o.id }"

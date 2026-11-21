@@ -66,7 +66,7 @@ def test_lignes_trouvees_avec_contexte_et_offsets():
 
 
 def test_ligne_longue_coupee_autour_de_la_correspondance(monkeypatch):
-    monkeypatch.setattr(web_grep, "LINE_CHARS", 20)
+    monkeypatch.setattr(web_grep.patterns, "LINE_CHARS", 20)
     texte = "a" * 50 + "CIBLE" + "b" * 50 + "\n" + "c" * 30
     trouve, contexte = corps(grep({"pattern": "cible"}, Web(default=page(texte))))
     assert trouve == "> 0  …" + "a" * 7 + "CIBLE" + "b" * 8 + "…"
@@ -84,7 +84,7 @@ def test_motif_absent_invalide_ou_trop_lent(monkeypatch):
         assert out.error == code and out.text.startswith(debut), args
     assert rendu(web_grep.TOOL.run({"pattern": "a"}, tools.Call())).error == "invalid_input"
     assert web.requests == []           # rien de téléchargé pour un motif refusé
-    monkeypatch.setattr(web_grep, "REGEX_TIMEOUT", 0.2)
+    monkeypatch.setattr(web_grep.patterns, "TIMEOUT", 0.2)
     out = grep({"pattern": "(x+x+)+y"}, Web(default=page("x" * 5000)))
     assert out.error == "failed" and "more than 0.2 s" in out.text
 

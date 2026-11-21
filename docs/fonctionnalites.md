@@ -92,6 +92,9 @@ détaille.
   format Slack sur une adresse secrète, auxquels un modèle répond dans le
   chat ; les réponses, et l'outil `webhook`, partent vers des URL
   compatibles Slack. [Webhooks](webhooks.md)
+- **Dépôts** (`[repos]`) : l'outil `repository` lit un projet GitLab,
+  GitHub, Gitea ou git (arborescence, fichier, recherche ; rien n'est
+  exécuté), avec le jeton d'une source du compte ou de l'admin. [Dépôts](depots.md)
 
 ## Suivi et interface
 

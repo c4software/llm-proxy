@@ -286,6 +286,12 @@ export const ChatStore = (() => {
         if (saved.get(c.id) !== JSON.stringify(toRaw(c)) || (state.conflict && state.conflict.id === c.id)) continue;
         const doc = await history.one(c.id);
         if (state.key !== key || state.streaming || saved.get(c.id) !== JSON.stringify(toRaw(c))) return;
+        // Une réponse qu'un AUTRE onglet est en train d'écrire (ni finie, ni
+        // menée par le proxy) : pas adoptée à mi-flux — prepare la croirait
+        // interrompue. Elle le sera à sa révision suivante.
+        const tail = doc && (doc.messages || [])[doc.messages.length - 1];
+        if (tail && tail.role === "assistant" && tail.started && !tail.duration
+            && !tail.error && !tail.serverTurn) continue;
         const i = state.convs.findIndex((x) => x.id === c.id);
         if (!doc) { if (i >= 0 && c.id !== state.currentId) state.convs.splice(i, 1); continue; }
         if (i >= 0) state.convs.splice(i, 1, { ...doc, stub: true });
