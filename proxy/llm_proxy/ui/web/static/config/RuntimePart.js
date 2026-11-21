@@ -110,8 +110,10 @@ export const RuntimePart = {
               <dt>Un bac</dt><dd>{{ data.admin.executor.limits.memory }}, {{ data.admin.executor.limits.cpus }} CPU,
                 /work de {{ data.admin.executor.limits.work_size }} ; détruit après {{ duration(data.admin.executor.limits.idle) }}
                 d'inactivité, {{ duration(data.admin.executor.limits.lifetime) }} au plus</dd>
-              <dt>Sortie réseau</dt><dd>{{ data.admin.executor.egress.enabled ? data.admin.executor.egress.hosts.length + " hôtes de paquets" : "aucune" }}
-                <details v-if="data.admin.executor.egress.enabled"><summary>voir</summary>{{ data.admin.executor.egress.hosts.join(", ") }}</details></dd>
+              <dt>Réseau des bacs</dt><dd><template v-if="data.admin.executor.egress.enabled">aucun, sauf
+                {{ data.admin.executor.egress.hosts.length }} domaines pour installer des paquets (pip, npm, cargo…)
+                <details><summary>voir les domaines</summary>{{ data.admin.executor.egress.hosts.join(", ") }}</details></template>
+                <template v-else>aucun</template></dd>
             </dl>
           </section>
           <section class="panel">
