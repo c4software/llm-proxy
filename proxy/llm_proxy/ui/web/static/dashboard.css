@@ -960,6 +960,11 @@ a.btn { display: inline-block; text-decoration: none; }
 .item-form textarea { resize: vertical; }
 .item-actions, .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .row-actions { flex-wrap: nowrap; justify-content: flex-end; }
+.owned .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0;
+  padding: 14px 18px; font-size: 13px; }
+.owned .kv dt { color: var(--muted); }
+.owned .kv dd { margin: 0; overflow-wrap: anywhere; }
+.owned .kv summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
 .owned td .err { padding: 2px 0 0; white-space: normal; max-width: 280px; }
 .key-new-row input { flex: 1; min-width: 0; padding: 7px 10px; }
 .key-fresh { border-color: var(--accent); }

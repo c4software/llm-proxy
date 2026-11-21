@@ -75,11 +75,11 @@ export const RuntimePart = {
           <div class="panel-head"><h2>Vos bacs</h2>
             <div class="item-actions">
               <button type="button" class="btn ghost" @click="load">Rafraîchir</button>
-              <button type="button" class="btn danger" :class="{ armed: armed === 'mine' }" :disabled="busy || !data.own.bacs || !data.own.bacs.length"
+              <button type="button" class="btn danger" v-if="data.own.bacs && data.own.bacs.length"
+                      :class="{ armed: armed === 'mine' }" :disabled="busy"
                       @click="destroyAll(false)">{{ armed === "mine" ? "Tout détruire ?" : "Tout détruire" }}</button></div></div>
-          <p class="note">Un bac de l'exécuteur garde les fichiers d'une conversation (exécution de code) ou vos
-            dépôts téléchargés, jusqu'à son inactivité. Le détruire efface ses fichiers ; la conversation en
-            retrouve un neuf au prochain appel.</p>
+          <p class="note">Les fichiers de vos conversations (exécution de code) et de vos dépôts. Détruire un bac
+            efface ses fichiers.</p>
           <p class="note" v-if="data.own.bacs === null">Exécuteur injoignable.</p>
           <table v-else-if="data.own.bacs.length">
             <thead><tr><th>Usage</th><th>Ouvert depuis</th><th>Inactif depuis</th><th>Détruit dans</th><th></th></tr></thead>
@@ -94,32 +94,31 @@ export const RuntimePart = {
             </tbody>
           </table>
           <p class="note" v-else>Aucun bac ouvert.</p>
-          <p class="note">Dépôts téléchargés gardés : {{ data.own.repositories.entries }}
-            ({{ bytes(data.own.repositories.bytes) }}), effacés {{ duration(data.own.repositories.ttl) }}
-            après leur dernière lecture.</p>
+          <p class="note" v-if="data.own.repositories.entries">Dépôts téléchargés : {{ data.own.repositories.entries }}
+            ({{ bytes(data.own.repositories.bytes) }}).</p>
         </section>
 
         <template v-if="data.admin">
           <section class="panel">
             <div class="panel-head"><h2>Exécuteur</h2></div>
-            <p class="note" v-if="!data.admin.executor">Exécuteur injoignable.</p>
-            <table v-else>
-              <tbody>
-                <tr><td>État</td><td>{{ data.admin.executor.status }}<span class="err" v-if="data.admin.executor.error"> {{ data.admin.executor.error }}</span></td></tr>
-                <tr><td>En service depuis</td><td>{{ duration(data.admin.executor.uptime) }}</td></tr>
-                <tr><td>Bacs ouverts</td><td>{{ data.admin.executor.sessions }} / {{ data.admin.executor.limits.max_sessions }}
-                  <span class="dim">({{ data.admin.executor.limits.max_sessions_per_client }} par compte)</span></td></tr>
-                <tr><td>Un bac</td><td>{{ data.admin.executor.limits.memory }} de mémoire, {{ data.admin.executor.limits.cpus }} CPU,
-                  {{ data.admin.executor.limits.work_size }} de /work ; inactivité {{ duration(data.admin.executor.limits.idle) }},
-                  vie {{ duration(data.admin.executor.limits.lifetime) }}</td></tr>
-                <tr><td>Sortie réseau</td><td>{{ data.admin.executor.egress.enabled ? data.admin.executor.egress.hosts.join(", ") : "aucune" }}</td></tr>
-              </tbody>
-            </table>
+            <p class="note" v-if="!data.admin.executor">Injoignable.</p>
+            <dl class="kv" v-else>
+              <dt>État</dt><dd>{{ data.admin.executor.status }}<span class="err" v-if="data.admin.executor.error"> — {{ data.admin.executor.error }}</span></dd>
+              <dt>En service depuis</dt><dd>{{ duration(data.admin.executor.uptime) }}</dd>
+              <dt>Bacs ouverts</dt><dd>{{ data.admin.executor.sessions }} sur {{ data.admin.executor.limits.max_sessions }},
+                {{ data.admin.executor.limits.max_sessions_per_client }} par compte</dd>
+              <dt>Un bac</dt><dd>{{ data.admin.executor.limits.memory }}, {{ data.admin.executor.limits.cpus }} CPU,
+                /work de {{ data.admin.executor.limits.work_size }} ; détruit après {{ duration(data.admin.executor.limits.idle) }}
+                d'inactivité, {{ duration(data.admin.executor.limits.lifetime) }} au plus</dd>
+              <dt>Sortie réseau</dt><dd>{{ data.admin.executor.egress.enabled ? data.admin.executor.egress.hosts.length + " hôtes de paquets" : "aucune" }}
+                <details v-if="data.admin.executor.egress.enabled"><summary>voir</summary>{{ data.admin.executor.egress.hosts.join(", ") }}</details></dd>
+            </dl>
           </section>
           <section class="panel">
             <div class="panel-head"><h2>Tous les bacs</h2>
-              <button type="button" class="btn danger" :class="{ armed: armed === 'all' }" :disabled="busy || !data.admin.bacs || !data.admin.bacs.length"
-                      @click="destroyAll(true)">{{ armed === "all" ? "Détruire tous les bacs ?" : "Détruire tous les bacs" }}</button></div>
+              <button type="button" class="btn danger" v-if="data.admin.bacs && data.admin.bacs.length"
+                      :class="{ armed: armed === 'all' }" :disabled="busy"
+                      @click="destroyAll(true)">{{ armed === "all" ? "Tout détruire ?" : "Tout détruire" }}</button></div>
             <p class="note" v-if="data.admin.bacs === null">Exécuteur injoignable.</p>
             <table v-else-if="data.admin.bacs.length">
               <thead><tr><th>Compte</th><th>Usage</th><th>Ouvert depuis</th><th>Inactif depuis</th><th>Détruit dans</th><th></th></tr></thead>
@@ -138,17 +137,16 @@ export const RuntimePart = {
           </section>
           <section class="panel">
             <div class="panel-head"><h2>Caches du proxy</h2></div>
-            <p class="note">En mémoire, perdus au redémarrage. Vider un cache ne casse rien : ce qui y manque est
-              relu ou retéléchargé au besoin (les échanges d'outils vidés, le modèle ne retrouve plus ce qu'il a lu
-              aux tours précédents).</p>
+            <p class="note">En mémoire. Vider un cache ne casse rien : ce qui manque est relu au besoin.</p>
             <table>
               <thead><tr><th>Cache</th><th>Entrées</th><th>Taille</th><th>Durée de vie</th><th></th></tr></thead>
               <tbody>
                 <tr v-for="c in data.admin.caches" :key="c.name">
-                  <td>{{ c.label }}</td><td>{{ num(c.entries) }}</td><td>{{ bytes(c.bytes) }}</td><td>{{ duration(Math.round(c.ttl)) }}</td>
+                  <td>{{ c.label }}</td><td>{{ num(c.entries) }}</td>
+                  <td>{{ c.entries && c.bytes != null ? bytes(c.bytes) : "—" }}</td><td>{{ duration(Math.round(c.ttl)) }}</td>
                   <td><div class="row-actions">
-                    <button type="button" class="btn danger" :class="{ armed: armed === 'cache:' + c.name }" :disabled="busy || !c.entries"
-                            @click="clear(c)">{{ armed === 'cache:' + c.name ? "Vider ?" : "Vider" }}</button></div></td>
+                    <button type="button" class="btn danger" v-if="c.entries" :class="{ armed: armed === 'cache:' + c.name }"
+                            :disabled="busy" @click="clear(c)">{{ armed === 'cache:' + c.name ? "Vider ?" : "Vider" }}</button></div></td>
                 </tr>
               </tbody>
             </table>

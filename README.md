@@ -13,11 +13,24 @@ Trois API côté client, une seule côté backend (`/v1/chat/completions`) :
 - **Anthropic Messages** (`/v1/messages`) : traduite.
 - **OpenAI Responses** (`/v1/responses`) : traduite.
 
-Autour du relais : un catalogue `/v1/models` unifié, des **outils web
-hébergés** (recherche par une instance SearXNG, lecture de page) que le
-proxy exécute pour le modèle, un limiteur de quotas pour les backends qui
-en ont, des statistiques persistantes à la forme de l'Usage API d'OpenAI
-et un tableau de bord.
+Autour du relais :
+
+- un catalogue `/v1/models` unifié ;
+- des **outils hébergés** que le proxy exécute pour le modèle : recherche
+  et lecture web (SearXNG), OCR, transcription, génération d'images,
+  mémoire persistante, exécution de code dans un bac à sable
+  ([Exécution de code](docs/execution-de-code.md)), lecture de dépôts
+  ([Dépôts](docs/depots.md)), envoi vers un webhook, serveurs MCP ;
+- des **webhooks** par compte : un message reçu au format Slack, auquel un
+  modèle répond, et des envois vers Slack, Mattermost ou Rocket.Chat
+  ([Webhooks](docs/webhooks.md)) ;
+- des **comptes OIDC** et des clés par compte, chacune limitable à
+  certains outils ; un partage équitable des tokens entre comptes ;
+- un limiteur de quotas pour les backends qui en ont, des statistiques
+  persistantes à la forme de l'Usage API d'OpenAI ;
+- un tableau de bord : statistiques, chat, configuration (clés, comptes,
+  webhooks, dépôts, bacs de l'exécuteur et caches) ;
+- un conteneur durci (lecture seule, sans capacités Linux).
 
 Le tableau de bord a son **chat**, une interface de conversation
 complète sur les backends du proxy ([Le chat](docs/chat.md)) :
@@ -36,7 +49,7 @@ complète sur les backends du proxy ([Le chat](docs/chat.md)) :
   ([Voix](docs/voix.md)) ; modèles de voix et de **transcription**
   directement dans le fil (audio joint ou enregistré au micro).
 - **Outils du proxy** : recherche et lecture web sourcées, exécution de
-  code, images, mémoire, serveurs MCP.
+  code, images, mémoire, dépôts, webhooks, serveurs MCP.
 - **Outils de la page** : questions à choix (`ask_user`), **artifacts**
   (HTML, Markdown, SVG, Mermaid) versionnés, retouchés par passages et
   débogués par le modèle dans leur cadre isolé, **dossier local** ouvert
@@ -100,8 +113,8 @@ du cours sur le développement agentique.
 | Le dépôt, ses dossiers et ses fichiers | [Architecture](docs/architecture.md) |
 | Docker Compose, Coolify, sauvegarde | [Déploiement](docs/deploiement.md) |
 | `data/config.toml`, table par table | [Configuration](docs/configuration.md) |
-| Clés, comptes OIDC, ce qui se sert sans clé | [Sécurité](docs/securite.md) |
-| `/ui` : statistiques, partage équitable, comptes, configuration | [Tableau de bord](docs/tableau-de-bord.md) |
+| Clés, comptes OIDC, ce qui se sert sans clé, conteneur durci | [Sécurité](docs/securite.md) |
+| `/ui` : statistiques, partage équitable, comptes et clés (droits d'outils), webhooks, dépôts, bacs et caches | [Tableau de bord](docs/tableau-de-bord.md) |
 | Le chat de la page : conversations, modèles d'images, de voix et de transcription, contexte, outils (questions, dossier, artifacts) | [Le chat](docs/chat.md) |
 | Position, caméra, presse-papiers… et JavaScript, TypeScript, PHP, SQLite, PostgreSQL dans le navigateur | [Les outils du navigateur](docs/navigateur.md) |
 | Une VM Linux dans l'onglet (bash, python3), partagée avec un terminal : réseau par relais Wisp, construction et limites | [La VM Linux du navigateur](docs/linux.md) |
@@ -110,10 +123,11 @@ du cours sur le développement agentique.
 | `/v1/responses` : traduction, outils, `[responses]` | [API OpenAI Responses](docs/api-responses.md) |
 | Recherche et lecture web, OCR, transcription, images, mémoire, MCP | [Outils hébergés](docs/outils-heberges.md) |
 | Synthèse vocale, conception et clonage de voix (Qwen3-TTS), avec curl et dans le chat | [Voix](docs/voix.md) |
-| Le bac à sable de `code_execution` | [Exécution de code](docs/execution-de-code.md) |
+| Le bac à sable de `code_execution` (aussi celui où les dépôts sont lus) | [Exécution de code](docs/execution-de-code.md) |
 | Webhooks entrants et sortants, au format Slack, par compte | [Webhooks](docs/webhooks.md) |
 | Lire un dépôt GitLab, GitHub, Gitea ou git (arborescence, fichiers, recherche), dans un bac de l'exécuteur | [Dépôts](docs/depots.md) |
 | Écrire un outil hébergé : le contrat | [docs/outils.md](docs/outils.md) |
 | Vérifier un déploiement | [Vérification](docs/verification.md) |
 | Ce qui ne marche pas, ou pas encore | [Limites connues](docs/limites.md) |
 | Les bancs de vrais clients | [bench/README.md](bench/README.md) |
+| Règles pour modifier le dépôt : code, documentation, tests | [AGENTS.md](AGENTS.md) |
