@@ -23,6 +23,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+from .. import tools
 from ..core import identity
 from ..core.httputil import dialect_of, error_response
 from ..core.settings import PROXY_API_KEYS, log
@@ -113,11 +114,13 @@ def client_token(request: Request) -> str:
 
 class Who(NamedTuple):
     """Qui présente une clé : son api_key_id (les statistiques), son
-    client (mémoire, échanges d'outils, partage équitable) et son compte
-    (None : clé du TOML seule)."""
+    client (mémoire, échanges d'outils, partage équitable), son compte
+    (None : clé du TOML seule) et ses droits sur les outils hébergés
+    (None : tous ; une clé gérée peut en avoir moins, accounts.py)."""
     api_key_id: str
     client: str
     account: int | None
+    tools: frozenset | None = None
 
 
 async def key_client(token: str) -> Who | None:
@@ -147,7 +150,7 @@ async def key_client(token: str) -> Who | None:
     if accounts.touch_due(hit["id"]):
         await asyncio.to_thread(accounts.touch, hit["id"])
     uid = hit["user_id"]
-    return Who(digest, account_owner(uid), uid)
+    return Who(digest, account_owner(uid), uid, hit["tools"])
 
 
 def identify(request: Request, who: Who) -> None:
@@ -159,6 +162,8 @@ def identify(request: Request, who: Who) -> None:
     stats.CLIENT.set(who.api_key_id)
     fairshare.CLIENT.set(who.client)
     fairshare.ACCOUNT.set(who.account)
+    # Les droits de la clé : tools.enabled ne rend que ce qu'ils permettent.
+    tools.GRANTED.set(who.tools)
     request.state.owner = who.client
 
 

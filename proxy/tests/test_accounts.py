@@ -256,7 +256,7 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     bob_id = bob.get("/ui/session").json()["account"]["id"]
     alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
     # Seule, la clé est son propre client.
-    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None)
+    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None, None)
 
     # Un user ne rattache rien ; l'admin, si.
     assert bob.put(f"/ui/keys/toml/{digest}",
@@ -265,7 +265,7 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     assert r.status_code == 200 and r.json()["user"] == "bob@example.org"
     # Elle écrit désormais dans la mémoire du compte ; ses stats aussi.
     assert asyncio.run(auth.key_client("sk-toml")) == (
-        digest, auth.account_owner(bob_id), bob_id)
+        digest, auth.account_owner(bob_id), bob_id, None)
     assert digest in accounts.digests(bob_id)
     # Bob la voit parmi ses clés ; l'admin, dans toutes.
     mine = bob.get("/ui/keys").json()["toml"]
@@ -283,7 +283,7 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     # Détachée : de nouveau son propre client.
     assert alice.put(f"/ui/keys/toml/{digest}",
                      json={"user_id": None}).json()["user_id"] is None
-    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None)
+    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None, None)
 
 
 def test_binding_refuses_what_is_not_a_toml_key(idp, monkeypatch):
@@ -416,3 +416,123 @@ def test_only_an_admin_sees_the_settings(idp, tmp_path, monkeypatch):
     assert alice.get("/ui/config").status_code == 200
     assert bob.get("/ui/config").status_code == 403
     assert bob.post("/ui/config/check", json={"toml": ""}).status_code == 403
+
+
+# ── Droits d'une clé sur les outils hébergés ────────────────────────────
+
+def listed(env, key) -> set[str]:
+    r = env.client.get("/v1/tools", headers=bearer(key))
+    assert r.status_code == 200, r.text
+    return {t["name"] for t in r.json()["data"]}
+
+
+def test_a_key_is_limited_to_the_tools_it_is_granted(idp):
+    alice = connect(idp)
+    every = listed(idp, new_key(alice)["key"])        # sans droits : tout
+    assert len(every) >= 2, every
+    one, other = sorted(every)[:2]
+    created = alice.post("/ui/keys", json={"label": "ci", "tools": [one, one]})
+    assert created.status_code == 200, created.text
+    assert created.json()["tools"] == [one]
+    key = created.json()["key"]
+    assert listed(idp, key) == {one}
+    # Appelé directement, l'outil refusé dit pourquoi.
+    r = idp.client.post(f"/v1/tools/{other}", json={}, headers=bearer(key))
+    assert r.status_code == 403 and r.json()["error"]["type"] == "tool_not_permitted"
+    # Aucun outil.
+    none = alice.post("/ui/keys", json={"tools": []}).json()
+    assert listed(idp, none["key"]) == set()
+    # La liste des clés montre les droits.
+    rights = {k["id"]: k["tools"] for k in alice.get("/ui/keys").json()["data"]}
+    assert rights[created.json()["id"]] == [one] and rights[none["id"]] == []
+
+
+def test_the_rights_of_a_key_change_afterwards(idp):
+    alice = connect(idp)
+    created = new_key(alice)
+    every = listed(idp, created["key"])
+    one = sorted(every)[0]
+    r = alice.patch(f"/ui/keys/{created['id']}", json={"tools": [one]})
+    assert r.status_code == 200 and r.json()["tools"] == [one], r.text
+    assert listed(idp, created["key"]) == {one}
+    r = alice.patch(f"/ui/keys/{created['id']}",
+                    json={"tools": None, "label": " portable "})
+    assert r.json()["tools"] is None and r.json()["label"] == "portable"
+    assert listed(idp, created["key"]) == every
+    # Mal formé, ou rien à changer.
+    for body in ({"tools": "web_search"}, {"tools": [3]}, {"tools": ["a b"]}, {}):
+        assert alice.patch(f"/ui/keys/{created['id']}", json=body).status_code == 400
+    # Révoquée, elle ne change plus.
+    alice.delete(f"/ui/keys/{created['id']}")
+    assert alice.patch(f"/ui/keys/{created['id']}",
+                       json={"tools": []}).status_code == 409
+
+
+def test_only_the_owner_or_an_admin_changes_the_rights(idp):
+    alice = connect(idp)
+    bob = connect(idp, "bob", "bob@example.org")
+    bob_id = bob.get("/ui/session").json()["account"]["id"]
+    alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
+    a, b = new_key(alice), new_key(bob)
+    assert bob.patch(f"/ui/keys/{a['id']}", json={"tools": []}).status_code == 404
+    assert bob.patch(f"/ui/keys/{b['id']}", json={"tools": []}).status_code == 200
+    assert alice.patch(f"/ui/keys/{b['id']}", json={"tools": None}).status_code == 200
+
+
+def test_mcp_rights_cover_a_whole_server():
+    from llm_proxy import tools
+    tool = next((t for t in tools.REGISTRY if t.name == "web_search"), None)
+    assert tools.granted(tool, None) and tools.granted(tool, frozenset({"web_search"}))
+    assert not tools.granted(tool, frozenset({"mcp", "web_fetch"}))
+
+    class Fake:
+        name, kinds = "docs_search", ("docs_search", "mcp:docs", "mcp")
+    assert tools.granted(Fake, frozenset({"mcp:docs"}))
+    assert tools.granted(Fake, frozenset({"mcp"}))
+    assert not tools.granted(Fake, frozenset({"mcp:autre"}))
+
+
+def test_the_page_lists_what_can_be_granted(idp):
+    data = connect(idp).get("/ui/keys/tools").json()["data"]
+    names = {d["name"] for d in data}
+    assert {"web_search", "memory"} <= names
+
+
+def test_rights_survive_a_database_from_before(idp, tmp_path, monkeypatch):
+    """Une base d'avant (table keys sans `tools`) : la colonne est ajoutée,
+    ses clés gardent tous les outils."""
+    import sqlite3
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                 "issuer TEXT NOT NULL, sub TEXT NOT NULL, email TEXT NOT NULL "
+                 "DEFAULT '', name TEXT NOT NULL DEFAULT '', role TEXT NOT NULL, "
+                 "created REAL NOT NULL, last_login REAL, UNIQUE (issuer, sub))")
+    conn.execute("CREATE TABLE keys (id TEXT PRIMARY KEY, user_id INTEGER NOT "
+                 "NULL REFERENCES users(id), digest TEXT NOT NULL UNIQUE, hint "
+                 "TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', created REAL "
+                 "NOT NULL, last_used REAL, revoked REAL)")
+    conn.execute("INSERT INTO users VALUES (1, 'i', 's', '', '', 'user', 0, 0)")
+    conn.execute("INSERT INTO keys VALUES ('k', 1, 'd', 'h', '', 0, NULL, NULL)")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(accounts, "DB_PATH", str(path))
+    assert accounts.resolve("d") == {"id": "k", "user_id": 1, "tools": None}
+
+
+def test_the_surfaces_only_see_the_granted_tools():
+    """tools.Hosted() — ce que construisent les trois surfaces, /v1/tools et
+    /mcp — ne garde que les outils permis par les droits de la requête."""
+    import contextvars
+    from llm_proxy import tools
+
+    def build(rights):
+        tools.GRANTED.set(rights)
+        return set(tools.Hosted().by_name)
+
+    every = contextvars.copy_context().run(build, None)
+    assert every, "aucun outil actif dans la configuration des tests"
+    one = sorted(every)[0]
+    assert contextvars.copy_context().run(build, frozenset({one})) == {one}
+    assert contextvars.copy_context().run(build, frozenset()) == set()
+    assert tools.GRANTED.get() is None          # rien n'a fui hors du contexte

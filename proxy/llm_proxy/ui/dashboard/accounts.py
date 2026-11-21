@@ -1,6 +1,7 @@
 """
 Les COMPTES, sous /ui : la connexion OIDC, la sauvegarde, les clés
-(créées, révoquées, rattachées) et les utilisateurs (rôles, parts).
+(créées avec leurs droits sur les outils, modifiées, révoquées,
+rattachées) et les utilisateurs (rôles, parts).
 """
 
 import asyncio
@@ -12,6 +13,7 @@ from urllib.parse import quote
 from fastapi import Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from starlette.background import BackgroundTask
+from ... import tools
 from ...core import identity
 from ...access import accounts, auth, oidc
 from ...core.settings import log
@@ -172,16 +174,29 @@ async def ui_toml_bind(request: Request, digest: str):
             **links.get(digest, {"user_id": None, "user": None})}
 
 
+@router.get("/ui/keys/tools")
+async def ui_key_tools(request: Request):
+    """Ce qu'on peut permettre à une clé (son champ `tools`) : les outils
+    hébergés du proxy, actifs ou non, et les serveurs MCP avec les outils
+    qu'ils ont fait connaître."""
+    if (off := accounts_off()) is not None:
+        return off
+    return {"object": "list", "data": tools.grantable()}
+
+
 @router.post("/ui/keys")
 async def ui_key_create(request: Request):
     """Une nouvelle clé pour le compte connecté : un uuid4, rendu ICI
-    seulement (`key`) — le proxy n'en garde que le condensé."""
+    seulement (`key`) — le proxy n'en garde que le condensé. `tools` :
+    ses droits sur les outils hébergés (absent ou null : tous ; une liste
+    de noms : ceux-là seuls, voir accounts.py)."""
     if (off := accounts_off()) is not None:
         return off
     if (bad := json_only(request)) is not None:
         return bad
     body = parse_json(await request.body())
-    label = body.get("label", "") if isinstance(body, dict) else ""
+    body = body if isinstance(body, dict) else {}
+    label = body.get("label", "")
     if not isinstance(label, str):
         return error_response("openai", 400, "invalid_request_error",
                               "label : une chaîne")
@@ -189,10 +204,39 @@ async def ui_key_create(request: Request):
     try:
         record = await asyncio.to_thread(
             accounts.create_key, request_user(request)["id"], key,
-            identity.owner(key), label)
+            identity.owner(key), label, body.get("tools"))
     except accounts.AccountError as exc:
         return account_error(exc)
     return record | {"key": key}
+
+
+@router.patch("/ui/keys/{kid}")
+async def ui_key_update(request: Request, kid: str):
+    """Change une clé : son libellé (`label`) et/ou ses droits (`tools` :
+    null = tous les outils, une liste = ceux-là seuls) — du compte
+    connecté, ou de n'importe qui (admin). Pris en compte à la requête
+    suivante (quelques secondes au plus pour un autre processus)."""
+    if (off := accounts_off()) is not None:
+        return off
+    if (bad := json_only(request)) is not None:
+        return bad
+    body = parse_json(await request.body())
+    if not isinstance(body, dict) or not ({"label", "tools"} & body.keys()):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps attendu : {\"label\": …} et/ou "
+                              "{\"tools\": null | [<outil>, …]}")
+    if "label" in body and not isinstance(body["label"], str):
+        return error_response("openai", 400, "invalid_request_error",
+                              "label : une chaîne")
+    user = request_user(request)
+    try:
+        return await asyncio.to_thread(
+            accounts.update_key, kid,
+            None if user["role"] == "admin" else user["id"],
+            label=body.get("label"),
+            tools=body["tools"] if "tools" in body else ...)
+    except accounts.AccountError as exc:
+        return account_error(exc)
 
 
 @router.delete("/ui/keys/{kid}")

@@ -441,7 +441,7 @@ L'outil `repository` et les sources de dépôts. Voir [Dépôts](depots.md).
 | `max_bytes` | `20000000` | Taille maximale d'une archive (compressée). C'est un fichier d'entrée du bac : `SANDBOX_MAX_INPUT_BYTES` de l'exécuteur au moins aussi haut |
 | `max_unpacked_bytes` | `100000000` | Taille maximale d'un projet décompressé dans le bac, à tenir dans son `/work` (`SANDBOX_WORK_SIZE`). Un fichier de plus de 2 Mo est listé, mais ni lu ni cherché |
 | `timeout` | `120` | Délai (s) du téléchargement entier, ou du fetch git |
-| `cache_ttl` | `1800` | Durée (s) pendant laquelle une archive téléchargée est gardée, par compte, source, projet et référence : un bac neuf la reçoit sans nouveau téléchargement |
+| `cache_ttl` | `1800` | Durée (s) de vie d'un dépôt téléchargé après sa dernière lecture, dans le proxy (l'archive, purgée chaque minute) comme dans le bac (détruit après cette inactivité). Voir [Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps) |
 | `cache_bytes` | `200000000` | Taille maximale de toutes les archives gardées (RAM du proxy) |
 | `sources.<nom>` | — | Une source partagée : `forge` (`gitlab`, `github`, `gitea`, `git`), `url`, `token` (en `${VAR}`), `username` (forge `git`), `projects` (motifs), `enabled` |
 

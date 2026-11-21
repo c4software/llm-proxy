@@ -9,7 +9,7 @@
 import { call } from "../lib/http.js";
 import { stamp as when } from "../lib/format.js";
 
-const { ref, reactive, onMounted } = Vue;
+const { ref, reactive, computed, onMounted } = Vue;
 
 const FORGE_LABELS = { gitlab: "GitLab", github: "GitHub", gitea: "Gitea / Forgejo", git: "git (HTTPS)" };
 const PLACEHOLDERS = { gitlab: "https://gitlab.exemple.fr", github: "https://github.com",
@@ -21,6 +21,7 @@ export const ReposPart = {
     const sources = ref([]);
     const shared = ref([]);
     const maxBytes = ref(0);
+    const ttl = ref(1800);
     const error = ref("");
     const form = reactive(blank());
     const editing = ref(false);
@@ -32,6 +33,7 @@ export const ReposPart = {
         sources.value = d.sources || [];
         shared.value = d.shared || [];
         maxBytes.value = d.max_bytes || 0;
+        ttl.value = d.ttl || 0;
         error.value = "";
       } catch (e) { error.value = e.message; }
     }
@@ -62,10 +64,24 @@ export const ReposPart = {
         await load();
       } catch (e) { error.value = e.message; }
     }
+    // Tout ce que le compte a téléchargé, effacé tout de suite (le cache du
+    // proxy, le bac des dépôts) ; sinon, [repos].cache_ttl après la dernière lecture.
+    const forgotten = ref("");
+    async function forgetAll() {
+      error.value = "";
+      try {
+        const r = await call("POST", "/ui/repos/forget", {});
+        forgotten.value = r.forgotten ? "Dépôts téléchargés effacés."
+          : "Archives effacées ; le bac d’exécution n’a pas pu être joint : il expirera seul.";
+        setTimeout(() => { forgotten.value = ""; }, 4000);
+      } catch (e) { error.value = e.message; }
+    }
+    const minutes = computed(() => Math.max(1, Math.round(ttl.value / 60)) + " min");
     const mb = (n) => (n / 1e6).toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " Mo";
 
     onMounted(load);
     return { sources, shared, maxBytes, error, form, editing, armed, open, save, remove, when, mb,
+             forgotten, forgetAll, minutes,
              FORGE_LABELS, PLACEHOLDERS };
   },
   template: `
@@ -73,11 +89,17 @@ export const ReposPart = {
       <p class="err" v-if="error" role="status">{{ error }}</p>
       <section class="panel">
         <div class="panel-head"><h2>Sources de dépôts</h2>
-          <button type="button" class="btn" v-if="!editing" @click="open()">Nouvelle</button></div>
+          <div class="item-actions">
+            <button type="button" class="btn ghost" @click="forgetAll"
+                    :title="'Efface tout de suite les dépôts téléchargés (cache du proxy, bac des dépôts) ; sinon, ' + minutes + ' après leur dernière lecture'">Oublier les dépôts téléchargés</button>
+            <button type="button" class="btn" v-if="!editing" @click="open()">Nouvelle</button></div></div>
+        <p class="note ok" v-if="forgotten" role="status">{{ forgotten }}</p>
         <p class="note">L'outil « Dépôts » du chat (et des webhooks) lit un projet d'une de ces sources :
           son arborescence, ses fichiers, une recherche — rien n'est exécuté. Le proxy le télécharge
           avec votre jeton (ni le modèle ni le bac ne le voient), un bac isolé le décompresse et le lit. Un jeton en lecture seule
-          suffit<template v-if="maxBytes"> ; archive de {{ mb(maxBytes) }} au plus</template>.</p>
+          suffit<template v-if="maxBytes"> ; archive de {{ mb(maxBytes) }} au plus</template>. Un dépôt
+          téléchargé est effacé {{ minutes }} après sa dernière lecture, ou quand vous modifiez ou supprimez sa
+          source.</p>
         <form class="item-form" v-if="editing" @submit.prevent="save">
           <label>Nom <span class="dim">(c'est par lui que le modèle la désigne)</span>
             <input v-model="form.name" maxlength="80" required placeholder="PMW, GitHub perso…"></label>

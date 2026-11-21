@@ -566,8 +566,9 @@ max_bytes = 20000000
 max_unpacked_bytes = 100000000
 # Délai (s) du téléchargement entier, ou du fetch git.
 timeout = 120
-# L'archive téléchargée est gardée ce temps (s), par compte, source, projet et
-# référence : un bac neuf la reçoit sans nouveau téléchargement.
+# Un dépôt téléchargé vit ce temps (s) après sa DERNIÈRE lecture : l'archive
+# dans le cache du proxy (purgé chaque minute), le projet dans le bac (détruit
+# après cette inactivité). Effacé aussitôt quand sa source change.
 cache_ttl = 1800
 # Octets au plus de toutes les archives gardées (RAM du proxy).
 cache_bytes = 200000000

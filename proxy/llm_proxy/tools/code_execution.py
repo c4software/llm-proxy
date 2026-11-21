@@ -276,6 +276,24 @@ async def execute(body: dict, timeout: float, transport=None) -> httpx2.Response
             f"Do not retry now: answer without running code, and say so."))
 
 
+async def destroy(client: str, session: str, transport=None) -> bool | None:
+    """POST /v1/destroy : le bac de (client, session) détruit, ses fichiers
+    avec lui. → vrai s'il existait, faux sinon ; None si l'exécuteur n'a pas
+    pu être joint (le bac expirera de lui-même)."""
+    try:
+        async with httpx2.AsyncClient(timeout=httpx2.Timeout(30, connect=5),
+                                      transport=transport, trust_env=False) as c:
+            r = await c.post(f"{URL}/v1/destroy", headers={"Authorization": f"Bearer {TOKEN}"},
+                             json={"client": client, "session": session})
+        if r.status_code != 200:
+            raise ValueError(f"HTTP {r.status_code}")
+        return bool(r.json().get("destroyed"))
+    except (httpx2.HTTPError, ValueError) as exc:
+        log.warning("exécuteur injoignable (%s) : bac %r de %s non détruit", exc, session,
+                    client[:8])
+        return None
+
+
 def render(doc: dict, timeout: float, session: bool, inputs=()) -> Result:
     """La réponse de l'exécuteur → le Result. Le TEXTE d'abord : l'issue,
     l'état du bac, les fichiers, puis la sortie en dernier — si le texte

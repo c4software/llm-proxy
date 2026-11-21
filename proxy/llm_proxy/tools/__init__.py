@@ -29,6 +29,7 @@ ne connaissent de ce paquet que `Hosted` et le contrat.
 """
 
 import asyncio
+import contextvars
 import dataclasses
 import json
 import re
@@ -117,8 +118,46 @@ EXPIRED = ("[result no longer available: the proxy was restarted or the "
            "entry expired; run the tool again if you still need it]")
 
 
+# Les DROITS de la clé qui fait la requête (accounts.py, posés par le
+# middleware d'auth comme stats.CLIENT) : None = tous les outils actifs ;
+# sinon les seuls qu'elle nomme — un outil par son nom, ou les outils d'un
+# serveur MCP par `mcp:<serveur>` (ceux qu'il découvrira compris), ou de
+# tous par `mcp`. Un outil refusé est pour cette requête un outil inactif :
+# ni présenté, ni listé, ni exécutable.
+GRANTED: contextvars.ContextVar[frozenset | None] = contextvars.ContextVar(
+    "tool_rights", default=None)
+
+
+def granted(tool: Tool, rights: frozenset | None) -> bool:
+    """`tool` est-il permis par ces droits (None : tout l'est) ?"""
+    if rights is None or tool.name in rights:
+        return True
+    return any(k in rights for k in tool.kinds
+               if k == mcp.KIND or k.startswith(mcp.KIND + ":"))
+
+
 def enabled() -> list[Tool]:
-    return [t for t in REGISTRY if t.enabled]
+    """Les outils actifs, et permis à la clé de la requête (GRANTED)."""
+    rights = GRANTED.get()
+    return [t for t in REGISTRY if t.enabled and granted(t, rights)]
+
+
+def grantable() -> list[dict]:
+    """Ce qu'on peut permettre à une clé, pour la page : chaque outil
+    natif (actif ou non : `enabled`), puis chaque serveur MCP de la
+    configuration avec les outils qu'il a fait connaître. Ignore les
+    droits de la requête."""
+    out = [{"name": t.name, "enabled": bool(t.enabled), "family": t.family}
+           for t in REGISTRY if not isinstance(t, mcp.McpTool)]
+    servers: dict[str, list] = {}
+    for t in REGISTRY:
+        if isinstance(t, mcp.McpTool):
+            servers.setdefault(t.server.name, []).append(
+                {"name": t.name, "enabled": bool(t.enabled)})
+    for name in (s.name for s in mcp.SERVERS):
+        servers.setdefault(name, [])
+    return out + [{"name": f"{mcp.KIND}:{name}", "server": name,
+                   "tools": found} for name, found in servers.items()]
 
 
 def kinds() -> frozenset:

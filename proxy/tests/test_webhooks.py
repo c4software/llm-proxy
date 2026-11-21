@@ -186,13 +186,14 @@ def test_tour_toujours_la_meme_conversation(proxy, posted):
     [conv] = conversations.list_all("")
     assert conv["id"] == cid and [m["content"] for m in conv["messages"]] \
         == ["premier", "un", "second", "deux"]
-    # Le second tour voit le premier échange.
-    assert [m["content"] for m in proxy.sent[-1]["messages"]] == ["premier", "un", "second"]
+    # Le second tour ne reçoit QUE son message : pas les tours précédents.
+    assert [m["content"] for m in proxy.sent[-1]["messages"]] == ["second"]
 
 
 def test_tour_dans_une_conversation_existante(proxy, posted):
-    """Une conversation de la page : son prompt système (le webhook n'en a
-    pas), ses tours d'outils de la page rejoués, son dernier résumé."""
+    """Une conversation de la page : le modèle reçoit son prompt système (le
+    webhook n'en a pas) et le seul message reçu — ni ses messages, ni ses
+    tours d'outils, ni son résumé. Le message et la réponse y sont rangés."""
     conversations.save("", "c1", {
         "id": "c1", "title": "T", "created": 1, "updated": 1, "model": "essai/m",
         "system": "Prompt de la page.", "tools": [], "messages": [
@@ -208,11 +209,9 @@ def test_tour_dans_une_conversation_existante(proxy, posted):
                                       "conversation": "c1"}, None, "")
     proxy.replies = [answer("ok")]
     go(webhook_turn.handle("", hook, "suite", {}))
-    msgs = proxy.sent[-1]["messages"]
-    assert msgs[0]["content"].startswith("Prompt de la page.\n\nRÉSUMÉ")
-    assert [m["role"] for m in msgs[1:]] == ["user", "assistant", "tool", "assistant", "user"]
-    assert msgs[2]["tool_calls"][0]["function"]["name"] == "get_date"
-    assert conversations.get("", "c1")["messages"][-1]["content"] == "ok"
+    assert proxy.sent[-1]["messages"] == [{"role": "system", "content": "Prompt de la page."},
+                                          {"role": "user", "content": "suite"}]
+    assert [m["content"] for m in conversations.get("", "c1")["messages"][-2:]] == ["suite", "ok"]
 
 
 def test_tour_en_erreur_est_dit(proxy, posted):
@@ -502,3 +501,22 @@ def test_conversation_dediee_supprimee_recreee(proxy, posted):
 def test_tool_est_un_booleen():
     with pytest.raises(webhooks.WebhookError, match="true ou false"):
         webhooks.create_out("a", {"name": "S", "url": "https://chat.example/h", "tool": "true"})
+
+
+
+def test_passe_plat_en_incognito(proxy, posted, monkeypatch):
+    """Le passe plat ne garde rien : son tour est INCOGNITO."""
+    from llm_proxy.core.settings import INCOGNITO
+    out = webhooks.create_out("", {"name": "S", "url": "https://chat.example/h"})
+    hook, _ = webhooks.create_in("", {"name": "P", "model": "essai/m", "target": "none",
+                                      "reply": out["id"]}, None, "")
+    seen = []
+    real = webhook_turn.complete
+
+    async def spy(owner, h, body):
+        seen.append(INCOGNITO.get())
+        return await real(owner, h, body)
+    monkeypatch.setattr(webhook_turn, "complete", spy)
+    proxy.replies = [answer("ok")]
+    go(webhook_turn.handle("", hook, "x", {}))
+    assert seen == [True] and INCOGNITO.get() is False

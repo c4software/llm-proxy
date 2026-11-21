@@ -28,6 +28,14 @@ et elle suit son état (compte en attente ou bloqué = clé refusée). Elle
 reste écrite dans le TOML. Les données déjà rangées sous la clé seule
 ne sont pas déplacées.
 
+LES DROITS D'UNE CLÉ GÉRÉE (colonne `tools`) : les outils hébergés qu'elle
+peut employer. NULL = tous ceux qui sont actifs (le défaut, et celui des
+clés d'avant) ; sinon une liste JSON de noms — un outil (`web_search`),
+les outils d'un serveur MCP (`mcp:<serveur>`, ceux qu'il découvrira
+compris) ou de tous (`mcp`) ; [] = aucun. Choisis à la création,
+modifiables ensuite (set_key_tools) ; ils suivent la clé, pas le compte.
+Le filtre lui-même est dans tools.enabled (tools.GRANTED).
+
 Ce module ne connaît ni FastAPI, ni httpx2, ni Authlib. SQLite, une
 connexion par opération sous un verrou, comme memories.py : des
 opérations courtes, appelées hors de la boucle d'événements. Les lectures
@@ -35,6 +43,8 @@ du chemin chaud (une clé présentée, le compte d'une session) passent par
 un petit cache à durée courte, vidé à chaque écriture locale.
 """
 
+import json
+import re
 import sqlite3
 import time
 
@@ -50,6 +60,10 @@ if NEW_ROLE not in ("pending", "user"):
                      f"«pending» ou «user» (reçu {NEW_ROLE!r})")
 MAX_LABEL = 80
 MAX_KEYS = config.integer("oidc.max_keys_per_account", 50)
+# Les droits d'une clé : au plus MAX_RIGHTS noms, chacun d'un outil ou
+# d'un serveur MCP (des noms de fonction : lettres, chiffres, _ . : -).
+MAX_RIGHTS = 200
+RIGHT = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 # Une clé présentée, le compte d'une session : relus au plus toutes les
 # CACHE_TTL secondes. Assez court pour qu'une révocation faite par un
 # autre processus prenne effet vite ; assez long pour ne pas toucher
@@ -95,6 +109,10 @@ def _setup(conn: sqlite3.Connection) -> None:
     have = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
     if "share" not in have:
         conn.execute("ALTER TABLE users ADD COLUMN share INTEGER")
+    # `tools` d'une clé : ses droits (JSON), NULL = tous les outils.
+    have = {r[1] for r in conn.execute("PRAGMA table_info(keys)")}
+    if "tools" not in have:
+        conn.execute("ALTER TABLE keys ADD COLUMN tools TEXT")
 
 
 _store = Store(lambda: DB_PATH, _setup, row_factory=sqlite3.Row,
@@ -230,21 +248,53 @@ def user_ids() -> list[int]:
 
 # ── Clés ────────────────────────────────────────────────────────────────
 
+def clean_rights(value) -> list[str] | None:
+    """Les droits reçus de la page → None (tous les outils) ou la liste
+    triée, sans doublon. Lève AccountError sur ce qui n'en est pas."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(
+            isinstance(v, str) and RIGHT.fullmatch(v) for v in value):
+        raise AccountError("tools : null (tous les outils) ou une liste de "
+                           "noms d'outils (web_search, mcp:<serveur>…)")
+    if len(set(value)) > MAX_RIGHTS:
+        raise AccountError(f"tools : {MAX_RIGHTS} noms au plus")
+    return sorted(set(value))
+
+
+def _rights(text) -> list[str] | None:
+    """La colonne `tools` relue : None, ou la liste. Illisible = aucun
+    outil (on ne donne pas plus qu'écrit)."""
+    if text is None:
+        return None
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return []
+    return [v for v in value if isinstance(v, str)] \
+        if isinstance(value, list) else []
+
+
 def _key(row) -> dict:
     out = {"id": row["id"], "hint": row["hint"], "label": row["label"],
            "created": row["created"], "last_used": row["last_used"],
            "revoked": row["revoked"], "user_id": row["user_id"],
            # Le condensé : ce que les statistiques appellent api_key_id.
-           "api_key_id": row["digest"]}
+           "api_key_id": row["digest"],
+           # Ses droits : None = tous les outils hébergés actifs.
+           "tools": _rights(row["tools"])}
     if "email" in row.keys():
         out["user"] = row["email"] or row["name"] or f"#{row['user_id']}"
     return out
 
 
-def create_key(uid: int, key: str, digest: str, label: str = "") -> dict:
+def create_key(uid: int, key: str, digest: str, label: str = "",
+               tools: list | None = None) -> dict:
     """Range la clé `key` (tirée par l'appelant) pour le compte `uid`,
-    sous son condensé. Le compte doit être actif."""
+    sous son condensé, avec ses droits (`tools`, voir clean_rights). Le
+    compte doit être actif."""
     label = " ".join(str(label or "").split())[:MAX_LABEL]
+    rights = clean_rights(tools)
     now = time.time()
 
     def go(conn):
@@ -259,8 +309,9 @@ def create_key(uid: int, key: str, digest: str, label: str = "") -> dict:
                                "révoquez-en une d'abord", 409)
         kid = digest[:12]
         conn.execute("INSERT INTO keys (id, user_id, digest, hint, label, "
-                     "created) VALUES (?, ?, ?, ?, ?, ?)",
-                     (kid, uid, digest, key[:8], label, now))
+                     "created, tools) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     (kid, uid, digest, key[:8], label, now,
+                      None if rights is None else json.dumps(rights)))
         return _key(conn.execute("SELECT * FROM keys WHERE id = ?",
                                  (kid,)).fetchone())
     return _run(go, write=True)
@@ -345,16 +396,47 @@ def revoke_key(kid: str, uid: int | None = None) -> dict:
     return _run(go, write=True)
 
 
+def update_key(kid: str, uid: int | None = None, *, label=None,
+               tools=...) -> dict:
+    """Change le libellé (`label`, None : inchangé) et/ou les droits
+    (`tools`, ... : inchangés ; None : tous les outils) de la clé `kid` —
+    du compte `uid`, ou de n'importe qui (None, admin). Une clé révoquée
+    ne change plus."""
+    rights = clean_rights(tools) if tools is not ... else ...
+    if label is not None:
+        label = " ".join(str(label).split())[:MAX_LABEL]
+
+    def go(conn):
+        row = conn.execute("SELECT * FROM keys WHERE id = ?", (kid,)).fetchone()
+        if row is None or (uid is not None and row["user_id"] != uid):
+            raise AccountError("clé introuvable", 404)
+        if row["revoked"] is not None:
+            raise AccountError("clé révoquée : elle ne change plus", 409)
+        if rights is not ...:
+            conn.execute("UPDATE keys SET tools = ? WHERE id = ?",
+                         (None if rights is None else json.dumps(rights), kid))
+        if label is not None:
+            conn.execute("UPDATE keys SET label = ? WHERE id = ?", (label, kid))
+        return _key(conn.execute("SELECT * FROM keys WHERE id = ?",
+                                 (kid,)).fetchone())
+    return _run(go, write=True)
+
+
 def resolve(digest: str) -> dict | None:
     """La clé de condensé `digest`, si elle vaut encore : non révoquée, et
-    son compte actif → {"id", "user_id"} ; None sinon."""
+    son compte actif → {"id", "user_id", "tools"} (ses droits, None = tous
+    les outils) ; None sinon."""
     def load():
         def go(conn):
             row = conn.execute(
-                "SELECT k.id, k.user_id FROM keys k JOIN users u "
+                "SELECT k.id, k.user_id, k.tools FROM keys k JOIN users u "
                 "ON u.id = k.user_id WHERE k.digest = ? AND k.revoked IS NULL "
                 "AND u.role IN ('admin', 'user')", (digest,)).fetchone()
-            return dict(row) if row else None
+            if row is None:
+                return None
+            rights = _rights(row["tools"])
+            return {"id": row["id"], "user_id": row["user_id"],
+                    "tools": None if rights is None else frozenset(rights)}
         return _run(go)
     return _cached(("key", digest), load)
 

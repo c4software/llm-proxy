@@ -468,6 +468,10 @@ démarrage et `/healthz` : `chat.always` (serveurs développés),
 Pour garder appels et résultats dans son propre historique, un client appelle
 les outils directement, derrière la clé du proxy et avec les mêmes garde-fous.
 Il les déclare à son modèle comme les siens ; le proxy n'a ni boucle ni mémoire.
+Une clé de compte limitée à certains outils ([droits d'une
+clé](tableau-de-bord.md#comptes-oidc)) ne voit que ceux-là, ici comme sur
+`/mcp` et les surfaces ; un outil actif mais non permis répond `403`
+`tool_not_permitted`.
 
 ```text
 GET  /v1/tools            → les outils actifs (nom, description, schéma) :

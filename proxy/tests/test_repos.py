@@ -215,17 +215,26 @@ class Bac:
     d'abord — comme dans un bac."""
 
     def __init__(self, root):
-        self.root, self.calls = root, []
+        self.root, self.calls, self.destroyed = root, [], []
 
     def handler(self, request):
         body = json.loads(request.content)
+        if request.url.path == "/v1/destroy":
+            self.destroyed.append(body)
+            work = self.root / f"{body['client'] or 'open'}-{body['session']}"
+            shutil.rmtree(work, ignore_errors=True)
+            return httpx2.Response(200, json={"destroyed": True})
         self.calls.append(body)
-        work = self.root / f"{body['client'] or 'open'}-{body['session']}"
+        # Session «» : un bac d'un seul appel, détruit après lui.
+        work = self.root / (f"{body['client'] or 'open'}-{body['session']}" if body["session"]
+                            else f"once-{len(self.calls)}")
         work.mkdir(parents=True, exist_ok=True)
         for f in body.get("inputs") or []:
             (work / f["name"]).write_bytes(base64.b64decode(f["data"]))
         p = subprocess.run([sys.executable, "-c", body["code"]], cwd=work,
                            capture_output=True, text=True, timeout=60)
+        if not body["session"]:
+            shutil.rmtree(work, ignore_errors=True)
         return httpx2.Response(200, json={"exit_code": p.returncode, "output": p.stdout + p.stderr,
                                           "timed_out": False, "rejected": [], "files": []})
 
@@ -357,6 +366,58 @@ def test_erreur_gardee_sur_la_source(repo):
     assert "not found" in repos.list_own("a")[0]["last_error"]
 
 
+def test_bac_aligne_sur_le_cache_et_oubli(repo, monkeypatch):
+    """Le bac des dépôts demande l'inactivité du cache (30 min) ; forget
+    vide le cache du compte et détruit son bac."""
+    repo.run({"command": "tree"})
+    assert all(c["idle"] == repository.CACHE.ttl for c in repo.bac.calls)
+    assert len(repository.CACHE) == 1
+    monkeypatch.setattr(code_execution, "destroy", lambda client, session, transport=None:
+                        _destroy(repo, client, session))
+    go(repository.forget("a"))
+    assert len(repository.CACHE) == 0 and repo.bac.destroyed == [{"client": "a", "session": "repository"}]
+    # Oublié : la commande suivante retélécharge.
+    repo.run({"command": "tree"})
+    assert len(repo.forge_seen) == 2
+
+
+async def _destroy(repo, client, session):
+    repo.bac.handler(httpx2.Request("POST", "http://executor.invalid/v1/destroy",
+                                    json={"client": client, "session": session}))
+    return True
+
+
+def test_incognito_un_bac_d_un_seul_appel(repo):
+    """Incognito : chaque commande dépose l'archive dans un bac d'un seul
+    appel (session «»), et le cache ne garde rien."""
+    from llm_proxy.core.settings import INCOGNITO
+    token = INCOGNITO.set(True)
+    try:
+        assert "mcp==1.2.0" in repo.run({"command": "grep", "pattern": "mcp=="})
+        repo.run({"command": "tree"})
+    finally:
+        INCOGNITO.reset(token)
+    assert [c["session"] for c in repo.bac.calls] == ["", ""]
+    assert all(c.get("inputs") for c in repo.bac.calls)
+    assert len(repository.CACHE) == 0 and len(repo.forge_seen) == 2
+    assert not list((repo.bac.root).glob("once-*"))           # rien ne reste
+
+
+def test_cache_glissant_purge_et_oubli(monkeypatch):
+    from llm_proxy.tools.webcache import Cache
+    import time as t
+    now = [1000.0]
+    monkeypatch.setattr(t, "monotonic", lambda: now[0])
+    c = Cache(60, 10, 10_000, sliding=True)
+    c.put(("a", 1), b"x", 1)
+    c.put(("b", 1), b"y", 1)
+    now[0] += 50
+    assert c.get(("a", 1)) == b"x"               # relu : sa durée repart
+    now[0] += 30
+    assert c.purge() == 1 and c.get(("b", 1)) is None and c.get(("a", 1)) == b"x"
+    assert c.forget(lambda k: k[0] != "a") == 1 and len(c) == 0
+
+
 # ── la page ─────────────────────────────────────────────────────────────
 
 def test_routes_de_la_page(proxy, monkeypatch):
@@ -376,3 +437,48 @@ def test_routes_de_la_page(proxy, monkeypatch):
     assert c.delete(f"/ui/repos/{sid}").json()["deleted"] is False
     monkeypatch.setattr(repository, "ENABLED", False)
     assert c.get("/ui/repos").status_code == 404
+
+
+def test_modifier_supprimer_oublier_efface(proxy, monkeypatch):
+    """Modifier ou supprimer une source, ou « Oublier », efface ce que le
+    compte a téléchargé."""
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-a"])
+    owner = auth.toml_digests().pop()
+    forgotten = []
+
+    async def forget(o, transport=None):
+        forgotten.append(o)
+        return True
+    monkeypatch.setattr(repository, "forget", forget)
+    c = proxy.client
+    c.post("/ui/login", json={"key": "sk-a"})
+    sid = c.post("/ui/repos", json={"name": "S", "forge": "gitlab", "url": "https://g.lan",
+                                    "token": "t"}).json()["source"]["id"]
+    assert forgotten == []                       # créer n'efface rien
+    c.put(f"/ui/repos/{sid}", json={"name": "S2", "forge": "gitlab", "url": "https://g.lan"})
+    c.delete(f"/ui/repos/{sid}")
+    assert c.post("/ui/repos/forget", json={}).json() == {"forgotten": True}
+    assert forgotten == [owner, owner, owner]
+
+
+
+def test_oubli_pendant_un_telechargement(repo, monkeypatch):
+    """Un forget pendant qu'une commande télécharge : l'archive ne retourne
+    ni dans le cache, ni dans le bac."""
+    real = repository.fetch
+
+    async def slow(*a, **k):
+        repository._generation["a"] = repository._generation.get("a", 0) + 1   # forget au milieu
+        return await real(*a, **k)
+    monkeypatch.setattr(repository, "fetch", slow)
+    with pytest.raises(ToolError, match="erased"):
+        repo.run({"command": "tree"})
+    assert len(repository.CACHE) == 0
+    assert all("inputs" not in c for c in repo.bac.calls)
+
+
+def test_oubli_dit_si_l_executeur_ne_repond_pas(monkeypatch):
+    async def down(client, session, transport=None):
+        return None
+    monkeypatch.setattr(code_execution, "destroy", down)
+    assert go(repository.forget("a")) is False

@@ -250,7 +250,7 @@ partie qui l'a importé.
 | `ui/voice_routes.py` | Routes `/ui/voices` (voix clonées) |
 | `ui/repo_routes.py` | `/ui/repos` : les sources de dépôts du compte |
 | `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |
-| `ui/webhook_turn.py` | Le tour d'un message reçu, sans navigateur : la conversation, l'échange tel que la page l'enverrait, `/ui/chat/completions` appelé en interne au nom du créateur, les envois sortants |
+| `ui/webhook_turn.py` | Le tour d'un message reçu, sans navigateur : la conversation, le seul message reçu et le prompt système envoyés au modèle, `/ui/chat/completions` appelé en interne au nom du créateur, les envois sortants |
 | `ui/dataurl.py` | Lecture des URL `data:` envoyées par la page (images, audio) |
 | `ui/web/templates/index.html` | Squelette de la page |
 | `ui/web/static/` | Modules ES par domaine : `app.js` (session, vues, menu), `stats/`, `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème), plus `dashboard.css`, `vue.global.prod.js` et `vueuse.iife.min.js` (VueUse 15, ses modules `shared` et `core`) |

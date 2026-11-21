@@ -426,3 +426,22 @@ def test_bornes_par_l_environnement():
     assert (lim.memory, lim.pids, lim.cpus, lim.idle) == ("1g", 64, 0.5, 10800.0)
     with pytest.raises(SystemExit, match="SANDBOX_PIDS"):
         sandbox.Limits.from_env({"SANDBOX_PIDS": "beaucoup"})
+
+
+def test_inactivite_demandee_par_l_appelant(service):
+    """`idle` raccourcit l'inactivité de CE bac (ramenée sous
+    SANDBOX_IDLE, 60 s au moins) ; les autres gardent la leur."""
+    import asyncio
+    client, box = service(idle=3600)
+    r = client.post("/v1/execute", headers=AUTH, json={
+        "client": "c", "session": "court", "language": "python", "code": "print(1)",
+        "idle": 120})
+    assert r.status_code == 200, r.text
+    run(client, "print(2)", session="long")
+    assert {k[1]: s.idle for k, s in box._sessions.items()} == {"court": 120.0, "long": None}
+    for s in box._sessions.values():
+        s.used -= 200                       # 200 s sans appel
+    assert asyncio.run(box.sweep()) == 1 and [k[1] for k in box._sessions] == ["long"]
+    bad = client.post("/v1/execute", headers=AUTH, json={
+        "client": "c", "session": "x", "language": "python", "code": "print(1)", "idle": "1"})
+    assert bad.status_code == 400

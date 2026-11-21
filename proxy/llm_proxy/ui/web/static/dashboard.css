@@ -933,6 +933,20 @@ a.btn { display: inline-block; text-decoration: none; }
   border: 1px solid var(--line); background: var(--bg); color: var(--ink);
 }
 .key-new-row { display: flex; gap: 10px; padding: 14px 18px; }
+.key-rights { border: 1px solid var(--line); border-radius: 8px; margin: 0 18px 14px; padding: 8px 12px 10px; }
+.key-rights legend { font-size: 12.5px; color: var(--muted); padding: 0 4px; }
+.key-rights-mode { display: flex; gap: 16px; flex-wrap: wrap; }
+.key-rights-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 6px 16px; margin-top: 10px; }
+.key-rights-list .dim { color: var(--muted); }
+.key-rights-list .tag { margin-left: 4px; }
+.key-rights-server { display: flex; flex-direction: column; gap: 4px; grid-column: 1 / -1; }
+.key-rights-server .sub { padding-left: 22px; }
+.key-rights-list .note { grid-column: 1 / -1; padding: 0; }
+.config-keys td.key-tools-cell { white-space: normal; max-width: 260px; font-size: 12.5px; }
+.config-keys tr.key-edit td { white-space: normal; background: var(--track); }
+.config-keys tr.key-edit .key-rights { margin: 4px 0 10px; background: var(--bg); }
+.config-keys tr.key-edit .note { padding: 8px 0 0; }
 /* Configuration → Webhooks, Dépôts : les listes et formulaires par compte */
 .item-form { display: flex; flex-direction: column; gap: 12px; padding: 4px 18px 18px; max-width: 720px; }
 .item-form > label:not(.check), .item-form fieldset { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }

@@ -95,6 +95,13 @@ async def tools_run(name: str, request: Request):
     de son texte (pages citées ; URL lue, titre, plage de caractères…),
     pour l'affichage — voir docs/outils.md."""
     hosted = tools.Hosted()
+    if name not in hosted.by_name and tools.GRANTED.get() is not None \
+            and any(t.name == name and t.enabled for t in tools.REGISTRY):
+        return error_response(
+            "openai", 403, "tool_not_permitted",
+            f"outil «{name}» non permis à cette clé (ses droits se règlent "
+            f"dans Configuration → Clés) ; permis : "
+            f"{', '.join(hosted.by_name) or 'aucun'}")
     if name not in hosted.by_name:
         return error_response(
             "openai", 404, "unknown_tool",

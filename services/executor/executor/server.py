@@ -6,9 +6,13 @@ L'API HTTP de l'exécuteur : trois routes derrière un jeton, une de santé.
   GET  /v1/status     l'état : bacs ouverts, bornes, ce que podman tient
                       réellement ici (cgroups), langages.
   POST /v1/execute    {"client", "session", "language", "code", "timeout"?,
-                      "inputs"?: [{"name", "data" (base64)}]}
+                      "idle"?, "inputs"?: [{"name", "data" (base64)}]}
                       → exécute dans le bac de (client, session), créé au
                       besoin. `session` vide = un bac d'un seul appel.
+                      `idle` (s) : ce bac est détruit après cette
+                      inactivité, ramenée sous SANDBOX_IDLE (60 s au
+                      moins) — le proxy y aligne le bac de ses dépôts sur
+                      son cache.
                       `inputs` : des fichiers DÉPOSÉS dans /work avant le
                       programme (un nom nu : lettres, chiffres, `_`, `.`,
                       `-`, sans point ni tiret en tête) ; un fichier du
@@ -56,6 +60,7 @@ import binascii
 import hmac
 import json
 import logging
+import math
 import os
 import time
 from contextlib import asynccontextmanager
@@ -214,6 +219,10 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
         if limit is not None and (isinstance(limit, bool)
                                   or not isinstance(limit, (int, float))):
             return error(400, "invalid_request", "`timeout` : un nombre")
+        idle = doc.get("idle")
+        if idle is not None and (isinstance(idle, bool) or not isinstance(idle, (int, float))
+                                 or not math.isfinite(idle)):
+            return error(400, "invalid_request", "`idle` : un nombre fini")
         # La FORME des entrées est jugée ici (400 : l'appelant se trompe) ;
         # leurs noms et leurs tailles par le bac, fichier par fichier.
         inputs = []
@@ -232,7 +241,7 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
         client, session = doc.get("client", ""), doc.get("session", "")
         try:
             out = await box.execute(client, session, language, code, limit,
-                                    inputs)
+                                    inputs, idle)
         except Busy as exc:
             return error(429, "busy", str(exc))
         except SandboxError as exc:

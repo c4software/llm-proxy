@@ -12,7 +12,9 @@ Elles se cumulent.
   401. Voir [Clé du proxy](#clé-du-proxy).
 - **Les [comptes OIDC](tableau-de-bord.md#comptes-oidc)** (`[oidc]`) :
   - la page ne s'ouvre que par le fournisseur d'identité ;
-  - chacun gère ses clés (uuid4, seul le condensé est en base) ;
+  - chacun gère ses clés (uuid4, seul le condensé est en base), et
+    peut limiter chacune à certains outils hébergés (pas d'exécution de
+    code ni de webhook pour une clé de CI, par exemple) ;
   - un admin accepte, bloque ou révoque les comptes ;
   - une clé volée n'ouvre pas la page.
 - **Le réseau** : Nginx Proxy Manager, Tailscale, réseau Docker partagé.
@@ -72,7 +74,11 @@ Le contenu d'un dépôt n'est pas décodé dans le proxy : l'archive est
 décompressée et lue dans un bac de l'exécuteur, sans réseau (voir
 [Comment un dépôt est lu](depots.md#comment-un-dépôt-est-lu)). Seule la
 forge `git` fait lire un pack par git dans le proxy, borné et sans rien
-exécuter du dépôt.
+exécuter du dépôt. Un dépôt téléchargé est effacé 30 minutes après sa
+dernière lecture, tout de suite quand sa source change, et n'est pas
+gardé en incognito ni en passe plat : voir
+[Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps). Tout
+vit en mémoire : sur l'hôte, un swap chiffré ou pas de swap.
 
 ## Le conteneur du proxy
 

@@ -211,6 +211,7 @@ class _Session:
     used: float
     name: str = ""                  # le conteneur ; «» tant qu'il n'existe pas
     dead: bool = False              # sa création a échoué
+    idle: float | None = None       # inactivité demandée par l'appelant, sous Limits.idle
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -494,7 +495,7 @@ class Sandboxes:
         # La marge d'une exécution sur la durée de vie : podman tue le
         # conteneur à `lifetime`, pas au milieu d'un appel.
         lim = self.limits
-        return now - s.used > lim.idle \
+        return now - s.used > (lim.idle if s.idle is None else s.idle) \
             or now - s.created > lim.lifetime - lim.timeout
 
     async def _drop(self, key) -> bool:
@@ -589,10 +590,13 @@ class Sandboxes:
     # ── exécution ───────────────────────────────────────────────────────
     async def execute(self, client: str, session: str, language: str,
                       code: str, timeout: float | None = None,
-                      inputs=()) -> Outcome:
+                      inputs=(), idle: float | None = None) -> Outcome:
         """Exécute `code` dans le bac de (client, session), créé au
         besoin. `session` vide : un bac d'UN appel, détruit aussitôt.
         `timeout` : le délai demandé, ramené sous celui des bornes.
+        `idle` : l'inactivité après laquelle CE bac est détruit, ramenée
+        sous Limits.idle (le bac des dépôts du proxy : son cache) ; la
+        dernière demandée vaut.
         `inputs` : des File à déposer dans /work AVANT le programme ; un
         fichier refusé n'empêche pas l'exécution (Outcome.rejected).
         Lève ValueError (langage inconnu), Busy, SandboxError."""
@@ -618,6 +622,8 @@ class Sandboxes:
             started = time.monotonic()
             fresh = not s.name
             s.used = started
+            if idle is not None:
+                s.idle = min(max(float(idle), 60.0), lim.idle)
             try:
                 if fresh:
                     await self._boot(key, s)

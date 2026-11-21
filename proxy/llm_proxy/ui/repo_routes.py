@@ -4,11 +4,16 @@ Les SOURCES DE DÉPÔTS du compte connecté (storage/repos.py), pour la page
 le jeton n'est jamais rendu. Écritures en JSON (json_only).
 
   GET    /ui/repos          {sources (les siennes), shared (celles de l'admin,
-                            sans jeton), max_bytes}
+                            sans jeton), max_bytes, ttl (durée de vie d'un
+                            dépôt téléchargé)}
   POST   /ui/repos          crée {name, forge, url, token, username?, projects?}
   PUT    /ui/repos/{id}     modifie (token absent ou vide : inchangé, sauf
                             si l'adresse ou la forge change)
   DELETE /ui/repos/{id}
+  POST   /ui/repos/forget   efface tout ce que le compte a téléchargé (cache
+                            et bac des dépôts) → {forgotten} (faux : bac non
+                            joint, il expirera seul) — aussi fait à chaque
+                            modification ou suppression d'une source
 """
 
 import asyncio
@@ -36,7 +41,8 @@ async def ui_repos(request: Request):
     if (bad := _closed()) is not None:
         return bad
     return {"sources": await asyncio.to_thread(repos.list_own, ui_client(request)),
-            "shared": repos.shared(), "max_bytes": repository.MAX_BYTES}
+            "shared": repos.shared(), "max_bytes": repository.MAX_BYTES,
+            "ttl": repository.CACHE.ttl}
 
 
 async def _write(request: Request, fn, *args):
@@ -44,8 +50,15 @@ async def _write(request: Request, fn, *args):
         return bad
     if (bad := json_only(request)) is not None:
         return bad
-    got, bad = await run(fn, ui_client(request), *args, parse_json(await request.body()))
-    return bad if bad is not None else {"source": got}
+    owner = ui_client(request)
+    got, bad = await run(fn, owner, *args, parse_json(await request.body()))
+    if bad is not None:
+        return bad
+    if fn is repos.update:
+        # Ce qui a été lu avec l'ancienne adresse, l'ancien jeton ou les
+        # anciens projets permis ne doit plus servir.
+        await repository.forget(owner)
+    return {"source": got}
 
 
 @router.post("/ui/repos")
@@ -62,5 +75,20 @@ async def ui_repo_update(request: Request, sid: str):
 async def ui_repo_delete(request: Request, sid: str):
     if (bad := _closed()) is not None:
         return bad
-    n, bad = await run(repos.delete, ui_client(request), sid)
-    return bad if bad is not None else {"id": sid, "deleted": bool(n)}
+    owner = ui_client(request)
+    n, bad = await run(repos.delete, owner, sid)
+    if bad is not None:
+        return bad
+    if n:
+        await repository.forget(owner)
+    return {"id": sid, "deleted": bool(n)}
+
+
+@router.post("/ui/repos/forget")
+async def ui_repos_forget(request: Request):
+    if (bad := _closed()) is not None:
+        return bad
+    if (bad := json_only(request)) is not None:
+        return bad
+    # Faux : l'exécuteur n'a pas pu être joint, son bac expirera seul.
+    return {"forgotten": await repository.forget(ui_client(request))}

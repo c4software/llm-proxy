@@ -61,10 +61,11 @@ décodé dans le proxy** :
   L'outil `code_execution` lui-même peut rester inactif.
 - **Le jeton** ne quitte pas le proxy : ni le bac ni le modèle ne le voient.
 
-Le bac garde ses dépôts tant qu'il vit (les deux plus récents, pour tenir
-dans `/work`). Un bac neuf, purgé après `SANDBOX_IDLE` ou recréé au
-redémarrage de l'exécuteur, n'a rien : le proxy y redépose l'archive de son
-cache, ou la retélécharge si elle n'y est plus.
+Le bac garde ses dépôts (les deux plus récents, pour tenir dans `/work`)
+tant qu'il vit, c'est-à-dire 30 minutes après sa dernière commande (voir
+[Ce qui est gardé](#ce-qui-est-gardé-et-combien-de-temps)). Un bac neuf
+n'a rien : le proxy y redépose l'archive de son cache, ou la retélécharge
+si elle n'y est plus.
 
 Le dépôt est décompressé dans un dossier caché, `/work/.repos/`.
 L'exécuteur ne renvoie donc pas ses fichiers comme « fichiers produits ».
@@ -129,15 +130,45 @@ expression piégée ne coûte donc que du temps de bac, jamais du proxy. Un
 fichier de plus de 2 Mo est listé, mais ni lu ni cherché ; un fichier
 binaire n'est pas lu.
 
-L'archive téléchargée est gardée `[repos].cache_ttl` secondes (30 minutes
-par défaut) par compte, source, projet et référence : un bac neuf la reçoit
-sans nouveau téléchargement, et deux commandes simultanées attendent le
-même téléchargement. Une source modifiée (adresse, forge, jeton) ne sert
-pas l'ancien contenu. Une conversation incognito ne garde rien dans le
-cache.
+Deux commandes simultanées sur le même projet attendent le même
+téléchargement. Une source modifiée (adresse, forge, jeton) ne sert pas
+l'ancien contenu.
 
 Une archive n'a pas d'historique, et le `git fetch` n'en garde qu'un
 commit. L'outil ne fait que lire : ni exécution du projet, ni push.
+
+## Ce qui est gardé, et combien de temps
+
+Le code d'un dépôt n'est gardé que le temps d'être lu : **30 minutes après
+sa dernière lecture** (`[repos].cache_ttl`), la même durée dans le proxy et
+dans le bac, avec une suppression active (pas seulement au prochain appel).
+
+| Où | Quoi | Effacé |
+|---|---|---|
+| RAM du proxy (cache) | L'archive compressée | 30 min après sa dernière lecture ; la purge passe chaque minute. Aussi : poussée dehors par d'autres archives (`cache_bytes`, 32 au plus), redémarrage du proxy |
+| `/tmp` du proxy (forge `git`) | Le pack git | À la fin du téléchargement (dossier temporaire ; `/tmp` est en mémoire) |
+| Bac de l'exécuteur | L'archive reçue | Juste après sa décompression |
+| Bac de l'exécuteur | Le projet décompressé | Le bac est détruit 30 min après sa dernière commande (le proxy demande cette inactivité à l'exécuteur, `idle` : il faut l'exécuteur de la même version ; un plus ancien l'ignore, et le bac vit alors `SANDBOX_IDLE`, 3 h) ; au redémarrage de l'exécuteur ; et au-delà de deux dépôts, le plus ancien. Le bac compte l'inactivité de tous ses dépôts : un dépôt peut y rester tant que l'autre est lu |
+| Partout | Tout ce que le compte a téléchargé | Tout de suite : à la modification ou à la suppression d'une source, et par le bouton **Oublier les dépôts téléchargés** (*Configuration → Dépôts*). Une commande déjà en route n'y remet rien. Si l'exécuteur ne répond pas, la page le dit : son bac expirera seul |
+
+**Incognito et passe plat** : rien n'est gardé. Chaque commande dépose
+l'archive dans un bac d'un seul appel, détruit après lui, et le cache ne la
+garde pas. Le passe plat des [webhooks](webhooks.md) tourne en incognito :
+pas non plus d'échange d'outils gardé.
+
+**Ce qui suit la conversation**, et non le dépôt : les extraits que le
+modèle a lus (résultats de `read` et `grep`) sont gardés avec les autres
+échanges d'outils pour les tours suivants (`[chat].memory`, jusqu'à
+`[tools].cache_ttl`, 24 h, en mémoire ; rien en incognito ni en passe
+plat). Ce que le modèle recopie dans sa réponse va dans l'historique du
+chat (effacé avec la conversation) et vers un webhook sortant (Slack,
+Mattermost : il ne se rappelle pas). La sauvegarde de `data/` contient
+l'historique.
+
+**Limite** : tout ce qui précède vit en mémoire (RAM, `tmpfs`), jamais sur
+le disque du proxy ni de l'exécuteur. Ne plus y faire référence n'est pas
+l'écraser, et le **swap** de l'hôte peut en garder une trace : sur la
+machine qui héberge la pile, un swap chiffré, ou pas de swap.
 
 ## Tailles
 

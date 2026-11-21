@@ -295,6 +295,10 @@ async def lifespan(app: FastAPI):
         ", ".join(EXEMPT_SUFFIXES) or "aucun",
     )
 
+    # La purge des caches en mémoire (pages, transcriptions, dépôts) :
+    # une entrée expirée en sort même si personne ne la redemande.
+    refresh_tasks.append(asyncio.create_task(tools.webcache.sweep()))
+
     hup = watch_sighup()
     # La lecture du source des modules (core/reload.py), une fois, hors de
     # la boucle : le premier rechargement n'a plus qu'à évaluer.

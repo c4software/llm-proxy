@@ -81,6 +81,11 @@ def health_detail() -> dict:
             # Serveurs MCP de la configuration : joints ou non, leur
             # protocole, leurs outils — jamais leurs en-têtes.
             "mcp": tools.mcp.status(),
+            # Les archives des dépôts (tools/repository.py) : gardées
+            # [repos].cache_ttl après leur dernière lecture, purgées chaque minute.
+            "repository_cache": {"ttl": tools.repository.CACHE.ttl,
+                                 "entries": len(tools.repository.CACHE),
+                                 "bytes": tools.repository.CACHE.size},
             # Cache des transcriptions (le texte, jamais l'audio).
             "transcribe_cache": {"ttl": tools.transcribe.CACHE.ttl,
                                  "entries": len(tools.transcribe.CACHE),

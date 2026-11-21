@@ -41,12 +41,18 @@ Les forges passent par net.download : adresse résolue et épinglée, corps
 borné, et le jeton envoyé au seul saut qui reste sur l'origine de la
 source (jamais à l'hôte d'une redirection).
 
-Le bac garde ses dépôts tant qu'il vit ; un bac neuf (purgé, exécuteur
-redémarré) n'a rien : le script le dit, et le proxy redépose l'archive de
-son cache (CACHE, [repos].cache_ttl), ou la retélécharge. La clé : compte,
-source (adresse, forge, utilisateur, condensé du jeton), projet,
-référence. Deux commandes simultanées sur le même projet attendent le même
-téléchargement. Incognito, rien n'est gardé dans le cache (webcache.Cache).
+CE QUI EST GARDÉ, et combien de temps ([repos].cache_ttl, 30 min) :
+l'archive dans le cache du proxy, 30 min après sa DERNIÈRE lecture
+(purgée activement, webcache.sweep) ; le projet décompressé dans le bac
+« repository » du compte, détruit par l'exécuteur après la même
+inactivité (`idle` demandé à chaque appel). Un bac neuf n'a rien : le
+script le dit, et le proxy redépose l'archive de son cache, ou la
+retélécharge. forget(compte) efface les deux (source supprimée ou
+modifiée, bouton « Oublier »). Incognito (et donc le passe plat des
+webhooks) : un bac d'un seul appel, détruit après lui, et rien dans le
+cache. La clé : compte, source (adresse, forge, utilisateur, condensé du
+jeton), projet, référence. Deux commandes simultanées sur le même projet
+attendent le même téléchargement.
 """
 
 import asyncio
@@ -61,6 +67,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from ..core import config
+from ..core.settings import INCOGNITO
 from ..storage import repos
 from . import code_execution, net
 from .contract import Call, Result, Tool, ToolError, ToolName
@@ -76,8 +83,10 @@ MAX_BYTES = config.integer("repos.max_bytes", 20_000_000)
 MAX_UNPACKED = config.integer("repos.max_unpacked_bytes", 100_000_000)
 # Délai (s) du téléchargement entier (ou du fetch git).
 TIMEOUT = config.num("repos.timeout", 120)
+# 30 min après la DERNIÈRE lecture (sliding), purgé activement
+# (webcache.sweep) ; le bac des dépôts reçoit la même durée d'inactivité.
 CACHE = Cache(config.num("repos.cache_ttl", 1800), 32,
-              config.integer("repos.cache_bytes", 200_000_000))
+              config.integer("repos.cache_bytes", 200_000_000), sliding=True)
 # Un fichier plus gros n'est pas gardé (listé, mais ni lu ni cherché).
 MAX_FILE_BYTES = 2_000_000
 # Entrées au plus d'une archive (fichiers, dossiers, liens).
@@ -285,13 +294,18 @@ def _code(args: dict) -> str:
     return f"ARGS = {json.dumps(args)!r}\n" + SCRIPT
 
 
-async def _bac(client: str, args: dict, archive: bytes | None, transport=None) -> str | None:
+async def _bac(client: str, args: dict, archive: bytes | None, transport=None,
+               session: str = SESSION) -> str | None:
     """Une commande dans le bac du compte → son texte ; None : le dépôt n'y
-    est pas (bac neuf), à redéposer. Lève ToolError."""
+    est pas (bac neuf), à redéposer. `session` «» : un bac d'un seul appel,
+    détruit par l'exécuteur après lui (incognito). Lève ToolError."""
     args = {**args, "max_unpacked": MAX_UNPACKED, "max_file": MAX_FILE_BYTES,
             "max_entries": MAX_ENTRIES, "keep": KEEP}
-    body = {"client": client, "session": SESSION, "language": "python",
-            "timeout": code_execution.TIMEOUT}
+    body = {"client": client, "session": session, "language": "python",
+            "timeout": code_execution.TIMEOUT,
+            # Le bac des dépôts vit aussi longtemps que le cache, pas les
+            # 3 h d'un bac de code (SANDBOX_IDLE).
+            "idle": CACHE.ttl}
     if archive is not None:
         name = f"repo-{args['dir']}.tar.gz"
         args["archive"] = name
@@ -415,14 +429,44 @@ class RepositoryTool(Tool):
         source = await _source(call.client, str(args.get("source") or "").strip(), project)
         key = _key(call.client, source, project, ref)
         todo["dir"] = hashlib.sha256(repr(key).encode()).hexdigest()[:24]
-        text = await _bac(call.client, todo, None, sandbox)
-        if text is None:              # pas dans le bac : l'archive, puis la commande
+        # Incognito, rien ne survit à la réponse : un bac d'un seul appel
+        # (session «»), détruit après lui, l'archive redéposée à chaque
+        # commande (le cache ne la garde pas). Sinon, le bac « repository »
+        # du compte, et l'archive seulement s'il ne l'a pas encore.
+        session = "" if INCOGNITO.get() else SESSION
+        generation = _generation.get(call.client, 0)
+        text = None if not session else await _bac(call.client, todo, None, sandbox)
+        if text is None:
             archive = await _archive_for(key, call.client, source, project, ref, transport)
-            text = await _bac(call.client, todo, archive, sandbox)
+            if session and _generation.get(call.client, 0) != generation:
+                # Effacé pendant ce temps : le projet ne retourne pas dans le bac.
+                raise ToolError("failed", "the downloaded repositories were just erased by "
+                                          "the user; ask before reading again.")
+            text = await _bac(call.client, todo, archive, sandbox, session)
             if text is None:
                 raise ToolError("failed", "the sandbox lost the project; try again.")
         where = f"{source['name']}:{project}" + (f"@{ref}" if ref else "")
         return Result(f"[{where}]\n{text}", meta={"source": source["name"], "project": project})
+
+
+# Une génération par compte, avancée par forget : une commande commencée
+# avant l'effacement ne remet ni l'archive dans le cache, ni le projet dans
+# le bac (_archive_for, run).
+_generation: dict[str, int] = {}
+
+
+async def forget(owner: str, transport=None) -> bool:
+    """Tout ce que le compte a téléchargé, effacé : ses archives du cache et
+    son bac des dépôts (détruit par l'exécuteur, ses fichiers avec lui). Une
+    commande déjà en route n'y remet rien (_generation) ; la suivante
+    retélécharge. Appelé à la suppression ou à la modification d'une
+    source, et par le bouton « Oublier » de la page. → faux si l'exécuteur
+    n'a pas pu être joint : son bac expirera seul ([repos].cache_ttl)."""
+    _generation[owner] = _generation.get(owner, 0) + 1
+    CACHE.forget(lambda key: key[0] != owner)
+    if code_execution.URL and code_execution.TOKEN:
+        return await code_execution.destroy(owner, SESSION, transport) is not None
+    return True
 
 
 async def _source(owner: str, wanted: str, project: str) -> dict:
@@ -460,7 +504,9 @@ def _key(owner: str, source: dict, project: str, ref: str) -> tuple:
 async def _archive_for(key: tuple, owner: str, source: dict, project: str, ref: str,
                        transport) -> bytes:
     """L'archive du projet, du cache ou téléchargée (une fois pour deux
-    commandes simultanées)."""
+    commandes simultanées). Gardée en cache seulement si le compte n'a pas
+    tout effacé (forget) pendant le téléchargement."""
+    generation = _generation.get(owner, 0)
     entry = _loading.setdefault(key, [asyncio.Lock(), 0])
     entry[1] += 1
     try:
@@ -478,7 +524,8 @@ async def _archive_for(key: tuple, owner: str, source: dict, project: str, ref: 
             # une erreur de la source : rien n'est noté.
             if not source["shared"]:
                 await asyncio.to_thread(repos.downloaded, owner, source["id"])
-            CACHE.put(key, data, len(data))
+            if _generation.get(owner, 0) == generation:
+                CACHE.put(key, data, len(data))
             return data
     finally:
         entry[1] -= 1

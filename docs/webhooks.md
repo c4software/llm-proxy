@@ -91,22 +91,31 @@ ensuite, en tâche de fond :
 
 1. le message entre dans la conversation, marqué comme reçu par le
    webhook, avec une réponse **en cours** ;
-2. le proxy envoie au modèle l'échange que la page enverrait : prompt
-   système, dernier résumé, messages et tours d'outils, fichiers joints,
-   images de l'historique. La requête passe par `/ui/chat/completions` au
-   nom du compte qui a créé le webhook : ses statistiques, sa part du
-   partage équitable, sa mémoire ;
+2. le proxy envoie au modèle **le seul message reçu**, précédé du prompt
+   système (celui du webhook, sinon celui de la conversation) : jamais les
+   tours précédents, même dans une conversation « toujours la même ».
+   Chaque message est une demande à part ; la conversation sert à les
+   ranger et à les relire (si l'on y écrit ensuite depuis la page, la page
+   reprend, elle, tout l'historique). La requête passe par
+   `/ui/chat/completions` au nom du compte qui a créé le webhook : ses
+   statistiques, sa part du partage équitable ;
 3. la réponse prend la place de celle en cours, puis part vers le webhook
    sortant choisi, convertie en mrkdwn. Une erreur (backend hors ligne…)
    part aussi, préfixée « Erreur : ».
 
 En **passe plat**, rien n'est rangé : le modèle reçoit le seul message (et
-le prompt système du webhook), sans historique, et sa réponse va au
+le prompt système du webhook), et sa réponse va au sortant. Le tour est
+incognito : ni échange d'outils gardé, ni dépôt gardé
+([Dépôts](depots.md#ce-qui-est-gardé-et-combien-de-temps)). Deux effets
+de l'incognito : l'outil `memory` n'y est pas offert, même coché, et un
+fichier produit par un outil (une image, un graphique) n'est lisible que
+15 minutes (`[files].incognito_ttl`), y compris par son lien envoyé au
 sortant. Le sortant d'un passe plat ne peut pas être supprimé (409) tant
 que le passe plat s'en sert.
 
 Deux messages d'un webhook « toujours la même conversation » sont traités
-l'un après l'autre : le second voit la réponse au premier. Si le tour
+l'un après l'autre (rangés dans l'ordre) ; le second ne reçoit pas le
+premier. Si le tour
 échoue en route (historique plein, panne), l'erreur part quand même au
 sortant et au `response_url`, et la réponse en cours devient cette erreur :
 rien ne reste « en cours ». Une conversation supprimée dans la page pendant
@@ -207,7 +216,8 @@ sortants du compte de sa clé.
   comme celui de l'utilisateur. Avec des outils actifs (`webhook`, code,
   mémoire), il peut leur faire faire ce que l'utilisateur pourrait
   demander. Il vaut mieux ne cocher que les outils utiles au webhook.
-- Avec un `response_url`, l'appelant lit la réponse. Dans un webhook
-  « toujours la même conversation », il peut donc faire répéter
-  l'historique de cette conversation : le jeton vaut l'accès à ce que le
-  webhook voit.
+- Avec un `response_url`, l'appelant lit la réponse. Le modèle ne recevant
+  que le message et le prompt système, l'appelant n'atteint pas
+  l'historique de la conversation ; il atteint le prompt système et ce que
+  les outils cochés lisent (un dépôt, le web, la mémoire) : le jeton vaut
+  l'accès à ce que le webhook peut lire.

@@ -206,8 +206,9 @@ export const WebhooksPart = {
             <label class="check" :title="form.reply ? '' : 'Choisir d’abord un webhook sortant de réponse'">
               <input type="radio" value="none" v-model="form.target" :disabled="!form.reply">
               aucune, passe plat <span class="dim">(rien n'est gardé : la réponse va seulement au sortant)</span></label>
-            <p class="note" v-if="form.target === 'none'">Le modèle ne reçoit que le message (et le prompt
-              système du webhook), sans historique.</p>
+            <p class="note">Le modèle ne reçoit que le message reçu (et le prompt système), jamais
+              l'historique de la conversation.<template v-if="form.target === 'none'"> Passe plat : rien n'est
+              gardé (incognito) — ni l'outil mémoire, et un fichier produit n'est lisible que 15 min.</template></p>
             <select v-if="form.target === 'conversation'" v-model="form.conversation" aria-label="Conversation">
               <option value="">— une conversation dédiée, créée au premier message —</option>
               <option v-if="form.conversation && !convs.some((c) => c.id === form.conversation)" :value="form.conversation">{{ form.conversation }}</option>

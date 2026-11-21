@@ -26,7 +26,11 @@ L'exécuteur sert aussi à l'outil [`repository`](depots.md) : les dépôts y
 sont décompressés et lus, dans un bac par compte (la session
 `repository`). Pour ce seul usage, l'exécuteur doit être configuré (`url`,
 `token`), mais `enabled` peut rester à `false` : l'outil `code_execution`
-n'est alors pas offert.
+n'est alors pas offert. Ce bac demande à l'exécuteur une inactivité plus
+courte que `SANDBOX_IDLE` (`idle` de `POST /v1/execute`, 30 min), que
+l'exécuteur comprend depuis v2026.11.21.5 : un plus ancien l'ignore, et le
+bac vit `SANDBOX_IDLE`. En incognito, `repository` passe par des bacs d'un
+seul appel.
 
 Déclarer l'outil :
 

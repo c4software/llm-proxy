@@ -169,6 +169,26 @@ perdre son rôle. L'admin gère les rôles dans *Configuration → Comptes*
   celles-ci (condensé seul) sans pouvoir les retirer, et les clés de
   tous (`GET /ui/keys?all=1`).
 
+**Droits d'une clé sur les outils** : à la création, on choisit les
+outils hébergés qu'elle peut employer — *tous* (le défaut, et celui des
+clés d'avant) ou *seulement ceux-ci*, cochés un à un. Un serveur MCP se
+coche entier (`mcp:<serveur>` : ses outils futurs compris) ou outil par
+outil. Le bouton *Droits* d'une clé les change ensuite.
+
+- API : `POST /ui/keys` `{"label": …, "tools": null | ["web_search", "mcp:docs", …]}`,
+  puis `PATCH /ui/keys/<id>` `{"tools": …}` et/ou `{"label": …}` (le
+  compte de la clé, ou un admin) ; `GET /ui/keys/tools` liste ce qu'on
+  peut permettre. `[]` = aucun outil : la clé ne sert qu'au modèle.
+- Un outil refusé est, pour cette clé, un outil inactif : ni présenté au
+  modèle (les trois surfaces, `[chat].always`), ni listé par `/v1/tools`
+  et `/mcp`. Appelé directement, `POST /v1/tools/<nom>` répond `403`
+  `tool_not_permitted`.
+- Un changement vaut à la requête suivante (jusqu'à 10 s pour un autre
+  processus). Une clé révoquée ne change plus (`409`).
+- Les droits suivent la **clé**, pas le compte : le chat de la page et
+  les webhooks gardent tous les outils actifs. Les clés du TOML n'en ont
+  pas.
+
 **Rattacher une clé du TOML** : l'admin peut lier une clé de
 `proxy.api_keys` à un compte (*Clés → tous les comptes*, ou
 `PUT /ui/keys/toml/<condensé>` `{"user_id": <id> | null}`). Le lien vit

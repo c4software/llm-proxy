@@ -16,20 +16,19 @@ mené par le proxy lui-même, sans navigateur :
      de l'entrant (`reply`) et vers le `response_url` du message, s'il en
      donne un (les commandes slash de Slack).
 
-L'échange envoyé au modèle est celui que la page enverrait (chat/api.js,
-apiMessages) : prompt système (celui du webhook s'il en a un, sinon celui
-de la conversation), dernier résumé, messages et tours d'outils de la page,
-fichiers joints, images de l'historique relues en data URL.
+Le modèle ne reçoit que le MESSAGE REÇU, précédé du prompt système (celui
+du webhook s'il en a un, sinon celui de la conversation) : jamais les tours
+précédents de la conversation, même « toujours la même ». Chaque message
+est une demande à part ; la conversation sert à les ranger et à les
+relire dans la page (qui, elle, reprend tout l'historique si l'on y écrit).
 
-Deux messages d'un même webhook « toujours la même conversation » passent
-l'un après l'autre : le second voit la réponse au premier. Les
-enregistrements suivent la révision de la conversation (conversations.py) :
-un autre onglet qui l'a changée entre-temps ne perd rien, le tour relit et
-ajoute à la suite.
+Deux messages d'un même webhook « toujours la même conversation » sont
+rangés l'un après l'autre. Les enregistrements suivent la révision de la
+conversation (conversations.py) : un autre onglet qui l'a changée
+entre-temps ne perd rien, le tour relit et ajoute à la suite.
 """
 
 import asyncio
-import base64
 import json
 import time
 import uuid
@@ -39,7 +38,7 @@ from fastapi.responses import StreamingResponse
 
 from ..access import accounts, fairshare, oidc
 from ..access.auth import account_owner, auth_required, toml_digests
-from ..core.settings import log
+from ..core.settings import INCOGNITO, log
 from ..storage import conversations, stats, webhooks
 from ..surfaces import chat_api
 from ..surfaces.endpoints import chat
@@ -49,7 +48,6 @@ from .dashboard import UI_CHAT_MODEL, chat_tool_groups
 
 ROUTE = "/ui/chat/completions"
 SAVE_TRIES = 5
-NOTHING = "Rien de particulier (plus d'artifact, de dossier ouvert…)."
 # Un verrou par webhook « toujours la même conversation » ; retiré quand le
 # webhook est supprimé (forget).
 _locks: dict[tuple[str, str], asyncio.Lock] = {}
@@ -61,109 +59,6 @@ def _uid() -> str:
 
 def _now() -> int:
     return round(time.time() * 1000)
-
-
-# ── l'échange, comme la page l'enverrait (chat/api.js) ──────────────────
-
-def _summary_done(m) -> bool:
-    return isinstance(m, dict) and m.get("role") == "summary" and not m.get("running") \
-        and not m.get("error") and bool(str(m.get("content") or "").strip())
-
-
-def _preamble(m) -> str:
-    return ("RÉSUMÉ DE LA CONVERSATION JUSQU'ICI (les messages antérieurs ne te sont "
-            "plus envoyés ; ce résumé les remplace, tu peux t'y fier) :\n\n"
-            + str(m.get("content") or "").strip())
-
-
-def _content(m: dict, state: str = ""):
-    """apiContent : texte seul, ou parties (texte, images)."""
-    attachments = [a for a in m.get("attachments") or [] if isinstance(a, dict)]
-    text = str(m.get("content") or "")
-    for f in attachments:
-        if f.get("kind") == "text":
-            name = str(f.get("name") or "").replace('"', "'")
-            text += f'\n\n<file name="{name}">\n{f.get("data") or ""}\n</file>'
-    if state:
-        text += f"\n\n[État du moment, ajouté par la page]\n{state}"
-    images = [a for a in attachments if a.get("kind") == "image" and a.get("data")]
-    if not images:
-        return text
-    return ([{"type": "text", "text": text}] if text else []) + [
-        {"type": "image_url", "image_url": {"url": a["data"]}} for a in images]
-
-
-def _steps(steps) -> list[dict]:
-    """tools.stepMessages : les tours d'outils de la page, rejoués."""
-    out = []
-    for step in steps or []:
-        calls = [c for c in step.get("calls") or [] if isinstance(c, dict)]
-        out.append({"role": "assistant", "content": step.get("content") or None,
-                    "tool_calls": [{"id": c.get("id"), "type": "function", "function": {
-                        "name": c.get("name"), "arguments": c.get("arguments") or "{}"}}
-                        for c in calls]})
-        out += [{"role": "tool", "tool_call_id": c.get("id"), "content": c.get("result") or ""}
-                for c in calls]
-        images = [c for c in calls if c.get("image")]
-        if images:
-            out.append({"role": "user", "content": [
-                {"type": "text", "text": "Image(s) rendue(s) par "
-                 + ", ".join(str(c.get("name")) for c in images) + " :"},
-                *({"type": "image_url", "image_url": {"url": c["image"]}} for c in images)]})
-    return out
-
-
-def api_messages(doc: dict, upto: int, system: str | None = None) -> list[dict]:
-    """apiMessages : l'échange jusqu'au message `upto` (exclu). `system` :
-    le prompt système du webhook, à la place de celui de la conversation."""
-    messages = [m for m in doc.get("messages") or [] if isinstance(m, dict)]
-    upto = min(upto, len(messages))
-    start = next((i + 1 for i in range(upto - 1, -1, -1) if _summary_done(messages[i])), 0)
-    head = (system if system is not None else str(doc.get("system") or "")).strip()
-    system_text = "\n\n".join(x for x in (head, _preamble(messages[start - 1]) if start else "") if x)
-    out = [{"role": "system", "content": system_text}] if system_text else []
-    shown = ""
-    for m in messages[start:upto]:
-        role = m.get("role")
-        if role == "summary":
-            continue
-        if role == "user":
-            now = m["state"] if isinstance(m.get("state"), str) else shown
-            joined = "" if now == shown else (now or NOTHING)
-            shown = now
-            out.append({"role": "user", "content": _content(m, joined)})
-        elif m.get("steps"):
-            out += _steps(m["steps"])
-            if m.get("final"):
-                out.append({"role": "assistant", "content": m["final"]})
-        elif m.get("content"):
-            out.append({"role": "assistant", "content": m["content"]})
-        elif m.get("attachments"):
-            out.append({"role": "assistant", "content": "(image générée : " + ", ".join(
-                str(a.get("name")) for a in m["attachments"] if isinstance(a, dict)) + ")"})
-    return out
-
-
-def inline_assets(owner: str, messages: list[dict]) -> None:
-    """Les images de l'historique (/ui/assets/<id>) en data URL, comme la
-    page les envoie (history.inline) ; une image disparue est retirée.
-    BLOQUANT (SQLite)."""
-    for m in messages:
-        parts = m.get("content")
-        if not isinstance(parts, list):
-            continue
-        kept = []
-        for p in parts:
-            url = (p.get("image_url") or {}).get("url") if isinstance(p, dict) else None
-            if isinstance(url, str) and url.startswith(conversations.ASSET_PATH):
-                row = conversations.asset(owner, url[len(conversations.ASSET_PATH):])
-                if row is None:
-                    continue
-                kind, _, data = row
-                p = {"type": "image_url", "image_url": {
-                    "url": f"data:{kind};base64,{base64.b64encode(data).decode()}"}}
-            kept.append(p)
-        m["content"] = kept
 
 
 # ── le compte au nom duquel le proxy répond ─────────────────────────────
@@ -316,6 +211,14 @@ def _replace(owner: str, cid: str, question: str, message: dict) -> bool:
     raise conversations.HistoryError("conversation modifiée sans cesse ailleurs", 409)
 
 
+def _messages(hook: dict, doc: dict | None, text: str) -> list[dict]:
+    """L'échange envoyé au modèle : le prompt système (du webhook, sinon de
+    la conversation) et le seul message reçu — jamais l'historique."""
+    system = (hook.get("system") or (doc or {}).get("system") or "").strip()
+    return ([{"role": "system", "content": system}] if system else []) \
+        + [{"role": "user", "content": text}]
+
+
 def _pick_model(hook: dict, asked: str, doc: dict | None) -> str:
     if asked and hook.get("model_override"):
         return asked
@@ -448,10 +351,8 @@ async def _in_conversation(owner: str, hook: dict, text: str, meta: dict,
                                   [question, pending])
 
     async def body():
-        upto = next(i for i, m in enumerate(doc["messages"]) if m.get("id") == question["id"]) + 1
-        messages = api_messages(doc, upto, hook.get("system") or None)
-        await asyncio.to_thread(inline_assets, owner, messages)
-        return _body(doc, model, messages, declarable(hook.get("tools") or doc.get("tools") or []))
+        return _body(doc, model, _messages(hook, doc, text),
+                     declarable(hook.get("tools") or doc.get("tools") or []))
 
     try:
         if dedicated:
@@ -494,16 +395,20 @@ async def _settle(owner: str, cid: str, question: str, answer: dict, errors: lis
 async def _passthrough(owner: str, hook: dict, text: str, meta: dict,
                        errors: list[str]) -> str:
     """Le PASSE PLAT : rien n'est rangé. Le modèle reçoit le seul message
-    (et le prompt système du webhook), sa réponse ne va qu'aux sortants."""
+    (et le prompt système du webhook), sa réponse ne va qu'aux sortants. Le
+    tour est INCOGNITO (settings.INCOGNITO) : rien de lui ne survit à la
+    réponse — ni échange d'outils gardé, ni cache, ni dépôt dans un bac
+    (tools/repository.py : un bac d'un seul appel)."""
     model = _pick_model(hook, meta.get("model") or "", None)
-    system = (hook.get("system") or "").strip()
-    messages = ([{"role": "system", "content": system}] if system else []) \
-        + [{"role": "user", "content": text}]
 
     async def body():
-        return _body({}, model, messages, declarable(hook.get("tools") or []))
+        return _body({}, model, _messages(hook, None, text), declarable(hook.get("tools") or []))
 
-    got = await _ask(owner, hook, model, body)
+    token = INCOGNITO.set(True)
+    try:
+        got = await _ask(owner, hook, model, body)
+    finally:
+        INCOGNITO.reset(token)
     if got.get("error"):
         errors.append(got["error"])
         return f"Erreur : {got['error']}"
