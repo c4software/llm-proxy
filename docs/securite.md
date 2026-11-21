@@ -75,6 +75,13 @@ forge `git` fait lire un pack par git dans le proxy, borné et sans rien
 exécuter du dépôt. Durées et emplacements :
 [Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps).
 
+## Webhooks sortants
+
+Une URL Apprise de webhook sortant n'a pas de règle d'adresse : un compte
+peut faire envoyer un message vers toute adresse que le proxy joint,
+réseau interne compris. Seules les URL hors Apprise suivent `[tools.net]`.
+Voir [Webhook sortant](webhooks.md#webhook-sortant).
+
 ## Secrets gardés en clair
 
 `data/conversations.db` garde en clair les jetons des webhooks entrants,

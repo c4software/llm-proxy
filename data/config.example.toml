@@ -522,15 +522,16 @@ history_max_bytes = 2000000000
 # adresse secrète qui reçoit un message au format Slack ({"text": …}) ; le
 # proxy le range dans une conversation du chat de la page et y fait
 # répondre un modèle, au nom du compte (ses tokens). SORTANT : une URL
-# compatible Slack où partent la réponse à un entrant et les messages de
-# l'outil hébergé `webhook`. Exige [ui].chat. Voir docs/webhooks.md.
+# Apprise (Slack, Mattermost, Discord, Teams, e-mail…) où partent la réponse
+# à un entrant et les messages de l'outil hébergé `webhook`. Exige [ui].chat. Voir docs/webhooks.md.
 [webhooks]
 # false (défaut) = /hooks/* → 404, ni onglet, ni outil `webhook`.
 enabled = false
 # Webhooks entrants, et sortants, au plus par compte.
 max_per_user = 20
-# Un sortant (ou le `response_url` d'un message reçu) qui vise une adresse
-# privée ou locale : refusé, sauf ici (un Mattermost du réseau interne).
+# Un sortant hors Apprise (une URL http(s) qu'Apprise ne reconnaît pas)
+# qui vise une adresse privée ou locale : refusé, sauf ici. Les URL Apprise
+# n'ont pas de règle d'adresse (docs/webhooks.md).
 allow_private = false
 # Délai (s) d'un envoi sortant.
 timeout = 10

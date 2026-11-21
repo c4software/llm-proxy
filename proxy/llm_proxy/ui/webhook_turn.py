@@ -276,7 +276,7 @@ async def _ask(owner: str, hook: dict, model: str, body) -> dict:
 async def handle(owner: str, hook: dict, text: str, meta: dict) -> None:
     """Le tour entier d'un message reçu. `meta` : `model` (demandé par le
     corps), `user` (qui l'a écrit, côté Slack), `response_url`,
-    `thread_ts`. Ne lève pas : une erreur est gardée sur le webhook, dans
+    `thread_ts` (un sortant JSON seulement). Ne lève pas : une erreur est gardée sur le webhook, dans
     la réponse de la conversation, et envoyée aux sortants."""
     key = (owner, hook["id"])
     lock = _locks.setdefault(key, asyncio.Lock()) if hook["target"] == "conversation" else None

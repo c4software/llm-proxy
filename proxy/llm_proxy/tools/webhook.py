@@ -1,7 +1,10 @@
 """
 `webhook` : le modèle poste un message sur un WEBHOOK SORTANT du compte
-(storage/webhooks.py) — une URL compatible Slack, où part
-{"text": "<message en mrkdwn>"}. Le compte les définit lui-même
+(storage/webhooks.py) — une URL Apprise (Slack, Mattermost, Discord,
+Teams, Telegram, ntfy, e-mail… : https://github.com/caronc/apprise),
+envoyée en Markdown que chaque service rend à sa façon. Une URL http(s)
+qu'Apprise ne reconnaît pas reçoit du JSON compatible Slack
+({"text": "<mrkdwn>", "channel"?}). Le compte les définit lui-même
 (Configuration → Webhooks) ; le modèle ne choisit jamais une URL, seulement
 le NOM d'un webhook de `call.client` EXPOSÉ à l'outil (case du sortant,
 décochée par défaut). Il ne peut donc écrire que là où le compte l'a
@@ -11,11 +14,13 @@ ou plusieurs sortants sans nom donné).
 Aussi ce qu'en a besoin la réception (ui/webhook_turn.py) : le format
 Slack dans les deux sens, et l'envoi.
 
+  post(owner, hook, text)  l'envoi sur un sortant du compte (Apprise, ou
+                           JSON), l'issue notée sur lui → «» ou l'erreur
   send(url, text, extra)   POST {"text": mrkdwn, …extra} (net.post : les
                            adresses publiques seulement, sauf
-                           [webhooks].allow_private) ; lève ToolError
-  post(owner, hook, text)  send sur un sortant du compte, dans son salon,
-                           l'issue notée sur lui → «» ou l'erreur
+                           [webhooks].allow_private) ; lève ToolError — le
+                           sortant JSON, et le `response_url` d'une
+                           commande slash
   to_mrkdwn(markdown)      le Markdown du modèle → le mrkdwn de Slack
   from_slack(payload)      le texte d'un message Slack reçu (text, blocks,
                            attachments), en Markdown
@@ -28,7 +33,11 @@ Sans liaison de protocole : présentable sur /v1/chat/completions (déclaré
 import asyncio
 import html
 import json
+import logging
 import re
+from urllib.parse import parse_qs, urlsplit
+
+import apprise
 
 from ..core import config
 from ..storage import webhooks
@@ -38,10 +47,10 @@ from .contract import Call, Result, Tool, ToolError, ToolName
 ENABLED = config.flag("webhooks.enabled", False)
 NAME = ToolName.WEBHOOK
 ALLOW_PRIVATE = config.flag("webhooks.allow_private", False)
-TIMEOUT = config.num("webhooks.timeout", 10.0)
+TIMEOUT = webhooks.TIMEOUT
 # Slack coupe un `text` au-delà de 40 000 caractères.
 MAX_TEXT = 39_000
-USER_AGENT = "llm-proxy-webhook"
+USER_AGENT = webhooks.USER_AGENT
 
 
 # ── le format Slack ─────────────────────────────────────────────────────
@@ -162,16 +171,44 @@ async def send(url: str, text: str, extra: dict | None = None,
                         + (f" ({detail})" if detail else "") + ".")
 
 
+def _notify(url: str, text: str) -> str:
+    """L'envoi par Apprise, en Markdown → «», ou ce qu'Apprise a dit de
+    l'échec. Toute URL qu'Apprise sait servir est permise (docs/webhooks.md).
+    Un texte trop long pour le service part en plusieurs messages, sauf si
+    l'URL dit autrement (`overflow=`). BLOQUANT."""
+    service = webhooks.target(url)
+    if service is None:
+        return "Apprise does not recognize this URL."
+    if "overflow" not in parse_qs(urlsplit(url).query):
+        service.overflow_mode = apprise.OverflowMode.SPLIT
+    # Les délais de connexion et de lecture (cto=, rto= dans l'URL) bornés
+    # par [webhooks].timeout.
+    service.socket_connect_timeout = min(service.socket_connect_timeout, TIMEOUT)
+    service.socket_read_timeout = min(service.socket_read_timeout, TIMEOUT)
+    sender = apprise.Apprise(service, asset=webhooks.ASSET)
+    said = []
+    if sender.notify(body=text[:MAX_TEXT], body_format=apprise.NotifyFormat.MARKDOWN,
+                     log_callback=lambda entry, plugin: said.append(entry.message),
+                     log_level=logging.WARNING):
+        return ""
+    return (said[-1] if said else "the notification failed.")[:300]
+
+
 async def post(owner: str, hook: dict, text: str, extra: dict | None = None) -> str:
-    """Envoie sur le sortant `hook` du compte, dans son salon s'il en a un,
-    et note l'issue (son dernier usage, son erreur). → «» si envoyé, sinon le message d'erreur."""
-    if hook.get("channel"):
-        extra = {"channel": hook["channel"], **(extra or {})}
-    try:
-        await send(hook["url"], text, extra)
-        error = ""
-    except ToolError as exc:
-        error = exc.message
+    """Envoie sur le sortant `hook` du compte (`list_out`/`get_out` avec
+    `full`) et note l'issue (son dernier usage, son erreur). → «» si envoyé,
+    sinon le message d'erreur. Une URL Apprise : par Apprise (`extra`, le fil
+    Slack, n'y a pas cours). Sinon, en JSON, avec son salon et `extra`."""
+    if not hook["legacy"]:
+        error = await asyncio.to_thread(_notify, hook["url"], text)
+    else:
+        if hook.get("channel"):
+            extra = {"channel": hook["channel"], **(extra or {})}
+        try:
+            await send(hook["url"], text, extra)
+            error = ""
+        except ToolError as exc:
+            error = exc.message
     await asyncio.to_thread(webhooks.used_out, owner, hook["id"], error)
     return error
 
@@ -189,7 +226,8 @@ class WebhookTool(Tool):
     def prompt(self, present) -> str:
         return (
             "Post a message to one of the user's outgoing webhooks (a Slack, "
-            "Mattermost or similar channel the user set up). Use it ONLY when "
+            "Mattermost, Discord, Teams, Telegram, e-mail or other destination "
+            "the user set up). Use it ONLY when "
             "the user asks to send, post, notify or share something there; "
             "never on your own initiative. `text` is the message, in "
             "Markdown, self-contained: the readers of the channel do not see "

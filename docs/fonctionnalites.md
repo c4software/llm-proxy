@@ -90,8 +90,8 @@ détaille.
   hébergés à tout client MCP. [Serveur MCP](outils-heberges.md#serveur-mcp--mcp)
 - **Webhooks** (`[webhooks]`) : chaque compte reçoit des messages au
   format Slack sur une adresse secrète, auxquels un modèle répond dans le
-  chat ; les réponses, et l'outil `webhook`, partent vers des URL
-  compatibles Slack. [Webhooks](webhooks.md)
+  chat ; les réponses, et l'outil `webhook`, partent par Apprise
+  (Slack, Mattermost, Discord, Teams, e-mail…). [Webhooks](webhooks.md)
 - **Dépôts** (`[repos]`) : l'outil `repository` lit un projet GitLab,
   GitHub, Gitea ou git (arborescence, fichier, recherche ; rien n'est
   exécuté), avec le jeton d'une source du compte ou de l'admin. Le proxy

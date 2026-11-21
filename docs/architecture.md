@@ -197,7 +197,7 @@ partie qui l'a importé.
 |---|---|
 | `tools/__init__.py` | Le commun : registre, exécution bornée (délai, taille, appels par réponse), stats, mémoire des résultats |
 | `tools/contract.py` | Le contrat : `Tool`, `Result`, `Call`, `ToolError`, codes d'erreur, liaisons aux protocoles. Voir [outils.md](outils.md) |
-| `tools/net.py` | Garde-fou réseau (`[tools.net]`) : domaines, adresses publiques seulement, redirections vérifiées ; `net.download` (avec, pour une forge, des en-têtes limités à son origine), et `net.post` (un webhook sortant) |
+| `tools/net.py` | Garde-fou réseau (`[tools.net]`) : domaines, adresses publiques seulement, redirections vérifiées ; `net.download` (avec, pour une forge, des en-têtes limités à son origine), et `net.post` (un webhook sortant hors Apprise, un `response_url`) |
 | `tools/webcache.py` | Cache web en mémoire vive, quelques minutes, borné |
 | `tools/html_text.py` | HTML → texte lisible par un modèle |
 | `tools/web_search.py` | `web_search` : requête à SearXNG, résultats numérotés, filtre par domaines |
@@ -211,7 +211,7 @@ partie qui l'a importé.
 | `tools/memory.py` | `memory` : `view`, `create`, `str_replace`, `insert`, `delete`, `rename` |
 | `tools/repository.py` | `repository` : lire un projet d'une forge (`tree`, `read`, `grep`). Le proxy télécharge l'archive (par `net.download`, ou `git fetch` + `git archive`) et la garde compressée ; un bac de l'exécuteur la décompresse et la lit |
 | `tools/repository_bac.py` | Le script que `repository` fait tourner dans le bac : décompression sûre, `tree`, `read`, `grep` (un texte envoyé à l'exécuteur, pas un module importé) |
-| `tools/webhook.py` | `webhook` : poste sur un webhook sortant du compte ; le format Slack dans les deux sens (`to_mrkdwn`, `from_slack`), l'envoi (`send`, par `net.post`) |
+| `tools/webhook.py` | `webhook` : poste sur un webhook sortant du compte ; l'envoi (`post` : Apprise, sinon `send` en JSON par `net.post`) ; le format Slack dans les deux sens (`to_mrkdwn`, `from_slack`) |
 | `tools/provenance.py` | Les sites connus d'une conversation : ceux qu'un outil qui lit une URL peut ouvrir |
 | `tools/mcp/` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés. Paquet : `protocol`, `tool` (`McpTool`), `server`, `registry` |
 
@@ -232,7 +232,7 @@ partie qui l'a importé.
 | `storage/voices.py` | Les voix clonées de la page, par compte (table à part de `conversations.db`) |
 | `storage/owned.py` | Ce que partagent les magasins par compte de `conversations.db` (webhooks, sources) : identifiants, noms (uniques sans casse), adresses, bornes, colonnes ajoutées |
 | `storage/repos.py` | Les sources de dépôts de chaque compte (jeton gardé, jamais rendu ; table à part de `conversations.db`) et celles de `[repos.sources]` |
-| `storage/webhooks.py` | Les webhooks entrants (jeton gardé, retrouvé par son condensé) et sortants (salon, exposition à l'outil) de chaque compte (tables à part de `conversations.db`) |
+| `storage/webhooks.py` | Les webhooks entrants (jeton gardé, retrouvé par son condensé) et sortants (URL Apprise et son service, exposition à l'outil) de chaque compte (tables à part de `conversations.db`) |
 | `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
 | `storage/backup.py` | Sauvegarde et restauration de `data/` |
 

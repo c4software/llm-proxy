@@ -9,7 +9,7 @@
               même, ou aucune : le passe plat) et le sortant où part la
               réponse. L'adresse se réaffiche (bouton Adresse : relue au
               proxy, GET …/token).
-    sortants  une URL compatible Slack, un salon facultatif, et s'il est
+    sortants  une URL Apprise (le salon y est), et s'il est
               exposé à l'outil `webhook` du chat (décoché par défaut) ;
               sinon il ne sert qu'aux réponses des entrants. L'URL n'est
               jamais relue (elle vaut droit d'écrire) : la page n'en voit
@@ -37,7 +37,7 @@ export const WebhooksPart = {
     const form = reactive(blankIn());
     const editing = ref(false);         // le formulaire d'un entrant est ouvert
     const fresh = ref(null);            // { name, url } : l'adresse affichée (création, Adresse)
-    const outForm = reactive({ id: null, name: "", url: "", channel: "", tool: false });
+    const outForm = reactive({ id: null, name: "", url: "", tool: false });
     const outEditing = ref(false);
     const armed = ref(null);            // suppression : deuxième clic attendu
     const testing = ref(null);
@@ -128,13 +128,13 @@ export const WebhooksPart = {
     // ── sortants ─────────────────────────────────────────────────────
     function openOut(o = null) {
       Object.assign(outForm, { id: o ? o.id : null, name: o ? o.name : "", url: "",
-                               channel: o ? o.channel || "" : "", tool: o ? !!o.tool : false });
+                               tool: o ? !!o.tool : false });
       outEditing.value = true;
     }
     async function saveOut() {
       error.value = "";
       try {
-        const body = { name: outForm.name, channel: outForm.channel, tool: outForm.tool,
+        const body = { name: outForm.name, tool: outForm.tool,
                        ...(outForm.url ? { url: outForm.url } : {}) };
         if (outForm.id) await call("PUT", "/ui/webhooks/out/" + encodeURIComponent(outForm.id), body);
         else await call("POST", "/ui/webhooks/out", body);
@@ -255,19 +255,18 @@ export const WebhooksPart = {
       <section class="panel">
         <div class="panel-head"><h2>Webhooks sortants</h2>
           <button type="button" class="btn" v-if="!outEditing" @click="openOut()">Nouveau</button></div>
-        <p class="note">Une URL compatible Slack (Slack, Mattermost, Rocket.Chat, Discord en <code>/slack</code>…),
-          où le proxy poste <code>{"text": "…"}</code> : la réponse d'un webhook entrant, et ce que le modèle
-          envoie par l'outil « Webhooks » du chat, quand vous le lui demandez.</p>
+        <p class="note">Une URL <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">Apprise</a>
+          (Slack, Mattermost, Discord, Teams, Telegram, ntfy, e-mail…) : le proxy y envoie la réponse d'un webhook
+          entrant, et ce que le modèle envoie par l'outil « Webhooks » du chat, quand vous le lui demandez.</p>
         <form class="item-form" v-if="outEditing" @submit.prevent="saveOut">
           <label>Nom <span class="dim">(c'est par lui que le modèle le désigne)</span>
             <input v-model="outForm.name" maxlength="80" required placeholder="Équipe, Ops…"></label>
           <label>URL <span class="dim" v-if="outForm.id">(vide : inchangée)</span>
-            <input v-model="outForm.url" type="url" maxlength="2000" :required="!outForm.id" spellcheck="false"
-                   placeholder="https://hooks.slack.com/services/…"></label>
-          <label>Salon <span class="dim">(facultatif : vide, celui de l'URL)</span>
-            <input v-model="outForm.channel" maxlength="80" spellcheck="false" placeholder="#alertes, @quelqu'un, town-square…">
-            <span class="dim">Envoyé en <code>channel</code> : Mattermost, Rocket.Chat et les anciens webhooks Slack le
-              suivent ; un webhook d'app Slack poste toujours dans le salon choisi à sa création.</span></label>
+            <input v-model="outForm.url" maxlength="2000" :required="!outForm.id" spellcheck="false"
+                   placeholder="slack://T…/B…/X…/#alertes, mmost://chat.exemple.fr/clé, discord://…">
+            <span class="dim">Le salon fait partie de l'URL quand le service le permet. L'URL d'un webhook
+              (<code>https://hooks.slack.com/…</code>, <code>https://discord.com/api/webhooks/…</code>) est aussi
+              reconnue ; une autre URL <code>https://</code> reçoit <code>{"text": "…"}</code>.</span></label>
           <label class="check"><input type="checkbox" v-model="outForm.tool">
             exposé à l'outil « Webhooks » du chat <span class="dim">(sinon : réponses des webhooks entrants seulement)</span></label>
           <div class="item-actions">
@@ -276,12 +275,13 @@ export const WebhooksPart = {
           </div>
         </form>
         <table v-if="outgoing.length">
-          <thead><tr><th>Nom</th><th>URL</th><th>Salon</th><th>Dernier envoi</th><th></th></tr></thead>
+          <thead><tr><th>Nom</th><th>Service</th><th>URL</th><th>Dernier envoi</th><th></th></tr></thead>
           <tbody>
             <tr v-for="o in outgoing" :key="o.id">
               <td>{{ o.name }}<span class="tag" v-if="o.tool" title="Le modèle peut y poster par l'outil Webhooks">outil</span></td>
+              <td>{{ o.service }}<span class="dim" v-if="o.channel"> · {{ o.channel }}</span>
+                <span class="tag" v-if="o.legacy" title="Envoi JSON compatible Slack, hors Apprise : ressaisir l'URL en URL Apprise">à ressaisir</span></td>
               <td><code>{{ o.url }}</code></td>
-              <td>{{ o.channel || "—" }}</td>
               <td>{{ when(o.last_used) }}<span class="dim" v-if="o.calls"> · {{ o.calls }}</span>
                 <div class="err" v-if="o.last_error">{{ o.last_error }}</div>
                 <div class="dim" v-else-if="tested[o.id]">essai : {{ tested[o.id] }}</div></td>

@@ -12,9 +12,9 @@ liés au même client que son historique (auth.ui_client) :
             réaffiche l'adresse : bouton Adresse) et retrouvé par son
             condensé ; une copie de la base donne donc des adresses
             utilisables, comme les URL des sortants.
-  sortants  une URL compatible Slack (Slack, Mattermost, Rocket.Chat,
-            Discord en /slack…) où le proxy POSTe {"text": …}, et
-            {"channel": …} si un salon est défini : la réponse à un
+  sortants  une URL Apprise (slack://, mmost://, discord://, mailto://…),
+            ou une URL http(s) qu'Apprise ne reconnaît pas, où le proxy
+            POSTe {"text": …} (et `channel`, son salon) : la réponse à un
             webhook entrant qui la nomme (`reply`) ; et, s'il est EXPOSÉ
             à l'outil (`tool`, décoché par défaut), ce que le modèle y
             poste par l'outil hébergé `webhook` (tools/webhook.py), de
@@ -27,18 +27,23 @@ sauvegardée avec lui, backup.py), ses tables à part.
 """
 
 import json
+import logging
+import re
 import secrets
 import time
-from urllib.parse import urlsplit
+from urllib.parse import quote, unquote, urlsplit
+
+import apprise
 
 from ..core import config, identity
 from . import conversations, owned
 
 MAX_PER_USER = config.integer("webhooks.max_per_user", 20)
+# Délai (s) d'un envoi sortant (Apprise, ou POST JSON).
+TIMEOUT = config.num("webhooks.timeout", 10.0)
 MAX_MODEL = 200
 MAX_SYSTEM = 20_000
 MAX_TOOLS = 40
-MAX_CHANNEL = 80
 # « none » : le passe plat — rien n'est rangé, la réponse ne va qu'au sortant.
 TARGETS = ("new", "conversation", "none")
 # Le préfixe d'un jeton : de quoi le reconnaître dans un journal ou un
@@ -260,17 +265,47 @@ def set_conversation(owner: str, wid: str, cid: str) -> None:
 
 # ── sortants ────────────────────────────────────────────────────────────
 
-def mask(url: str) -> str:
-    """L'URL d'un sortant telle que la page la montre : son hôte et la fin
-    de son chemin — l'URL entière vaut droit d'écrire."""
-    parts = urlsplit(url)
-    tail = parts.path[-4:] if len(parts.path) > 8 else ""
-    return f"{parts.scheme}://{parts.hostname or ''}/…{tail}"
+# L'agent des envois sortants, Apprise ou JSON : un entrant le refuse
+# (un sortant pointé sur un entrant bouclerait).
+USER_AGENT = "llm-proxy-webhook"
+# Apprise : stockage en MÉMOIRE (le conteneur est en lecture seule, rien n'a
+# à survivre), le délai d'un envoi, et ni nom ni image d'Apprise sur les
+# messages (pied Slack, avatar Discord, nom Mattermost). `app_id` est aussi
+# son User-Agent.
+ASSET = apprise.AppriseAsset(
+    storage_mode=apprise.PersistentStoreMode.MEMORY, service_timeout=TIMEOUT,
+    app_id=USER_AGENT, app_desc="llm-proxy", app_url="https://github.com/c4software/llm-proxy",
+    image_url_mask=None, image_url_logo=None)
+# Les journaux d'Apprise citent les URL, donc leurs secrets : coupés du
+# journal du proxy. L'erreur d'un envoi est lue par son log_callback.
+logging.getLogger("apprise").propagate = False
+
+
+def target(url: str):
+    """Le service Apprise de cette URL (un objet d'Apprise), None si Apprise
+    ne la reconnaît pas : une URL http(s) quelconque, un sortant JSON."""
+    return apprise.Apprise.instantiate(url, asset=ASSET)
+
+
+def describe(url: str) -> dict:
+    """Ce que la page montre d'un sortant : le service, son URL réduite au
+    schéma et à l'hôte (masqué par Apprise quand il porte un secret, comme
+    un jeton Telegram) — le reste vaut droit d'écrire —, et `legacy` pour
+    un envoi JSON hors Apprise, à ressaisir en URL Apprise."""
+    found = target(url)
+    shown = urlsplit(found.url(privacy=True) if found is not None else url)
+    return {"service": found.service_name if found is not None else "JSON compatible Slack",
+            "legacy": found is None, "shown": f"{shown.scheme}://{shown.hostname or ''}/…"}
 
 
 def _out_meta(row, full: bool = False) -> dict:
     wid, name, url, channel, tool, created, last_used, calls, last_error = row
-    return {"id": wid, "name": name, "url": url if full else mask(url), "channel": channel,
+    seen = describe(url)
+    return {"id": wid, "name": name, "url": url if full else seen["shown"],
+            "service": seen["service"], "legacy": seen["legacy"],
+            # Le salon d'un sortant JSON, envoyé en `channel` ; avec Apprise,
+            # il est dans l'URL (slack://…/#alertes).
+            "channel": channel if seen["legacy"] else "",
             # Offert à l'outil `webhook` du modèle ; sinon, réponses des entrants seulement.
             "tool": bool(tool),
             "created": owned.seconds(created), "last_used": owned.seconds(last_used),
@@ -278,11 +313,29 @@ def _out_meta(row, full: bool = False) -> dict:
 
 
 def _url(value) -> str:
-    url = owned.http_url(value)
-    if urlsplit(url).path.startswith("/hooks/" + TOKEN_PREFIX):
-        # Un sortant vers un entrant d'un proxy : chaque réponse en ferait
-        # un nouveau message, sans fin.
+    """Une URL Apprise (slack://, mmost://, discord://, tgram://, mailto://…,
+    ou l'URL d'un webhook qu'Apprise reconnaît), ou une URL http(s) : un
+    envoi JSON compatible Slack."""
+    url = str(value or "").strip()
+    if len(url) > owned.MAX_URL:
+        raise WebhookError("URL trop longue")
+    found = target(url)
+    if found is None:
+        url = owned.http_url(url, "une URL Apprise (slack://, mmost://, discord://…) ou une URL")
+    if re.search(r"(^|[/=])" + TOKEN_PREFIX, unquote(url).casefold()):
+        # Un sortant vers un entrant d'un proxy (quel que soit le schéma :
+        # mmost://hôte/wh-…, json://hôte/%68ooks/wh-…) : chaque réponse en
+        # ferait un nouveau message, sans fin.
         raise WebhookError("un webhook sortant ne peut pas viser un webhook entrant du proxy")
+    # Les paramètres lus comme Apprise : « + » est un caractère, pas un espace.
+    query = [tuple(unquote(x) for x in (part.split("=", 1) + [""])[:2])
+             for part in urlsplit(url).query.split("&") if part]
+    if any(k.casefold() == "+user-agent" for k, _ in query):
+        # Le User-Agent est ce par quoi un entrant reconnaît un proxy.
+        raise WebhookError("l'en-tête User-Agent d'un sortant ne se change pas")
+    if any(v.startswith(("/", "~", "file:", ".")) for _, v in query):
+        # keyfile=/etc/… : Apprise lirait un fichier du proxy.
+        raise WebhookError("une URL de sortant ne désigne pas de fichier local")
     return url
 
 
@@ -291,16 +344,6 @@ def _flag(value) -> bool:
     if not isinstance(value, bool):
         raise WebhookError("`tool` : true ou false")
     return value
-
-
-def _channel(value) -> str:
-    """Le salon de destination (`channel` du message) : « #général »,
-    « @quelqu'un », ou le nom tel que le service l'attend ; «» = celui de
-    l'URL."""
-    channel = " ".join(str(value or "").split())
-    if len(channel) > MAX_CHANNEL:
-        raise WebhookError(f"nom de salon trop long ({MAX_CHANNEL} caractères au plus)")
-    return channel
 
 
 def list_out(owner: str, full: bool = False) -> list[dict]:
@@ -313,7 +356,6 @@ def list_out(owner: str, full: bool = False) -> list[dict]:
 def create_out(owner: str, body) -> dict:
     owned.body(body)
     name, url = owned.name(body.get("name")), _url(body.get("url"))
-    channel = _channel(body.get("channel"))
     # Pas exposé à l'outil sauf demande : un salon n'est pas offert au modèle
     # sans qu'on l'ait choisi.
     tool = int(_flag(body.get("tool", False)))
@@ -324,20 +366,19 @@ def create_out(owner: str, body) -> dict:
         if owned.taken(c, "webhooks_out", owner, name):
             raise WebhookError("un webhook sortant porte déjà ce nom")
         c.execute("INSERT INTO webhooks_out (owner, id, name, url, channel, tool, created) "
-                  "VALUES (?, ?, ?, ?, ?, ?, ?)", (owner, wid, name, url, channel, tool,
-                                                   time.time()))
+                  "VALUES (?, ?, ?, ?, '', ?, ?)", (owner, wid, name, url, tool, time.time()))
         return c.execute(f"SELECT {_OUT} FROM webhooks_out WHERE owner = ? AND id = ?",
                          (owner, wid)).fetchone()
     return _out_meta(_run(q))
 
 
 def update_out(owner: str, wid: str, body) -> dict:
-    """Le nom, le salon, et l'URL si elle est donnée (la page ne la
-    connaît pas : absente, elle reste)."""
+    """Le nom, l'exposition à l'outil, et l'URL si elle est donnée (la page
+    ne la connaît pas : absente, elle reste). Une URL redonnée efface le
+    salon d'un sortant JSON d'avant : avec Apprise, il est dans l'URL."""
     _check_id(wid)
     owned.body(body)
     name = owned.name(body.get("name"))
-    channel = _channel(body.get("channel"))
     # Absent (un ancien onglet, un script) : inchangé, comme l'URL.
     tool = None if "tool" not in body else int(_flag(body["tool"]))
     url = _url(body["url"]) if body.get("url") else None
@@ -345,9 +386,10 @@ def update_out(owner: str, wid: str, body) -> dict:
     def q(c):
         if owned.taken(c, "webhooks_out", owner, name, wid):
             raise WebhookError("un webhook sortant porte déjà ce nom")
-        n = c.execute("UPDATE webhooks_out SET name = ?, channel = ?, tool = coalesce(?, tool), "
-                      "url = coalesce(?, url) WHERE owner = ? AND id = ?",
-                      (name, channel, tool, url, owner, wid)).rowcount
+        n = c.execute("UPDATE webhooks_out SET name = ?, tool = coalesce(?, tool), "
+                      "url = coalesce(?, url), channel = CASE WHEN ? IS NULL THEN channel "
+                      "ELSE '' END WHERE owner = ? AND id = ?",
+                      (name, tool, url, url, owner, wid)).rowcount
         if not n:
             raise WebhookError("webhook inconnu", 404)
         return c.execute(f"SELECT {_OUT} FROM webhooks_out WHERE owner = ? AND id = ?",
@@ -417,4 +459,31 @@ def clear_inherited_prompts() -> int:
                            owner, cid))
                 cleaned += 1
         return cleaned
+    return _run(q)
+
+
+_SLACK_HOOK = re.compile(r"https://hooks\.slack\.com/services/([^/]+)/([^/]+)/([^/?#]+)/?\Z")
+
+
+def move_channels_to_urls() -> int:
+    """Une seule fois par base : le salon d'un sortant hooks.slack.com
+    (champ à part) passe dans son URL Apprise (slack://A/B/C/#salon). → le
+    nombre de sortants convertis. Une URL produite qu'Apprise refuserait
+    n'est pas écrite : le sortant reste en JSON, avec son salon. BLOQUANT."""
+    def q(c):
+        if not owned.once(c, "webhook-channels-into-apprise-urls"):
+            return 0
+        moved = 0
+        for owner, wid, url, channel in c.execute(
+                "SELECT owner, id, url, channel FROM webhooks_out WHERE channel != ''").fetchall():
+            m = _SLACK_HOOK.match(url)
+            if not m:
+                continue
+            new = f"slack://{m[1]}/{m[2]}/{m[3]}/{quote(channel, safe='')}"
+            if target(new) is None:
+                continue
+            c.execute("UPDATE webhooks_out SET url = ?, channel = '' WHERE owner = ? AND id = ?",
+                      (new, owner, wid))
+            moved += 1
+        return moved
     return _run(q)

@@ -7,8 +7,9 @@ Webhooks* de `/ui`. Il y a deux sortes de webhooks :
   (supervision, CI, formulaire, cron, Slack) y poste un message au format
   d'un webhook entrant de Slack. Le message entre dans une conversation du
   chat de la page, et le modèle y répond au nom du compte ;
-- un webhook **sortant** est une URL compatible Slack. Le proxy y poste la
-  réponse à un webhook entrant. Le modèle peut aussi y poster, par l'outil
+- un webhook **sortant** est une URL [Apprise](https://github.com/caronc/apprise/wiki)
+  (Slack, Mattermost, Discord, Teams, Telegram, ntfy, e-mail…). Le proxy y
+  envoie la réponse à un webhook entrant. Le modèle peut aussi y poster, par l'outil
   hébergé `webhook`, quand l'utilisateur le lui demande.
 
 ## Activer
@@ -86,7 +87,7 @@ Le proxy accepte aussi quatre champs facultatifs :
 |---|---|
 | `model` | Un autre modèle, si le webhook le permet |
 | `username` (ou `user_name`) | Qui écrit, affiché sur le message (« reçu par le webhook « Alertes » · zabbix ») |
-| `thread_ts` | Repris dans la réponse envoyée au webhook sortant : elle part dans le même fil Slack |
+| `thread_ts` | Repris dans la réponse envoyée à un sortant JSON (hors Apprise) : elle part dans le même fil Slack |
 | `response_url` | Commande slash : la réponse y est aussi postée (`response_type: in_channel`). En `https`, vers une adresse publique seulement, même avec `[webhooks].allow_private` |
 
 ### La réponse
@@ -104,7 +105,7 @@ ensuite, en tâche de fond :
    requête passe par `/ui/chat/completions` au nom du compte qui a créé le
    webhook : ses statistiques, sa part du partage équitable ;
 3. la réponse prend la place de celle en cours, puis part vers le webhook
-   sortant choisi, convertie en mrkdwn. Une erreur (backend hors ligne,
+   sortant choisi. Une erreur (backend hors ligne,
    historique plein…) prend aussi la place de la réponse en cours et part
    au sortant et au `response_url`, préfixée « Erreur : ».
 
@@ -155,36 +156,42 @@ En texte, comme Slack :
 
 ## Webhook sortant
 
-Un nom, une URL compatible Slack et, au choix, un salon. Slack
-(`https://hooks.slack.com/services/…`), Mattermost, Rocket.Chat, Discord
-(URL du webhook suivie de `/slack`)… Le proxy y poste :
+Un nom et une URL [Apprise](https://github.com/caronc/apprise/wiki) : le
+service, ses identifiants et, quand le service le permet, le salon.
 
-```json
-{"text": "<message en mrkdwn>", "channel": "#alertes"}
-```
+| Service | URL |
+|---|---|
+| Slack | `slack://T…/B…/X…/#alertes`, ou l'URL du webhook `https://hooks.slack.com/services/…` |
+| Mattermost | `mmost://chat.exemple.fr/<clé>` |
+| Discord | `discord://<id>/<jeton>`, ou `https://discord.com/api/webhooks/…` |
+| Teams, Telegram, ntfy, Matrix, e-mail… | voir le [wiki d'Apprise](https://github.com/caronc/apprise/wiki) |
 
-Le **salon** est facultatif. Défini, il part dans `channel` : `#alertes`,
-`@quelqu'un`, ou le nom que le service attend (`town-square` pour
-Mattermost). Vide, le message va dans le salon de l'URL. Mattermost,
-Rocket.Chat et les anciens webhooks Slack le suivent. Un webhook d'app
-Slack l'ignore et poste toujours dans le salon choisi à sa création :
-pour un autre salon, il faut une autre URL, donc un autre sortant.
+Le message part en Markdown ; chaque service le rend à sa façon. Un texte
+trop long pour le service part en plusieurs messages (sauf `overflow=`
+dans l'URL) ; au-delà de 39 000 caractères, il est coupé. La réponse à un
+message reçu est un nouveau message, pas une réponse dans le fil Slack.
+Un envoi dure au plus `[webhooks].timeout`.
 
-Le Markdown du modèle est converti : `**gras**` devient `*gras*`,
-`~~barré~~` devient `~barré~`, `[texte](url)` devient `<url|texte>`, un
-titre devient une ligne en gras, une puce devient `•`. Le code passe tel quel. Un texte de plus de 39 000
-caractères est coupé.
+Une URL `http(s)://` qu'Apprise ne reconnaît pas reçoit
+`{"text": "<message en mrkdwn>"}`, comme un webhook entrant de Slack. La
+page la marque **à ressaisir** : l'envoi suit alors les règles réseau des
+outils (`[tools.net]`, adresses publiques seulement sauf
+`[webhooks].allow_private`), et une redirection n'est pas suivie. Un tel
+sortant garde son salon, envoyé en `channel`, tant que l'URL n'est pas
+ressaisie.
+
+Toute URL qu'Apprise sait servir est acceptée, sans règle d'adresse :
+`json://` ou `mmost://` vers une machine du réseau interne, `mailto://`…
+Un compte peut donc faire envoyer un message vers toute adresse que le
+proxy joint. Sont refusés : une URL qui vise un webhook entrant d'un proxy
+(`/hooks/wh-…`, sous tout schéma : chaque réponse deviendrait un nouveau
+message), un en-tête `+User-Agent=`, et un paramètre qui désigne un
+fichier local (`keyfile=/…`).
 
 La page ne relit jamais l'URL, qui vaut droit d'écrire : elle n'en montre
-que l'hôte et la fin. **Essayer** envoie un message d'essai.
-
-L'envoi suit les règles réseau des outils : les refus de `[tools.net]`
-(`blocked_urls`, `blocked_domains`), les adresses publiques seulement. Une
-redirection n'est pas suivie : c'est un échec, à corriger dans l'URL
-(`https`, slash final). Pour un Mattermost du réseau interne, il faut
-`[webhooks].allow_private = true`. Un sortant ne peut pas viser un webhook
-entrant d'un proxy (`/hooks/wh-…`) : chaque réponse deviendrait un
-nouveau message.
+que le service, le schéma et l'hôte (masqué quand il porte un secret,
+comme le jeton d'un bot Telegram). **Essayer** envoie un message d'essai ;
+l'erreur d'Apprise s'affiche sur le sortant.
 
 ### L'outil `webhook`
 

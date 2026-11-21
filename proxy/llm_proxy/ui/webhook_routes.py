@@ -10,7 +10,7 @@ le chat de la page).
                             commande slash (`text`, `user_name`,
                             `response_url`). En plus : `model` (si le
                             webhook le permet), `thread_ts` (repris par la
-                            réponse). → 200 « ok » tout de suite ; la
+                            réponse à un sortant JSON). → 200 « ok » tout de suite ; la
                             réponse du modèle part ensuite vers le sortant
                             du webhook et le `response_url` (webhook_turn).
                             Erreurs comme Slack, en texte : 400
@@ -29,7 +29,7 @@ Sous /ui, ceux du compte connecté (jamais d'un autre) ; écritures en JSON
                                           réaffiche)
   POST   /ui/webhooks/in/{id}/rotate      nouveau jeton → {webhook, token}
   DELETE /ui/webhooks/in/{id}
-  POST   /ui/webhooks/out                 crée {name, url, channel?, tool?}
+  POST   /ui/webhooks/out                 crée {name, url, tool?}
   PUT    /ui/webhooks/out/{id}            modifie (url ou tool absents :
                                           inchangés)
   POST   /ui/webhooks/out/{id}/test       envoie un message d'essai

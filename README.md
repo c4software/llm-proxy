@@ -22,7 +22,8 @@ Autour du relais :
   ([Exécution de code](docs/execution-de-code.md)), lecture de dépôts
   ([Dépôts](docs/depots.md)), envoi vers un webhook, serveurs MCP ;
 - des **webhooks** par compte : un message reçu au format Slack, auquel un
-  modèle répond, et des envois vers Slack, Mattermost ou Rocket.Chat
+  modèle répond, et des envois vers Slack, Mattermost, Discord, Teams,
+  e-mail… par Apprise
   ([Webhooks](docs/webhooks.md)) ;
 - des **comptes OIDC** et des clés par compte, chacune limitable à
   certains outils ; un partage équitable des tokens entre comptes ;

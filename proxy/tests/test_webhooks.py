@@ -1,12 +1,14 @@
 """Les webhooks (storage/webhooks.py, ui/webhook_routes.py, ui/webhook_turn.py,
 tools/webhook.py) : le magasin, la réception au format Slack, le tour mené
 par le proxy, l'envoi sortant et l'outil `webhook`. Sans réseau : l'envoi
-(net.post) et le backend (relaying.send_upstream) sont remplacés."""
+JSON (net.post), celui d'Apprise (requests, sous son vrai code) et le
+backend (relaying.send_upstream) sont remplacés."""
 
 import json
 import sqlite3
 
 import pytest
+import requests
 
 from fakes import FakeUpstream, everywhere, go
 
@@ -41,6 +43,27 @@ def posted(monkeypatch):
     return sent
 
 
+class Sent(list):
+    """Les envois vus à une frontière ; `status` : ce que le service répond
+    (en 200, « ok », ce qu'attend un webhook Slack)."""
+    status = 200
+
+
+@pytest.fixture
+def notified(monkeypatch):
+    """Ce qu'Apprise envoie, à sa frontière (requests) : (url, corps)."""
+    sent = Sent()
+
+    def request(method, url, data=None, **kw):
+        sent.append((url, json.loads(data)))
+        r = requests.Response()
+        r.status_code, r._content = sent.status, b"ok" if sent.status == 200 else b"{}"
+        return r
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(requests, "post", lambda url, **kw: request("POST", url, **kw))
+    return sent
+
+
 @pytest.fixture
 def started(monkeypatch):
     """Les tours que la réception lance — (compte, webhook, texte, méta) —
@@ -63,6 +86,13 @@ def page(proxy, monkeypatch):
     login("sk-a")
     login.client = c
     return login
+
+
+def old_channels(channel: str) -> None:
+    """Le salon de tous les sortants, posé comme dans une base d'avant (la
+    page ne le saisit plus)."""
+    with sqlite3.connect(conversations.DB_PATH) as c:
+        c.execute("UPDATE webhooks_out SET channel = ?", (channel,))
 
 
 def outgoing(owner="", **settings) -> dict:
@@ -144,10 +174,22 @@ def test_un_compte_ne_touche_pas_aux_webhooks_d_un_autre():
 
 
 def test_sortant_url_masquee_et_reglages_refuses():
-    out = outgoing("a", url="https://hooks.slack.com/services/T/B/secret")
-    assert "secret" not in json.dumps(out) and "secret" not in json.dumps(webhooks.list_out("a"))
-    with pytest.raises(webhooks.WebhookError, match="URL"):
-        outgoing("a", url="file:///etc/passwd")
+    """Une URL Apprise (ou l'URL d'un webhook qu'Apprise reconnaît) : son
+    service, l'URL masquée ; une autre URL https : un sortant JSON, à
+    ressaisir ; ni l'une ni l'autre : refusée."""
+    for url, service in (("https://hooks.slack.com/services/T/B/secretsecret", "Slack"),
+                         ("discord://123/secretsecret", "Discord"),
+                         ("tgram://123456:secretsecret/987", "Telegram"),
+                         ("json://chat.example/hooks/secretsecret", "JSON"),
+                         ("ntfy://ntfy.example/secretsecret", "ntfy"),
+                         ("https://chat.example/hooks/secretsecret", "JSON compatible Slack")):
+        out = outgoing("a", name=service, url=url)
+        assert (out["service"], out["legacy"]) == (service, service == "JSON compatible Slack"), url
+        assert "secretsecret" not in json.dumps(webhooks.list_out("a")), url
+    for url, why in (("file:///etc/passwd", "URL"), ("pas une url", "URL"), ("slack://", "URL"),
+                     ("fcm://projet/appareil?keyfile=/etc/passwd", "fichier")):
+        with pytest.raises(webhooks.WebhookError, match=why):
+            outgoing("a", url=url)
     with pytest.raises(webhooks.WebhookError, match="true ou false"):
         outgoing("a", tool="true")
 
@@ -237,8 +279,15 @@ def test_boucle_sortant_vers_entrant_refusee(proxy, started):
     par un proxy (son User-Agent) est refusé : la réponse en ferait un
     nouveau message, sans fin."""
     url = address(incoming())
-    with pytest.raises(webhooks.WebhookError, match="entrant"):
-        outgoing(name="boucle", url="https://proxy.example" + url)
+    token = url.removeprefix("/hooks/")
+    for loop, why in ((f"https://proxy.example{url}", "entrant"),
+                      (f"mmost://proxy.example/{token}", "entrant"),
+                      (f"json://proxy.example/%68ooks/{token}", "entrant"),
+                      ("json://proxy.example/x?+User-Agent=autre", "User-Agent")):
+        with pytest.raises(webhooks.WebhookError, match=why):
+            outgoing(name="boucle", url=loop)
+    # Apprise se présente comme le proxy : l'entrant le reconnaît.
+    assert webhooks.ASSET.app_id == slack.USER_AGENT
     r = proxy.client.post(url, json={"text": "x"},
                           headers={"user-agent": slack.USER_AGENT})
     assert r.status_code == 403 and started == []
@@ -466,6 +515,55 @@ def test_passe_plat_exige_et_garde_son_sortant(proxy, posted):
     assert "ignoré" in last_error(hook)
 
 
+# ── l'envoi par Apprise ─────────────────────────────────────────────────
+
+def test_sortant_apprise_envoie_et_note_l_erreur(proxy, notified, posted):
+    """Une URL Apprise : le message part par Apprise, en Markdown, dans le
+    salon de l'URL, sans fil Slack ; un échec du service est noté sur le
+    sortant et rendu à l'outil."""
+    out = outgoing("a", url="slack://T1/B2/C3/#alertes", tool=True)
+    hook = incoming("a", reply=out["id"])
+    proxy.replies = [answer("**Rien** de grave.")]
+    go(webhook_turn.handle("a", hook, "x", {"thread_ts": "1.2"}))
+    url, body = notified[-1]
+    assert url == "https://hooks.slack.com/services/T1/B2/C3" and posted == []
+    assert body["channel"] == "#alertes" and "Rien" in json.dumps(body)
+    assert "thread_ts" not in body
+    assert webhooks.list_out("a")[0]["last_error"] == ""
+    assert "Message posted" in tool({"text": "x"}).text
+    notified.status = 500
+    with pytest.raises(ToolError) as exc:
+        tool({"text": "x"})
+    error = webhooks.list_out("a")[0]["last_error"]
+    assert error and "C3" not in error + exc.value.message       # pas l'URL
+
+
+def test_journal_du_proxy_sans_url_de_sortant(caplog, notified):
+    """Une URL refusée, ou un envoi en échec : ni le jeton ni l'URL dans
+    le journal du proxy."""
+    with pytest.raises(webhooks.WebhookError):
+        outgoing("a", url="mmost://secretsecret")
+    outgoing("a", url="slack://T1/B2/secretsecret", tool=True)
+    notified.status = 500
+    with pytest.raises(ToolError):
+        tool({"text": "x"})
+    assert "secretsecret" not in caplog.text
+
+
+def test_sortant_json_garde_son_salon_jusqu_a_l_url_ressaisie(posted):
+    """Un sortant JSON garde son salon (`channel`) ; une
+    URL redonnée l'efface : avec Apprise, le salon est dans l'URL."""
+    out = outgoing("a", tool=True)
+    old_channels("#alertes")
+    tool({"text": "x"})
+    assert posted[-1] == (URL, {"text": "x", "channel": "#alertes"})
+    webhooks.update_out("a", out["id"], {"name": "S"})             # sans URL : inchangé
+    assert webhooks.list_out("a")[0]["channel"] == "#alertes"
+    webhooks.update_out("a", out["id"], {"name": "S", "url": URL})
+    tool({"text": "y"})
+    assert posted[-1] == (URL, {"text": "y"})
+
+
 # ── l'outil ─────────────────────────────────────────────────────────────
 
 def tool(args, client="a"):
@@ -502,18 +600,6 @@ def test_outil_ne_voit_que_les_sortants_exposes(posted):
     assert [url for url, _ in posted] == ["https://chat.example/q"]
     with pytest.raises(ToolError, match="Public"):          # seul Public est proposé
         tool({"text": "x", "webhook": "Privé"})
-
-
-def test_salon_du_sortant(posted):
-    """Un salon défini part en `channel` ; retiré (sans redonner l'URL ni
-    `tool`, qui restent), plus de `channel`."""
-    out = outgoing("a", channel=" #alertes ", tool=True)
-    assert out["channel"] == "#alertes"
-    tool({"text": "x"})
-    assert posted[-1][1] == {"text": "x", "channel": "#alertes"}
-    webhooks.update_out("a", out["id"], {"name": "S", "channel": ""})
-    tool({"text": "y"})
-    assert posted[-1] == (URL, {"text": "y"})
 
 
 def test_outils_declares_comme_la_page(monkeypatch):
@@ -585,6 +671,26 @@ def test_base_d_avant_le_salon(tmp_path, monkeypatch):
                   "VALUES ('a', 'o1', 'S', 'https://chat.example/h', 1)")
     monkeypatch.setattr(conversations, "DB_PATH", path)
     assert webhooks.list_out("a")[0]["channel"] == ""
+
+
+def test_salon_d_un_sortant_slack_passe_dans_son_url_une_fois():
+    """Au démarrage, une fois : le salon d'un sortant hooks.slack.com passe
+    dans son URL Apprise ; un autre sortant JSON garde le sien."""
+    slack_out = outgoing("a", name="Slack", url="https://hooks.slack.com/services/T/B/X")
+    spaced = outgoing("a", name="Espacé", url="https://hooks.slack.com/services/T/B/Z")
+    other = outgoing("a", name="Autre")
+    old_channels("#alertes")
+    with sqlite3.connect(conversations.DB_PATH) as c:
+        c.execute("UPDATE webhooks_out SET channel = 'town square' WHERE id = ?", (spaced["id"],))
+    assert webhooks.move_channels_to_urls() == 2
+    moved = webhooks.get_out("a", slack_out["id"])
+    assert (moved["url"], moved["channel"], moved["legacy"]) == ("slack://T/B/X/%23alertes", "", False)
+    assert webhooks.get_out("a", spaced["id"])["url"] == "slack://T/B/Z/town%20square"
+    assert webhooks.get_out("a", other["id"])["channel"] == "#alertes"
+    old_channels("#autre")
+    with sqlite3.connect(conversations.DB_PATH) as c:
+        c.execute("UPDATE webhooks_out SET url = 'https://hooks.slack.com/services/T/B/Y'")
+    assert webhooks.move_channels_to_urls() == 0
 
 
 def test_prompts_herites_retires_une_fois():

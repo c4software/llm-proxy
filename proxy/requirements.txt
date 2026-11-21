@@ -4,4 +4,5 @@ httpx2==2.13.1
 pypdf==6.21.4
 regex==2026.9.29
 Authlib==1.9.1
+apprise==2.1.0
 itsdangerous==2.2.0

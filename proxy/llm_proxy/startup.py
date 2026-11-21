@@ -112,9 +112,12 @@ async def lifespan(app: FastAPI):
     stats.init()
     # Une fois par base : le prompt d'un webhook entrant que des
     # conversations avaient pris dans leurs réglages en est retiré.
-    if tools.webhook.ENABLED \
-            and (n := await asyncio.to_thread(webhooks.clear_inherited_prompts)):
-        log.info("webhooks : prompt système d'un webhook retiré de %d conversation(s)", n)
+    if tools.webhook.ENABLED:
+        if (n := await asyncio.to_thread(webhooks.clear_inherited_prompts)):
+            log.info("webhooks : prompt système d'un webhook retiré de %d conversation(s)", n)
+        # Une fois aussi : le salon d'un sortant Slack passe dans son URL Apprise.
+        if (n := await asyncio.to_thread(webhooks.move_channels_to_urls)):
+            log.info("webhooks : salon passé dans l'URL Apprise de %d sortant(s)", n)
     seeded = await asyncio.to_thread(seed_fair_share)
     log.info("partage équitable : %s par heure glissante par défaut, "
              "réglable par compte ; %d requête(s) de la dernière heure "
