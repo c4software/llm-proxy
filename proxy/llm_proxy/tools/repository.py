@@ -1,19 +1,31 @@
 """
 `repository` : LIRE un projet d'une forge (GitLab, GitHub, Gitea/Forgejo,
 ou tout dépôt git en HTTPS) — son arborescence, un fichier, une recherche
-— sans rien exécuter. Le proxy télécharge le projet avec le jeton d'une
-source (storage/repos.py : celles du compte, puis les partagées de
-l'admin), le garde en mémoire un moment, et répond aux commandes :
+— sans rien exécuter du projet.
+
+Le travail est partagé pour que le contenu d'un dépôt ne soit jamais
+décodé dans le proxy :
+
+  le PROXY    choisit la source (storage/repos.py : celles du compte, puis
+              les partagées), télécharge l'archive avec son jeton, et la
+              garde (compressée) en cache. Il ne l'ouvre pas.
+  un BAC      de l'exécuteur de code (le conteneur `executor` de la pile,
+              par sa route /v1/execute, comme code_execution — l'outil
+              code_execution lui-même peut rester inactif), un par compte
+              (session « repository »), sans réseau : il reçoit l'archive,
+              la décompresse et répond aux commandes, par le script
+              repository_bac.py.
 
   tree   l'arborescence (sous `path`), tailles comprises
   read   un fichier texte, lignes numérotées (`offset`, `limit`)
-  grep   une expression régulière (tools/pattern.py : bornée en durée)
-         dans les fichiers texte, sous `path`, filtrés par `include`
+  grep   une expression régulière dans les fichiers texte, sous `path`,
+         filtrés par `include`
 
 Le modèle ne choisit qu'une source (par son nom), un projet et une
-référence ; le jeton ne quitte jamais le proxy. Aucune règle d'adresse :
-une source peut viser une forge du réseau interne (choix du déploiement,
-docs/depots.md) — seules les listes de REFUS de [tools.net] valent.
+référence ; le jeton ne quitte jamais le proxy, ni vers le bac ni vers le
+modèle. Aucune règle d'adresse : une source peut viser une forge du réseau
+interne (choix du déploiement, docs/depots.md) — seules les listes de REFUS
+de [tools.net] valent.
 
   gitlab   GET <url>/api/v4/projects/<projet>/repository/archive.tar.gz
   github   GET <api>/repos/<projet>/tarball[/<ref>] (api.github.com, ou
@@ -22,69 +34,66 @@ docs/depots.md) — seules les listes de REFUS de [tools.net] valent.
            aussi) ; sans ref, la branche par défaut lue avant
   git      `git fetch --depth 1` de <url>/<projet>.git puis `git archive`,
            sous `prlimit` (le pack borné), jeton en Authorization Basic,
-           redirections refusées, listes de refus de [tools.net] appliquées
+           redirections refusées. git lit le pack DANS le proxy : seule
+           exception à « rien n'est décodé ici » (docs/depots.md).
 
 Les forges passent par net.download : adresse résolue et épinglée, corps
 borné, et le jeton envoyé au seul saut qui reste sur l'origine de la
-source (jamais à l'hôte d'une redirection). Le résultat est toujours une
-archive tar, lue par _unpack avec les mêmes bornes.
+source (jamais à l'hôte d'une redirection).
 
-Le projet est gardé (CACHE), par compte, source, adresse, forge, jeton,
-projet et référence, [repos].cache_ttl secondes : les commandes suivantes
-ne le retéléchargent pas, et une source modifiée ne sert pas l'ancien.
-Deux commandes simultanées sur le même projet attendent le même
-téléchargement. Une conversation incognito ne garde rien (webcache.Cache) :
-chaque commande retélécharge.
+Le bac garde ses dépôts tant qu'il vit ; un bac neuf (purgé, exécuteur
+redémarré) n'a rien : le script le dit, et le proxy redépose l'archive de
+son cache (CACHE, [repos].cache_ttl), ou la retélécharge. La clé : compte,
+source (adresse, forge, utilisateur, condensé du jeton), projet,
+référence. Deux commandes simultanées sur le même projet attendent le même
+téléchargement. Incognito, rien n'est gardé dans le cache (webcache.Cache).
 """
 
 import asyncio
 import base64
-import fnmatch
 import hashlib
-import io
 import json
 import os
 import re
 import signal
-import tarfile
 import tempfile
-import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from ..core import config
 from ..storage import repos
-from . import net
-from . import pattern as patterns
+from . import code_execution, net
 from .contract import Call, Result, Tool, ToolError, ToolName
 from .webcache import Cache
 
 ENABLED = config.flag("repos.enabled", False)
 NAME = ToolName.REPOSITORY
-# Octets au plus d'une archive téléchargée (compressée), et d'un projet
-# décompressé, gardé en mémoire.
-MAX_BYTES = config.integer("repos.max_bytes", 50_000_000)
-MAX_UNPACKED = config.integer("repos.max_unpacked_bytes", 200_000_000)
+# Octets au plus d'une archive (compressée) : c'est aussi un fichier
+# d'entrée du bac — SANDBOX_MAX_INPUT_BYTES de l'exécuteur au moins aussi haut.
+MAX_BYTES = config.integer("repos.max_bytes", 20_000_000)
+# Octets au plus d'un projet décompressé dans le bac (qui doit tenir dans
+# son /work, SANDBOX_WORK_SIZE).
+MAX_UNPACKED = config.integer("repos.max_unpacked_bytes", 100_000_000)
 # Délai (s) du téléchargement entier (ou du fetch git).
 TIMEOUT = config.num("repos.timeout", 120)
 CACHE = Cache(config.num("repos.cache_ttl", 1800), 32,
-              config.integer("repos.cache_bytes", 400_000_000))
+              config.integer("repos.cache_bytes", 200_000_000))
 # Un fichier plus gros n'est pas gardé (listé, mais ni lu ni cherché).
 MAX_FILE_BYTES = 2_000_000
 # Entrées au plus d'une archive (fichiers, dossiers, liens).
 MAX_ENTRIES = 100_000
+# Dépôts gardés au plus dans le bac d'un compte (les plus récents).
+KEEP = 2
 READ_LINES = 400
-MAX_READ_CHARS = 60_000
-MAX_LINE_CHARS = 2000
-TREE_LINES = 400
-GREP_MATCHES = 200
-# Délai (s) de TOUTE une recherche, fichiers compris.
-GREP_BUDGET = 10.0
+MAX_PATTERN = 500
+SESSION = "repository"
 USER_AGENT = "llm-proxy repository (+https://github.com/c4software/llm-proxy)"
 COMMANDS = ("tree", "read", "grep")
 # Un projet : « groupe/sous-groupe/projet », « propriétaire/dépôt ».
 PROJECT = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.\-]*(/[A-Za-z0-9_.][A-Za-z0-9_.\-]*)*\Z")
 _REF = re.compile(r"[A-Za-z0-9_.\-/]{1,200}\Z")
+# Le script du bac, lu une fois (un texte : il n'est pas importé ici).
+SCRIPT = Path(__file__).with_name("repository_bac.py").read_text(encoding="utf-8")
 
 
 def valid_project(project: str) -> bool:
@@ -208,7 +217,8 @@ async def _git_run(args: list[str], env: dict, hidden: list[str],
         await asyncio.gather(
             collect(proc.stderr, err, 64_000, ""),
             *([collect(proc.stdout, out, limit,
-                       f"the project is larger than {limit} bytes once unpacked.")]
+                       f"the archive is larger than {limit} bytes, the limit of this "
+                       f"proxy.")]
               if limit else []))
         await proc.wait()
     finally:
@@ -230,8 +240,8 @@ async def _git_run(args: list[str], env: dict, hidden: list[str],
 
 async def _git(source: dict, project: str, ref: str) -> bytes:
     """`git fetch --depth 1` de la référence (un commit aussi), puis
-    `git archive` : une archive tar, comme celle d'une forge, sans checkout
-    sur le disque."""
+    `git archive` : une archive tar.gz, comme celle d'une forge, sans
+    checkout sur le disque."""
     url = source["url"].rstrip("/") + f"/{project}" + ("" if project.endswith(".git") else ".git")
     net.refused(url)                              # les listes de refus, comme les forges
     env, hidden = _git_env(source)
@@ -251,180 +261,68 @@ async def _git(source: dict, project: str, ref: str) -> bytes:
                 raise ToolError("unsupported", f"the repository is larger than "
                                                f"{MAX_BYTES} bytes.")
             raise
-        return await _git_run(["-C", tmp, "archive", "--format=tar", "--prefix=src/",
-                               "FETCH_HEAD"], env, hidden, MAX_UNPACKED + MAX_UNPACKED // 10)
+        return bytes(await _git_run(["-C", tmp, "archive", "--format=tar.gz", "--prefix=src/",
+                                     "FETCH_HEAD"], env, hidden, MAX_BYTES))
 
 
-def _unpack(data: bytes) -> dict[str, bytes | None]:
-    """Une archive (UN dossier racine) → ses fichiers réguliers, chemins sans
-    ce dossier ; None pour un fichier trop gros (listé, non gardé). Liens,
-    chemins absolus ou en `..` : ignorés."""
-    files: dict[str, bytes | None] = {}
-    total = entries = 0
-    try:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tar:
-            for m in tar:
-                entries += 1
-                if entries > MAX_ENTRIES:
-                    raise ToolError("unsupported", f"the project has more than "
-                                                   f"{MAX_ENTRIES} entries.")
-                # Tout membre compte, gardé ou non : il est décompressé pour
-                # être sauté.
-                total += m.size
-                if total > MAX_UNPACKED:
-                    raise ToolError("unsupported", f"the project is larger than "
-                                                   f"{MAX_UNPACKED} bytes once unpacked.")
-                parts = m.name.split("/")[1:]
-                if not m.isfile() or not parts or any(p in ("", ".", "..") for p in parts):
-                    continue
-                path = "/".join(parts)
-                if m.size > MAX_FILE_BYTES:
-                    files[path] = None
-                else:
-                    f = tar.extractfile(m)
-                    files[path] = f.read() if f else b""
-    except (tarfile.TarError, EOFError, OSError):
-        raise ToolError("unsupported", "the forge returned an unreadable archive.")
-    return files
-
-
-async def fetch(source: dict, project: str, ref: str, transport=None) -> dict[str, bytes | None]:
-    """Le projet → {chemin: octets, ou None}. Lève ToolError."""
+async def fetch(source: dict, project: str, ref: str, transport=None) -> bytes:
+    """L'archive tar.gz du projet (UN dossier racine), non ouverte. Lève
+    ToolError."""
     try:
         async with asyncio.timeout(TIMEOUT):
-            data = await (_git(source, project, ref) if source["forge"] == "git"
-                          else _archive(source, project, ref, transport))
+            if source["forge"] == "git":
+                return await _git(source, project, ref)
+            return await _archive(source, project, ref, transport)
     except TimeoutError:
         raise ToolError("timeout", f"the download took more than {TIMEOUT:g} s.")
-    return await asyncio.to_thread(_unpack, data)
 
 
-# ── les commandes ───────────────────────────────────────────────────────
+# ── le bac ──────────────────────────────────────────────────────────────
 
-def _text(data: bytes | None) -> str | None:
-    """Le texte d'un fichier, None s'il est binaire (ou trop gros)."""
-    if data is None or b"\0" in data[:8000]:
+def _code(args: dict) -> str:
+    """Le script du bac, ses arguments en tête (un littéral Python : repr
+    d'un texte JSON)."""
+    return f"ARGS = {json.dumps(args)!r}\n" + SCRIPT
+
+
+async def _bac(client: str, args: dict, archive: bytes | None, transport=None) -> str | None:
+    """Une commande dans le bac du compte → son texte ; None : le dépôt n'y
+    est pas (bac neuf), à redéposer. Lève ToolError."""
+    args = {**args, "max_unpacked": MAX_UNPACKED, "max_file": MAX_FILE_BYTES,
+            "max_entries": MAX_ENTRIES, "keep": KEEP}
+    body = {"client": client, "session": SESSION, "language": "python",
+            "timeout": code_execution.TIMEOUT}
+    if archive is not None:
+        name = f"repo-{args['dir']}.tar.gz"
+        args["archive"] = name
+        body["inputs"] = [{"name": name, "data": base64.b64encode(archive).decode("ascii")}]
+    body["code"] = _code(args)
+    r = await code_execution.execute(
+        body, code_execution.TIMEOUT + code_execution.MARGIN + code_execution.INPUT_MARGIN,
+        transport)
+    if r.status_code == 413:
+        raise ToolError("unsupported", "the archive is larger than the sandbox accepts "
+                                       "(SANDBOX_MAX_INPUT_BYTES).")
+    if r.status_code == 429:
+        raise ToolError("too_many_requests", "every sandbox is busy; try again later.")
+    if r.status_code != 200:
+        raise ToolError("unavailable", f"the sandbox service failed (HTTP {r.status_code}).")
+    doc = r.json()
+    if doc.get("rejected"):
+        raise ToolError("unsupported", "the sandbox refused the archive ("
+                        + str(doc["rejected"][0].get("reason", "?")) + ").")
+    out = (doc.get("output") or "").rstrip("\n")
+    if doc.get("timed_out"):
+        raise ToolError("timeout", "the sandbox took too long on this project.")
+    if doc.get("exit_code") == 3:
         return None
-    return data.decode("utf-8", "replace")
-
-
-def _under(path: str, folder: str) -> bool:
-    return not folder or path == folder or path.startswith(folder + "/")
-
-
-def _size(n: int | None) -> str:
-    if n is None:
-        return f">{MAX_FILE_BYTES // 1_000_000} MB, not kept"
-    return f"{n} B" if n < 1000 else f"{n / 1000:.1f} kB" if n < 1_000_000 else f"{n / 1e6:.1f} MB"
-
-
-def tree(files: dict, folder: str, depth: int) -> str:
-    entries = sorted(p for p in files if _under(p, folder))
-    if not entries:
-        raise ToolError("not_accessible", f"no file under {folder!r}.")
-    start = len(folder.split("/")) if folder else 0
-    out, counts = [], {}
-    for p in entries:
-        parts = p.split("/")
-        if len(parts) - start > depth:
-            d = "/".join(parts[:start + depth])
-            if d not in counts:
-                counts[d] = 0
-                out.append(d)
-            counts[d] += 1
-        else:
-            data = files[p]
-            out.append(f"{p}  ({_size(None if data is None else len(data))})")
-    out = [f"{x}/  ({counts[x]} files)" if x in counts else x for x in out]
-    more = len(out) - TREE_LINES
-    return f"{len(entries)} files\n" + "\n".join(out[:TREE_LINES]) + (
-        f"\n[… {more} more entries; narrow with `path` or `depth`]" if more > 0 else "")
-
-
-def read(files: dict, path: str, offset: int, limit: int) -> str:
-    if path not in files:
-        name = path.split("/")[-1]
-        near = [p for p in files if p.split("/")[-1] == name]
-        raise ToolError("not_accessible", f"no file {path!r}" + (
-            f"; did you mean: {', '.join(near[:5])}?" if near else "; use the tree command."))
-    text = _text(files[path])
-    if text is None:
-        raise ToolError("unsupported", f"{path} is binary or larger than "
-                                       f"{MAX_FILE_BYTES} bytes.")
-    # Découpé sur \n seul, comme grep compte ses lignes ; sans la ligne vide
-    # qui suit le dernier saut.
-    lines = [line.rstrip("\r") for line in text.split("\n")]
-    if lines and lines[-1] == "" and text.endswith("\n"):
-        lines.pop()
-    first = max(1, offset)
-    if lines and first > len(lines):
-        raise ToolError("invalid_input", f"{path} has {len(lines)} lines; `offset` is past "
-                                         f"its end.")
-    body, used = [], 0
-    for i, line in enumerate(lines[first - 1:first - 1 + limit], first):
-        if len(line) > MAX_LINE_CHARS:            # JS minifié, lockfile : coupé
-            line = line[:MAX_LINE_CHARS] + f" [… {len(line) - MAX_LINE_CHARS} characters]"
-        row = f"{i:>5}\t{line}"
-        if body and used + len(row) > MAX_READ_CHARS:
-            break                                  # au moins une ligne : on avance toujours
-        used += len(row) + 1
-        body.append(row)
-    last = first + len(body) - 1
-    tail = f"\n[lines {first}-{last} of {len(lines)}; continue with offset={last + 1}]" \
-        if last < len(lines) else ""
-    return f"{path} ({len(lines)} lines)\n" + "\n".join(body) + tail
-
-
-def grep(files: dict, pattern, folder: str, include: str) -> str:
-    """Les lignes qui répondent au motif compilé (patterns.compile), une
-    fois chacune, coupées autour de la correspondance. Chaque recherche est
-    bornée par patterns.TIMEOUT : un fichier où elle déborde est compté
-    comme non cherché ; l'ensemble est borné par GREP_BUDGET (TimeoutError)."""
-    deadline = time.monotonic() + GREP_BUDGET
-    found, skipped, slow = [], 0, 0
-    for p in sorted(files):
-        if not _under(p, folder) or (include and not _glob(p, include)):
-            continue
-        text = _text(files[p])
-        if text is None:
-            skipped += 1
-            continue
-        pos, number = 0, 1
-        while pos <= len(text):
-            left = deadline - time.monotonic()
-            if left <= 0:
-                raise TimeoutError
-            try:
-                m = pattern.search(text, pos, timeout=min(patterns.TIMEOUT, left),
-                                   concurrent=True)
-            except TimeoutError:
-                slow += 1
-                break
-            if m is None or (m.start() == len(text) and text.endswith("\n")):
-                break                             # pas de ligne après le dernier saut
-            begin = text.rfind("\n", 0, m.start()) + 1
-            end = text.find("\n", m.start())
-            end = len(text) if end < 0 else end
-            number += text.count("\n", pos, begin)
-            line = text[begin:end].rstrip("\r")
-            found.append(f"{p}:{number}: "
-                         f"{patterns.clip(line, m.start() - begin, m.end() - begin).strip()}")
-            if len(found) >= GREP_MATCHES:
-                return "\n".join(found) + (f"\n[stopped at {GREP_MATCHES} matches; "
-                                           f"narrow with `path` or `include`]")
-            # La ligne suivante : une ligne n'est rendue qu'une fois.
-            pos = end + 1
-            number += 1
-    too_slow = f"{slow} files where the pattern was too slow, not searched" if slow else ""
-    if not found:
-        notes = ([f"{skipped} binary or large files not searched"] if skipped else []) \
-            + ([too_slow] if too_slow else [])
-        return "No match." + (f" ({'; '.join(notes)}.)" if notes else "")
-    return "\n".join(found) + (f"\n[{too_slow}]" if too_slow else "")
-
-
-def _glob(path: str, include: str) -> bool:
-    return fnmatch.fnmatch(path.split("/")[-1], include) or fnmatch.fnmatch(path, include)
+    if doc.get("exit_code") == 2:
+        code, _, message = out.partition(": ")
+        raise ToolError(code if code in ("invalid_input", "not_accessible", "unsupported",
+                                         "failed") else "failed", message or out)
+    if doc.get("exit_code") != 0:
+        raise ToolError("failed", "the sandbox failed: " + out[-300:])
+    return out
 
 
 # ── l'outil ─────────────────────────────────────────────────────────────
@@ -436,28 +334,32 @@ _loading: dict[tuple, list] = {}
 class RepositoryTool(Tool):
     name = NAME
     max_calls = 30
-    timeout = TIMEOUT + GREP_BUDGET + 15
+    timeout = TIMEOUT + 2 * (code_execution.TIMEOUT + code_execution.MARGIN
+                             + code_execution.INPUT_MARGIN)
 
     @property
     def enabled(self) -> bool:
-        return ENABLED
+        # Les dépôts sont lus dans un bac de l'exécuteur : il doit être
+        # configuré (l'outil code_execution peut, lui, rester inactif).
+        return ENABLED and bool(code_execution.URL and code_execution.TOKEN)
 
     def prompt(self, present) -> str:
         return (
             "Read a git repository the user configured access to (GitLab, GitHub, "
             "Gitea or another git server): its file tree, a file, or a regex search "
-            "across its files. Nothing is executed. Use it when the task needs the "
-            "actual source of a project (where a dependency is pinned, how something "
-            "is implemented, a config file). Commands: tree (optional `path` to look "
-            "inside a folder, `depth`, default 2), read (`path` of a file; `offset` "
-            "and `limit` in lines for long files), grep (`pattern`, a regular "
-            "expression, case-insensitive; optional `path` folder and `include` "
-            "file-name glob such as *.py or requirements*.txt). `project` is the path "
-            "on the forge (group/subgroup/project, owner/repo). `source` names a "
-            "configured source, omitted when there is only one; an unknown name "
-            "returns the available ones. `ref`: branch, tag or commit; omit for the "
-            "default branch. The project is downloaded on first use and kept for a "
-            "while: later commands are fast.")
+            "across its files. Nothing of the project is executed. Use it when the "
+            "task needs the actual source of a project (where a dependency is "
+            "pinned, how something is implemented, a config file). Commands: tree "
+            "(optional `path` to look inside a folder, `depth`, default 2), read "
+            "(`path` of a file; `offset` and `limit` in lines for long files), grep "
+            "(`pattern`, a Python regular expression, case-insensitive; optional "
+            "`path` folder and `include` file-name glob such as *.py or "
+            "requirements*.txt). `project` is the path on the forge "
+            "(group/subgroup/project, owner/repo). `source` names a configured "
+            "source, omitted when there is only one; an unknown name returns the "
+            "available ones. `ref`: branch, tag or commit; omit for the default "
+            "branch. The project is downloaded on first use and kept for a while: "
+            "later commands are fast.")
 
     def parameters(self, present) -> dict:
         return {"type": "object", "properties": {
@@ -469,7 +371,7 @@ class RepositoryTool(Tool):
             "ref": {"type": "string", "description": "Branch, tag or commit; omit for the default branch."},
             "path": {"type": "string", "description": (
                 "read: the file; tree and grep: a folder to limit to (optional).")},
-            "pattern": {"type": "string", "description": "grep: a regular expression."},
+            "pattern": {"type": "string", "description": "grep: a Python regular expression."},
             "include": {"type": "string", "description": "grep: a file-name glob, e.g. *.py."},
             "depth": {"type": "integer", "description": "tree: levels shown (default 2)."},
             "offset": {"type": "integer", "description": "read: first line (default 1)."},
@@ -480,7 +382,9 @@ class RepositoryTool(Tool):
         return {"type": self.name, "command": str(args.get("command") or ""),
                 "project": str(args.get("project") or ""), "path": str(args.get("path") or "")}
 
-    async def run(self, args: dict, call: Call, transport=None) -> Result:
+    async def run(self, args: dict, call: Call, transport=None, sandbox=None) -> Result:
+        """`transport`, `sandbox` : pour les tests — vers la forge, vers
+        l'exécuteur."""
         command = args.get("command")
         if command not in COMMANDS:
             raise ToolError("invalid_input", "`command` must be one of " + ", ".join(COMMANDS) + ".")
@@ -490,28 +394,33 @@ class RepositoryTool(Tool):
         ref = str(args.get("ref") or "").strip()
         if ref and not valid_ref(ref):
             raise ToolError("invalid_input", "`ref` must be a branch, tag or commit name.")
-        # Le motif d'abord : une erreur du modèle ne coûte pas un téléchargement.
-        pattern = patterns.compile(args.get("pattern")) if command == "grep" else None
-        source = await _source(call.client, str(args.get("source") or "").strip(), project)
-        files = await _files(call.client, source, project, ref, transport)
         path = str(args.get("path") or "").strip().strip("/")
+        todo = {"command": command, "path": path}
         if command == "tree":
             depth = args.get("depth") if isinstance(args.get("depth"), int) else 2
-            text = tree(files, path, max(1, min(depth, 10)))
+            todo["depth"] = max(1, min(depth, 10))
         elif command == "read":
             if not path:
                 raise ToolError("invalid_input", "`path` of the file to read is required.")
             offset = args.get("offset") if isinstance(args.get("offset"), int) else 1
             limit = args.get("limit") if isinstance(args.get("limit"), int) else READ_LINES
-            text = read(files, path, offset, max(1, min(limit, 2000)))
+            todo.update(offset=offset, limit=max(1, min(limit, 2000)))
         else:
-            try:
-                text = await asyncio.to_thread(grep, files, pattern, path,
-                                               str(args.get("include") or "").strip())
-            except TimeoutError:
-                raise ToolError("failed", "the pattern took too long on this project; use a "
-                                          "simpler expression, or narrow with `path` or "
-                                          "`include`.")
+            pattern = args.get("pattern")
+            if not isinstance(pattern, str) or not pattern:
+                raise ToolError("invalid_input", "`pattern` is required.")
+            if len(pattern) > MAX_PATTERN:
+                raise ToolError("invalid_input", f"`pattern` is longer than {MAX_PATTERN} characters.")
+            todo.update(pattern=pattern, include=str(args.get("include") or "").strip())
+        source = await _source(call.client, str(args.get("source") or "").strip(), project)
+        key = _key(call.client, source, project, ref)
+        todo["dir"] = hashlib.sha256(repr(key).encode()).hexdigest()[:24]
+        text = await _bac(call.client, todo, None, sandbox)
+        if text is None:              # pas dans le bac : l'archive, puis la commande
+            archive = await _archive_for(key, call.client, source, project, ref, transport)
+            text = await _bac(call.client, todo, archive, sandbox)
+            if text is None:
+                raise ToolError("failed", "the sandbox lost the project; try again.")
         where = f"{source['name']}:{project}" + (f"@{ref}" if ref else "")
         return Result(f"[{where}]\n{text}", meta={"source": source["name"], "project": project})
 
@@ -537,24 +446,30 @@ async def _source(owner: str, wanted: str, project: str) -> dict:
     return source
 
 
-async def _files(owner: str, source: dict, project: str, ref: str, transport) -> dict:
-    """Le projet, du cache ou téléchargé. La clé tient le compte (un projet
-    lu avec le jeton d'un compte n'est pas servi à un autre) et ce qui fait
-    la source (adresse, forge, utilisateur, condensé du jeton) : une source
-    modifiée ne sert pas l'ancien contenu. Le projet tel qu'écrit : une
-    forge git peut distinguer la casse."""
+def _key(owner: str, source: dict, project: str, ref: str) -> tuple:
+    """Ce qui fait un projet lu : le compte (un projet lu avec le jeton d'un
+    compte n'est pas servi à un autre) et la source (adresse, forge,
+    utilisateur, condensé du jeton : une source modifiée ne sert pas
+    l'ancien contenu), le projet tel qu'écrit (une forge git peut distinguer
+    la casse), la référence."""
     token = hashlib.sha256((source.get("token") or "").encode()).hexdigest()[:16]
-    key = (owner, source["id"], source["url"], source["forge"], source.get("username") or "",
-           token, project, ref)
+    return (owner, source["id"], source["url"], source["forge"], source.get("username") or "",
+            token, project, ref)
+
+
+async def _archive_for(key: tuple, owner: str, source: dict, project: str, ref: str,
+                       transport) -> bytes:
+    """L'archive du projet, du cache ou téléchargée (une fois pour deux
+    commandes simultanées)."""
     entry = _loading.setdefault(key, [asyncio.Lock(), 0])
     entry[1] += 1
     try:
         async with entry[0]:
-            files = CACHE.get(key)
-            if files is not None:
-                return files
+            data = CACHE.get(key)
+            if data is not None:
+                return data
             try:
-                files = await fetch(source, project, ref, transport)
+                data = await fetch(source, project, ref, transport)
             except ToolError as exc:
                 if not source["shared"]:
                     await asyncio.to_thread(repos.downloaded, owner, source["id"], exc.message)
@@ -563,8 +478,8 @@ async def _files(owner: str, source: dict, project: str, ref: str, transport) ->
             # une erreur de la source : rien n'est noté.
             if not source["shared"]:
                 await asyncio.to_thread(repos.downloaded, owner, source["id"])
-            CACHE.put(key, files, sum(len(v) for v in files.values() if v))
-            return files
+            CACHE.put(key, data, len(data))
+            return data
     finally:
         entry[1] -= 1
         if not entry[1]:

@@ -14,6 +14,17 @@ services:
     # ./data appartient à l'hôte : écrire avec son uid, sinon le montage
     # n'est pas inscriptible et les fichiers créés exigent sudo.
     user: "${PUID:-1000}:${PGID:-1000}"
+    # Durcissement : l'image en lecture seule (seuls ./data et /tmp
+    # s'écrivent : bases, configuration ; fichiers temporaires des outils et
+    # du fetch git de `repository`), aucune capacité Linux, pas d'élévation.
+    # Ce que le proxy décode d'un tiers (archives, PDF, audio) a ainsi le
+    # moins de prise possible.
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     environment:
       # Les secrets seulement, injectés dans le TOML par «${VAR}» ; les
       # réglages vivent dans le TOML. Les variables vides sont sans effet.

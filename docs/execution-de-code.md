@@ -22,6 +22,12 @@ client ─▶ proxy ──HTTP + jeton──▶ executor ──podman exec──
 3. Suivre la [procédure de validation](#valider-lexécuteur-sur-le-déploiement),
    qui finit par poser `enabled = true` et `[files] public_url`.
 
+L'exécuteur sert aussi à l'outil [`repository`](depots.md) : les dépôts y
+sont décompressés et lus, dans un bac par compte (la session
+`repository`). Pour ce seul usage, l'exécuteur doit être configuré (`url`,
+`token`), mais `enabled` peut rester à `false` : l'outil `code_execution`
+n'est alors pas offert.
+
 Déclarer l'outil :
 
 - sur `/v1/chat/completions` : `{"type": "code_execution"}` dans `tools`,

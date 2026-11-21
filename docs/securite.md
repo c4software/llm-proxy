@@ -65,8 +65,23 @@ une adresse fournie par un compte (sa source), sans règle d'adresse : une
 forge du réseau interne est joignable, et tout compte peut définir une
 source. À n'activer (`[repos].enabled`) que là où les comptes sont de
 confiance. Le jeton d'une source n'est rendu ni à la page, ni au modèle,
-ni dans une URL, et ne
-suit pas une redirection vers un autre hôte.
+ni au bac, ni dans une URL, et ne suit pas une redirection vers un autre
+hôte.
+
+Le contenu d'un dépôt n'est pas décodé dans le proxy : l'archive est
+décompressée et lue dans un bac de l'exécuteur, sans réseau (voir
+[Comment un dépôt est lu](depots.md#comment-un-dépôt-est-lu)). Seule la
+forge `git` fait lire un pack par git dans le proxy, borné et sans rien
+exécuter du dépôt.
+
+## Le conteneur du proxy
+
+Le service `albert-proxy` tourne durci (voir
+[Déploiement](deploiement.md#durcissement-du-conteneur)) : image en
+lecture seule, seuls `./data` et un `/tmp` en mémoire s'écrivent, aucune
+capacité Linux, pas d'élévation de privilèges, utilisateur non root. Ce
+que le proxy décode d'un tiers (pages, PDF, audio, packs git) a ainsi le
+moins de prise possible.
 
 ## La page
 

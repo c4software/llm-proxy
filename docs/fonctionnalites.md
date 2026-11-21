@@ -94,7 +94,8 @@ détaille.
   compatibles Slack. [Webhooks](webhooks.md)
 - **Dépôts** (`[repos]`) : l'outil `repository` lit un projet GitLab,
   GitHub, Gitea ou git (arborescence, fichier, recherche ; rien n'est
-  exécuté), avec le jeton d'une source du compte ou de l'admin. [Dépôts](depots.md)
+  exécuté), avec le jeton d'une source du compte ou de l'admin. Le proxy
+  télécharge, un bac de l'exécuteur décompresse et lit. [Dépôts](depots.md)
 
 ## Suivi et interface
 

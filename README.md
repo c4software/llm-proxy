@@ -112,7 +112,7 @@ du cours sur le développement agentique.
 | Synthèse vocale, conception et clonage de voix (Qwen3-TTS), avec curl et dans le chat | [Voix](docs/voix.md) |
 | Le bac à sable de `code_execution` | [Exécution de code](docs/execution-de-code.md) |
 | Webhooks entrants et sortants, au format Slack, par compte | [Webhooks](docs/webhooks.md) |
-| Lire un dépôt GitLab, GitHub, Gitea ou git (arborescence, fichiers, recherche) | [Dépôts](docs/depots.md) |
+| Lire un dépôt GitLab, GitHub, Gitea ou git (arborescence, fichiers, recherche), dans un bac de l'exécuteur | [Dépôts](docs/depots.md) |
 | Écrire un outil hébergé : le contrat | [docs/outils.md](docs/outils.md) |
 | Vérifier un déploiement | [Vérification](docs/verification.md) |
 | Ce qui ne marche pas, ou pas encore | [Limites connues](docs/limites.md) |

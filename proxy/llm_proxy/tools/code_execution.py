@@ -259,6 +259,23 @@ async def download(asked: list[Input], settings, transport=None) -> None:
             item.name = name
 
 
+async def execute(body: dict, timeout: float, transport=None) -> httpx2.Response:
+    """POST /v1/execute à l'exécuteur, sa réponse telle quelle. Commun à
+    code_execution et à `repository` (repository.py), qui y lit ses dépôts.
+    Lève ToolError `unavailable` s'il est injoignable."""
+    try:
+        # trust_env=False : l'exécuteur est une adresse du réseau du proxy,
+        # un HTTP_PROXY d'environnement n'a pas à s'en mêler.
+        async with httpx2.AsyncClient(timeout=httpx2.Timeout(timeout, connect=5),
+                                      transport=transport, trust_env=False) as c:
+            return await c.post(f"{URL}/v1/execute",
+                                headers={"Authorization": f"Bearer {TOKEN}"}, json=body)
+    except httpx2.HTTPError as exc:
+        raise ToolError("unavailable", (
+            f"the sandbox service is unreachable ({type(exc).__name__}). "
+            f"Do not retry now: answer without running code, and say so."))
+
+
 def render(doc: dict, timeout: float, session: bool, inputs=()) -> Result:
     """La réponse de l'exécuteur → le Result. Le TEXTE d'abord : l'issue,
     l'état du bac, les fichiers, puis la sortie en dernier — si le texte
@@ -521,21 +538,8 @@ class CodeExecution(Tool):
                 {"name": item.name,
                  "data": base64.b64encode(item.data).decode("ascii")}
                 for item in ready]
-        try:
-            # trust_env=False : l'exécuteur est une adresse du réseau du
-            # proxy, un HTTP_PROXY d'environnement n'a pas à s'en mêler.
-            async with httpx2.AsyncClient(
-                    timeout=httpx2.Timeout(
-                        TIMEOUT + MARGIN - 5 + (INPUT_MARGIN if ready else 0),
-                        connect=5),
-                    transport=transport, trust_env=False) as c:
-                r = await c.post(
-                    f"{URL}/v1/execute",
-                    headers={"Authorization": f"Bearer {TOKEN}"}, json=body)
-        except httpx2.HTTPError as exc:
-            raise ToolError("unavailable", (
-                f"the sandbox service is unreachable ({type(exc).__name__}). "
-                f"Do not retry now: answer without running code, and say so."))
+        r = await execute(body, TIMEOUT + MARGIN - 5 + (INPUT_MARGIN if ready else 0),
+                          transport)
         if r.status_code == 429:
             raise ToolError("too_many_requests", (
                 "every sandbox is busy. Try again once, later in this "

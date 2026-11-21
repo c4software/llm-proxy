@@ -1,5 +1,6 @@
 """
-Une expression régulière ÉCRITE PAR LE MODÈLE (web_grep, repository) : par
+Une expression régulière ÉCRITE PAR LE MODÈLE, lue dans le proxy (web_grep ;
+celle de `repository` tourne dans un bac, repository_bac.py) : par
 la bibliothèque `regex` et non `re`, parce que `regex` a un délai
 (`timeout`). Une expression à retour arrière catastrophique — `(a+)+$` —
 est coupée au bout de TIMEOUT au lieu de bloquer le proxy ; la recherche
@@ -9,7 +10,7 @@ l'attend pas.
   compile(source, ignore_case)   le motif compilé ; ToolError s'il est
                                  vide, trop long ou invalide
   TIMEOUT                        le délai d'UNE recherche
-                                 ([tools.web_grep].regex_timeout, pour les deux)
+                                 ([tools.web_grep].regex_timeout)
   clip(line, start, end)         une ligne trouvée, coupée autour de la
                                  correspondance
 """

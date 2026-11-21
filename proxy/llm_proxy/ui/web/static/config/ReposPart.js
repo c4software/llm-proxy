@@ -75,8 +75,8 @@ export const ReposPart = {
         <div class="panel-head"><h2>Sources de dépôts</h2>
           <button type="button" class="btn" v-if="!editing" @click="open()">Nouvelle</button></div>
         <p class="note">L'outil « Dépôts » du chat (et des webhooks) lit un projet d'une de ces sources :
-          son arborescence, ses fichiers, une recherche — rien n'est exécuté. C'est le proxy qui le
-          télécharge avec votre jeton : le modèle ne le voit jamais. Un jeton en lecture seule
+          son arborescence, ses fichiers, une recherche — rien n'est exécuté. Le proxy le télécharge
+          avec votre jeton (ni le modèle ni le bac ne le voient), un bac isolé le décompresse et le lit. Un jeton en lecture seule
           suffit<template v-if="maxBytes"> ; archive de {{ mb(maxBytes) }} au plus</template>.</p>
         <form class="item-form" v-if="editing" @submit.prevent="save">
           <label>Nom <span class="dim">(c'est par lui que le modèle la désigne)</span>

@@ -202,13 +202,14 @@ partie qui l'a importé.
 | `tools/web_search.py` | `web_search` : requête à SearXNG, résultats numérotés, filtre par domaines |
 | `tools/web_fetch.py` | `web_fetch` : lecture d'une page ou du texte d'un PDF, tailles bornées |
 | `tools/web_grep.py` | `web_grep` : expression régulière dans une page lue, avec contexte et offset |
-| `tools/pattern.py` | Une expression régulière écrite par le modèle (`web_grep`, `repository`) : bibliothèque `regex`, délai et longueur bornés |
+| `tools/pattern.py` | Une expression régulière écrite par le modèle, lue dans le proxy (`web_grep`) : bibliothèque `regex`, délai et longueur bornés ; l'extrait autour d'une correspondance |
 | `tools/ocr.py` | `ocr` : texte d'une image ou d'un PDF scanné, par un modèle de vision |
 | `tools/transcribe.py` | `transcribe` : transcription d'un fichier audio par un backend, texte découpé et caché |
-| `tools/code_execution.py` | `code_execution` : client de l'exécuteur, texte et fichiers produits |
+| `tools/code_execution.py` | `code_execution` : client de l'exécuteur, texte et fichiers produits ; `execute`, l'appel à l'exécuteur, commun avec `repository` |
 | `tools/image_generation.py` | `image_generation` : génération ou retouche par un backend, image rendue en fichier |
 | `tools/memory.py` | `memory` : `view`, `create`, `str_replace`, `insert`, `delete`, `rename` |
-| `tools/repository.py` | `repository` : lire un projet d'une forge (`tree`, `read`, `grep`) ; l'archive de la forge (par `net.download`) ou `git fetch` + `git archive`, gardée en mémoire |
+| `tools/repository.py` | `repository` : lire un projet d'une forge (`tree`, `read`, `grep`). Le proxy télécharge l'archive (par `net.download`, ou `git fetch` + `git archive`) et la garde compressée ; un bac de l'exécuteur la décompresse et la lit |
+| `tools/repository_bac.py` | Le script que `repository` fait tourner dans le bac : décompression sûre, `tree`, `read`, `grep` (un texte envoyé à l'exécuteur, pas un module importé) |
 | `tools/webhook.py` | `webhook` : poste sur un webhook sortant du compte ; le format Slack dans les deux sens (`to_mrkdwn`, `from_slack`), l'envoi (`send`, par `net.post`) |
 | `tools/provenance.py` | Les sites connus d'une conversation : ceux qu'un outil qui lit une URL peut ouvrir |
 | `tools/mcp/` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés. Paquet : `protocol`, `tool` (`McpTool`), `server`, `registry` |

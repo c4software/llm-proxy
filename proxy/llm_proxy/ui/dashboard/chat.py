@@ -104,7 +104,7 @@ async def ui_session(request: Request):
         # Les webhooks du compte (Configuration → Webhooks).
         "webhooks": tools.webhook.ENABLED and UI_CHAT,
         # Les sources de dépôts du compte (Configuration → Dépôts).
-        "repos": tools.repository.ENABLED,
+        "repos": tools.repository.TOOL.enabled,
         # None : proxy ouvert, personne n'est compté.
         "fair_share": await fair_share_state(),
     }

@@ -247,7 +247,7 @@ Ce que l'outil peut joindre : [`[tools.net]`](#toolsnet).
 | `enabled` | `false` | Présente `web_grep` avec `web_search` (comme `web_fetch`), et l'expose par `/v1/tools` et `/mcp`. Garde-fou, conversion et cache : ceux de `web_fetch` |
 | `max_matches` | `20` | Lignes rendues si le modèle n'en précise pas le nombre (50 au plus) |
 | `context` | `1` | Lignes non vides de chaque côté d'une ligne trouvée (5 au plus) |
-| `regex_timeout` | `1.0` | Secondes pour la recherche du motif, lecture non comprise. Au-delà, coupée. Vaut aussi pour `grep` de l'outil `repository`, fichier par fichier |
+| `regex_timeout` | `1.0` | Secondes pour la recherche du motif, lecture non comprise. Au-delà, coupée |
 
 ## `[tools.ocr]`
 
@@ -436,13 +436,13 @@ L'outil `repository` et les sources de dépôts. Voir [Dépôts](depots.md).
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `enabled` | `false` | Offre l'outil `repository` et la partie *Dépôts* de la configuration de `/ui` |
+| `enabled` | `false` | Offre l'outil `repository` et la partie *Dépôts* de la configuration de `/ui`. Exige l'exécuteur de `[tools.code_execution]` (`url`, `token`), où les dépôts sont lus ; l'outil `code_execution` peut rester inactif |
 | `max_per_user` | `20` | Sources au plus par compte |
-| `max_bytes` | `50000000` | Taille maximale d'une archive téléchargée (compressée) |
-| `max_unpacked_bytes` | `200000000` | Taille maximale d'un projet décompressé. Un fichier de plus de 2 Mo est listé, mais ni lu ni cherché |
-| `timeout` | `120` | Délai (s) du téléchargement entier, ou du clone git |
-| `cache_ttl` | `1800` | Durée (s) pendant laquelle un projet téléchargé est gardé, par compte, source, projet et référence |
-| `cache_bytes` | `400000000` | Taille maximale de tous les projets gardés (RAM du proxy) |
+| `max_bytes` | `20000000` | Taille maximale d'une archive (compressée). C'est un fichier d'entrée du bac : `SANDBOX_MAX_INPUT_BYTES` de l'exécuteur au moins aussi haut |
+| `max_unpacked_bytes` | `100000000` | Taille maximale d'un projet décompressé dans le bac, à tenir dans son `/work` (`SANDBOX_WORK_SIZE`). Un fichier de plus de 2 Mo est listé, mais ni lu ni cherché |
+| `timeout` | `120` | Délai (s) du téléchargement entier, ou du fetch git |
+| `cache_ttl` | `1800` | Durée (s) pendant laquelle une archive téléchargée est gardée, par compte, source, projet et référence : un bac neuf la reçoit sans nouveau téléchargement |
+| `cache_bytes` | `200000000` | Taille maximale de toutes les archives gardées (RAM du proxy) |
 | `sources.<nom>` | — | Une source partagée : `forge` (`gitlab`, `github`, `gitea`, `git`), `url`, `token` (en `${VAR}`), `username` (forge `git`), `projects` (motifs), `enabled` |
 
 ## `[fair_share]`

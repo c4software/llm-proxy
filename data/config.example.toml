@@ -194,7 +194,6 @@ enabled = true
 max_matches = 20
 context = 1
 # Délai (s) de la recherche du motif (une regex catastrophique est coupée).
-# Vaut aussi pour `grep` de l'outil `repository` ([repos]), fichier par fichier.
 regex_timeout = 1.0
 
 # Garde-fou de TÉLÉCHARGEMENT, commun à tout ce que le proxy va chercher à
@@ -546,28 +545,32 @@ max_text_chars = 100000
 
 # ── Dépôts : l'outil `repository` ───────────────────────────────────────
 # Lit un projet d'une forge (GitLab, GitHub, Gitea/Forgejo, tout git en
-# HTTPS) : arborescence, fichier, recherche ; rien n'est exécuté. Le proxy
-# le télécharge avec le jeton de la source et le garde en mémoire un moment.
-# Chaque compte définit ses sources (Configuration → Dépôts) ; l'admin peut
-# en partager ci-dessous. AUCUNE règle d'adresse : une source peut viser une
-# forge du réseau interne. Voir docs/depots.md.
+# HTTPS) : arborescence, fichier, recherche ; rien du projet n'est exécuté.
+# Le proxy télécharge l'archive avec le jeton de la source ; un BAC de
+# l'exécuteur ([tools.code_execution] url et token ; l'outil code_execution
+# peut rester inactif), sans réseau, la décompresse et la lit. Chaque compte
+# définit ses sources (Configuration → Dépôts) ; l'admin peut en partager
+# ci-dessous. AUCUNE règle d'adresse : une source peut viser une forge du
+# réseau interne. Voir docs/depots.md.
 [repos]
 # false (défaut) = ni outil, ni partie Dépôts.
 enabled = false
 # Sources au plus par compte.
 max_per_user = 20
-# Octets au plus d'une archive téléchargée (compressée).
-max_bytes = 50000000
-# Octets au plus d'un projet décompressé, gardé en mémoire (fichiers de plus
-# de 2 Mo listés, mais ni lus ni cherchés).
-max_unpacked_bytes = 200000000
-# Délai (s) du téléchargement entier, ou du clone git.
+# Octets au plus d'une archive (compressée). C'est un fichier d'entrée du
+# bac : SANDBOX_MAX_INPUT_BYTES de l'exécuteur au moins aussi haut.
+max_bytes = 20000000
+# Octets au plus d'un projet décompressé dans le bac : à tenir dans son
+# /work (SANDBOX_WORK_SIZE, 256m par défaut). Fichiers de plus de 2 Mo listés,
+# mais ni lus ni cherchés.
+max_unpacked_bytes = 100000000
+# Délai (s) du téléchargement entier, ou du fetch git.
 timeout = 120
-# Un projet téléchargé est gardé ce temps (s), par compte, source, projet et
-# référence : les commandes suivantes ne le retéléchargent pas.
+# L'archive téléchargée est gardée ce temps (s), par compte, source, projet et
+# référence : un bac neuf la reçoit sans nouveau téléchargement.
 cache_ttl = 1800
-# Octets au plus de tous les projets gardés (RAM du proxy).
-cache_bytes = 400000000
+# Octets au plus de toutes les archives gardées (RAM du proxy).
+cache_bytes = 200000000
 
 # Sources PARTAGÉES, offertes à tous les comptes (une source d'un compte
 # du même nom la masque pour lui). Champs (un par ligne) :

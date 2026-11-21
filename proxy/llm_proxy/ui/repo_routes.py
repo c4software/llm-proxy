@@ -25,9 +25,9 @@ router = APIRouter()
 
 
 def _closed():
-    if not repository.ENABLED:
+    if not repository.TOOL.enabled:
         return error_response("openai", 404, "unknown_route",
-                              "dépôts inactifs ([repos].enabled)")
+                              "dépôts inactifs ([repos].enabled, exécuteur de [tools.code_execution])")
     return None
 
 

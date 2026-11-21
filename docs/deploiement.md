@@ -70,6 +70,30 @@ commandes. Si le paquet est privé, `docker login ghcr.io` sur la machine,
 avec un jeton qui a `read:packages`. `docker compose up -d --build`
 reconstruit toujours sur place, par exemple pour une version modifiée.
 
+### Durcissement du conteneur
+
+Le service `albert-proxy` du `docker-compose.yml` tourne avec :
+
+```yaml
+user: "${PUID:-1000}:${PGID:-1000}"   # pas root
+read_only: true                        # l'image en lecture seule
+tmpfs:
+  - /tmp:size=512m,mode=1777           # fichiers temporaires des outils
+cap_drop: [ALL]                        # aucune capacité Linux
+security_opt:
+  - no-new-privileges:true             # pas d'élévation (setuid…)
+```
+
+Seuls `./data` (configuration, bases) et `/tmp` s'écrivent. `/tmp` sert aux
+outils : conversions audio de `transcribe`, fetch git de l'outil
+[`repository`](depots.md). Ce que le proxy décode d'un tiers (pages, PDF,
+audio, packs git) a ainsi le moins de prise possible : une faille dans un
+de ces décodeurs ne pourrait ni modifier l'image, ni gagner de droits.
+
+Un déploiement qui recopie le `docker-compose.yml` (sans `git pull`) doit
+y reporter ces lignes. Un override qui monte d'autres dossiers en
+écriture les ajoute en `volumes:`.
+
 ## Coolify
 
 1. Nouvelle ressource → Dockerfile, pointée sur ce dépôt.
