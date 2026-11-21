@@ -6,9 +6,10 @@ liés au même client que son historique (auth.ui_client) :
             message au format d'un webhook entrant de Slack ({"text": …}).
             Le proxy le range dans une conversation du chat de la page
             (une nouvelle à chaque fois, ou toujours la même) et y fait
-            répondre le modèle du webhook (ui/webhook_turn.py). Le jeton
-            n'est montré qu'à la création (ou à sa régénération) : seul
-            son condensé est gardé, comme celui d'une clé.
+            répondre le modèle du webhook (ui/webhook_turn.py) — ou, en
+            passe plat (`target` « none »), ne range rien et n'envoie la
+            réponse qu'au sortant. Le jeton est gardé (le lien se recopie
+            dans la page) ; il est retrouvé par son condensé.
   sortants  une URL compatible Slack (Slack, Mattermost, Rocket.Chat,
             Discord en /slack…) où le proxy POSTe {"text": …}, et
             {"channel": …} si un salon est défini : la
@@ -36,15 +37,16 @@ MAX_MODEL = 200
 MAX_SYSTEM = 20_000
 MAX_URL = 2000
 MAX_TOOLS = 40
-TARGETS = ("new", "conversation")
+# « none » : le passe plat — rien n'est rangé, la réponse ne va qu'au sortant.
+TARGETS = ("new", "conversation", "none")
 # Le préfixe d'un jeton : de quoi le reconnaître dans un journal ou un
 # gestionnaire de secrets.
 TOKEN_PREFIX = "wh-"
 
 _IN = ("id, name, hint, model, model_override, system, tools, target, "
        "conversation, reply, account, api_key_id, created, last_used, calls, "
-       "last_error")
-_OUT = "id, name, url, channel, created, last_used, calls, last_error"
+       "last_error, token != ''")
+_OUT = "id, name, url, channel, tool, created, last_used, calls, last_error"
 MAX_CHANNEL = 80
 
 
@@ -60,17 +62,23 @@ def _tables(c) -> None:
         tools TEXT NOT NULL, target TEXT NOT NULL, conversation TEXT NOT NULL,
         reply TEXT NOT NULL, account INTEGER, api_key_id TEXT NOT NULL,
         created REAL NOT NULL, last_used REAL, calls INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT NOT NULL DEFAULT '', PRIMARY KEY (owner, id))""")
+        last_error TEXT NOT NULL DEFAULT '', token TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (owner, id))""")
     c.execute("""CREATE TABLE IF NOT EXISTS webhooks_out (
         owner TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,
         url TEXT NOT NULL, created REAL NOT NULL, last_used REAL,
         calls INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
-        channel TEXT NOT NULL DEFAULT '', PRIMARY KEY (owner, id))""")
-    # Une base d'avant le salon (v2026.11.21) : la colonne, vide.
+        channel TEXT NOT NULL DEFAULT '', tool INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (owner, id))""")
+    # Une base d'avant le salon (v2026.11.21) ou le jeton gardé
+    # (v2026.11.21.1) : les colonnes, vides.
     if conversations.DB_PATH not in _migrated:
-        cols = {row[1] for row in c.execute("PRAGMA table_info(webhooks_out)")}
-        if "channel" not in cols:
-            c.execute("ALTER TABLE webhooks_out ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
+        for table, column, kind in (("webhooks_out", "channel", "TEXT NOT NULL DEFAULT ''"),
+                                    ("webhooks_in", "token", "TEXT NOT NULL DEFAULT ''"),
+                                    ("webhooks_out", "tool", "INTEGER NOT NULL DEFAULT 1")):
+            cols = {row[1] for row in c.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
         _migrated.add(conversations.DB_PATH)
 
 
@@ -115,14 +123,17 @@ def new_token() -> str:
 
 def _in_meta(row) -> dict:
     (wid, name, hint, model, override, system, tools, target, conv, reply,
-     account, api_key_id, created, last_used, calls, last_error) = row
+     account, api_key_id, created, last_used, calls, last_error, copyable) = row
     return {"id": wid, "name": name, "hint": hint, "model": model,
             "model_override": bool(override), "system": system,
             "tools": json.loads(tools), "target": target,
             "conversation": conv, "reply": reply, "account": account,
             "api_key_id": api_key_id, "created": _ms(created),
             "last_used": _ms(last_used), "calls": calls,
-            "last_error": last_error}
+            "last_error": last_error,
+            # Le lien se relit (token_in) ; faux pour un entrant d'avant
+            # v2026.11.21.2, dont seul le condensé est gardé : à régénérer.
+            "copyable": bool(copyable)}
 
 
 def _in_fields(body, c, owner: str) -> dict:
@@ -145,6 +156,9 @@ def _in_fields(body, c, owner: str) -> dict:
     if conv:
         conversations._check_id(conv)
     reply = str(body.get("reply") or "")
+    if target == "none" and not reply:
+        raise WebhookError("le passe plat (aucune conversation) exige un webhook "
+                           "sortant de réponse")
     if reply and not c.execute("SELECT 1 FROM webhooks_out WHERE owner = ? AND id = ?",
                                (owner, reply)).fetchone():
         raise WebhookError("webhook sortant de réponse inconnu")
@@ -162,8 +176,7 @@ def list_in(owner: str) -> list[dict]:
 
 
 def create_in(owner: str, body, account: int | None, api_key_id: str) -> tuple[dict, str]:
-    """Un nouvel entrant → (sa description, son jeton en clair : montré une
-    seule fois)."""
+    """Un nouvel entrant → (sa description, son jeton)."""
     token = new_token()
     wid = secrets.token_urlsafe(12)
 
@@ -173,11 +186,11 @@ def create_in(owner: str, body, account: int | None, api_key_id: str) -> tuple[d
                        (owner,)).fetchone()
         if n >= MAX_PER_USER:
             raise WebhookError(f"{MAX_PER_USER} webhooks entrants au plus", 413)
-        c.execute("INSERT INTO webhooks_in (owner, id, digest, hint, name, model, "
+        c.execute("INSERT INTO webhooks_in (owner, id, digest, token, hint, name, model, "
                   "model_override, system, tools, target, conversation, reply, "
-                  "account, api_key_id, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                  "account, api_key_id, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                   "?, ?, ?, ?, ?, ?)",
-                  (owner, wid, _digest(token), token[len(TOKEN_PREFIX):][:6],
+                  (owner, wid, _digest(token), token, token[len(TOKEN_PREFIX):][:6],
                    f["name"], f["model"], f["model_override"], f["system"],
                    f["tools"], f["target"], f["conversation"], f["reply"],
                    account, api_key_id, time.time()))
@@ -210,14 +223,24 @@ def rotate_in(owner: str, wid: str) -> tuple[dict, str]:
     token = new_token()
 
     def q(c):
-        n = c.execute("UPDATE webhooks_in SET digest = ?, hint = ? WHERE owner = ? "
-                      "AND id = ?", (_digest(token), token[len(TOKEN_PREFIX):][:6],
-                                     owner, wid)).rowcount
+        n = c.execute("UPDATE webhooks_in SET digest = ?, token = ?, hint = ? WHERE "
+                      "owner = ? AND id = ?", (_digest(token), token,
+                                               token[len(TOKEN_PREFIX):][:6],
+                                               owner, wid)).rowcount
         if not n:
             raise WebhookError("webhook inconnu", 404)
         return c.execute(f"SELECT {_IN} FROM webhooks_in WHERE owner = ? AND id = ?",
                          (owner, wid)).fetchone()
     return _in_meta(_run(q)), token
+
+
+def token_in(owner: str, wid: str) -> str | None:
+    """Le jeton d'un entrant du compte (le lien à copier) ; «» pour un
+    entrant d'avant qu'il soit gardé, None si inconnu."""
+    _check_id(wid)
+    row = _run(lambda c: c.execute(
+        "SELECT token FROM webhooks_in WHERE owner = ? AND id = ?", (owner, wid)).fetchone())
+    return row[0] if row else None
 
 
 def delete_in(owner: str, wid: str) -> int:
@@ -271,8 +294,10 @@ def mask(url: str) -> str:
 
 
 def _out_meta(row, full: bool = False) -> dict:
-    wid, name, url, channel, created, last_used, calls, last_error = row
+    wid, name, url, channel, tool, created, last_used, calls, last_error = row
     return {"id": wid, "name": name, "url": url if full else mask(url), "channel": channel,
+            # Offert à l'outil `webhook` du modèle ; sinon, réponses des entrants seulement.
+            "tool": bool(tool),
             "created": _ms(created), "last_used": _ms(last_used),
             "calls": calls, "last_error": last_error}
 
@@ -310,6 +335,7 @@ def create_out(owner: str, body) -> dict:
         raise WebhookError("corps JSON attendu")
     name, url = _name(body.get("name")), _url(body.get("url"))
     channel = _channel(body.get("channel"))
+    tool = int(body.get("tool", True) is not False)
     wid = secrets.token_urlsafe(12)
 
     def q(c):
@@ -320,8 +346,9 @@ def create_out(owner: str, body) -> dict:
         if c.execute("SELECT 1 FROM webhooks_out WHERE owner = ? AND name = ?",
                      (owner, name)).fetchone():
             raise WebhookError("un webhook sortant porte déjà ce nom")
-        c.execute("INSERT INTO webhooks_out (owner, id, name, url, channel, created) "
-                  "VALUES (?, ?, ?, ?, ?, ?)", (owner, wid, name, url, channel, time.time()))
+        c.execute("INSERT INTO webhooks_out (owner, id, name, url, channel, tool, created) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?)", (owner, wid, name, url, channel, tool,
+                                                   time.time()))
         return c.execute(f"SELECT {_OUT} FROM webhooks_out WHERE owner = ? AND id = ?",
                          (owner, wid)).fetchone()
     return _out_meta(_run(q))
@@ -335,14 +362,16 @@ def update_out(owner: str, wid: str, body) -> dict:
         raise WebhookError("corps JSON attendu")
     name = _name(body.get("name"))
     channel = _channel(body.get("channel"))
+    tool = int(body.get("tool", True) is not False)
     url = _url(body["url"]) if body.get("url") else None
 
     def q(c):
         if c.execute("SELECT 1 FROM webhooks_out WHERE owner = ? AND name = ? AND id != ?",
                      (owner, name, wid)).fetchone():
             raise WebhookError("un webhook sortant porte déjà ce nom")
-        n = c.execute("UPDATE webhooks_out SET name = ?, channel = ?, url = coalesce(?, url) "
-                      "WHERE owner = ? AND id = ?", (name, channel, url, owner, wid)).rowcount
+        n = c.execute("UPDATE webhooks_out SET name = ?, channel = ?, tool = ?, "
+                      "url = coalesce(?, url) WHERE owner = ? AND id = ?",
+                      (name, channel, tool, url, owner, wid)).rowcount
         if not n:
             raise WebhookError("webhook inconnu", 404)
         return c.execute(f"SELECT {_OUT} FROM webhooks_out WHERE owner = ? AND id = ?",

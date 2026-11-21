@@ -208,11 +208,13 @@ class WebhookTool(Tool):
         text = args.get("text")
         if not isinstance(text, str) or not text.strip():
             raise ToolError("invalid_input", "`text` is required.")
-        hooks = await asyncio.to_thread(webhooks.list_out, call.client, True)
+        # Seuls ceux que le compte a exposés à l'outil.
+        hooks = [h for h in await asyncio.to_thread(webhooks.list_out, call.client, True)
+                 if h["tool"]]
         if not hooks:
             raise ToolError("unavailable", (
-                "the user has no outgoing webhook; they can add one in the "
-                "dashboard, Configuration → Webhooks."))
+                "the user has no outgoing webhook available to this tool; they can "
+                "add or expose one in the dashboard, Configuration → Webhooks."))
         wanted = str(args.get("webhook") or "").strip()
         if wanted:
             hook = next((h for h in hooks if h["name"].casefold() == wanted.casefold()),

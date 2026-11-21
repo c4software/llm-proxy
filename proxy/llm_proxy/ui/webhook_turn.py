@@ -3,7 +3,9 @@ Le TOUR d'un message reçu par un webhook entrant (webhook_routes.py),
 mené par le proxy lui-même, sans navigateur :
 
   1. la conversation du webhook (une nouvelle, ou toujours la même) reçoit
-     le message, marqué `webhook` — la page l'affiche comme tel ;
+     le message, marqué `webhook` — la page l'affiche comme tel. En PASSE
+     PLAT (`target` « none »), rien n'est rangé : le modèle ne reçoit que
+     ce message, et sa réponse ne va qu'aux sortants ;
   2. le modèle répond : /ui/chat/completions appelé EN INTERNE, au nom
      du compte qui a créé le webhook (ses statistiques, sa part du partage
      équitable, sa mémoire d'outils), avec ses outils HÉBERGÉS seulement
@@ -286,6 +288,31 @@ def _append(owner: str, cid: str, fresh: dict | None, added: list[dict]) -> dict
     raise conversations.HistoryError("conversation modifiée sans cesse ailleurs", 409)
 
 
+def _replace(owner: str, cid: str, message: dict) -> dict | None:
+    """Remplace le message de même id (la réponse « en cours »), sur la
+    dernière révision ; l'ajoute s'il n'y est plus. → le document, None si
+    la conversation n'existe plus. BLOQUANT."""
+    for _ in range(SAVE_TRIES):
+        doc = conversations.get(owner, cid)
+        if doc is None:
+            return None
+        base = doc.pop("rev", 0)
+        msgs = doc.setdefault("messages", [])
+        at = next((i for i, m in enumerate(msgs) if isinstance(m, dict)
+                   and m.get("id") == message["id"]), None)
+        if at is None:
+            msgs.append(message)
+        else:
+            msgs[at] = message
+        doc["updated"] = _now()
+        try:
+            conversations.save(owner, cid, doc, base)
+            return doc
+        except conversations.Conflict:
+            continue
+    raise conversations.HistoryError("conversation modifiée sans cesse ailleurs", 409)
+
+
 def _pick_model(hook: dict, asked: str, doc: dict | None) -> str:
     if asked and hook.get("model_override"):
         return asked
@@ -365,6 +392,38 @@ async def _answer(owner: str, hook: dict, cid: str, text: str, meta: dict,
                   errors: list[str]) -> str:
     """La question rangée, le modèle appelé, la réponse rangée → le texte
     à envoyer (« Erreur : … » si le modèle a échoué)."""
+    if hook["target"] == "none":
+        return await _passthrough(owner, hook, text, meta, errors)
+    try:
+        return await _answer_in(owner, hook, cid, text, meta, errors)
+    except _Failed as failed:
+        # Une panne après la réponse « en cours » : elle devient l'erreur.
+        await _settle(owner, failed.cid, {**failed.pending,
+                                          "error": f"panne : {failed.cause}",
+                                          "duration": max(0.001, (_now() - failed.pending["started"]) / 1000)},
+                      errors)
+        raise failed.cause
+
+
+class _Failed(Exception):
+    def __init__(self, cid: str, pending: dict, cause: Exception):
+        super().__init__(str(cause))
+        self.cid, self.pending, self.cause = cid, pending, cause
+
+
+async def _settle(owner: str, cid: str, answer: dict, errors: list[str]) -> None:
+    """La réponse « en cours » remplacée par `answer` (même id) ; ajoutée
+    si elle a disparu ; rien si la conversation a été supprimée."""
+    answer = {k: v for k, v in answer.items() if k != "serverTurn"}
+    try:
+        if await asyncio.to_thread(_replace, owner, cid, answer) is None:
+            errors.append("conversation supprimée pendant la réponse")
+    except conversations.HistoryError as exc:
+        errors.append(f"réponse non rangée : {exc}")
+
+
+async def _answer_in(owner: str, hook: dict, cid: str, text: str, meta: dict,
+                     errors: list[str]) -> str:
     doc = await asyncio.to_thread(conversations.get, owner, cid) if cid else None
     if doc is None:
         dedicated = hook["target"] == "conversation" and not hook["conversation"]
@@ -376,16 +435,25 @@ async def _answer(owner: str, hook: dict, cid: str, text: str, meta: dict,
     question = {"id": _uid(), "role": "user", "content": text, "attachments": [],
                 "webhook": {"id": hook["id"], "name": hook["name"],
                             "from": meta.get("user") or "", "at": _now()}}
-    doc = await asyncio.to_thread(_append, owner, cid, fresh, [question])
+    # La réponse EN COURS, rangée tout de suite avec la question : la page
+    # l'affiche comme telle (`serverTurn`), puis la remplace par la vraie.
+    started = _now()
+    pending = {"id": _uid(), "role": "assistant", "content": "", "reasoning": "",
+               "tools": [], "sources": [], "model": model, "usage": None, "error": "",
+               "started": started, "duration": 0, "serverTurn": True,
+               "webhook": {"id": hook["id"], "name": hook["name"]}}
+    doc = await asyncio.to_thread(_append, owner, cid, fresh, [question, pending])
     if dedicated:
         # Gardée tout de suite : un tour qui échoue ensuite ne la perd pas.
         await asyncio.to_thread(webhooks.set_conversation, owner, hook["id"], cid)
 
-    started = _now()
-    upto = next(i for i, m in enumerate(doc["messages"]) if m.get("id") == question["id"]) + 1
-    messages = api_messages(doc, upto, hook.get("system") or None)
-    await asyncio.to_thread(inline_assets, owner, messages)
-    tool_types = declarable(hook.get("tools") or doc.get("tools") or [])
+    try:
+        upto = next(i for i, m in enumerate(doc["messages"]) if m.get("id") == question["id"]) + 1
+        messages = api_messages(doc, upto, hook.get("system") or None)
+        await asyncio.to_thread(inline_assets, owner, messages)
+        tool_types = declarable(hook.get("tools") or doc.get("tools") or [])
+    except Exception as exc:
+        raise _Failed(cid, pending, exc)
     if not model:
         got = {"error": "aucun modèle : le webhook n'en nomme pas, ni [ui].chat_model"}
     else:
@@ -394,7 +462,7 @@ async def _answer(owner: str, hook: dict, cid: str, text: str, meta: dict,
         except Exception as exc:
             log.exception("webhook %s : appel du modèle en échec", hook["id"])
             got = {"error": f"panne : {exc}"}
-    answer = {"id": _uid(), "role": "assistant", "content": got.get("content") or "",
+    answer = {"id": pending["id"], "role": "assistant", "content": got.get("content") or "",
               "reasoning": got.get("reasoning") or "", "tools": [],
               "sources": got.get("sources") or [], "model": model,
               "usage": got.get("usage"), "error": got.get("error") or "",
@@ -406,13 +474,32 @@ async def _answer(owner: str, hook: dict, cid: str, text: str, meta: dict,
         answer["cut"] = got["cut"]
     if answer["error"]:
         errors.append(answer["error"])
-    try:
-        # Supprimée dans la page pendant le tour : pas recréée pour la seule réponse.
-        if await asyncio.to_thread(_append, owner, cid, None, [answer]) is None:
-            errors.append("conversation supprimée pendant la réponse")
-    except conversations.HistoryError as exc:
-        errors.append(f"réponse non rangée : {exc}")
+    await _settle(owner, cid, answer, errors)
     return answer["content"] if not answer["error"] else f"Erreur : {answer['error']}"
+
+
+async def _passthrough(owner: str, hook: dict, text: str, meta: dict,
+                       errors: list[str]) -> str:
+    """Le PASSE PLAT : rien n'est rangé. Le modèle reçoit le seul message
+    (et le prompt système du webhook), sa réponse ne va qu'aux sortants."""
+    model = _pick_model(hook, meta.get("model") or "", None)
+    if not model:
+        error = "aucun modèle : le webhook n'en nomme pas, ni [ui].chat_model"
+    else:
+        system = (hook.get("system") or "").strip()
+        messages = ([{"role": "system", "content": system}] if system else []) \
+            + [{"role": "user", "content": text}]
+        try:
+            got = await complete(owner, hook, _body({}, model, messages,
+                                                    declarable(hook.get("tools") or [])))
+        except Exception as exc:
+            log.exception("webhook %s : appel du modèle en échec", hook["id"])
+            got = {"error": f"panne : {exc}"}
+        error = got.get("error") or ""
+        if not error:
+            return got.get("content") or ""
+    errors.append(error)
+    return f"Erreur : {error}"
 
 
 async def _deliver(owner: str, hook: dict, meta: dict, reply: str) -> list[str]:

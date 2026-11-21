@@ -40,12 +40,15 @@ l'historique, et sauvegardées avec lui.
 | Le message peut en demander un autre | Le champ `model` du corps est alors accepté. Sinon, un corps qui le donne reçoit `403 action_prohibited` |
 | Prompt système | Facultatif. Il remplace celui de la conversation pour les réponses du webhook. Il est aussi posé sur la conversation que le webhook crée |
 | Outils hébergés | Les outils présentés au modèle (recherche web, code, mémoire, `webhook`…). Aucun coché : ceux de la conversation. Les outils de la page (navigateur, appareil) n'existent pas ici, faute de navigateur |
-| Conversation | **Une nouvelle à chaque message**, ou **toujours la même** : une conversation existante choisie dans la liste, ou une conversation dédiée créée au premier message |
+| Conversation | **Une nouvelle à chaque message** ; **toujours la même** : une conversation existante choisie dans la liste, ou une conversation dédiée créée au premier message ; ou **aucune, passe plat** : rien n'est gardé, le modèle ne reçoit que le message (et le prompt système du webhook) et sa réponse va seulement au sortant, qui est alors obligatoire |
 | Réponse envoyée à | Un webhook sortant du compte, ou aucun (la réponse reste alors dans la conversation) |
 
-L'adresse, `https://<proxy>/hooks/wh-…`, n'est montrée qu'à la création.
-Le proxy n'en garde qu'un condensé, comme pour une clé. **Régénérer**
-donne une nouvelle adresse et ferme l'ancienne. L'adresse vaut droit
+L'adresse, `https://<proxy>/hooks/wh-…`, s'affiche à la création, puis à
+tout moment par le bouton **Adresse** du webhook, avec Copier et un exemple
+`curl`. **Régénérer** donne une nouvelle adresse et ferme l'ancienne. Un
+webhook créé en v2026.11.21 ou v2026.11.21.1, dont le proxy ne gardait
+qu'un condensé, doit être régénéré une fois pour que son adresse se
+réaffiche. L'adresse vaut droit
 d'écrire dans l'historique du compte et de dépenser ses tokens : il faut la
 garder comme une clé.
 
@@ -102,6 +105,12 @@ l'un après l'autre : le second voit la réponse au premier. Si le tour
 échoue en route (historique plein, panne), l'erreur part quand même au
 sortant et au `response_url`. Une conversation supprimée dans la page
 pendant le tour n'est pas recréée pour la seule réponse.
+
+Dès la réception, la question et une réponse **en cours** sont rangées
+dans la conversation : la page affiche l'indicateur de saisie (« réponse en
+cours, menée par le proxy ») et relit la conversation toutes les 3 secondes
+jusqu'à la réponse, qui prend sa place. Une réponse restée en cours plus de
+30 minutes (proxy redémarré pendant le tour) s'affiche en erreur.
 
 Une page ouverte sur le chat relit la liste des conversations toutes les
 20 secondes et au retour sur l'onglet. Une conversation nouvelle y entre,
@@ -161,7 +170,9 @@ nouveau message.
 ### L'outil `webhook`
 
 Quand les webhooks sont actifs, le chat propose l'outil **Webhooks** (menu
-Outils). Le modèle l'appelle avec un texte et, si le compte en a plusieurs,
+Outils). Il ne voit que les sortants **exposés à l'outil** (case du
+formulaire, cochée par défaut) : un sortant décoché ne sert qu'aux réponses
+des webhooks entrants. Le modèle l'appelle avec un texte et, si le compte en a plusieurs,
 le nom d'un sortant : « poste le résumé sur Équipe ». Son prompt lui
 interdit de l'appeler de lui-même. Il ne voit jamais les URL : seulement
 les noms des sortants du compte, et seulement s'il en nomme un inconnu.

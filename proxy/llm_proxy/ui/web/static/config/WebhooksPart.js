@@ -33,8 +33,8 @@ export const WebhooksPart = {
     const error = ref("");
     const form = reactive(blankIn());
     const editing = ref(false);         // le formulaire d'un entrant est ouvert
-    const fresh = ref(null);            // { name, url } : l'adresse, montrée une fois
-    const outForm = reactive({ id: null, name: "", url: "", channel: "" });
+    const fresh = ref(null);            // { name, url } : l'adresse, montrée à la création
+    const outForm = reactive({ id: null, name: "", url: "", channel: "", tool: true });
     const outEditing = ref(false);
     const armed = ref(null);            // suppression : deuxième clic attendu
     const testing = ref(null);
@@ -110,18 +110,28 @@ export const WebhooksPart = {
         await load();
       } catch (e) { error.value = e.message; }
     }
+    // L'adresse d'un entrant, relue au proxy (elle ne voyage pas avec la
+    // liste) : le panneau de la création, avec Copier et l'exemple curl.
+    async function showLink(h) {
+      error.value = "";
+      try {
+        const r = await call("GET", "/ui/webhooks/in/" + encodeURIComponent(h.id) + "/token");
+        fresh.value = { name: h.name, url: urlOf(r.token) };
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (e) { error.value = e.message; }
+    }
     const curl = (url) => `curl -X POST -H 'Content-Type: application/json' \\\n  -d '{"text": "Bonjour !"}' ${url}`;
 
     // ── sortants ─────────────────────────────────────────────────────
     function openOut(o = null) {
       Object.assign(outForm, { id: o ? o.id : null, name: o ? o.name : "", url: "",
-                               channel: o ? o.channel || "" : "" });
+                               channel: o ? o.channel || "" : "", tool: o ? o.tool !== false : true });
       outEditing.value = true;
     }
     async function saveOut() {
       error.value = "";
       try {
-        const body = { name: outForm.name, channel: outForm.channel,
+        const body = { name: outForm.name, channel: outForm.channel, tool: outForm.tool,
                        ...(outForm.url ? { url: outForm.url } : {}) };
         if (outForm.id) await call("PUT", "/ui/webhooks/out/" + encodeURIComponent(outForm.id), body);
         else await call("POST", "/ui/webhooks/out", body);
@@ -142,7 +152,7 @@ export const WebhooksPart = {
 
     return { incoming, outgoing, error, form, editing, fresh, outForm, outEditing, armed, testing, tested,
              convs, toolGroups, outName, convTitle, modelChoices, openIn, toggleTool, saveIn, rotate, remove,
-             openOut, saveOut, test, curl, copied, copy, when };
+             openOut, saveOut, test, curl, copied, copy, showLink, when };
   },
   template: `
     <div class="config-keys webhooks">
@@ -151,9 +161,8 @@ export const WebhooksPart = {
       <section class="panel key-fresh" v-if="fresh">
         <div class="panel-head"><h2>Adresse du webhook « {{ fresh.name }} »</h2>
           <button type="button" class="btn ghost" @click="fresh = null">Fermer</button></div>
-        <p class="note">Copiez-la maintenant : le proxy n'en garde qu'un condensé, elle ne sera plus
-          affichée. Elle vaut droit d'écrire dans votre historique et de dépenser vos tokens : à garder
-          comme une clé (Régénérer en donne une autre et ferme celle-ci).</p>
+        <p class="note">Elle vaut droit d'écrire dans votre historique et de dépenser vos tokens : à garder
+          comme une clé. Le bouton Adresse du webhook la réaffiche ; Régénérer en donne une autre et ferme celle-ci.</p>
         <div class="key-copy">
           <code>{{ fresh.url }}</code>
           <button type="button" class="btn ghost" @click="copy({ name: 'hook', content: fresh.url })">{{ copied === "hook" ? "Copié" : "Copier" }}</button>
@@ -191,6 +200,11 @@ export const WebhooksPart = {
               une nouvelle à chaque message</label>
             <label class="check"><input type="radio" value="conversation" v-model="form.target">
               toujours la même</label>
+            <label class="check" :title="form.reply ? '' : 'Choisir d’abord un webhook sortant de réponse'">
+              <input type="radio" value="none" v-model="form.target" :disabled="!form.reply">
+              aucune, passe plat <span class="dim">(rien n'est gardé : la réponse va seulement au sortant)</span></label>
+            <p class="note" v-if="form.target === 'none'">Le modèle ne reçoit que le message (et le prompt
+              système du webhook), sans historique.</p>
             <select v-if="form.target === 'conversation'" v-model="form.conversation" aria-label="Conversation">
               <option value="">— une conversation dédiée, créée au premier message —</option>
               <option v-if="form.conversation && !convs.some((c) => c.id === form.conversation)" :value="form.conversation">{{ form.conversation }}</option>
@@ -215,11 +229,14 @@ export const WebhooksPart = {
               <td>{{ h.name }}<span class="tag" v-if="h.system" title="Prompt système du webhook">prompt</span></td>
               <td><code title="début du jeton">…/hooks/wh-{{ h.hint }}…</code></td>
               <td>{{ h.model || "—" }}<span class="dim" v-if="h.model_override"> (ou celui du message)</span></td>
-              <td>{{ h.target === "new" ? "nouvelle à chaque fois" : h.conversation ? convTitle(h.conversation) : "dédiée (créée au premier message)" }}</td>
+              <td>{{ h.target === "none" ? "aucune (passe plat)" : h.target === "new" ? "nouvelle à chaque fois" : h.conversation ? convTitle(h.conversation) : "dédiée (créée au premier message)" }}</td>
               <td>{{ h.reply ? outName(h.reply) : "—" }}</td>
               <td>{{ when(h.last_used) }}<span class="dim" v-if="h.calls"> · {{ h.calls }}</span>
                 <div class="err" v-if="h.last_error">{{ h.last_error }}</div></td>
               <td><div class="webhook-row-actions">
+                <button type="button" class="btn ghost" @click="showLink(h)"
+                        :title="h.copyable ? 'Afficher l’adresse du webhook, à copier' : 'Créé avant que l’adresse soit gardée : le régénérer pour pouvoir l’afficher'"
+                        >Adresse</button>
                 <button type="button" class="btn ghost" @click="openIn(h)">Modifier</button>
                 <button type="button" class="btn ghost" :class="{ armed: armed === 'rotate:' + h.id }"
                         @click="rotate(h)">{{ armed === "rotate:" + h.id ? "Régénérer ?" : "Régénérer" }}</button>
@@ -247,6 +264,8 @@ export const WebhooksPart = {
             <input v-model="outForm.channel" maxlength="80" spellcheck="false" placeholder="#alertes, @quelqu'un, town-square…">
             <span class="dim">Envoyé en <code>channel</code> : Mattermost, Rocket.Chat et les anciens webhooks Slack le
               suivent ; un webhook d'app Slack poste toujours dans le salon choisi à sa création.</span></label>
+          <label class="check"><input type="checkbox" v-model="outForm.tool">
+            exposé à l'outil « Webhooks » du chat <span class="dim">(sinon : réponses des webhooks entrants seulement)</span></label>
           <div class="webhook-actions">
             <button type="submit" class="btn">{{ outForm.id ? "Enregistrer" : "Créer" }}</button>
             <button type="button" class="btn ghost" @click="outEditing = false">Annuler</button>
@@ -256,7 +275,7 @@ export const WebhooksPart = {
           <thead><tr><th>Nom</th><th>URL</th><th>Salon</th><th>Dernier envoi</th><th></th></tr></thead>
           <tbody>
             <tr v-for="o in outgoing" :key="o.id">
-              <td>{{ o.name }}</td>
+              <td>{{ o.name }}<span class="tag" v-if="o.tool" title="Le modèle peut y poster par l'outil Webhooks">outil</span></td>
               <td><code>{{ o.url }}</code></td>
               <td>{{ o.channel || "—" }}</td>
               <td>{{ when(o.last_used) }}<span class="dim" v-if="o.calls"> · {{ o.calls }}</span>

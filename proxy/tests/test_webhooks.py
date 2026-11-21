@@ -362,3 +362,72 @@ def test_base_d_avant_le_salon(tmp_path, monkeypatch):
                   "VALUES ('a', 'o1', 'S', 'https://chat.example/h', 1)")
     monkeypatch.setattr(conversations, "DB_PATH", path)
     assert webhooks.list_out("a")[0]["channel"] == ""
+
+
+def test_lien_recopiable(proxy, monkeypatch):
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-a", "sk-b"])
+    c = proxy.client
+    c.post("/ui/login", json={"key": "sk-a"})
+    r = c.post("/ui/webhooks/in", json={"name": "H"}).json()
+    hid, token = r["webhook"]["id"], r["token"]
+    assert r["webhook"]["copyable"] is True and "token" not in c.get("/ui/webhooks").text
+    assert c.get(f"/ui/webhooks/in/{hid}/token").json()["token"] == token
+    fresh = c.post(f"/ui/webhooks/in/{hid}/rotate", json={}).json()["token"]
+    assert c.get(f"/ui/webhooks/in/{hid}/token").json()["token"] == fresh != token
+    # Un entrant d'avant le jeton gardé : 409, à régénérer.
+    conversations._run(lambda conn: conn.execute("UPDATE webhooks_in SET token = ''"))
+    assert c.get(f"/ui/webhooks/in/{hid}/token").status_code == 409
+    assert c.get("/ui/webhooks").json()["incoming"][0]["copyable"] is False
+    # Un autre compte n'y a pas accès.
+    c.cookies.clear()
+    c.post("/ui/login", json={"key": "sk-b"})
+    assert c.get(f"/ui/webhooks/in/{hid}/token").status_code == 404
+
+
+def test_passe_plat(proxy, posted):
+    with pytest.raises(webhooks.WebhookError, match="passe plat"):
+        webhooks.create_in("", {"name": "P", "target": "none"}, None, "")
+    out = webhooks.create_out("", {"name": "S", "url": "https://chat.example/h"})
+    hook, _ = webhooks.create_in("", {"name": "P", "model": "essai/m", "target": "none",
+                                      "system": "Traduis en anglais.", "reply": out["id"]},
+                                 None, "")
+    proxy.replies = [answer("Hello")]
+    go(webhook_turn.handle("", hook, "Bonjour", {}))
+    assert proxy.sent[-1]["messages"] == [{"role": "system", "content": "Traduis en anglais."},
+                                          {"role": "user", "content": "Bonjour"}]
+    assert posted[-1] == ("https://chat.example/h", {"text": "Hello"})
+    assert conversations.list_all("") == []
+    assert webhooks.get_in("", hook["id"])["calls"] == 1
+
+
+def test_reponse_en_cours_visible(proxy, posted, monkeypatch):
+    """Pendant le tour, la conversation porte la question ET une réponse
+    « en cours » (serverTurn), que la réponse remplace ensuite (même id)."""
+    hook, _ = webhooks.create_in("", {"name": "H", "model": "essai/m"}, None, "")
+    seen = {}
+    real = webhook_turn.complete
+
+    async def spy(owner, h, body):
+        [conv] = conversations.list_all("")
+        seen["during"] = conv["messages"][-1]
+        assert [m["role"] for m in body["messages"]] == ["user"]   # pas la réponse en cours
+        return await real(owner, h, body)
+    monkeypatch.setattr(webhook_turn, "complete", spy)
+    proxy.replies = [answer("fini")]
+    go(webhook_turn.handle("", hook, "x", {}))
+    assert seen["during"]["serverTurn"] is True and seen["during"]["content"] == ""
+    [conv] = conversations.list_all("")
+    q, a = conv["messages"]
+    assert a["id"] == seen["during"]["id"] and a["content"] == "fini" and "serverTurn" not in a
+
+
+def test_sortant_non_expose_a_l_outil(posted):
+    webhooks.create_out("a", {"name": "Privé", "url": "https://chat.example/p", "tool": False})
+    with pytest.raises(ToolError, match="no outgoing webhook available"):
+        go(slack.TOOL.run({"text": "x"}, Call(client="a")))
+    o = webhooks.create_out("a", {"name": "Public", "url": "https://chat.example/q"})
+    assert o["tool"] is True
+    go(slack.TOOL.run({"text": "x"}, Call(client="a")))
+    assert posted[-1][0] == "https://chat.example/q"
+    with pytest.raises(ToolError, match="Public"):        # Privé n'est pas proposé
+        go(slack.TOOL.run({"text": "x", "webhook": "Privé"}, Call(client="a")))

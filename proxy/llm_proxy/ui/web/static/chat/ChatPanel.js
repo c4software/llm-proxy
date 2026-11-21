@@ -96,6 +96,9 @@ export const ChatPanel = {
     const API = "/ui/chat/completions";
     // Tours d'outils de la page au plus, par réponse.
     const MAX_ROUNDS = 25;
+    // Une réponse du proxy (webhook) encore « en cours » passé ce délai :
+    // le proxy a redémarré pendant le tour, elle ne viendra plus.
+    const SERVER_STALE = 30 * 60 * 1000;
     const LAST_MODEL = "llm-proxy-chat-model";
     const lastModel = VueUse.useLocalStorage(LAST_MODEL, "");
     const MEMORY_OPEN = "llm-proxy-chat-memory";
@@ -1727,8 +1730,19 @@ export const ChatPanel = {
       // pendant le flux) : ses puces en cours passent en erreur, son tour
       // d'outils ouvert est clos, et elle se signale avec « Reprendre ».
       // Pas pendant un flux de CET onglet (l'enregistrement d'un autre).
+      // Une réponse que le PROXY écrit (un webhook, webhook_turn.py) : en
+      // cours, pas interrompue — sauf restée telle au-delà de SERVER_STALE
+      // (proxy redémarré pendant le tour).
+      for (const m of c.messages || []) {
+        if (m.serverTurn && Date.now() - (m.started || 0) > SERVER_STALE) {
+          delete m.serverTurn;
+          m.error = "Réponse du webhook interrompue (proxy redémarré pendant le tour ?).";
+          m.duration = 0.001;
+        }
+      }
       const last = (c.messages || [])[c.messages.length - 1];
-      if (last && last.role === "assistant" && !last.waiting && !(streaming.value && current.value === c)) {
+      if (last && last.role === "assistant" && !last.waiting && !last.serverTurn
+          && !(streaming.value && current.value === c)) {
         const midway = (last.step && !last.waiting)
           || (last.tools || []).some((t) => t.status === "running" || t.status === "writing")
           || (last.started && !last.duration && !last.error && !last.image && !last.voice && !last.asr);
@@ -1746,9 +1760,13 @@ export const ChatPanel = {
     // Les webhooks du compte écrivent dans l'historique sans cette page
     // (un message reçu, sa réponse) : la liste et la conversation ouverte
     // suivent, de temps en temps et au retour sur l'onglet (store.sync).
+    // Une réponse du proxy en cours dans la conversation affichée : relue
+    // toutes les 3 s, jusqu'à ce qu'elle arrive.
+    const serverBusy = computed(() => !!(current.value && current.value.messages.some((m) => m.serverTurn)));
     if (props.session.webhooks) {
       const sync = () => { if (document.visibilityState === "visible") S.sync(); };
       VueUse.useIntervalFn(sync, 20000);
+      VueUse.useIntervalFn(() => { if (serverBusy.value) sync(); }, 3000);
       VueUse.useEventListener(document, "visibilitychange", sync);
     }
 
@@ -2069,7 +2087,9 @@ export const ChatPanel = {
                       @click="openOut(f)" title="Ouvrir (aperçu, copier, télécharger)">{{ f.name }}
                 <span class="dim">{{ size(f.size) }}</span></button>
             </div>
-            <div class="typing" v-if="streaming && !m.error
+            <div class="typing" v-if="m.serverTurn && !m.error">
+              <i></i><i></i><i></i><span class="dim">réponse en cours, menée par le proxy (webhook « {{ m.webhook ? m.webhook.name : "" }} »)…</span></div>
+            <div class="typing" v-else-if="streaming && !m.error
                  && (m.image ? m.want > (m.attachments || []).length : i === current.messages.length - 1 && !m.content)">
               <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ m.want > 1
                 ? " " + ((m.attachments || []).length + 1) + " / " + m.want : "" }}…</span>
@@ -2092,7 +2112,7 @@ export const ChatPanel = {
                  rel="noopener noreferrer" :title="s.url">{{ s.title || host(s.url) }}
                 <span class="dim">{{ host(s.url) }}</span></a>
             </div>
-            <div class="msg-meta" v-if="!(streaming && i === current.messages.length - 1)">
+            <div class="msg-meta" v-if="!m.serverTurn && !(streaming && i === current.messages.length - 1)">
               <span>{{ m.model }}</span>
               <span v-if="m.usage">{{ num(m.usage.prompt_tokens) }} → {{ num(m.usage.completion_tokens) }} tokens</span>
               <span v-if="m.duration">{{ m.duration.toFixed(1) }} s</span>

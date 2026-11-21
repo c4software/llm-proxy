@@ -22,9 +22,9 @@ Sous /ui, ceux du compte connecté (jamais d'un autre) ; écritures en JSON
 (json_only) :
 
   GET    /ui/webhooks                     {incoming, outgoing}
-  POST   /ui/webhooks/in                  crée → {webhook, token} (le jeton,
-                                          une seule fois)
+  POST   /ui/webhooks/in                  crée → {webhook, token}
   PUT    /ui/webhooks/in/{id}             modifie
+  GET    /ui/webhooks/in/{id}/token       le jeton (le lien que la page copie)
   POST   /ui/webhooks/in/{id}/rotate      nouveau jeton → {webhook, token}
   DELETE /ui/webhooks/in/{id}
   POST   /ui/webhooks/out                 crée (nom, url)
@@ -253,6 +253,23 @@ async def ui_webhook_in_rotate(request: Request, wid: str):
         return bad
     hook, token = got
     return {"webhook": _public(hook), "token": token}
+
+
+@router.get("/ui/webhooks/in/{wid}/token")
+async def ui_webhook_in_token(request: Request, wid: str):
+    """Le jeton d'un entrant du compte : le lien que la page copie."""
+    if (bad := _closed()) is not None:
+        return bad
+    token, bad = await _run(webhooks.token_in, ui_client(request), wid)
+    if bad is not None:
+        return bad
+    if token is None:
+        return error_response("openai", 404, "not_found", "webhook inconnu")
+    if not token:
+        return error_response("openai", 409, "token_unknown",
+                              "jeton non gardé (webhook créé avant v2026.11.21.2) : "
+                              "régénérez-le pour pouvoir copier son lien")
+    return {"id": wid, "token": token}
 
 
 @router.delete("/ui/webhooks/in/{wid}")
