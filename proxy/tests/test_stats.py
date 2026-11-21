@@ -30,9 +30,7 @@ def test_usage_collector_json_without_details():
     c.finish()
     assert c.tokens(0) == (7, 2, True)
     assert c.cached() == 0
-
-
-def test_cached_tokens_helper():
+    # Le détail absent, ou insensé : zéro.
     assert stats.cached_tokens(None) == 0
     assert stats.cached_tokens({"prompt_tokens_details": {"cached_tokens": -3}}) == 0
     assert stats.cached_tokens({"prompt_tokens_details": {"cached_tokens": 12}}) == 12
@@ -349,39 +347,3 @@ def test_purge_drops_old_tool_calls_with_old_requests(db, monkeypatch):
         stats._purge(conn)
         assert count() == [1, 1]
         assert conn.execute("SELECT ts FROM tool_calls").fetchone()[0] == recent
-
-
-def test_page_ui_versionne_ses_fichiers_statiques():
-    """Gabarit et script vont ensemble : leurs URL portent une empreinte,
-    pour qu'un navigateur ne marie pas le nouveau gabarit à l'ancien script
-    resté en cache (page blanche), et la page elle-même n'est pas gardée."""
-    from fastapi.testclient import TestClient
-    from llm_proxy import app as A
-    r = TestClient(A.app).get("/ui")
-    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
-    from llm_proxy.ui import static_files
-    for name in ("app.js", "dashboard.css", "vue.global.prod.js"):
-        assert f'/ui/static/v/{static_files.VERSION}/{name}"' in r.text, name
-    c = TestClient(A.app)
-    got = c.get(f"/ui/static/v/{static_files.VERSION}/chat/ChatPanel.js")
-    assert got.status_code == 200 and "immutable" in got.headers["cache-control"]
-    # Une empreinte périmée : servie, mais pas gardée ; hors de static : 404.
-    assert c.get("/ui/static/v/0/app.js").headers["cache-control"] == "no-cache"
-    assert c.get("/ui/static/icon.svg").headers["cache-control"] == "no-cache"
-    assert c.get("/ui/static/v/0/../../dashboard.py").status_code == 404
-
-
-def test_page_ui_annonce_ses_modules():
-    """Les modules qu'importe app.js, de proche en proche, sont annoncés
-    (modulepreload) avant lui ; la configuration et les statistiques, lues
-    à leur ouverture (import dynamique), n'en sont pas."""
-    from fastapi.testclient import TestClient
-    from llm_proxy import app as A
-    from llm_proxy.ui import static_files
-    html = TestClient(A.app).get("/ui").text
-    pre = f'<link rel="modulepreload" href="/ui/static/v/{static_files.VERSION}/'
-    for name in ("app.js", "chat/store.js", "chat/ChatPanel.js", "lib/http.js"):
-        assert pre + name + '">' in html, name
-    assert "config/ConfigPanel.js" not in static_files.MODULES
-    assert "stats/StatsView.js" not in static_files.MODULES
-    assert html.index(pre) < html.index('<script type="module"')

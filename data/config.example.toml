@@ -542,7 +542,6 @@ max_running = 3
 max_text_chars = 100000
 
 
-
 # ── Dépôts : l'outil `repository` ───────────────────────────────────────
 # Lit un projet d'une forge (GitLab, GitHub, Gitea/Forgejo, tout git en
 # HTTPS) : arborescence, fichier, recherche ; rien du projet n'est exécuté.
@@ -581,13 +580,13 @@ cache_bytes = 200000000
 #     https://github.com par défaut, ou celle d'un GitHub Enterprise ;
 #   token — le jeton, en «${VAR}» du .env (lecture du dépôt suffit) ;
 #   username — forge "git" seulement : l'utilisateur du jeton (défaut «git») ;
-#   projects — motifs des projets permis (["playmoweb/*"]) ; vide = tous ;
+#   projects — motifs des projets permis (["equipe/*"]) ; vide = tous ;
 #   enabled — false : la source n'est pas offerte.
-# [repos.sources.pmw]
+# [repos.sources.entreprise]
 # forge = "gitlab"
 # url = "https://gitlab.exemple.fr"
 # token = "${GITLAB_TOKEN}"
-# projects = ["playmoweb/*"]
+# projects = ["equipe/*"]
 
 
 # ── Partage équitable ───────────────────────────────────────────────────

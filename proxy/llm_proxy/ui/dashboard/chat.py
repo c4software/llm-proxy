@@ -105,6 +105,8 @@ async def ui_session(request: Request):
         "webhooks": tools.webhook.ENABLED and UI_CHAT,
         # Les sources de dépôts du compte (Configuration → Dépôts).
         "repos": tools.repository.TOOL.enabled,
+        # L'exécuteur de code est configuré : la partie Exécution (ses bacs).
+        "executor": bool(tools.code_execution.URL and tools.code_execution.TOKEN),
         # None : proxy ouvert, personne n'est compté.
         "fair_share": await fair_share_state(),
     }

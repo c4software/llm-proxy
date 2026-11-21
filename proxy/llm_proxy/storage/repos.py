@@ -12,7 +12,7 @@ une forge, son adresse, un jeton.
                source d'un compte du même nom (sans casse) la masque pour lui.
 
 Chaque source peut borner les projets permis (`projects` : des motifs à
-jokers, « playmoweb/* ») ; vide = tous ceux que le jeton voit.
+jokers, « equipe/* ») ; vide = tous ceux que le jeton voit.
 """
 
 import fnmatch

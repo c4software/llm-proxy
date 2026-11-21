@@ -387,3 +387,34 @@ def used_out(owner: str, wid: str, error: str = "") -> None:
     _run(lambda c: c.execute(
         "UPDATE webhooks_out SET last_used = ?, calls = calls + 1, last_error = ? "
         "WHERE owner = ? AND id = ?", (time.time(), error[:500], owner, wid)))
+
+
+def clear_inherited_prompts() -> int:
+    """Une seule fois par base : le prompt système d'un webhook entrant que
+    des conversations ont pris dans leurs réglages (créées par lui, ou
+    ouvertes depuis l'une d'elles dans la page, jusqu'à v2026.11.21.5) en
+    est retiré — même texte, même compte. Il ne sert qu'aux tours du
+    webhook. → le nombre de conversations nettoyées. BLOQUANT."""
+    def q(c):
+        if not owned.once(c, "webhook-prompts-out-of-conversations"):
+            return 0
+        prompts: dict[str, set[str]] = {}
+        for owner, system in c.execute("SELECT owner, system FROM webhooks_in WHERE system != ''"):
+            prompts.setdefault(owner, set()).add(system.strip())
+        cleaned = 0
+        for owner, texts in prompts.items():
+            for cid, raw, rev in c.execute("SELECT id, doc, rev FROM conversations WHERE owner = ?",
+                                           (owner,)).fetchall():
+                try:
+                    doc = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(doc, dict) or str(doc.get("system") or "").strip() not in texts:
+                    continue
+                doc["system"] = ""
+                c.execute("UPDATE conversations SET doc = ?, rev = ? WHERE owner = ? AND id = ?",
+                          (json.dumps(doc, ensure_ascii=False, separators=(",", ":")), rev + 1,
+                           owner, cid))
+                cleaned += 1
+        return cleaned
+    return _run(q)

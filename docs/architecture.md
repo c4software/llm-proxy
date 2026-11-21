@@ -117,6 +117,7 @@ Le reste demande un redémarrage.
 
 | Fichier | Rôle |
 |---|---|
+| `AGENTS.md` | Les règles pour qui modifie le dépôt (agent ou personne) : code, documentation, tests (`CLAUDE.md` y renvoie) |
 | `docker-compose.yml` | La pile de base, versionnée : le proxy et SearXNG |
 | `docker-compose.override.example.yml` | Modèle de `docker-compose.override.yml` (non versionné, fusionné par Compose) : l'exécuteur et son réseau interne, les adaptations à la machine. Voir [Le compose de base et son override](execution-de-code.md#le-compose-de-base-et-son-override) |
 | `data/config.example.toml` | Modèle de configuration documenté : chaque réglage, sa valeur par défaut |
@@ -249,6 +250,7 @@ partie qui l'a importé.
 | `ui/linux_relay.py` | Le relais réseau (Wisp) de la VM Linux : jeton signé, adresses publiques seulement, plafond d'octets et délai d'inactivité |
 | `ui/voice_routes.py` | Routes `/ui/voices` (voix clonées) |
 | `ui/repo_routes.py` | `/ui/repos` : les sources de dépôts du compte |
+| `ui/runtime_routes.py` | `/ui/runtime` : les bacs de l'exécuteur (les siens ; tous pour un admin) et les caches du proxy, à détruire ou vider |
 | `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |
 | `ui/webhook_turn.py` | Le tour d'un message reçu, sans navigateur : la conversation, le seul message reçu et le prompt système envoyés au modèle, `/ui/chat/completions` appelé en interne au nom du créateur, les envois sortants |
 | `ui/dataurl.py` | Lecture des URL `data:` envoyées par la page (images, audio) |

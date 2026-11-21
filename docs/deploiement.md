@@ -86,9 +86,7 @@ security_opt:
 
 Seuls `./data` (configuration, bases) et `/tmp` s'écrivent. `/tmp` sert aux
 outils : conversions audio de `transcribe`, fetch git de l'outil
-[`repository`](depots.md). Ce que le proxy décode d'un tiers (pages, PDF,
-audio, packs git) a ainsi le moins de prise possible : une faille dans un
-de ces décodeurs ne pourrait ni modifier l'image, ni gagner de droits.
+[`repository`](depots.md). Pourquoi : [Sécurité](securite.md#le-conteneur-du-proxy).
 
 Un déploiement qui recopie le `docker-compose.yml` (sans `git pull`) doit
 y reporter ces lignes. Un override qui monte d'autres dossiers en

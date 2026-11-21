@@ -307,7 +307,10 @@ export const ChatStore = (() => {
     // dupliquée.
     const empty = state.convs.find((c) => !c.stub && !c.messages.length && !!c.incognito === incognito);
     if (empty) { state.currentId = empty.id; return; }
-    const base = current.value;
+    // Les réglages de la conversation affichée sont repris — sauf ceux d'une
+    // conversation créée par un webhook (son modèle, ses outils sont ceux du
+    // webhook) : une nouvelle conversation part alors des réglages par défaut.
+    const base = current.value && !current.value.webhook ? current.value : null;
     const fresh = defaults();
     const conv = {
       id: uid(), title: "Nouvelle conversation", created: Date.now(),

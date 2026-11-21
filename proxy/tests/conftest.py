@@ -89,3 +89,23 @@ def proxy(monkeypatch):
     everywhere(monkeypatch, stats, "record", lambda *a: env.lines.append(a))
     env.client = TestClient(app.app)
     return env
+
+
+@pytest.fixture
+def idp(proxy, monkeypatch, tmp_path):
+    """`proxy`, les comptes OIDC actifs sur une base temporaire, et le faux
+    fournisseur (`idp`) derrière le client d'Authlib."""
+    import httpx2
+    from fakes import FakeIdP, ISSUER
+    from llm_proxy.access import accounts, oidc
+    monkeypatch.setattr(accounts, "DB_PATH", str(tmp_path / "accounts.db"))
+    monkeypatch.setattr(accounts, "_cache", {})
+    monkeypatch.setattr(accounts, "_touched", {})
+    monkeypatch.setattr(oidc, "ISSUER", ISSUER)
+    monkeypatch.setattr(oidc, "CLIENT_ID", "llm-proxy")
+    monkeypatch.setattr(oidc, "CLIENT_SECRET", "secret")
+    monkeypatch.setattr(oidc, "ENABLED", True)
+    fake = FakeIdP()
+    oidc.register(transport=httpx2.MockTransport(fake.handle))
+    proxy.idp = fake
+    return proxy

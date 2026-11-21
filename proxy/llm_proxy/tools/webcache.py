@@ -94,6 +94,12 @@ class Cache:
             self._drop(k)
         return len(old)
 
+    def count(self, keep) -> tuple[int, int]:
+        """(entrées, taille) de celles dont la clé passe `keep(clé)` (ce
+        qu'un compte y a)."""
+        mine = [size for k, (_, size, _) in self._data.items() if keep(k)]
+        return len(mine), sum(mine)
+
     def forget(self, keep) -> int:
         """Retire les entrées dont la clé ne passe pas `keep(clé)` → leur
         nombre (un compte qui efface ses dépôts)."""

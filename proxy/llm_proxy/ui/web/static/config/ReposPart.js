@@ -102,7 +102,7 @@ export const ReposPart = {
           source.</p>
         <form class="item-form" v-if="editing" @submit.prevent="save">
           <label>Nom <span class="dim">(c'est par lui que le modèle la désigne)</span>
-            <input v-model="form.name" maxlength="80" required placeholder="PMW, GitHub perso…"></label>
+            <input v-model="form.name" maxlength="80" required placeholder="Entreprise, GitHub perso…"></label>
           <label>Forge
             <select v-model="form.forge">
               <option v-for="(label, f) in FORGE_LABELS" :key="f" :value="f">{{ label }}</option>
@@ -120,7 +120,7 @@ export const ReposPart = {
             <input v-model="form.username" maxlength="100" spellcheck="false"></label>
           <label>Projets permis <span class="dim">(facultatif : motifs séparés par des virgules ; vide = tous
             ceux que le jeton voit)</span>
-            <input v-model="form.projects" spellcheck="false" placeholder="playmoweb/*, kid-ai/*"></label>
+            <input v-model="form.projects" spellcheck="false" placeholder="equipe/*, outils/*"></label>
           <div class="item-actions">
             <button type="submit" class="btn">{{ form.id ? "Enregistrer" : "Créer" }}</button>
             <button type="button" class="btn ghost" @click="editing = false">Annuler</button>

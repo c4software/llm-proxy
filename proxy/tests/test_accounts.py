@@ -6,121 +6,24 @@ révoquées, et ce que la page refuse. Aucun réseau : le fournisseur répond
 par httpx2.MockTransport."""
 
 import asyncio
-import base64
-import hashlib
 import json
 import time
 import uuid
-from urllib.parse import parse_qs, urlparse
 
-import httpx2
 import pytest
-from joserfc import jwt
 from joserfc.jwk import RSAKey
 from fastapi.testclient import TestClient
 
-from fakes import bearer, everywhere
+from fakes import ISSUER, admin_and_user, bearer, connect, everywhere
 from llm_proxy.access import accounts, oidc
 from llm_proxy import app as A
 from llm_proxy.access import auth
 from llm_proxy.core import identity
 
-ISSUER = "https://idp.test"
-JSON = {"content-type": "application/json"}
-
-
-class FakeIdP:
-    """Un fournisseur OIDC minimal : ce que le client d'Authlib lit
-    (découverte, JWKS) et l'échange du code — vérifiant le PKCE — contre
-    un id_token signé. `authorize` joue l'utilisateur qui se connecte."""
-
-    def __init__(self):
-        self.key = RSAKey.generate_key(2048, parameters={"kid": "k1"})
-        # La clé que signale le JWKS : une autre = un jeton contrefait.
-        self.published = self.key
-        self.codes = {}
-
-    def authorize(self, location: str, sub: str, email: str) -> str:
-        """L'URL d'autorisation reçue du proxy → l'URL de retour, code
-        compris, comme le fournisseur y renverrait le navigateur."""
-        q = {k: v[0] for k, v in parse_qs(urlparse(location).query).items()}
-        assert location.startswith(ISSUER + "/authorize")
-        assert q["client_id"] == "llm-proxy"
-        assert q["code_challenge_method"] == "S256"
-        code = uuid.uuid4().hex
-        self.codes[code] = {"sub": sub, "email": email, "nonce": q["nonce"],
-                            "challenge": q["code_challenge"],
-                            "redirect_uri": q["redirect_uri"]}
-        return f"{q['redirect_uri']}?code={code}&state={q['state']}"
-
-    def handle(self, request: httpx2.Request) -> httpx2.Response:
-        path = request.url.path
-        if path == "/.well-known/openid-configuration":
-            return httpx2.Response(200, json={
-                "issuer": ISSUER,
-                "authorization_endpoint": ISSUER + "/authorize",
-                "token_endpoint": ISSUER + "/token",
-                "jwks_uri": ISSUER + "/jwks",
-                "id_token_signing_alg_values_supported": ["RS256"],
-            })
-        if path == "/jwks":
-            return httpx2.Response(200, json={"keys": [self.published.as_dict(private=False)]})
-        if path == "/token":
-            form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
-            grant = self.codes.pop(form.get("code"), None)
-            if grant is None or form.get("redirect_uri") != grant["redirect_uri"]:
-                return httpx2.Response(400, json={"error": "invalid_grant"})
-            digest = hashlib.sha256(form["code_verifier"].encode()).digest()
-            if base64.urlsafe_b64encode(digest).rstrip(b"=").decode() \
-                    != grant["challenge"]:
-                return httpx2.Response(400, json={"error": "invalid_grant"})
-            now = int(time.time())
-            id_token = jwt.encode(
-                {"alg": "RS256", "kid": "k1"},
-                {"iss": ISSUER, "aud": "llm-proxy", "sub": grant["sub"],
-                 "email": grant["email"], "nonce": grant["nonce"],
-                 "iat": now, "exp": now + 300},
-                self.key)
-            return httpx2.Response(200, json={
-                "access_token": "at", "token_type": "Bearer",
-                "expires_in": 300, "id_token": id_token})
-        return httpx2.Response(404)
-
-
-@pytest.fixture
-def idp(proxy, monkeypatch, tmp_path):
-    """`proxy`, les comptes OIDC actifs sur une base temporaire, et le faux
-    fournisseur (`idp`) derrière le client d'Authlib."""
-    monkeypatch.setattr(accounts, "DB_PATH", str(tmp_path / "accounts.db"))
-    monkeypatch.setattr(accounts, "_cache", {})
-    monkeypatch.setattr(accounts, "_touched", {})
-    monkeypatch.setattr(oidc, "ISSUER", ISSUER)
-    monkeypatch.setattr(oidc, "CLIENT_ID", "llm-proxy")
-    monkeypatch.setattr(oidc, "CLIENT_SECRET", "secret")
-    monkeypatch.setattr(oidc, "ENABLED", True)
-    fake = FakeIdP()
-    oidc.register(transport=httpx2.MockTransport(fake.handle))
-    proxy.idp = fake
-    return proxy
-
-
-def connect(env, sub="alice", email="alice@example.org") -> TestClient:
-    """Un navigateur (son propre pot de cookies) qui se connecte chez le
-    fournisseur de `env`."""
-    browser = TestClient(A.app)
-    r = browser.get("/ui/auth/login", follow_redirects=False)
-    assert r.status_code == 302, r.text
-    back = env.idp.authorize(r.headers["location"], sub, email)
-    r = browser.get(back, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/ui", r.headers
-    return browser
-
-
 def new_key(browser, label="pi") -> dict:
     r = browser.post("/ui/keys", json={"label": label})
     assert r.status_code == 200, r.text
     return r.json()
-
 
 
 def test_first_account_is_admin_next_ones_wait(idp):
@@ -191,26 +94,26 @@ def test_a_key_does_not_open_the_page(idp):
                                            "label": oidc.LABEL}
 
 
-def test_users_only_see_and_revoke_their_own_keys(idp):
-    alice = connect(idp)
-    bob = connect(idp, "bob", "bob@example.org")
-    bob_id = bob.get("/ui/session").json()["account"]["id"]
-    alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
+def test_users_only_see_and_manage_their_own_keys(idp):
+    """Un user ne voit, ne révoque et ne règle (droits d'outils) que ses
+    clés ; l'admin, celles de tous."""
+    alice, bob, bob_id = admin_and_user(idp)
     a = new_key(alice)
     b = new_key(bob)
     assert [k["id"] for k in bob.get("/ui/keys").json()["data"]] == [b["id"]]
+    assert bob.patch(f"/ui/keys/{a['id']}", json={"tools": []}).status_code == 404
     assert bob.delete(f"/ui/keys/{a['id']}").status_code == 404
-    # L'admin voit et révoque celles de tous.
+    assert idp.client.get("/v1/tools", headers=bearer(a["key"])).status_code == 200
+    assert bob.patch(f"/ui/keys/{b['id']}", json={"tools": []}).status_code == 200
     every = alice.get("/ui/keys", params={"all": 1}).json()
     assert {k["id"] for k in every["data"]} == {a["id"], b["id"]}
+    assert alice.patch(f"/ui/keys/{b['id']}", json={"tools": None}).status_code == 200
     assert alice.delete(f"/ui/keys/{b['id']}").status_code == 200
+    assert idp.client.get("/v1/tools", headers=bearer(b["key"])).status_code == 401
 
 
 def test_blocking_an_account_kills_its_keys_and_session(idp):
-    alice = connect(idp)
-    bob = connect(idp, "bob", "bob@example.org")
-    bob_id = bob.get("/ui/session").json()["account"]["id"]
-    alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
+    alice, bob, bob_id = admin_and_user(idp)
     key = new_key(bob)["key"]
     assert idp.client.get("/v1/tools", headers=bearer(key)).status_code == 200
     alice.patch(f"/ui/users/{bob_id}", json={"role": "blocked"})
@@ -251,10 +154,7 @@ def test_toml_keys_still_work_next_to_accounts(idp, monkeypatch):
 def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-toml"])
     digest = identity.owner("sk-toml")
-    alice = connect(idp)
-    bob = connect(idp, "bob", "bob@example.org")
-    bob_id = bob.get("/ui/session").json()["account"]["id"]
-    alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
+    alice, bob, bob_id = admin_and_user(idp)
     # Seule, la clé est son propre client.
     assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None, None)
 
@@ -317,6 +217,7 @@ def test_without_oidc_nothing_changes(proxy):
     assert proxy.client.get("/ui/auth").json() == {"mode": None, "label": None}
     assert proxy.client.get("/ui/keys").status_code == 404
     assert proxy.client.get("/ui/auth/login").status_code == 404
+    assert proxy.client.get("/ui/admin/backup").status_code == 404
     assert proxy.client.get("/healthz").json()["ui_login"] is None
 
 
@@ -402,10 +303,6 @@ def test_an_admin_downloads_a_backup(idp, tmp_path, monkeypatch):
     assert bob.get("/ui/admin/backup").status_code == 403
 
 
-def test_no_backup_download_without_accounts(proxy):
-    assert proxy.client.get("/ui/admin/backup").status_code == 404
-
-
 def test_only_an_admin_sees_the_settings(idp, tmp_path, monkeypatch):
     """Configuration → Paramètres, avec les comptes : admin seulement."""
     from llm_proxy.core import config
@@ -430,6 +327,8 @@ def test_a_key_is_limited_to_the_tools_it_is_granted(idp):
     alice = connect(idp)
     every = listed(idp, new_key(alice)["key"])        # sans droits : tout
     assert len(every) >= 2, every
+    # La page propose d'accorder chacun de ces outils.
+    assert every <= {d["name"] for d in alice.get("/ui/keys/tools").json()["data"]}
     one, other = sorted(every)[:2]
     created = alice.post("/ui/keys", json={"label": "ci", "tools": [one, one]})
     assert created.status_code == 200, created.text
@@ -468,20 +367,9 @@ def test_the_rights_of_a_key_change_afterwards(idp):
                        json={"tools": []}).status_code == 409
 
 
-def test_only_the_owner_or_an_admin_changes_the_rights(idp):
-    alice = connect(idp)
-    bob = connect(idp, "bob", "bob@example.org")
-    bob_id = bob.get("/ui/session").json()["account"]["id"]
-    alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
-    a, b = new_key(alice), new_key(bob)
-    assert bob.patch(f"/ui/keys/{a['id']}", json={"tools": []}).status_code == 404
-    assert bob.patch(f"/ui/keys/{b['id']}", json={"tools": []}).status_code == 200
-    assert alice.patch(f"/ui/keys/{b['id']}", json={"tools": None}).status_code == 200
-
-
 def test_mcp_rights_cover_a_whole_server():
     from llm_proxy import tools
-    tool = next((t for t in tools.REGISTRY if t.name == "web_search"), None)
+    tool = next(t for t in tools.REGISTRY if t.name == "web_search")
     assert tools.granted(tool, None) and tools.granted(tool, frozenset({"web_search"}))
     assert not tools.granted(tool, frozenset({"mcp", "web_fetch"}))
 
@@ -490,12 +378,6 @@ def test_mcp_rights_cover_a_whole_server():
     assert tools.granted(Fake, frozenset({"mcp:docs"}))
     assert tools.granted(Fake, frozenset({"mcp"}))
     assert not tools.granted(Fake, frozenset({"mcp:autre"}))
-
-
-def test_the_page_lists_what_can_be_granted(idp):
-    data = connect(idp).get("/ui/keys/tools").json()["data"]
-    names = {d["name"] for d in data}
-    assert {"web_search", "memory"} <= names
 
 
 def test_rights_survive_a_database_from_before(idp, tmp_path, monkeypatch):

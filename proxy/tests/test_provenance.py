@@ -39,18 +39,16 @@ def test_sites_d_une_conversation():
     assert provenance.hosts_in_messages(msgs) == {"exemple.org", "crates.io", "rust-lang.org", "serde.rs"}
 
 
-def test_le_refus():
+def test_le_refus(monkeypatch):
     known = tools.Call(hosts=frozenset({"python.org"}))
     provenance.check("https://docs.python.org/3/", known)               # même site
     provenance.check("https://inconnu.fr/", tools.Call())               # pas de contexte
     with pytest.raises(tools.ToolError) as exc:
         provenance.check("https://routify-file-proxy-sg.oss-ap-southeast-1.aliyuncs.com/f", known)
     assert exc.value.code == "not_allowed" and "web search" in exc.value.message
-
-
-def test_coupee(monkeypatch):
+    # Coupée ([tools.net].provenance = "off") : plus aucun refus.
     monkeypatch.setattr(provenance, "MODE", "off")
-    provenance.check("https://inconnu.fr/", tools.Call(hosts=frozenset()))
+    provenance.check("https://inconnu.fr/", known)
 
 
 @pytest.mark.parametrize("tool, args", [

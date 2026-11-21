@@ -943,7 +943,7 @@ a.btn { display: inline-block; text-decoration: none; }
 .key-rights-server { display: flex; flex-direction: column; gap: 4px; grid-column: 1 / -1; }
 .key-rights-server .sub { padding-left: 22px; }
 .key-rights-list .note { grid-column: 1 / -1; padding: 0; }
-.config-keys td.key-tools-cell { white-space: normal; max-width: 260px; font-size: 12.5px; }
+.config-keys td.key-tools-cell { font-size: 12.5px; cursor: help; }
 .config-keys tr.key-edit td { white-space: normal; background: var(--track); }
 .config-keys tr.key-edit .key-rights { margin: 4px 0 10px; background: var(--bg); }
 .config-keys tr.key-edit .note { padding: 8px 0 0; }

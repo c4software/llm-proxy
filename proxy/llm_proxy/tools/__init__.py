@@ -204,6 +204,9 @@ class Memory:
     def __len__(self) -> int:
         return len(self._data)
 
+    def clear(self) -> None:
+        self._data.clear()
+
 
 MEMORY = Memory(CACHE_ENTRIES, CACHE_TTL)
 

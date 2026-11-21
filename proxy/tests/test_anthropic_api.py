@@ -90,18 +90,14 @@ def test_to_openai_tools_and_tool_choice():
         "parameters": {"type": "object", "properties": {}}}}]
     assert out["tool_choice"] == "required"
     assert out["parallel_tool_calls"] is False
-
-
-@pytest.mark.parametrize("choice,expected", [
-    ({"type": "auto"}, "auto"),
-    ({"type": "none"}, "none"),
-    ({"type": "tool", "name": "f"}, {"type": "function", "function": {"name": "f"}}),
-])
-def test_tool_choice_values(choice, expected):
-    out = A.to_openai({"model": "m", "messages": [],
-                       "tools": [{"name": "f", "input_schema": {}}],
-                       "tool_choice": choice})
-    assert out["tool_choice"] == expected
+    for choice, expected in [
+            ({"type": "auto"}, "auto"),
+            ({"type": "none"}, "none"),
+            ({"type": "tool", "name": "f"}, {"type": "function", "function": {"name": "f"}})]:
+        out = A.to_openai({"model": "m", "messages": [],
+                           "tools": [{"name": "f", "input_schema": {}}],
+                           "tool_choice": choice})
+        assert out["tool_choice"] == expected, choice
 
 
 def test_to_openai_tool_round_trip():

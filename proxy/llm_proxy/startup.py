@@ -20,7 +20,7 @@ from .access import accounts, auth, fairshare, oidc
 from .access.auth import account_owner
 from .core import config, reload
 from .core.settings import EXEMPT_SUFFIXES, is_exempt, log
-from .storage import files, stats
+from .storage import files, stats, webhooks
 from .surfaces import anthropic_api, chat_api, responses_api
 from .upstream import albert
 from .upstream.backends import BACKENDS, FALLBACK_BACKEND, close_clients, open_clients
@@ -110,6 +110,11 @@ async def lifespan(app: FastAPI):
             "être transmise au conteneur, `environment:` du compose)",
             ", ".join(sorted(config.MISSING_VARS)))
     stats.init()
+    # Une fois par base : le prompt d'un webhook entrant que des
+    # conversations avaient pris dans leurs réglages en est retiré.
+    if tools.webhook.ENABLED \
+            and (n := await asyncio.to_thread(webhooks.clear_inherited_prompts)):
+        log.info("webhooks : prompt système d'un webhook retiré de %d conversation(s)", n)
     seeded = await asyncio.to_thread(seed_fair_share)
     log.info("partage équitable : %s par heure glissante par défaut, "
              "réglable par compte ; %d requête(s) de la dernière heure "

@@ -57,7 +57,7 @@ def test_magasin(monkeypatch):
     assert voices.list_all("a") == []
 
 
-def test_routes_du_compte_connecte(proxy):
+def test_routes_du_compte_connecte(proxy, monkeypatch):
     proxy.post("/ui/login", json={"key": "sk-a"})
     r = proxy.put(f"/ui/voices/{VID}", json={"name": "Moi", "text": "Bonjour.",
                                              "duration": 3, "source": "micro", "data": WAV_URL})
@@ -81,9 +81,6 @@ def test_routes_du_compte_connecte(proxy):
     proxy.post("/ui/login", json={"key": "sk-a"})
     assert proxy.delete(f"/ui/voices/{VID}").json()["deleted"] is True
     assert proxy.get(f"/ui/voices/{VID}/audio").status_code == 404
-
-
-def test_chat_ferme(proxy, monkeypatch):
+    # Le chat de la page fermé ([ui].chat) : ces routes n'existent pas.
     everywhere(monkeypatch, dashboard, "UI_CHAT", False)
-    proxy.post("/ui/login", json={"key": "sk-a"})
     assert proxy.get("/ui/voices").status_code == 404

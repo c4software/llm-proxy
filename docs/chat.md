@@ -14,10 +14,12 @@ appareil. Chacune garde son modèle, son prompt système, sa température,
 ses outils, ses artifacts et ses fichiers produits.
 
 Un [webhook entrant](webhooks.md) écrit aussi dans l'historique : ses
-messages y sont marqués « reçu par le webhook … », et la page relit la
-liste toutes les 20 secondes pour les montrer. Pendant qu'il répond, la
-conversation affiche une réponse en cours, menée par le proxy, relue toutes
-les 3 secondes ; la page n'y écrit pas avant la réponse.
+messages y sont marqués « reçu par le webhook … », et la page les montre
+sans rechargement. Pendant qu'il répond, la conversation affiche une
+réponse en cours, menée par le proxy, et la page n'y écrit pas avant la
+réponse. Une nouvelle conversation reprend les réglages de celle
+affichée (modèle, prompt système, outils…), sauf depuis une conversation
+créée par un webhook : elle part alors des réglages par défaut.
 
 - Dans le menu latéral : renommer, supprimer, **rechercher** (chaque
   mot, sans casse ni accents, dans le titre ou les messages ; le proxy

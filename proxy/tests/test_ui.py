@@ -7,6 +7,7 @@ import base64
 import json
 
 import pytest
+from fastapi.testclient import TestClient
 
 from fakes import everywhere
 from fakes import (ANSWER_TURN, FakeUpstream, hosted_chat, search_then_answer,
@@ -14,11 +15,12 @@ from fakes import (ANSWER_TURN, FakeUpstream, hosted_chat, search_then_answer,
 from llm_proxy.core import identity
 from llm_proxy.access import auth
 from llm_proxy.upstream import catalog, relaying
-from llm_proxy.ui import dashboard, usage_api
+from llm_proxy.ui import dashboard, static_files, usage_api
 from llm_proxy.surfaces import chat_api as C
 from llm_proxy.upstream import backends
 from llm_proxy.access import oidc
 from llm_proxy.storage import stats
+from llm_proxy import app as A
 from llm_proxy import tools
 
 KEY = "sk-alice"
@@ -85,6 +87,36 @@ def test_unchanged_static_file_is_revalidated_without_its_content(ui):
     assert again.status_code == 304 and not again.content
     assert ui.client.get("/ui/static/icon.svg",
                          headers={"If-None-Match": '"autre"'}).status_code == 200
+
+
+def test_static_files_carry_a_version_in_their_url():
+    """Gabarit et script vont ensemble : leurs URL portent une empreinte,
+    pour qu'un navigateur ne marie pas le nouveau gabarit à l'ancien script
+    resté en cache (page blanche), et la page elle-même n'est pas gardée."""
+    r = TestClient(A.app).get("/ui")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    for name in ("app.js", "dashboard.css", "vue.global.prod.js"):
+        assert f'/ui/static/v/{static_files.VERSION}/{name}"' in r.text, name
+    c = TestClient(A.app)
+    got = c.get(f"/ui/static/v/{static_files.VERSION}/chat/ChatPanel.js")
+    assert got.status_code == 200 and "immutable" in got.headers["cache-control"]
+    # Une empreinte périmée : servie, mais pas gardée ; hors de static : 404.
+    assert c.get("/ui/static/v/0/app.js").headers["cache-control"] == "no-cache"
+    assert c.get("/ui/static/icon.svg").headers["cache-control"] == "no-cache"
+    assert c.get("/ui/static/v/0/../../dashboard.py").status_code == 404
+
+
+def test_the_page_preloads_the_modules_app_js_imports():
+    """Les modules qu'importe app.js, de proche en proche, sont annoncés
+    (modulepreload) avant lui ; la configuration et les statistiques, lues
+    à leur ouverture (import dynamique), n'en sont pas."""
+    html = TestClient(A.app).get("/ui").text
+    pre = f'<link rel="modulepreload" href="/ui/static/v/{static_files.VERSION}/'
+    for name in ("app.js", "chat/store.js", "chat/ChatPanel.js", "lib/http.js"):
+        assert pre + name + '">' in html, name
+    assert "config/ConfigPanel.js" not in static_files.MODULES
+    assert "stats/StatsView.js" not in static_files.MODULES
+    assert html.index(pre) < html.index('<script type="module"')
 
 
 def test_installable_app_is_served_without_key(ui):
@@ -492,11 +524,7 @@ def test_healthz_says_only_ok_without_a_key(ui):
     full = ui.client.get("/healthz", headers={
         "authorization": f"Bearer {KEY}"}).json()
     assert full["status"] == "ok" and "backends" in full
-
-
-def test_healthz_says_each_backend_fair_share(ui):
-    full = ui.client.get("/healthz", headers={
-        "authorization": f"Bearer {KEY}"}).json()
+    # Avec la clé : le partage équitable de chaque backend, les chemins exemptés.
     assert all(isinstance(b["fair_share"], bool) for b in full["backends"].values())
     assert isinstance(full["exempt_paths"], list)
 
@@ -514,7 +542,6 @@ def test_an_open_proxy_shows_its_health(proxy):
 def test_premier_demarrage_sans_configuration(tmp_path, monkeypatch):
     """Sans data/config.toml : rien n'est créé, config.SETUP, la page le
     sait (/ui/session) et l'API répond 503 setup_required."""
-    from fastapi.testclient import TestClient
     from llm_proxy import app as app_module
     from llm_proxy.core import config
     path = tmp_path / "config.toml"

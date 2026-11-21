@@ -50,6 +50,10 @@ class Memory:
         self._data.move_to_end((owner, key))
         return entry[2]
 
+    def clear(self) -> None:
+        self._data.clear()
+        self.size = 0
+
     def _drop(self, key) -> None:
         entry = self._data.pop(key, None)
         if entry is not None:

@@ -61,16 +61,16 @@ décodé dans le proxy** :
   L'outil `code_execution` lui-même peut rester inactif.
 - **Le jeton** ne quitte pas le proxy : ni le bac ni le modèle ne le voient.
 
-Le bac garde ses dépôts (les deux plus récents, pour tenir dans `/work`)
-tant qu'il vit, c'est-à-dire 30 minutes après sa dernière commande (voir
+Le bac garde les deux dépôts les plus récents, pour tenir dans `/work`,
+tant qu'il vit (voir
 [Ce qui est gardé](#ce-qui-est-gardé-et-combien-de-temps)). Un bac neuf
 n'a rien : le proxy y redépose l'archive de son cache, ou la retélécharge
 si elle n'y est plus.
 
-Le dépôt est décompressé dans un dossier caché, `/work/.repos/`.
-L'exécuteur ne renvoie donc pas ses fichiers comme « fichiers produits ».
-Seuls les fichiers réguliers sont écrits, chacun sous le dossier du dépôt :
-les liens, les chemins absolus et les `..` de l'archive sont ignorés.
+Le dépôt est décompressé dans un dossier caché, `/work/.repos/` :
+l'exécuteur ne renvoie donc pas ses fichiers comme « fichiers produits ».
+Seuls les fichiers réguliers sont écrits, sous le dossier du dépôt : les
+liens, les chemins absolus et les `..` de l'archive sont ignorés.
 
 ## Les sources
 
@@ -88,11 +88,11 @@ projets permis.
   la casse) la remplace pour lui.
 
 ```toml
-[repos.sources.pmw]
+[repos.sources.entreprise]
 forge = "gitlab"
-url = "https://gitlab.pmw.lan"
+url = "https://gitlab.exemple.fr"
 token = "${GITLAB_TOKEN}"
-projects = ["playmoweb/*", "kid-ai/*"]
+projects = ["equipe/*", "outils/*"]
 ```
 
 | Forge | Récupération | Jeton |
@@ -103,7 +103,7 @@ projects = ["playmoweb/*", "kid-ai/*"]
 | `git` | `git fetch --depth 1` de `<url>/<projet>.git`, puis `git archive` (une branche, un tag ou un commit) | en `Authorization: Basic <username>:<jeton>` ; `username` : `git` par défaut, `oauth2` pour GitLab, `x-access-token` pour GitHub |
 
 `projects` borne ce que le modèle peut demander : des motifs à jokers,
-sans casse (`playmoweb/*`). Vide, tous les projets que le jeton voit sont
+sans casse (`equipe/*`). Vide, tous les projets que le jeton voit sont
 permis. Une adresse ne peut pas contenir d'identifiants
 (`https://user:jeton@…`) : le jeton a son propre champ.
 
@@ -124,11 +124,9 @@ permis. Une adresse ne peut pas contenir d'identifiants
 - `ref` : une branche, un tag ou un commit. Absent, la branche par défaut.
 
 Les numéros de ligne de `grep` sont ceux de `read`. Une recherche est
-bornée à une seconde par fichier : un fichier où elle déborde est dit
-« trop lent » et sauté. La recherche entière est bornée à 10 secondes. Une
-expression piégée ne coûte donc que du temps de bac, jamais du proxy. Un
-fichier de plus de 2 Mo est listé, mais ni lu ni cherché ; un fichier
-binaire n'est pas lu.
+bornée à une seconde par fichier (un fichier où elle déborde est dit
+« trop lent » et sauté) et à 10 secondes en tout. Un fichier de plus de
+2 Mo est listé, mais ni lu ni cherché ; un fichier binaire n'est pas lu.
 
 Deux commandes simultanées sur le même projet attendent le même
 téléchargement. Une source modifiée (adresse, forge, jeton) ne sert pas
@@ -139,31 +137,30 @@ commit. L'outil ne fait que lire : ni exécution du projet, ni push.
 
 ## Ce qui est gardé, et combien de temps
 
-Le code d'un dépôt n'est gardé que le temps d'être lu : **30 minutes après
-sa dernière lecture** (`[repos].cache_ttl`), la même durée dans le proxy et
-dans le bac, avec une suppression active (pas seulement au prochain appel).
+Le code d'un dépôt n'est gardé que le temps d'être lu :
+`[repos].cache_ttl` (30 minutes par défaut) après sa dernière lecture, la
+même durée dans le proxy et dans le bac. L'effacement est actif : il
+n'attend pas l'appel suivant.
 
 | Où | Quoi | Effacé |
 |---|---|---|
-| RAM du proxy (cache) | L'archive compressée | 30 min après sa dernière lecture ; la purge passe chaque minute. Aussi : poussée dehors par d'autres archives (`cache_bytes`, 32 au plus), redémarrage du proxy |
+| RAM du proxy (cache) | L'archive compressée | `cache_ttl` après sa dernière lecture (la purge passe chaque minute) ; plus tôt si d'autres archives la poussent dehors (`cache_bytes`, 32 au plus) ; au redémarrage du proxy |
 | `/tmp` du proxy (forge `git`) | Le pack git | À la fin du téléchargement (dossier temporaire ; `/tmp` est en mémoire) |
 | Bac de l'exécuteur | L'archive reçue | Juste après sa décompression |
-| Bac de l'exécuteur | Le projet décompressé | Le bac est détruit 30 min après sa dernière commande (le proxy demande cette inactivité à l'exécuteur, `idle` : il faut l'exécuteur de la même version ; un plus ancien l'ignore, et le bac vit alors `SANDBOX_IDLE`, 3 h) ; au redémarrage de l'exécuteur ; et au-delà de deux dépôts, le plus ancien. Le bac compte l'inactivité de tous ses dépôts : un dépôt peut y rester tant que l'autre est lu |
+| Bac de l'exécuteur | Le projet décompressé | Avec le bac, détruit après `cache_ttl` sans commande (le proxy demande cette inactivité à l'exécuteur, voir [Exécution de code](execution-de-code.md)) ; au redémarrage de l'exécuteur ; et, au-delà de deux dépôts, le plus ancien. L'inactivité compte pour tout le bac : un dépôt y reste tant que l'autre est lu |
 | Partout | Tout ce que le compte a téléchargé | Tout de suite : à la modification ou à la suppression d'une source, et par le bouton **Oublier les dépôts téléchargés** (*Configuration → Dépôts*). Une commande déjà en route n'y remet rien. Si l'exécuteur ne répond pas, la page le dit : son bac expirera seul |
 
 **Incognito et passe plat** : rien n'est gardé. Chaque commande dépose
 l'archive dans un bac d'un seul appel, détruit après lui, et le cache ne la
-garde pas. Le passe plat des [webhooks](webhooks.md) tourne en incognito :
-pas non plus d'échange d'outils gardé.
+garde pas. Le passe plat des [webhooks](webhooks.md) tourne en incognito.
 
 **Ce qui suit la conversation**, et non le dépôt : les extraits que le
 modèle a lus (résultats de `read` et `grep`) sont gardés avec les autres
 échanges d'outils pour les tours suivants (`[chat].memory`, jusqu'à
-`[tools].cache_ttl`, 24 h, en mémoire ; rien en incognito ni en passe
-plat). Ce que le modèle recopie dans sa réponse va dans l'historique du
-chat (effacé avec la conversation) et vers un webhook sortant (Slack,
-Mattermost : il ne se rappelle pas). La sauvegarde de `data/` contient
-l'historique.
+`[tools].cache_ttl`, 24 h, en mémoire ; rien en incognito). Ce que le
+modèle recopie dans sa réponse va dans l'historique du chat (effacé avec
+la conversation, présent dans la sauvegarde de `data/`) et vers un webhook
+sortant (un message posté sur Slack ou Mattermost ne se rappelle pas).
 
 **Limite** : tout ce qui précède vit en mémoire (RAM, `tmpfs`), jamais sur
 le disque du proxy ni de l'exécuteur. Ne plus y faire référence n'est pas
@@ -187,7 +184,8 @@ monter ensemble pour de gros dépôts :
 
 - **Le contenu est lu hors du proxy.** Décompression, lecture et
   recherche se font dans le bac, sans réseau et sous ses bornes. Une
-  archive piégée ou une expression catastrophique n'atteint pas le proxy.
+  archive piégée ou une expression catastrophique ne coûte que du temps
+  de bac.
 - **Seule exception : la forge `git`.** `git fetch` et `git archive`
   tournent dans le proxy, et git y lit le pack reçu. git tourne avec un
   environnement minimal (sans configuration de l'hôte, sans variables de
@@ -216,7 +214,7 @@ monter ensemble pour de gros dépôts :
   autres outils cochés (poster sur un webhook sortant exposé, écrire dans
   sa mémoire, aller sur le web). Ne cocher, sur un webhook, que les outils
   utiles.
-- Les jetons sont gardés en clair dans `data/conversations.db`, comme les
-  URL des webhooks sortants : la sauvegarde de `data/` les contient.
+- Les jetons sont gardés en clair dans `data/conversations.db` : voir
+  [Secrets gardés en clair](securite.md#secrets-gardés-en-clair).
 - Le conteneur du proxy tourne en lecture seule, sans capacité Linux (voir
   [Déploiement](deploiement.md#durcissement-du-conteneur)).

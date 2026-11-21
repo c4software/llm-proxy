@@ -24,11 +24,18 @@ const TOOL_LABELS = {
   webhook: "Webhooks sortants", repository: "Dépôts de code",
 };
 
-// Ce que dit une colonne « Outils » des droits d'une clé.
+// La liste complète des droits d'une clé (l'info-bulle de la colonne).
 export function rightsSummary(rights) {
   if (rights == null) return "tous";
   if (!rights.length) return "aucun";
   return rights.map((r) => TOOL_LABELS[r] || (r === "mcp" ? "tous les MCP" : r.replace(/^mcp:/, "MCP "))).join(", ");
+}
+
+// Ce qu'en dit la colonne « Outils » du tableau : court, la liste en
+// info-bulle (rightsSummary).
+export function rightsShort(rights) {
+  if (rights == null || !rights.length || rights.length === 1) return rightsSummary(rights);
+  return `${rights.length} outils`;
 }
 
 /*
@@ -183,7 +190,7 @@ export const KeysPart = {
 
     return { KEYFILE, KEY_ENV, isAdmin, keys, tomlKeys, allKeys, keyLabel, fresh, keyError,
              armed, createKey, revokeKey, bindToml, users, fair, num, when, copied, copy,
-             keyTools, catalog, editing, editRights, saveRights, rightsSummary };
+             keyTools, catalog, editing, editRights, saveRights, rightsSummary, rightsShort };
   },
   template: `
     <div class="config-keys">
@@ -229,7 +236,7 @@ export const KeysPart = {
               <td>{{ k.label || "—" }}</td>
               <td v-if="allKeys">{{ k.user }}</td>
               <td><code>{{ k.hint }}…</code></td>
-              <td class="key-tools-cell" :title="rightsSummary(k.tools)">{{ rightsSummary(k.tools) }}</td>
+              <td class="key-tools-cell" :title="rightsSummary(k.tools)">{{ rightsShort(k.tools) }}</td>
               <td>{{ when(k.created) }}</td>
               <td>{{ when(k.last_used) }}</td>
               <td><span v-if="k.revoked" class="tag">révoquée</span>

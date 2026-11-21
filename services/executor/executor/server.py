@@ -1,5 +1,5 @@
 """
-L'API HTTP de l'exécuteur : trois routes derrière un jeton, une de santé.
+L'API HTTP de l'exécuteur : cinq routes derrière un jeton, une de santé.
 
   GET  /healthz       sans jeton — pour le healthcheck du conteneur. Dit
                       seulement si le service est prêt.
@@ -31,6 +31,11 @@ L'API HTTP de l'exécuteur : trois routes derrière un jeton, une de santé.
                       besoin : c'est à lui qu'un appelant reconnaît un
                       exécuteur qui sait déposer.
   POST /v1/destroy    {"client", "session"} → {"destroyed": bool}
+  GET  /v1/sessions   ?client= (facultatif) → {"data": [{"client", "session",
+                      "age", "idle_for", "idle", "expires_in", "running",
+                      "booted"}]} : les bacs ouverts, pour les voir
+  POST /v1/destroy_all  {"client"?} → {"destroyed": n} : tous les bacs (d'un
+                      client, ou de tous), même en pleine exécution
 
 Erreurs : {"error": {"code", "message"}} — 400 `invalid_request`, 401
 `unauthorized`, 413 `too_large` (corps au-delà de ce que les bornes
@@ -275,6 +280,19 @@ def create_app(box: Sandboxes, token: str) -> FastAPI:
             return doc
         return {"destroyed": await box.destroy(doc.get("client", ""),
                                                doc.get("session", ""))}
+
+    @app.get("/v1/sessions")
+    async def sessions(client: str | None = None):
+        return {"data": box.sessions(client)}
+
+    @app.post("/v1/destroy_all")
+    async def destroy_all(request: Request):
+        doc = await body(request)
+        if isinstance(doc, JSONResponse):
+            return doc
+        if "client" in doc and not isinstance(doc["client"], str):
+            return error(400, "invalid_request", "`client` : une chaîne (absent : tous les bacs)")
+        return {"destroyed": await box.destroy_all(doc["client"] if "client" in doc else None)}
 
     return app
 

@@ -11,12 +11,15 @@ uid) — un test vérifie seulement qu'ils sont demandés.
 Les programmes d'essai sont minuscules et n'écrivent que dans le dossier
 du « conteneur », sous tmp_path."""
 
+import asyncio
 import base64
 import json
 import os
 import shutil
 import sys
+import threading
 import time
+import types
 
 import pytest
 from fastapi.testclient import TestClient
@@ -284,7 +287,6 @@ def test_quotas_expiration_destruction_orphelins(service):
 
     # Expiration : par inactivité (le serveur appelle sweep() toutes les
     # 30 s ; ici, à la main).
-    import asyncio
     box.limits = sandbox.Limits(idle=0.05)
     time.sleep(0.1)
     assert asyncio.run(box.sweep()) == 2
@@ -293,7 +295,6 @@ def test_quotas_expiration_destruction_orphelins(service):
 
 def test_tous_les_bacs_occupes(service):
     """Un bac qui exécute ne cède pas sa place : 429 `busy`."""
-    import threading
     client, _ = service(max_sessions=1)
     slow = threading.Thread(target=run, args=(
         client, "import time; time.sleep(1.5)"), kwargs={"session": "lent"})
@@ -321,8 +322,6 @@ def test_bac_disparu_recree(service):
 
     # Détruit PENDANT qu'un second appel de la session attend son tour :
     # celui-ci repart d'un bac neuf, pas d'un conteneur qui n'existe plus.
-    import asyncio
-
     async def deux_appels():
         lent = asyncio.create_task(box.execute("c", "s", "sh", "sleep 0.6"))
         await asyncio.sleep(0.3)
@@ -428,20 +427,42 @@ def test_bornes_par_l_environnement():
         sandbox.Limits.from_env({"SANDBOX_PIDS": "beaucoup"})
 
 
-def test_inactivite_demandee_par_l_appelant(service):
-    """`idle` raccourcit l'inactivité de CE bac (ramenée sous
-    SANDBOX_IDLE, 60 s au moins) ; les autres gardent la leur."""
-    import asyncio
+def test_inactivite_demandee_par_l_appelant(service, monkeypatch):
+    """`idle` raccourcit l'inactivité de CE bac (ramenée sous SANDBOX_IDLE,
+    60 s au moins) ; les autres gardent la leur."""
     client, box = service(idle=3600)
-    r = client.post("/v1/execute", headers=AUTH, json={
-        "client": "c", "session": "court", "language": "python", "code": "print(1)",
-        "idle": 120})
-    assert r.status_code == 200, r.text
-    run(client, "print(2)", session="long")
-    assert {k[1]: s.idle for k, s in box._sessions.items()} == {"court": 120.0, "long": None}
-    for s in box._sessions.values():
-        s.used -= 200                       # 200 s sans appel
-    assert asyncio.run(box.sweep()) == 1 and [k[1] for k in box._sessions] == ["long"]
+    for session, idle in (("court", 120), ("plancher", 1), ("plafond", 10**6)):
+        run(client, "open('f.txt', 'w').write('x')", session=session, idle=idle)
+    run(client, "open('f.txt', 'w').write('x')", session="long")
+
+    def after(seconds) -> list[str]:
+        """Les sessions qui ont encore leur bac, `seconds` plus tard."""
+        real = time.monotonic
+        with monkeypatch.context() as m:
+            m.setattr(sandbox, "time", types.SimpleNamespace(
+                monotonic=lambda: real() + seconds))
+            asyncio.run(box.sweep())
+        return [s for s in ("court", "plancher", "plafond", "long")
+                if not run(client, "ls", "sh", session=s)["fresh"]]
+    assert after(50) == ["court", "plancher", "plafond", "long"]    # 1 s vaut 60 s
+    assert after(200) == ["plafond", "long"]
+    assert after(4000) == []                    # 10**6 s : pas plus que SANDBOX_IDLE
     bad = client.post("/v1/execute", headers=AUTH, json={
         "client": "c", "session": "x", "language": "python", "code": "print(1)", "idle": "1"})
-    assert bad.status_code == 400
+    assert (bad.status_code, bad.json()["error"]["code"]) == (400, "invalid_request")
+
+
+def test_lister_et_detruire_les_bacs(service):
+    """GET /v1/sessions montre les bacs ouverts (d'un client, ou de tous) ;
+    POST /v1/destroy_all les détruit (d'un client, ou tous)."""
+    client, box = service()
+    for who, session in (("a", "conv1"), ("a", "repository"), ("b", "conv1")):
+        run(client, "print(1)", session=session, who=who)
+    mine = client.get("/v1/sessions", headers=AUTH, params={"client": "a"}).json()["data"]
+    assert [b["session"] for b in mine] == ["conv1", "repository"]
+    assert {"age", "idle_for", "idle", "expires_in", "running"} <= set(mine[0])
+    assert len(client.get("/v1/sessions", headers=AUTH).json()["data"]) == 3
+    assert client.post("/v1/destroy_all", headers=AUTH, json={"client": "a"}).json() == {"destroyed": 2}
+    assert [b["client"] for b in client.get("/v1/sessions", headers=AUTH).json()["data"]] == ["b"]
+    assert client.post("/v1/destroy_all", headers=AUTH, json={}).json() == {"destroyed": 1}
+    assert client.get("/v1/sessions").status_code == 401          # derrière le jeton

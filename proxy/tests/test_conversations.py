@@ -94,7 +94,7 @@ def test_suppression_rend_la_place():
     assert free == (0,)
 
 
-def test_routes_du_compte_connecte(proxy):
+def test_routes_du_compte_connecte(proxy, monkeypatch):
     proxy.post("/ui/login", json={"key": "sk-a"})
     r = proxy.post("/ui/assets", json={"conversation": "c1", "name": "i.png", "data": PNG_URL})
     assert r.status_code == 200, r.text
@@ -122,6 +122,9 @@ def test_routes_du_compte_connecte(proxy):
     proxy.post("/ui/login", json={"key": "sk-a"})
     assert proxy.delete("/ui/conversations/c1").json()["deleted"] is True
     assert proxy.get(url).status_code == 404
+    # Le chat de la page fermé ([ui].chat) : ces routes n'existent pas.
+    everywhere(monkeypatch, dashboard, "UI_CHAT", False)
+    assert proxy.get("/ui/conversations").status_code == 404
 
 
 def test_revision_refuse_un_ecrit_perime(proxy):
@@ -159,12 +162,6 @@ def test_base_d_avant_recoit_la_revision(monkeypatch, tmp_path):
     monkeypatch.setattr(conversations, "DB_PATH", path)
     assert conversations.get("a", "c1") == {"id": "c1", "rev": 0}
     assert conversations.save("a", "c1", conv(), base=0) == 1
-
-
-def test_chat_ferme(proxy, monkeypatch):
-    everywhere(monkeypatch, dashboard, "UI_CHAT", False)
-    proxy.post("/ui/login", json={"key": "sk-a"})
-    assert proxy.get("/ui/conversations").status_code == 404
 
 
 def test_resumes_par_pages_une_seule_et_recherche(proxy):

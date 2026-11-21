@@ -561,6 +561,31 @@ class Sandboxes:
         """Détruit le bac de cette session, même en pleine exécution."""
         return await self._drop((client, session))
 
+    def sessions(self, client: str | None = None) -> list[dict]:
+        """Les bacs ouverts (d'un client, ou de tous) : de quoi les voir et
+        les nettoyer. Un bac d'un seul appel (session «») n'y figure pas
+        sous son nom : il se dit « ~ »."""
+        now, lim = time.monotonic(), self.limits
+        out = []
+        for (owner, session), s in self._sessions.items():
+            if client is not None and owner != client:
+                continue
+            idle = lim.idle if s.idle is None else s.idle
+            out.append({"client": owner, "session": "~" if session.startswith("~") else session,
+                        "age": round(now - s.created), "idle_for": round(now - s.used),
+                        "idle": round(idle), "expires_in": round(max(0.0, min(
+                            idle - (now - s.used), lim.lifetime - lim.timeout - (now - s.created)))),
+                        "running": s.lock.locked(), "booted": bool(s.name)})
+        return sorted(out, key=lambda x: (x["client"], x["session"]))
+
+    async def destroy_all(self, client: str | None = None) -> int:
+        """Détruit tous les bacs (d'un client, ou de tous), même en pleine
+        exécution → leur nombre."""
+        keys = [k for k in self._sessions if client is None or k[0] == client]
+        for key in keys:
+            await self._drop(key)
+        return len(keys)
+
     async def close(self) -> None:
         for key in list(self._sessions):
             await self._drop(key)

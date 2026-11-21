@@ -47,10 +47,8 @@ Même avec l'auth active :
 - `GET /v1/files/<jeton>/<nom>` : le jeton du lien vaut droit d'accès.
 - `POST /hooks/<jeton>` : un [webhook entrant](webhooks.md), dont le jeton
   vaut droit d'accès. Il répond au nom du compte qui l'a créé, tant que ce
-  compte est actif ou que sa clé du TOML est encore là. Le jeton est gardé
-  en clair dans `data/conversations.db`, comme les URL des webhooks
-  sortants et les jetons des [sources de dépôts](depots.md) : la sauvegarde
-  de `data/` les contient.
+  compte est actif ou que sa clé du TOML est encore là. Voir
+  [Webhooks, Sécurité](webhooks.md#sécurité).
 - `GET /healthz`, réduit à `{"status": "ok"}`. Le détail (backends et
   leurs URL, outils, caches) exige une clé, ou la session de la page par
   `GET /ui/health`.
@@ -74,20 +72,27 @@ Le contenu d'un dépôt n'est pas décodé dans le proxy : l'archive est
 décompressée et lue dans un bac de l'exécuteur, sans réseau (voir
 [Comment un dépôt est lu](depots.md#comment-un-dépôt-est-lu)). Seule la
 forge `git` fait lire un pack par git dans le proxy, borné et sans rien
-exécuter du dépôt. Un dépôt téléchargé est effacé 30 minutes après sa
-dernière lecture, tout de suite quand sa source change, et n'est pas
-gardé en incognito ni en passe plat : voir
-[Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps). Tout
-vit en mémoire : sur l'hôte, un swap chiffré ou pas de swap.
+exécuter du dépôt. Durées et emplacements :
+[Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps).
+
+## Secrets gardés en clair
+
+`data/conversations.db` garde en clair les jetons des webhooks entrants,
+les URL des webhooks sortants et les jetons des sources de dépôts : la
+page doit pouvoir réafficher une adresse, et le proxy présenter un jeton
+à la forge. Une copie de la base, ou de la sauvegarde de `data/`, donne
+des adresses et des jetons utilisables. Ce que le proxy garde en mémoire
+(dépôts, fichiers produits) peut finir dans le swap de l'hôte : un swap
+chiffré, ou pas de swap.
 
 ## Le conteneur du proxy
 
 Le service `albert-proxy` tourne durci (voir
 [Déploiement](deploiement.md#durcissement-du-conteneur)) : image en
 lecture seule, seuls `./data` et un `/tmp` en mémoire s'écrivent, aucune
-capacité Linux, pas d'élévation de privilèges, utilisateur non root. Ce
-que le proxy décode d'un tiers (pages, PDF, audio, packs git) a ainsi le
-moins de prise possible.
+capacité Linux, pas d'élévation de privilèges, utilisateur non root. Une
+faille dans ce que le proxy décode d'un tiers (pages, PDF, audio, packs
+git) ne pourrait ni modifier l'image, ni gagner de droits.
 
 ## La page
 

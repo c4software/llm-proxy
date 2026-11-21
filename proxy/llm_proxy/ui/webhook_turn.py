@@ -155,7 +155,10 @@ def new_doc(hook: dict, cid: str, text: str, model: str) -> dict:
     return {"id": cid, "title": (f"{hook['name']} · {first[:50]}"
                                  + ("…" if len(first) > 50 else "")),
             "created": now, "updated": now, "model": model,
-            "system": hook.get("system") or "", "temperature": None,
+            # Le prompt système du WEBHOOK n'est pas celui de la conversation :
+            # il ne sert qu'à ses tours (_messages le lit sur le webhook), et
+            # une conversation ouverte ensuite dans la page n'en hérite pas.
+            "system": "", "temperature": None,
             "showReasoning": True, "tools": list(hook.get("tools") or []),
             "reasoning": "auto", "imageCount": 1, "imageSteps": 0,
             "imageLora": "", "imageAlone": False, "incognito": False,

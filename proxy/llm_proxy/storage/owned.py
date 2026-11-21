@@ -19,6 +19,8 @@ la même façon partout.
   room(c, table, …)     la borne de lignes par compte (413)
   seconds(ts)           une date pour la page (lib/format.js, stamp)
   add_columns(c, …)     les colonnes qu'une base d'avant n'a pas encore
+  once(c, name)         vrai la PREMIÈRE fois qu'un nettoyage de cette base
+                        est demandé (table `migrations`), faux ensuite
 """
 
 from urllib.parse import urlsplit
@@ -104,3 +106,14 @@ def add_columns(c, table: str, columns: dict[str, str]) -> None:
         if column not in have:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
     _migrated.add((conversations.DB_PATH, table))
+
+
+def once(c, name: str) -> bool:
+    """Un nettoyage de la base, joué une seule fois : vrai s'il ne l'a
+    jamais été (et le note), faux sinon. À appeler dans la transaction du
+    nettoyage : s'il échoue, rien n'est noté."""
+    c.execute("CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, at REAL NOT NULL)")
+    if c.execute("SELECT 1 FROM migrations WHERE name = ?", (name,)).fetchone():
+        return False
+    c.execute("INSERT INTO migrations (name, at) VALUES (?, strftime('%s', 'now'))", (name,))
+    return True

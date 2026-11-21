@@ -170,9 +170,9 @@ perdre son rôle. L'admin gère les rôles dans *Configuration → Comptes*
   tous (`GET /ui/keys?all=1`).
 
 **Droits d'une clé sur les outils** : à la création, on choisit les
-outils hébergés qu'elle peut employer — *tous* (le défaut, et celui des
-clés d'avant) ou *seulement ceux-ci*, cochés un à un. Un serveur MCP se
-coche entier (`mcp:<serveur>` : ses outils futurs compris) ou outil par
+outils hébergés qu'elle peut employer : *tous* (le défaut) ou *seulement
+ceux-ci*, cochés un à un. Un serveur MCP se coche entier (`mcp:<serveur>`,
+ses outils futurs compris ; `mcp` pour tous les serveurs) ou outil par
 outil. Le bouton *Droits* d'une clé les change ensuite.
 
 - API : `POST /ui/keys` `{"label": …, "tools": null | ["web_search", "mcp:docs", …]}`,
@@ -307,6 +307,16 @@ adresse, jeton, projets permis) pour l'outil `repository`. Voir [Dépôts](depot
 ses webhooks entrants (un message reçu au format Slack, auquel le modèle
 répond dans une conversation du chat) et sortants (une URL compatible
 Slack). Voir [Webhooks](webhooks.md).
+
+**Exécution** : avec l'exécuteur de code configuré (`[tools.code_execution]`
+`url` et `token`). Chacun y voit ses bacs (une conversation, ses dépôts) :
+âge, inactivité, échéance, et peut les détruire un à un ou tous. Un admin
+(avec les comptes OIDC ; sans eux, la page connectée) voit en plus l'état de
+l'exécuteur et ses bornes, les bacs de tous les comptes, et les caches du
+proxy (pages web, archives des dépôts, transcriptions, résultats et
+échanges d'outils), qu'il peut vider. Détruire un bac efface ses fichiers,
+même en pleine exécution ; vider un cache ne casse rien, ce qui manque est
+relu au besoin.
 
 **Proxy** : toute la configuration, en sections (Accès, Backends,
 Surfaces, Outils, Partage équitable, Comptes, Divers, Avancé, Fichier

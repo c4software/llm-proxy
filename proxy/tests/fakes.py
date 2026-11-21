@@ -7,11 +7,19 @@ et un PDF écrit à la main. Aucun réseau. Des fonctions simples ; la
 fixture `proxy`, qui monte l'application dessus, est dans conftest.py."""
 
 import asyncio
+import base64
+import hashlib
 import json
 import socket
+import time
+import uuid
+from urllib.parse import parse_qs, urlparse
 
 import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
 import httpx2
+from fastapi.testclient import TestClient
+from joserfc import jwt
+from joserfc.jwk import RSAKey
 
 from llm_proxy import tools
 from llm_proxy.tools import net, web_fetch, web_search
@@ -391,3 +399,94 @@ def everywhere(monkeypatch, module, name: str, value) -> None:
         sub = sys.modules.get(f"{module.__name__}.{info.name}")
         if sub is not None and hasattr(sub, name):
             monkeypatch.setattr(sub, name, value)
+
+
+# ── comptes OIDC : un faux fournisseur, et des navigateurs connectés ─────
+# (la fixture `idp`, qui l'installe, est dans conftest.py)
+
+ISSUER = "https://idp.test"
+
+
+class FakeIdP:
+    """Un fournisseur OIDC minimal : ce que le client d'Authlib lit
+    (découverte, JWKS) et l'échange du code — vérifiant le PKCE — contre
+    un id_token signé. `authorize` joue l'utilisateur qui se connecte."""
+
+    def __init__(self):
+        self.key = RSAKey.generate_key(2048, parameters={"kid": "k1"})
+        # La clé que signale le JWKS : une autre = un jeton contrefait.
+        self.published = self.key
+        self.codes = {}
+
+    def authorize(self, location: str, sub: str, email: str) -> str:
+        """L'URL d'autorisation reçue du proxy → l'URL de retour, code
+        compris, comme le fournisseur y renverrait le navigateur."""
+        q = {k: v[0] for k, v in parse_qs(urlparse(location).query).items()}
+        assert location.startswith(ISSUER + "/authorize")
+        assert q["client_id"] == "llm-proxy"
+        assert q["code_challenge_method"] == "S256"
+        code = uuid.uuid4().hex
+        self.codes[code] = {"sub": sub, "email": email, "nonce": q["nonce"],
+                            "challenge": q["code_challenge"],
+                            "redirect_uri": q["redirect_uri"]}
+        return f"{q['redirect_uri']}?code={code}&state={q['state']}"
+
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
+        path = request.url.path
+        if path == "/.well-known/openid-configuration":
+            return httpx2.Response(200, json={
+                "issuer": ISSUER,
+                "authorization_endpoint": ISSUER + "/authorize",
+                "token_endpoint": ISSUER + "/token",
+                "jwks_uri": ISSUER + "/jwks",
+                "id_token_signing_alg_values_supported": ["RS256"],
+            })
+        if path == "/jwks":
+            return httpx2.Response(200, json={"keys": [self.published.as_dict(private=False)]})
+        if path == "/token":
+            form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+            grant = self.codes.pop(form.get("code"), None)
+            if grant is None or form.get("redirect_uri") != grant["redirect_uri"]:
+                return httpx2.Response(400, json={"error": "invalid_grant"})
+            digest = hashlib.sha256(form["code_verifier"].encode()).digest()
+            if base64.urlsafe_b64encode(digest).rstrip(b"=").decode() \
+                    != grant["challenge"]:
+                return httpx2.Response(400, json={"error": "invalid_grant"})
+            now = int(time.time())
+            id_token = jwt.encode(
+                {"alg": "RS256", "kid": "k1"},
+                {"iss": ISSUER, "aud": "llm-proxy", "sub": grant["sub"],
+                 "email": grant["email"], "nonce": grant["nonce"],
+                 "iat": now, "exp": now + 300},
+                self.key)
+            return httpx2.Response(200, json={
+                "access_token": "at", "token_type": "Bearer",
+                "expires_in": 300, "id_token": id_token})
+        return httpx2.Response(404)
+
+
+def connect(env, sub="alice", email="alice@example.org") -> TestClient:
+    """Un navigateur (son propre pot de cookies) qui se connecte chez le
+    fournisseur de `env`."""
+    from llm_proxy import app as A
+    browser = TestClient(A.app)
+    r = browser.get("/ui/auth/login", follow_redirects=False)
+    assert r.status_code == 302, r.text
+    back = env.idp.authorize(r.headers["location"], sub, email)
+    r = browser.get(back, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/ui", r.headers
+    return browser
+
+
+def admin_and_user(env) -> tuple[TestClient, TestClient, int]:
+    """Alice (premier compte : admin), Bob qu'elle a accepté (user), et
+    l'identifiant du compte de Bob."""
+    alice = connect(env)
+    bob = connect(env, "bob", "bob@example.org")
+    bob_id = bob.get("/ui/session").json()["account"]["id"]
+    r = alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
+    assert r.status_code == 200 and r.json()["role"] == "user"
+    return alice, bob, bob_id
+
+
+

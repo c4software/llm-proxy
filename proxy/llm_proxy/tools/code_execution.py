@@ -276,22 +276,48 @@ async def execute(body: dict, timeout: float, transport=None) -> httpx2.Response
             f"Do not retry now: answer without running code, and say so."))
 
 
+async def _admin(method: str, path: str, transport=None, **kw):
+    """Une route d'administration de l'exécuteur (état, bacs) → son JSON, ou
+    None s'il n'a pas pu être joint."""
+    try:
+        async with httpx2.AsyncClient(timeout=httpx2.Timeout(30, connect=5),
+                                      transport=transport, trust_env=False) as c:
+            r = await c.request(method, f"{URL}{path}",
+                                headers={"Authorization": f"Bearer {TOKEN}"}, **kw)
+        if r.status_code != 200:
+            raise ValueError(f"HTTP {r.status_code}")
+        return r.json()
+    except (httpx2.HTTPError, ValueError) as exc:
+        log.warning("exécuteur injoignable (%s) : %s %s", exc, method, path)
+        return None
+
+
+async def status(transport=None) -> dict | None:
+    """GET /v1/status : l'état de l'exécuteur, ses bornes ; None injoignable."""
+    return await _admin("GET", "/v1/status", transport)
+
+
+async def sessions(client: str | None = None, transport=None) -> list[dict] | None:
+    """GET /v1/sessions : ses bacs ouverts (d'un client, ou de tous)."""
+    got = await _admin("GET", "/v1/sessions", transport,
+                       params={"client": client} if client is not None else None)
+    return None if got is None else got.get("data") or []
+
+
+async def destroy_all(client: str | None = None, transport=None) -> int | None:
+    """POST /v1/destroy_all : tous ses bacs (d'un client, ou de tous)."""
+    got = await _admin("POST", "/v1/destroy_all", transport,
+                       json={"client": client} if client is not None else {})
+    return None if got is None else int(got.get("destroyed") or 0)
+
+
 async def destroy(client: str, session: str, transport=None) -> bool | None:
     """POST /v1/destroy : le bac de (client, session) détruit, ses fichiers
     avec lui. → vrai s'il existait, faux sinon ; None si l'exécuteur n'a pas
     pu être joint (le bac expirera de lui-même)."""
-    try:
-        async with httpx2.AsyncClient(timeout=httpx2.Timeout(30, connect=5),
-                                      transport=transport, trust_env=False) as c:
-            r = await c.post(f"{URL}/v1/destroy", headers={"Authorization": f"Bearer {TOKEN}"},
-                             json={"client": client, "session": session})
-        if r.status_code != 200:
-            raise ValueError(f"HTTP {r.status_code}")
-        return bool(r.json().get("destroyed"))
-    except (httpx2.HTTPError, ValueError) as exc:
-        log.warning("exécuteur injoignable (%s) : bac %r de %s non détruit", exc, session,
-                    client[:8])
-        return None
+    got = await _admin("POST", "/v1/destroy", transport,
+                       json={"client": client, "session": session})
+    return None if got is None else bool(got.get("destroyed"))
 
 
 def render(doc: dict, timeout: float, session: bool, inputs=()) -> Result:

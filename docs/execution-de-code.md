@@ -26,11 +26,11 @@ L'exécuteur sert aussi à l'outil [`repository`](depots.md) : les dépôts y
 sont décompressés et lus, dans un bac par compte (la session
 `repository`). Pour ce seul usage, l'exécuteur doit être configuré (`url`,
 `token`), mais `enabled` peut rester à `false` : l'outil `code_execution`
-n'est alors pas offert. Ce bac demande à l'exécuteur une inactivité plus
-courte que `SANDBOX_IDLE` (`idle` de `POST /v1/execute`, 30 min), que
-l'exécuteur comprend depuis v2026.11.21.5 : un plus ancien l'ignore, et le
-bac vit `SANDBOX_IDLE`. En incognito, `repository` passe par des bacs d'un
-seul appel.
+n'est alors pas offert. Ce bac vit `[repos].cache_ttl` (30 min) sans
+commande, et non `SANDBOX_IDLE` : le proxy le demande à chaque appel
+(`idle` de `POST /v1/execute`, plafonné par `SANDBOX_IDLE`). Un exécuteur
+antérieur à v2026.11.21.5 ignore `idle` : mettre à jour les deux images
+ensemble. En incognito, `repository` passe par des bacs d'un seul appel.
 
 Déclarer l'outil :
 
@@ -78,6 +78,11 @@ Côté exécuteur, dans `docker-compose.override.yml` :
 - Un bac expire après 3 h sans appel, 4 h au plus, ou quand il faut de la
   place (8 bacs, 4 par clé ; le moins récemment utilisé part). Le modèle
   est prévenu que le suivant est vide.
+- Les bacs ouverts se voient et se détruisent dans *Configuration →
+  Exécution* ([tableau de bord](tableau-de-bord.md)), par les routes
+  `GET /v1/sessions` et `POST /v1/destroy_all` de l'exécuteur : il faut
+  l'image de l'exécuteur de la même version que le proxy (un exécuteur plus
+  ancien y paraît injoignable).
 
 ### Le système d'un bac
 
