@@ -640,6 +640,7 @@ body:has(> #app:not([v-cloak])) > .boot { display: none; }
   font-size: 12px; color: var(--muted);
 }
 .msg.user .msg-meta { opacity: 0; transition: opacity .12s ease; }
+.msg-origin { font-size: .78rem; color: var(--muted); margin: 0 0 .2rem; text-align: right; }
 .msg.user:hover .msg-meta, .msg.user .msg-meta:focus-within { opacity: 1; }
 .msg-error {
   margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; font-size: 13.5px;
@@ -932,6 +933,20 @@ a.btn { display: inline-block; text-decoration: none; }
   border: 1px solid var(--line); background: var(--bg); color: var(--ink);
 }
 .key-new-row { display: flex; gap: 10px; padding: 14px 18px; }
+/* Configuration → Webhooks */
+.webhook-form { display: flex; flex-direction: column; gap: 12px; padding: 4px 18px 18px; max-width: 720px; }
+.webhook-form > label:not(.check), .webhook-form fieldset { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.webhook-form fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0; }
+.webhook-form legend { font-size: 12.5px; color: var(--muted); padding: 0 4px; }
+.webhook-form fieldset .note { padding: 0; }
+.webhook-form :is(input:not([type=checkbox]):not([type=radio]), textarea, select) {
+  font: inherit; font-size: 13px; padding: 6px 9px; border-radius: 8px; width: 100%; box-sizing: border-box;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+}
+.webhook-form textarea { resize: vertical; }
+.webhook-actions, .webhook-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.webhook-row-actions { flex-wrap: nowrap; justify-content: flex-end; }
+.webhooks td .err { padding: 2px 0 0; white-space: normal; max-width: 280px; }
 .key-new-row input { flex: 1; min-width: 0; padding: 7px 10px; }
 .key-fresh { border-color: var(--accent); }
 .key-copy { display: flex; align-items: center; gap: 10px; padding: 0 18px; flex-wrap: wrap; }

@@ -196,7 +196,7 @@ partie qui l'a importé.
 |---|---|
 | `tools/__init__.py` | Le commun : registre, exécution bornée (délai, taille, appels par réponse), stats, mémoire des résultats |
 | `tools/contract.py` | Le contrat : `Tool`, `Result`, `Call`, `ToolError`, codes d'erreur, liaisons aux protocoles. Voir [outils.md](outils.md) |
-| `tools/net.py` | Garde-fou réseau (`[tools.net]`) : domaines, adresses publiques seulement, redirections vérifiées ; `net.download` |
+| `tools/net.py` | Garde-fou réseau (`[tools.net]`) : domaines, adresses publiques seulement, redirections vérifiées ; `net.download`, et `net.post` (un webhook sortant) |
 | `tools/webcache.py` | Cache web en mémoire vive, quelques minutes, borné |
 | `tools/html_text.py` | HTML → texte lisible par un modèle |
 | `tools/web_search.py` | `web_search` : requête à SearXNG, résultats numérotés, filtre par domaines |
@@ -207,6 +207,7 @@ partie qui l'a importé.
 | `tools/code_execution.py` | `code_execution` : client de l'exécuteur, texte et fichiers produits |
 | `tools/image_generation.py` | `image_generation` : génération ou retouche par un backend, image rendue en fichier |
 | `tools/memory.py` | `memory` : `view`, `create`, `str_replace`, `insert`, `delete`, `rename` |
+| `tools/webhook.py` | `webhook` : poste sur un webhook sortant du compte ; le format Slack dans les deux sens (`to_mrkdwn`, `from_slack`), l'envoi (`send`, par `net.post`) |
 | `tools/provenance.py` | Les sites connus d'une conversation : ceux qu'un outil qui lit une URL peut ouvrir |
 | `tools/mcp/` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés. Paquet : `protocol`, `tool` (`McpTool`), `server`, `registry` |
 
@@ -225,6 +226,7 @@ partie qui l'a importé.
 | `storage/conversations.py` | Historique du chat de la page (`data/conversations.db`) : conversations et images par compte |
 | `storage/memories.py` | Magasin de la mémoire persistante (`data/memory.db`), par client, sous `/memories` |
 | `storage/voices.py` | Les voix clonées de la page, par compte (table à part de `conversations.db`) |
+| `storage/webhooks.py` | Les webhooks entrants (jeton en condensé) et sortants de chaque compte (tables à part de `conversations.db`) |
 | `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
 | `storage/backup.py` | Sauvegarde et restauration de `data/` |
 
@@ -241,6 +243,8 @@ partie qui l'a importé.
 | `ui/page_tools.py` | Les outils de la page refusés par `[ui].page_tools_disabled`, lus dans `page_tools.json` (tiré du registre de la page) |
 | `ui/linux_relay.py` | Le relais réseau (Wisp) de la VM Linux : jeton signé, adresses publiques seulement, plafond d'octets et délai d'inactivité |
 | `ui/voice_routes.py` | Routes `/ui/voices` (voix clonées) |
+| `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |
+| `ui/webhook_turn.py` | Le tour d'un message reçu, sans navigateur : la conversation, l'échange tel que la page l'enverrait, `/ui/chat/completions` appelé en interne au nom du créateur, les envois sortants |
 | `ui/dataurl.py` | Lecture des URL `data:` envoyées par la page (images, audio) |
 | `ui/web/templates/index.html` | Squelette de la page |
 | `ui/web/static/` | Modules ES par domaine : `app.js` (session, vues, menu), `stats/`, `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème), plus `dashboard.css`, `vue.global.prod.js` et `vueuse.iife.min.js` (VueUse 15, ses modules `shared` et `core`) |

@@ -101,6 +101,8 @@ async def ui_session(request: Request):
             "linux_relay": linux_relay.allowed(user),
         },
         "memory": tools.memory.ENABLED,
+        # Les webhooks du compte (Configuration → Webhooks).
+        "webhooks": tools.webhook.ENABLED and UI_CHAT,
         # None : proxy ouvert, personne n'est compté.
         "fair_share": await fair_share_state(),
     }

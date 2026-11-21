@@ -280,6 +280,11 @@ Les postes les prennent ici aussi, sur la branche `master` :
 **Clés** et **Comptes** : avec les [comptes OIDC](#comptes-oidc)
 seulement.
 
+**Webhooks** : avec `[webhooks].enabled` et `[ui].chat`. Chacun y définit
+ses webhooks entrants (un message reçu au format Slack, auquel le modèle
+répond dans une conversation du chat) et sortants (une URL compatible
+Slack). Voir [Webhooks](webhooks.md).
+
 **Proxy** : toute la configuration, en sections (Accès, Backends,
 Surfaces, Outils, Partage équitable, Comptes, Divers, Avancé, Fichier
 complet, `.env`, Override Docker). Réservé aux admins avec les comptes

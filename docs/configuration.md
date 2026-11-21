@@ -416,6 +416,20 @@ aussi).
 | `asset_max_bytes` | `20000000` | Taille maximale d'une image gardée |
 | `history_max_bytes` | `2000000000` | Taille maximale de tout l'historique d'un compte |
 
+## `[webhooks]`
+
+Les webhooks entrants et sortants de chaque compte. Voir [Webhooks](webhooks.md).
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `false` | Ouvre `POST /hooks/<jeton>`, la partie *Webhooks* de la configuration de `/ui` et l'outil hébergé `webhook`. Exige `[ui].chat` |
+| `max_per_user` | `20` | Webhooks entrants au plus par compte, et autant de sortants |
+| `allow_private` | `false` | `true` : un sortant (ou le `response_url` d'un message reçu) peut viser une adresse privée ou locale |
+| `timeout` | `10` | Délai (s) d'un envoi sortant |
+| `calls_per_minute` | `30` | Messages reçus au plus par minute, par webhook entrant. Au-delà : `429 rate_limited` |
+| `max_running` | `3` | Réponses menées en même temps, par compte. Au-delà : `429 rate_limited` |
+| `max_text_chars` | `100000` | Caractères au plus du texte d'un message reçu. Au-delà : `400 msg_too_long` |
+
 ## `[fair_share]`
 
 | Clé | Défaut | Rôle |

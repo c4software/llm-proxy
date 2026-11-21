@@ -13,6 +13,10 @@ et liées au **compte** : on les retrouve sur tout navigateur et tout
 appareil. Chacune garde son modèle, son prompt système, sa température,
 ses outils, ses artifacts et ses fichiers produits.
 
+Un [webhook entrant](webhooks.md) écrit aussi dans l'historique : ses
+messages y sont marqués « reçu par le webhook … », et la page relit la
+liste toutes les 20 secondes pour les montrer.
+
 - Dans le menu latéral : renommer, supprimer, **rechercher** (chaque
   mot, sans casse ni accents, dans le titre ou les messages ; le proxy
   cherche aussi dans celles que le menu n'a pas encore lues).
@@ -358,6 +362,8 @@ Avec `[chat] hosted_tools = true`, la section *Proxy* propose les
 - *Web* : `{"type": "web_search"}`, soit `web_search`, `web_fetch`,
   `web_grep` ;
 - *Code*, *Images*, *Mémoire* (l'outil `memory`) ;
+- *Webhooks* (l'outil `webhook`) : poster sur un webhook sortant du
+  compte, à la demande. Voir [Webhooks](webhooks.md) ;
 - un par serveur MCP configuré : `{"type": "mcp:<serveur>"}`.
 
 Les cases **font foi** : `[chat].always` ne s'ajoute pas aux requêtes du

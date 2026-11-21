@@ -42,6 +42,7 @@ from .ui import (
     static_files,
     usage_api,
     voice_routes,
+    webhook_routes,
 )
 
 app = FastAPI(title="albert-proxy", lifespan=lifespan)
@@ -74,7 +75,7 @@ async def setup_gate(request: Request, call_next):
 # les prendrait toutes.
 for module in (endpoints, usage_api, static_files, dashboard,
                conversation_routes, voice_routes, config_view, health, tool_routes,
-               linux_relay):
+               linux_relay, webhook_routes):
     app.include_router(module.router)
 
 

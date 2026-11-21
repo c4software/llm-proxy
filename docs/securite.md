@@ -43,6 +43,9 @@ Le tableau de bord `/ui` exige la même clé :
 Même avec l'auth active :
 
 - `GET /v1/files/<jeton>/<nom>` : le jeton du lien vaut droit d'accès.
+- `POST /hooks/<jeton>` : un [webhook entrant](webhooks.md), dont le jeton
+  vaut droit d'accès. Il répond au nom du compte qui l'a créé, tant que ce
+  compte est actif ou que sa clé du TOML est encore là.
 - `GET /healthz`, réduit à `{"status": "ok"}`. Le détail (backends et
   leurs URL, outils, caches) exige une clé, ou la session de la page par
   `GET /ui/health`.

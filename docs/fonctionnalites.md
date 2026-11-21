@@ -88,6 +88,10 @@ détaille.
   outils hébergés. [Serveurs MCP](outils.md#serveurs-mcp)
 - **Serveur MCP** (`[mcp_server].enabled`) : `POST /mcp` offre les outils
   hébergés à tout client MCP. [Serveur MCP](outils-heberges.md#serveur-mcp--mcp)
+- **Webhooks** (`[webhooks]`) : chaque compte reçoit des messages au
+  format Slack sur une adresse secrète, auxquels un modèle répond dans le
+  chat ; les réponses, et l'outil `webhook`, partent vers des URL
+  compatibles Slack. [Webhooks](webhooks.md)
 
 ## Suivi et interface
 

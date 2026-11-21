@@ -205,11 +205,15 @@ def check(url: str, settings=None) -> None:
 
 
 async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
-               transport) -> tuple[httpx2.Response, bytes]:
+               transport, *, method: str = "GET", content: bytes | None = None,
+               content_type: str = "", allow_private: bool | None = None
+               ) -> tuple[httpx2.Response, bytes]:
     """Un saut : résolution contrôlée, connexion vers l'adresse vérifiée
     (Host et SNI portent le nom), corps lu jusqu'à `limit` — voir
-    download()."""
-    scheme, ip, port = await public_target(url, ALLOW_PRIVATE)
+    download(). `method`, `content` : un POST (post()) ; `allow_private` :
+    None = [tools.net].allow_private."""
+    scheme, ip, port = await public_target(
+        url, ALLOW_PRIVATE if allow_private is None else allow_private)
     parts = urlsplit(url)
     host = parts.hostname or ""
     # Le nom tel qu'il part sur le fil : en ASCII (un nom accentué passe
@@ -234,13 +238,15 @@ async def _hop(url: str, timeout: float, limit, user_agent: str, accept: str,
         # bloc par bloc — un seul bloc gzip peut en rendre mille fois plus.
         "Accept-Encoding": "identity",
     }
+    if content_type:
+        headers["Content-Type"] = content_type
     # trust_env=False : sans lui httpx2 lirait HTTP_PROXY / ALL_PROXY, et
     # « la connexion part vers l'adresse vérifiée » deviendrait « un proxy
     # s'y connecte pour nous ».
     async with httpx2.AsyncClient(timeout=timeout, transport=transport,
                                  follow_redirects=False,
                                  trust_env=False) as c:
-        req = c.build_request("GET", target, headers=headers,
+        req = c.build_request(method, target, headers=headers, content=content,
                               extensions={"sni_hostname": host})
         r = await c.send(req, stream=True)
         body = bytearray()
@@ -309,3 +315,39 @@ async def download(url: str, settings=None, *, timeout: float, limit,
             "too_many_requests" if r.status_code == 429 else "not_accessible",
             f"{url} returned HTTP {r.status_code}.")
     return url, r, body
+
+
+def _refused(url: str) -> None:
+    """Les listes de REFUS de [tools.net] seules (pour post)."""
+    for rx, message in BLOCKED_URLS:
+        if rx.search(url):
+            raise ToolError("not_allowed", message or (
+                f"{urlsplit(url).hostname or url} is a blocked address."))
+    if domain_match(url, BLOCKED_DOMAINS):
+        raise ToolError("not_allowed", f"{urlsplit(url).hostname or url} is a "
+                                       f"blocked domain.")
+
+
+async def post(url: str, content: bytes, content_type: str, *, timeout: float,
+               user_agent: str, allow_private: bool = False, limit: int = 65536,
+               transport=None) -> tuple[int, bytes]:
+    """Un POST vers une URL que le proxy n'a pas choisie (un webhook
+    sortant d'un compte, le `response_url` d'un message reçu) : les
+    refus de [tools.net] (`blocked_urls`, `blocked_domains` ; pas
+    `allowed_domains`, une liste de sites à LIRE), les adresses publiques
+    seulement, sauf `allow_private`, pas de redirection suivie (un POST redirigé
+    changerait de cible sans contrôle). → (statut, début du corps).
+
+    Lève ToolError : `not_allowed` (domaine refusé, adresse privée), `invalid_input`
+    (URL), `not_accessible` (hôte inconnu, erreur de transport)."""
+    _refused(url)
+    try:
+        r, body = await _hop(url, timeout, lambda r, b: limit, user_agent,
+                             "*/*", transport, method="POST", content=content,
+                             content_type=content_type, allow_private=allow_private)
+    except Blocked as exc:
+        raise ToolError(exc.code, f"{exc}.")
+    except (httpx2.HTTPError, httpx2.InvalidURL) as exc:
+        raise ToolError("not_accessible", f"could not reach {urlsplit(url).hostname} "
+                                          f"({type(exc).__name__}).")
+    return r.status_code, body

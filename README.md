@@ -111,6 +111,7 @@ du cours sur le développement agentique.
 | Recherche et lecture web, OCR, transcription, images, mémoire, MCP | [Outils hébergés](docs/outils-heberges.md) |
 | Synthèse vocale, conception et clonage de voix (Qwen3-TTS), avec curl et dans le chat | [Voix](docs/voix.md) |
 | Le bac à sable de `code_execution` | [Exécution de code](docs/execution-de-code.md) |
+| Webhooks entrants et sortants, au format Slack, par compte | [Webhooks](docs/webhooks.md) |
 | Écrire un outil hébergé : le contrat | [docs/outils.md](docs/outils.md) |
 | Vérifier un déploiement | [Vérification](docs/verification.md) |
 | Ce qui ne marche pas, ou pas encore | [Limites connues](docs/limites.md) |

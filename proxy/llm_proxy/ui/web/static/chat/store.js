@@ -265,6 +265,36 @@ export const ChatStore = (() => {
     }
   }
 
+  // Ce que le proxy a changé sans cet onglet (un message reçu par un
+  // webhook, webhook_turn.py ; un autre appareil) : la première page du
+  // menu relue — une conversation nouvelle y entre, une conversation
+  // ouverte dont le proxy tient une révision plus récente est relue, si
+  // rien d'ici n'attend d'être enregistré. Jamais pendant une réponse.
+  let syncing = false;
+  async function sync() {
+    if (syncing || !state.key || state.listing || state.streaming || running) return;
+    syncing = true;
+    const key = state.key;
+    try {
+      const page = await history.page(0);
+      if (state.key !== key) return;
+      merge(page.list);
+      state.total = page.total;
+      for (const s of page.list) {
+        const c = state.convs.find((x) => x.id === s.id);
+        if (!c || c.stub || state.streaming || !revs.has(c.id) || !(s.rev > revs.get(c.id))) continue;
+        if (saved.get(c.id) !== JSON.stringify(toRaw(c)) || (state.conflict && state.conflict.id === c.id)) continue;
+        const doc = await history.one(c.id);
+        if (state.key !== key || state.streaming || saved.get(c.id) !== JSON.stringify(toRaw(c))) return;
+        const i = state.convs.findIndex((x) => x.id === c.id);
+        if (!doc) { if (i >= 0 && c.id !== state.currentId) state.convs.splice(i, 1); continue; }
+        if (i >= 0) state.convs.splice(i, 1, { ...doc, stub: true });
+        adopt(doc);
+      }
+    } catch { /* la prochaine fois */ }
+    finally { syncing = false; }
+  }
+
   function newConv(incognito = false) {
     if (state.streaming) return;
     // Une conversation vide (du même genre) est réutilisée plutôt que
@@ -378,6 +408,6 @@ export const ChatStore = (() => {
 
 
   return { state, sorted, filtered, current, pending, count, open, loadMore, fetchCurrent,
-           newConv, persist, resolveConflict, select, want, remove, startRename, endRename, exportMd, when, uid,
+           newConv, persist, resolveConflict, sync, select, want, remove, startRename, endRename, exportMd, when, uid,
            setDefaults(fn) { defaults = fn; }, setPrepare(fn) { prepare = fn; } };
 })();

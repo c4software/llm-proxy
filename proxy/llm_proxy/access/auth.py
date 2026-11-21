@@ -31,6 +31,8 @@ from . import accounts, fairshare, oidc
 
 
 UI_PREFIX = "/ui"
+# Les webhooks entrants (ui/webhook_routes.py).
+HOOK_PREFIX = "/hooks/"
 # Cookie de /ui qui portait la clé EN CLAIR : jamais posé, effacé à
 # l'entrée et à la sortie s'il traîne dans un navigateur.
 LEGACY_COOKIE = "proxy_key"
@@ -193,8 +195,12 @@ async def require_proxy_key(request: Request, call_next):
     # la clé du proxy. Le jeton du chemin vaut droit d'accès (files.py).
     served = request.method in ("GET", "HEAD") \
         and files.is_link(request.url.path)
+    # POST /hooks/<jeton> : un webhook entrant (ui/webhook_routes.py), envoyé
+    # par un service tiers sans la clé du proxy. Le jeton vaut droit d'accès.
+    hook = request.method == "POST" and request.url.path.startswith(HOOK_PREFIX) \
+        and "/" not in request.url.path[len(HOOK_PREFIX):]
     if not auth_required() or request.url.path == "/healthz" or served \
-            or ui_open(request):
+            or hook or ui_open(request):
         return await call_next(request)
     if oidc.ENABLED and is_ui_path(request.url.path):
         if (denied := await ui_account(request)) is not None:

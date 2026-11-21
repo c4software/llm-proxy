@@ -517,6 +517,31 @@ asset_max_bytes = 20000000
 history_max_bytes = 2000000000
 
 
+# ── Webhooks : POST /hooks/<jeton>, et l'outil `webhook` ────────────────
+# Chaque compte définit les siens (Configuration → Webhooks). ENTRANT : une
+# adresse secrète qui reçoit un message au format Slack ({"text": …}) ; le
+# proxy le range dans une conversation du chat de la page et y fait
+# répondre un modèle, au nom du compte (ses tokens). SORTANT : une URL
+# compatible Slack où partent la réponse à un entrant et les messages de
+# l'outil hébergé `webhook`. Exige [ui].chat. Voir docs/webhooks.md.
+[webhooks]
+# false (défaut) = /hooks/* → 404, ni onglet, ni outil `webhook`.
+enabled = false
+# Webhooks entrants, et sortants, au plus par compte.
+max_per_user = 20
+# Un sortant (ou le `response_url` d'un message reçu) qui vise une adresse
+# privée ou locale : refusé, sauf ici (un Mattermost du réseau interne).
+allow_private = false
+# Délai (s) d'un envoi sortant.
+timeout = 10
+# Messages reçus au plus par minute, par webhook entrant (au-delà : 429).
+calls_per_minute = 30
+# Réponses menées en même temps, par compte (au-delà : 429).
+max_running = 3
+# Caractères au plus du texte d'un message reçu (au-delà : 400 msg_too_long).
+max_text_chars = 100000
+
+
 # ── Partage équitable ───────────────────────────────────────────────────
 # Pas un quota (jamais de 429) : au-delà de sa part de tokens sur une heure
 # glissante, un client ATTEND. Client = compte, sinon clé du TOML ; proxy

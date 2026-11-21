@@ -103,7 +103,7 @@ export const ChatPanel = {
     const TOOL_LABELS = {
       web_search: "Web", code_execution: "Code", code_interpreter: "Code",
       image_generation: "Images", memory: "Mémoire", ocr: "OCR",
-      transcribe: "Transcription",
+      transcribe: "Transcription", webhook: "Webhooks",
     };
 
     const chat = computed(() => props.session.chat || {});
@@ -1743,6 +1743,15 @@ export const ChatPanel = {
     }
     S.setPrepare(prepareConv);
 
+    // Les webhooks du compte écrivent dans l'historique sans cette page
+    // (un message reçu, sa réponse) : la liste et la conversation ouverte
+    // suivent, de temps en temps et au retour sur l'onglet (store.sync).
+    if (props.session.webhooks) {
+      const sync = () => { if (document.visibilityState === "visible") S.sync(); };
+      VueUse.useIntervalFn(sync, 20000);
+      VueUse.useEventListener(document, "visibilitychange", sync);
+    }
+
     onMounted(async () => {
       // Le catalogue et l'historique en même temps : l'un n'attend pas l'autre.
       const models = loadModels();
@@ -1950,6 +1959,8 @@ export const ChatPanel = {
             </div>
           </template>
           <template v-else-if="m.role === 'user'">
+            <div class="msg-origin" v-if="m.webhook" :title="m.webhook.at ? 'Reçu le ' + new Date(m.webhook.at).toLocaleString('fr-FR') : ''">
+              reçu par le webhook « {{ m.webhook.name }} »<template v-if="m.webhook.from"> · {{ m.webhook.from }}</template></div>
             <div class="bubble">
               <div class="attachments" v-if="m.attachments && m.attachments.length">
                 <template v-for="a in m.attachments" :key="a.name">
