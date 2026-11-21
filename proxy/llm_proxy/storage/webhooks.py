@@ -10,7 +10,8 @@ liés au même client que son historique (auth.ui_client) :
             n'est montré qu'à la création (ou à sa régénération) : seul
             son condensé est gardé, comme celui d'une clé.
   sortants  une URL compatible Slack (Slack, Mattermost, Rocket.Chat,
-            Discord en /slack…) où le proxy POSTe {"text": …} : la
+            Discord en /slack…) où le proxy POSTe {"text": …}, et
+            {"channel": …} si un salon est défini : la
             réponse à un webhook entrant qui la nomme (`reply`), et
             l'outil hébergé `webhook` (tools/webhook.py), que le modèle
             appelle de n'importe quelle conversation du compte.
@@ -43,7 +44,8 @@ TOKEN_PREFIX = "wh-"
 _IN = ("id, name, hint, model, model_override, system, tools, target, "
        "conversation, reply, account, api_key_id, created, last_used, calls, "
        "last_error")
-_OUT = "id, name, url, created, last_used, calls, last_error"
+_OUT = "id, name, url, channel, created, last_used, calls, last_error"
+MAX_CHANNEL = 80
 
 
 class WebhookError(conversations.HistoryError):
@@ -63,7 +65,16 @@ def _tables(c) -> None:
         owner TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,
         url TEXT NOT NULL, created REAL NOT NULL, last_used REAL,
         calls INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
-        PRIMARY KEY (owner, id))""")
+        channel TEXT NOT NULL DEFAULT '', PRIMARY KEY (owner, id))""")
+    # Une base d'avant le salon (v2026.11.21) : la colonne, vide.
+    if conversations.DB_PATH not in _migrated:
+        cols = {row[1] for row in c.execute("PRAGMA table_info(webhooks_out)")}
+        if "channel" not in cols:
+            c.execute("ALTER TABLE webhooks_out ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
+        _migrated.add(conversations.DB_PATH)
+
+
+_migrated: set[str] = set()
 
 
 def _run(fn):
@@ -260,8 +271,8 @@ def mask(url: str) -> str:
 
 
 def _out_meta(row, full: bool = False) -> dict:
-    wid, name, url, created, last_used, calls, last_error = row
-    return {"id": wid, "name": name, "url": url if full else mask(url),
+    wid, name, url, channel, created, last_used, calls, last_error = row
+    return {"id": wid, "name": name, "url": url if full else mask(url), "channel": channel,
             "created": _ms(created), "last_used": _ms(last_used),
             "calls": calls, "last_error": last_error}
 
@@ -277,6 +288,16 @@ def _url(value) -> str:
     return url
 
 
+def _channel(value) -> str:
+    """Le salon de destination (`channel` du message) : « #général »,
+    « @quelqu'un », ou le nom tel que le service l'attend ; «» = celui de
+    l'URL."""
+    channel = " ".join(str(value or "").split())
+    if len(channel) > MAX_CHANNEL:
+        raise WebhookError(f"nom de salon trop long ({MAX_CHANNEL} caractères au plus)")
+    return channel
+
+
 def list_out(owner: str, full: bool = False) -> list[dict]:
     rows = _run(lambda c: c.execute(
         f"SELECT {_OUT} FROM webhooks_out WHERE owner = ? ORDER BY created, id",
@@ -288,6 +309,7 @@ def create_out(owner: str, body) -> dict:
     if not isinstance(body, dict):
         raise WebhookError("corps JSON attendu")
     name, url = _name(body.get("name")), _url(body.get("url"))
+    channel = _channel(body.get("channel"))
     wid = secrets.token_urlsafe(12)
 
     def q(c):
@@ -298,28 +320,29 @@ def create_out(owner: str, body) -> dict:
         if c.execute("SELECT 1 FROM webhooks_out WHERE owner = ? AND name = ?",
                      (owner, name)).fetchone():
             raise WebhookError("un webhook sortant porte déjà ce nom")
-        c.execute("INSERT INTO webhooks_out (owner, id, name, url, created) "
-                  "VALUES (?, ?, ?, ?, ?)", (owner, wid, name, url, time.time()))
+        c.execute("INSERT INTO webhooks_out (owner, id, name, url, channel, created) "
+                  "VALUES (?, ?, ?, ?, ?, ?)", (owner, wid, name, url, channel, time.time()))
         return c.execute(f"SELECT {_OUT} FROM webhooks_out WHERE owner = ? AND id = ?",
                          (owner, wid)).fetchone()
     return _out_meta(_run(q))
 
 
 def update_out(owner: str, wid: str, body) -> dict:
-    """Le nom, et l'URL si elle est donnée (la page ne la connaît pas :
-    absente, elle reste)."""
+    """Le nom, le salon, et l'URL si elle est donnée (la page ne la
+    connaît pas : absente, elle reste)."""
     _check_id(wid)
     if not isinstance(body, dict):
         raise WebhookError("corps JSON attendu")
     name = _name(body.get("name"))
+    channel = _channel(body.get("channel"))
     url = _url(body["url"]) if body.get("url") else None
 
     def q(c):
         if c.execute("SELECT 1 FROM webhooks_out WHERE owner = ? AND name = ? AND id != ?",
                      (owner, name, wid)).fetchone():
             raise WebhookError("un webhook sortant porte déjà ce nom")
-        n = c.execute("UPDATE webhooks_out SET name = ?, url = coalesce(?, url) "
-                      "WHERE owner = ? AND id = ?", (name, url, owner, wid)).rowcount
+        n = c.execute("UPDATE webhooks_out SET name = ?, channel = ?, url = coalesce(?, url) "
+                      "WHERE owner = ? AND id = ?", (name, channel, url, owner, wid)).rowcount
         if not n:
             raise WebhookError("webhook inconnu", 404)
         return c.execute(f"SELECT {_OUT} FROM webhooks_out WHERE owner = ? AND id = ?",

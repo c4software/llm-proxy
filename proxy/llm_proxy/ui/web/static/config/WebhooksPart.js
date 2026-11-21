@@ -34,7 +34,7 @@ export const WebhooksPart = {
     const form = reactive(blankIn());
     const editing = ref(false);         // le formulaire d'un entrant est ouvert
     const fresh = ref(null);            // { name, url } : l'adresse, montrée une fois
-    const outForm = reactive({ id: null, name: "", url: "" });
+    const outForm = reactive({ id: null, name: "", url: "", channel: "" });
     const outEditing = ref(false);
     const armed = ref(null);            // suppression : deuxième clic attendu
     const testing = ref(null);
@@ -114,13 +114,15 @@ export const WebhooksPart = {
 
     // ── sortants ─────────────────────────────────────────────────────
     function openOut(o = null) {
-      Object.assign(outForm, { id: o ? o.id : null, name: o ? o.name : "", url: "" });
+      Object.assign(outForm, { id: o ? o.id : null, name: o ? o.name : "", url: "",
+                               channel: o ? o.channel || "" : "" });
       outEditing.value = true;
     }
     async function saveOut() {
       error.value = "";
       try {
-        const body = { name: outForm.name, ...(outForm.url ? { url: outForm.url } : {}) };
+        const body = { name: outForm.name, channel: outForm.channel,
+                       ...(outForm.url ? { url: outForm.url } : {}) };
         if (outForm.id) await call("PUT", "/ui/webhooks/out/" + encodeURIComponent(outForm.id), body);
         else await call("POST", "/ui/webhooks/out", body);
         outEditing.value = false;
@@ -241,17 +243,22 @@ export const WebhooksPart = {
           <label>URL <span class="dim" v-if="outForm.id">(vide : inchangée)</span>
             <input v-model="outForm.url" type="url" maxlength="2000" :required="!outForm.id" spellcheck="false"
                    placeholder="https://hooks.slack.com/services/…"></label>
+          <label>Salon <span class="dim">(facultatif : vide, celui de l'URL)</span>
+            <input v-model="outForm.channel" maxlength="80" spellcheck="false" placeholder="#alertes, @quelqu'un, town-square…">
+            <span class="dim">Envoyé en <code>channel</code> : Mattermost, Rocket.Chat et les anciens webhooks Slack le
+              suivent ; un webhook d'app Slack poste toujours dans le salon choisi à sa création.</span></label>
           <div class="webhook-actions">
             <button type="submit" class="btn">{{ outForm.id ? "Enregistrer" : "Créer" }}</button>
             <button type="button" class="btn ghost" @click="outEditing = false">Annuler</button>
           </div>
         </form>
         <table v-if="outgoing.length">
-          <thead><tr><th>Nom</th><th>URL</th><th>Dernier envoi</th><th></th></tr></thead>
+          <thead><tr><th>Nom</th><th>URL</th><th>Salon</th><th>Dernier envoi</th><th></th></tr></thead>
           <tbody>
             <tr v-for="o in outgoing" :key="o.id">
               <td>{{ o.name }}</td>
               <td><code>{{ o.url }}</code></td>
+              <td>{{ o.channel || "—" }}</td>
               <td>{{ when(o.last_used) }}<span class="dim" v-if="o.calls"> · {{ o.calls }}</span>
                 <div class="err" v-if="o.last_error">{{ o.last_error }}</div>
                 <div class="dim" v-else-if="tested[o.id]">essai : {{ tested[o.id] }}</div></td>

@@ -335,3 +335,30 @@ def test_response_url_jamais_privee(proxy, monkeypatch):
     proxy.replies = [answer("ok")]
     go(webhook_turn.handle("", hook, "x", {"response_url": "https://slack.example/r"}))
     assert seen == [False]
+
+
+def test_salon_du_sortant(posted):
+    out = webhooks.create_out("a", {"name": "S", "url": "https://chat.example/h",
+                                    "channel": " #alertes "})
+    assert out["channel"] == "#alertes"
+    go(slack.TOOL.run({"text": "x"}, Call(client="a")))
+    assert posted[-1][1] == {"text": "x", "channel": "#alertes"}
+    # Modifié sans URL : l'URL reste, le salon change ; vide, plus de `channel`.
+    webhooks.update_out("a", out["id"], {"name": "S", "channel": ""})
+    go(slack.TOOL.run({"text": "y"}, Call(client="a")))
+    assert posted[-1] == ("https://chat.example/h", {"text": "y"})
+
+
+def test_base_d_avant_le_salon(tmp_path, monkeypatch):
+    """Une table webhooks_out d'avant la colonne `channel` la reçoit."""
+    import sqlite3
+    path = str(tmp_path / "vieille.db")
+    with sqlite3.connect(path) as c:
+        c.execute("""CREATE TABLE webhooks_out (owner TEXT NOT NULL, id TEXT NOT NULL,
+            name TEXT NOT NULL, url TEXT NOT NULL, created REAL NOT NULL, last_used REAL,
+            calls INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (owner, id))""")
+        c.execute("INSERT INTO webhooks_out (owner, id, name, url, created) "
+                  "VALUES ('a', 'o1', 'S', 'https://chat.example/h', 1)")
+    monkeypatch.setattr(conversations, "DB_PATH", path)
+    assert webhooks.list_out("a")[0]["channel"] == ""

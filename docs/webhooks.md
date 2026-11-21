@@ -127,13 +127,20 @@ En texte, comme Slack :
 
 ## Webhook sortant
 
-Un nom et une URL compatible Slack : Slack (`https://hooks.slack.com/services/…`),
+Un nom, une URL compatible Slack et, au choix, un salon : Slack (`https://hooks.slack.com/services/…`),
 Mattermost, Rocket.Chat, Discord (URL du webhook suivie de `/slack`)… Le
 proxy y poste :
 
 ```json
-{"text": "<message en mrkdwn>"}
+{"text": "<message en mrkdwn>", "channel": "#alertes"}
 ```
+
+Le **salon** est facultatif. Défini, il part dans `channel` : `#alertes`,
+`@quelqu'un`, ou le nom que le service attend (`town-square` pour
+Mattermost). Vide, le message va dans le salon de l'URL. Mattermost,
+Rocket.Chat et les anciens webhooks Slack le suivent. Un webhook d'app
+Slack l'ignore et poste toujours dans le salon choisi à sa création :
+pour un autre salon, il faut une autre URL, donc un autre sortant.
 
 Le Markdown du modèle est converti : `**gras**` devient `*gras*`,
 `[texte](url)` devient `<url|texte>`, un titre devient une ligne en gras, une

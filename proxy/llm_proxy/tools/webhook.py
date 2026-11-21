@@ -159,8 +159,10 @@ async def send(url: str, text: str, extra: dict | None = None,
 
 
 async def post(owner: str, hook: dict, text: str, extra: dict | None = None) -> str:
-    """Envoie sur le sortant `hook` du compte et note l'issue (son dernier
-    usage, son erreur). → «» si envoyé, sinon le message d'erreur."""
+    """Envoie sur le sortant `hook` du compte, dans son salon s'il en a un,
+    et note l'issue (son dernier usage, son erreur). → «» si envoyé, sinon le message d'erreur."""
+    if hook.get("channel"):
+        extra = {"channel": hook["channel"], **(extra or {})}
     try:
         await send(hook["url"], text, extra)
         error = ""
