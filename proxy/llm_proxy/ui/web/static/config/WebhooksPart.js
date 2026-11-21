@@ -11,9 +11,9 @@
               proxy, GET …/token).
     sortants  une URL Apprise (le salon y est), et s'il est
               exposé à l'outil `webhook` du chat (décoché par défaut) ;
-              sinon il ne sert qu'aux réponses des entrants. L'URL n'est
-              jamais relue (elle vaut droit d'écrire) : la page n'en voit
-              que l'hôte.
+              sinon il ne sert qu'aux réponses des entrants. L'URL
+              s'affiche en entier (à son compte seulement), se copie, et
+              préremplit le formulaire.
 */
 import { call } from "../lib/http.js";
 import { stamp as when } from "../lib/format.js";
@@ -37,7 +37,7 @@ export const WebhooksPart = {
     const form = reactive(blankIn());
     const editing = ref(false);         // le formulaire d'un entrant est ouvert
     const fresh = ref(null);            // { name, url } : l'adresse affichée (création, Adresse)
-    const outForm = reactive({ id: null, name: "", url: "", tool: false });
+    const outForm = reactive({ id: null, name: "", url: "", was: "", tool: false });
     const outEditing = ref(false);
     const armed = ref(null);            // suppression : deuxième clic attendu
     const testing = ref(null);
@@ -127,15 +127,17 @@ export const WebhooksPart = {
 
     // ── sortants ─────────────────────────────────────────────────────
     function openOut(o = null) {
-      Object.assign(outForm, { id: o ? o.id : null, name: o ? o.name : "", url: "",
-                               tool: o ? !!o.tool : false });
+      Object.assign(outForm, { id: o ? o.id : null, name: o ? o.name : "", url: o ? o.url : "",
+                               was: o ? o.url : "", tool: o ? !!o.tool : false });
       outEditing.value = true;
     }
     async function saveOut() {
       error.value = "";
       try {
+        // L'URL n'est renvoyée que changée : redonnée, elle effacerait le
+        // salon d'un sortant JSON.
         const body = { name: outForm.name, tool: outForm.tool,
-                       ...(outForm.url ? { url: outForm.url } : {}) };
+                       ...(outForm.url !== outForm.was ? { url: outForm.url } : {}) };
         if (outForm.id) await call("PUT", "/ui/webhooks/out/" + encodeURIComponent(outForm.id), body);
         else await call("POST", "/ui/webhooks/out", body);
         outEditing.value = false;
@@ -261,8 +263,8 @@ export const WebhooksPart = {
         <form class="item-form" v-if="outEditing" @submit.prevent="saveOut">
           <label>Nom <span class="dim">(c'est par lui que le modèle le désigne)</span>
             <input v-model="outForm.name" maxlength="80" required placeholder="Équipe, Ops…"></label>
-          <label>URL <span class="dim" v-if="outForm.id">(vide : inchangée)</span>
-            <input v-model="outForm.url" maxlength="2000" :required="!outForm.id" spellcheck="false"
+          <label>URL
+            <input v-model="outForm.url" maxlength="2000" required spellcheck="false"
                    placeholder="slack://T…/B…/X…/#alertes, mmost://chat.exemple.fr/clé, discord://…">
             <span class="dim">Le salon fait partie de l'URL quand le service le permet. L'URL d'un webhook
               (<code>https://hooks.slack.com/…</code>, <code>https://discord.com/api/webhooks/…</code>) est aussi
@@ -281,11 +283,12 @@ export const WebhooksPart = {
               <td>{{ o.name }}<span class="tag" v-if="o.tool" title="Le modèle peut y poster par l'outil Webhooks">outil</span></td>
               <td>{{ o.service }}<span class="dim" v-if="o.channel"> · {{ o.channel }}</span>
                 <span class="tag" v-if="o.legacy" title="Envoi JSON compatible Slack, hors Apprise : ressaisir l'URL en URL Apprise">à ressaisir</span></td>
-              <td><code>{{ o.url }}</code></td>
+              <td class="out-url"><code>{{ o.url }}</code></td>
               <td>{{ when(o.last_used) }}<span class="dim" v-if="o.calls"> · {{ o.calls }}</span>
                 <div class="err" v-if="o.last_error">{{ o.last_error }}</div>
                 <div class="dim" v-else-if="tested[o.id]">essai : {{ tested[o.id] }}</div></td>
               <td><div class="row-actions">
+                <button type="button" class="btn ghost" @click="copy({ name: 'out:' + o.id, content: o.url })">{{ copied === 'out:' + o.id ? "Copié" : "Copier" }}</button>
                 <button type="button" class="btn ghost" :disabled="testing === o.id" @click="test(o)">Essayer</button>
                 <button type="button" class="btn ghost" @click="openOut(o)">Modifier</button>
                 <button type="button" class="btn danger" :class="{ armed: armed === 'out:' + o.id }"

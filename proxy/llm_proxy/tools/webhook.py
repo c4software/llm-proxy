@@ -195,8 +195,7 @@ def _notify(url: str, text: str) -> str:
 
 
 async def post(owner: str, hook: dict, text: str, extra: dict | None = None) -> str:
-    """Envoie sur le sortant `hook` du compte (`list_out`/`get_out` avec
-    `full`) et note l'issue (son dernier usage, son erreur). → «» si envoyé,
+    """Envoie sur le sortant `hook` du compte (`list_out`, `get_out`) et note l'issue (son dernier usage, son erreur). → «» si envoyé,
     sinon le message d'erreur. Une URL Apprise : par Apprise (`extra`, le fil
     Slack, n'y a pas cours). Sinon, en JSON, avec son salon et `extra`."""
     if not hook["legacy"]:
@@ -251,7 +250,7 @@ class WebhookTool(Tool):
         if not isinstance(text, str) or not text.strip():
             raise ToolError("invalid_input", "`text` is required.")
         # Seuls ceux que le compte a exposés à l'outil.
-        hooks = [h for h in await asyncio.to_thread(webhooks.list_out, call.client, True)
+        hooks = [h for h in await asyncio.to_thread(webhooks.list_out, call.client)
                  if h["tool"]]
         if not hooks:
             raise ToolError("unavailable", (

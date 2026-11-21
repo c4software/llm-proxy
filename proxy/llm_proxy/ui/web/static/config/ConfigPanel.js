@@ -27,7 +27,7 @@ import { AccountsPart } from "./AccountsPart.js";
 import { ProxyPart } from "./ProxyPart.js";
 import { useAccount, useUsers } from "./shared.js";
 
-const { computed, onMounted } = Vue;
+const { computed, onMounted, ref } = Vue;
 const STORE_PART = "llm-proxy-config-part";
 
 export const ConfigPanel = {
@@ -58,15 +58,25 @@ export const ConfigPanel = {
     function setPart(p) {
       stored.value = p;
     }
-    // Admin : le nombre de comptes en attente, sur le sélecteur.
-    onMounted(() => { if (isAdmin.value) loadUsers(); });
+    // Sur un téléphone, les parties défilent dans leur pastille : la partie
+    // ouverte y est amenée en vue.
+    const tabs = ref(null);
+    onMounted(() => {
+      // Admin : le nombre de comptes en attente, sur le sélecteur.
+      if (isAdmin.value) loadUsers();
+      const on = tabs.value && tabs.value.querySelector('[aria-pressed="true"]');
+      if (on) {
+        const box = tabs.value.getBoundingClientRect(), b = on.getBoundingClientRect();
+        tabs.value.scrollLeft += b.left - box.left - (box.width - b.width) / 2;
+      }
+    });
 
-    return { parts, part, setPart, pendingCount };
+    return { parts, part, setPart, pendingCount, tabs };
   },
   template: `
   <div class="config-view">
     <div class="toolbar">
-      <div class="range" role="group" aria-label="Partie">
+      <div class="range" ref="tabs" role="group" aria-label="Partie">
         <button type="button" v-for="p in parts" :key="p.id" :aria-pressed="String(part === p.id)"
                 @click="setPart(p.id)">{{ p.label }}<template
                 v-if="p.id === 'accounts' && pendingCount"> ({{ pendingCount }})</template></button>

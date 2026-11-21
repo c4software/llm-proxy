@@ -188,10 +188,10 @@ proxy joint. Sont refusés : une URL qui vise un webhook entrant d'un proxy
 message), un en-tête `+User-Agent=`, et un paramètre qui désigne un
 fichier local (`keyfile=/…`).
 
-La page ne relit jamais l'URL, qui vaut droit d'écrire : elle n'en montre
-que le service, le schéma et l'hôte (masqué quand il porte un secret,
-comme le jeton d'un bot Telegram). **Essayer** envoie un message d'essai ;
-l'erreur d'Apprise s'affiche sur le sortant.
+La page montre le service et l'URL entière, à copier, au seul compte qui
+l'a créée ; l'URL vaut droit d'écrire, comme l'adresse d'un entrant.
+**Essayer** envoie un message d'essai ; l'erreur d'Apprise s'affiche sur
+le sortant.
 
 ### L'outil `webhook`
 

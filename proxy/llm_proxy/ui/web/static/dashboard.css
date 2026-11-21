@@ -179,8 +179,13 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
 .range {
   display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px;
   background: var(--track); border: 1px solid var(--line);
+  /* Plus large que l'écran (téléphone) : défile dans sa pastille, sans
+     barre visible, plutôt que de déborder de la page. */
+  max-width: 100%; overflow-x: auto; scrollbar-width: none;
 }
+.range::-webkit-scrollbar { display: none; }
 .range button {
+  flex: none; white-space: nowrap;
   font: inherit; font-size: 13.5px; line-height: 1;
   padding: 8px 16px; border: 0; border-radius: 999px; cursor: pointer;
   background: transparent; color: var(--muted);
@@ -960,6 +965,10 @@ a.btn { display: inline-block; text-decoration: none; }
 .item-form textarea { resize: vertical; }
 .item-actions, .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .row-actions { flex-wrap: nowrap; justify-content: flex-end; }
+/* L'URL entière d'un sortant : elle passe à la ligne plutôt que d'élargir
+   le tableau. */
+.owned td.out-url { white-space: normal; min-width: 14em; }
+.owned td.out-url code { overflow-wrap: anywhere; }
 .owned .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0;
   padding: 14px 18px; font-size: 13px; }
 .owned .kv dt { color: var(--muted); }

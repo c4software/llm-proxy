@@ -173,10 +173,10 @@ def test_un_compte_ne_touche_pas_aux_webhooks_d_un_autre():
         webhooks.create_in("b", {"name": "x", "reply": out["id"]}, None, "b")
 
 
-def test_sortant_url_masquee_et_reglages_refuses():
+def test_service_du_sortant_et_urls_refusees():
     """Une URL Apprise (ou l'URL d'un webhook qu'Apprise reconnaît) : son
-    service, l'URL masquée ; une autre URL https : un sortant JSON, à
-    ressaisir ; ni l'une ni l'autre : refusée."""
+    service ; une autre URL http(s) : un sortant JSON, à ressaisir ; ni
+    l'une ni l'autre : refusée."""
     for url, service in (("https://hooks.slack.com/services/T/B/secretsecret", "Slack"),
                          ("discord://123/secretsecret", "Discord"),
                          ("tgram://123456:secretsecret/987", "Telegram"),
@@ -185,7 +185,6 @@ def test_sortant_url_masquee_et_reglages_refuses():
                          ("https://chat.example/hooks/secretsecret", "JSON compatible Slack")):
         out = outgoing("a", name=service, url=url)
         assert (out["service"], out["legacy"]) == (service, service == "JSON compatible Slack"), url
-        assert "secretsecret" not in json.dumps(webhooks.list_out("a")), url
     for url, why in (("file:///etc/passwd", "URL"), ("pas une url", "URL"), ("slack://", "URL"),
                      ("fcm://projet/appareil?keyfile=/etc/passwd", "fichier")):
         with pytest.raises(webhooks.WebhookError, match=why):
@@ -625,14 +624,15 @@ def test_routes_de_la_page_par_compte(page, posted):
     assert token.startswith("wh-") and "api_key_id" not in hook
     j = c.get("/ui/webhooks").json()
     assert [h["id"] for h in j["incoming"]] == [hook["id"]] and j["path"] == "/hooks/"
-    assert "xyz1234" not in json.dumps(j)                 # l'URL sortante, masquée
+    assert j["outgoing"][0]["url"] == "https://chat.example/xyz1234"   # réaffichée, à son compte
     assert c.post(f"/ui/webhooks/out/{out['id']}/test", json={}).json()["sent"] is True
     assert posted[-1][0] == "https://chat.example/xyz1234"
     assert c.get("/ui/session").json()["webhooks"] is True
     # Un autre compte ne voit ni ne supprime rien.
     page("sk-b")
-    j = c.get("/ui/webhooks").json()
-    assert j["incoming"] == [] and j["outgoing"] == []
+    got = c.get("/ui/webhooks")
+    assert got.json()["incoming"] == [] and got.json()["outgoing"] == []
+    assert "xyz1234" not in got.text
     assert c.delete(f"/ui/webhooks/in/{hook['id']}").json()["deleted"] is False
     assert c.delete(f"/ui/webhooks/out/{out['id']}").json()["deleted"] is False
     assert webhooks.by_token(token) is not None

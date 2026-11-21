@@ -288,20 +288,19 @@ def target(url: str):
 
 
 def describe(url: str) -> dict:
-    """Ce que la page montre d'un sortant : le service, son URL réduite au
-    schéma et à l'hôte (masqué par Apprise quand il porte un secret, comme
-    un jeton Telegram) — le reste vaut droit d'écrire —, et `legacy` pour
-    un envoi JSON hors Apprise, à ressaisir en URL Apprise."""
+    """Le service d'un sortant, et `legacy` pour un envoi JSON hors Apprise,
+    à ressaisir en URL Apprise."""
     found = target(url)
-    shown = urlsplit(found.url(privacy=True) if found is not None else url)
     return {"service": found.service_name if found is not None else "JSON compatible Slack",
-            "legacy": found is None, "shown": f"{shown.scheme}://{shown.hostname or ''}/…"}
+            "legacy": found is None}
 
 
-def _out_meta(row, full: bool = False) -> dict:
+def _out_meta(row) -> dict:
     wid, name, url, channel, tool, created, last_used, calls, last_error = row
     seen = describe(url)
-    return {"id": wid, "name": name, "url": url if full else seen["shown"],
+    # L'URL entière : elle n'est rendue qu'à son compte, qui la réaffiche et
+    # la copie (comme l'adresse d'un entrant).
+    return {"id": wid, "name": name, "url": url,
             "service": seen["service"], "legacy": seen["legacy"],
             # Le salon d'un sortant JSON, envoyé en `channel` ; avec Apprise,
             # il est dans l'URL (slack://…/#alertes).
@@ -346,11 +345,11 @@ def _flag(value) -> bool:
     return value
 
 
-def list_out(owner: str, full: bool = False) -> list[dict]:
+def list_out(owner: str) -> list[dict]:
     rows = _run(lambda c: c.execute(
         f"SELECT {_OUT} FROM webhooks_out WHERE owner = ? ORDER BY created, id",
         (owner,)).fetchall())
-    return [_out_meta(r, full) for r in rows]
+    return [_out_meta(r) for r in rows]
 
 
 def create_out(owner: str, body) -> dict:
@@ -422,7 +421,7 @@ def get_out(owner: str, wid: str) -> dict | None:
     row = _run(lambda c: c.execute(
         f"SELECT {_OUT} FROM webhooks_out WHERE owner = ? AND id = ?",
         (owner, wid)).fetchone())
-    return _out_meta(row, full=True) if row else None
+    return _out_meta(row) if row else None
 
 
 def used_out(owner: str, wid: str, error: str = "") -> None:
