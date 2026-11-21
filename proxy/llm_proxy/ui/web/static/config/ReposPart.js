@@ -126,7 +126,7 @@ export const ReposPart = {
             <button type="button" class="btn ghost" @click="editing = false">Annuler</button>
           </div>
         </form>
-        <table v-if="sources.length">
+        <div class="scroll" v-if="sources.length"><table>
           <thead><tr><th>Nom</th><th>Forge</th><th>Adresse</th><th>Projets</th><th>Dernier téléchargement</th><th></th></tr></thead>
           <tbody>
             <tr v-for="s in sources" :key="s.id">
@@ -141,13 +141,13 @@ export const ReposPart = {
                         @click="remove(s)">{{ armed === s.id ? "Supprimer ?" : "Supprimer" }}</button></div></td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
         <p class="note" v-else-if="!editing">Aucune source à vous.</p>
       </section>
       <section class="panel" v-if="shared.length">
         <div class="panel-head"><h2>Sources partagées</h2></div>
         <p class="note">Déclarées par l'admin, offertes à tous. Une source à vous du même nom la remplace.</p>
-        <table>
+        <div class="scroll"><table>
           <thead><tr><th>Nom</th><th>Forge</th><th>Adresse</th><th>Projets</th></tr></thead>
           <tbody>
             <tr v-for="s in shared" :key="s.id">
@@ -156,7 +156,7 @@ export const ReposPart = {
               <td>{{ s.projects.length ? s.projects.join(", ") : "tous" }}</td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
       </section>
     </div>
   `,

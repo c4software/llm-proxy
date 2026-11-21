@@ -58,7 +58,7 @@ export const AccountsPart = {
       <section class="panel">
         <div class="panel-head"><h2>Comptes</h2></div>
         <p class="err" v-if="userError" role="status">{{ userError }}</p>
-        <table>
+        <div class="scroll"><table>
           <thead><tr><th>Compte</th><th>Clés</th><th>Créé</th><th>Connexion</th>
             <th title="Partage équitable : tokens par heure glissante ; au-delà, les requêtes du compte attendent">Part / h</th><th>Rôle</th></tr></thead>
           <tbody>
@@ -81,7 +81,7 @@ export const AccountsPart = {
                 <option v-for="r in ROLES" :key="r.id" :value="r.id">{{ r.label }}</option></select></td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
       </section>
       <section class="panel backup-panel">
         <div class="panel-head"><h2>Sauvegarde</h2>

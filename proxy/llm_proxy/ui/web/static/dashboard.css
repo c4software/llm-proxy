@@ -909,7 +909,7 @@ body:has(> #app:not([v-cloak])) > .boot { display: none; }
 a.btn { display: inline-block; text-decoration: none; }
 
 .config-keys { display: flex; flex-direction: column; gap: 16px; }
-.config-keys .panel { overflow-x: auto; }
+/* Un tableau trop large défile seul (.scroll), pas tout le panneau. */
 .config-keys .note, .config-keys .err { font-size: 13px; margin: 0; padding: 12px 18px; }
 .config-settings textarea {
   display: block; width: calc(100% - 36px); margin: 0 18px 18px; min-height: 65vh; resize: vertical;

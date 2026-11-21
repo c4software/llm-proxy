@@ -81,7 +81,7 @@ export const RuntimePart = {
           <p class="note">Les fichiers de vos conversations (exécution de code) et de vos dépôts. Détruire un bac
             efface ses fichiers.</p>
           <p class="note" v-if="data.own.bacs === null">Exécuteur injoignable.</p>
-          <table v-else-if="data.own.bacs.length">
+          <div class="scroll" v-else-if="data.own.bacs.length"><table>
             <thead><tr><th>Usage</th><th>Ouvert depuis</th><th>Inactif depuis</th><th>Détruit dans</th><th></th></tr></thead>
             <tbody>
               <tr v-for="b in data.own.bacs" :key="b.session">
@@ -92,7 +92,7 @@ export const RuntimePart = {
                           :disabled="busy || b.session === '~'" @click="destroy(b)">{{ armed === 'bac:' + b.client + ':' + b.session ? "Détruire ?" : "Détruire" }}</button></div></td>
               </tr>
             </tbody>
-          </table>
+          </table></div>
           <p class="note" v-else>Aucun bac ouvert.</p>
           <p class="note" v-if="data.own.repositories.entries">Dépôts téléchargés : {{ data.own.repositories.entries }}
             ({{ bytes(data.own.repositories.bytes) }}).</p>
@@ -122,7 +122,7 @@ export const RuntimePart = {
                       :class="{ armed: armed === 'all' }" :disabled="busy"
                       @click="destroyAll(true)">{{ armed === "all" ? "Tout détruire ?" : "Tout détruire" }}</button></div>
             <p class="note" v-if="data.admin.bacs === null">Exécuteur injoignable.</p>
-            <table v-else-if="data.admin.bacs.length">
+            <div class="scroll" v-else-if="data.admin.bacs.length"><table>
               <thead><tr><th>Compte</th><th>Usage</th><th>Ouvert depuis</th><th>Inactif depuis</th><th>Détruit dans</th><th></th></tr></thead>
               <tbody>
                 <tr v-for="b in data.admin.bacs" :key="b.client + b.session">
@@ -134,13 +134,13 @@ export const RuntimePart = {
                             :disabled="busy || b.session === '~'" @click="destroy(b, true)">{{ armed === 'bac:' + b.client + ':' + b.session ? "Détruire ?" : "Détruire" }}</button></div></td>
                 </tr>
               </tbody>
-            </table>
+            </table></div>
             <p class="note" v-else>Aucun bac ouvert.</p>
           </section>
           <section class="panel">
             <div class="panel-head"><h2>Caches du proxy</h2></div>
             <p class="note">En mémoire. Vider un cache ne casse rien : ce qui manque est relu au besoin.</p>
-            <table>
+            <div class="scroll"><table>
               <thead><tr><th>Cache</th><th>Entrées</th><th>Taille</th><th>Durée de vie</th><th></th></tr></thead>
               <tbody>
                 <tr v-for="c in data.admin.caches" :key="c.name">
@@ -151,7 +151,7 @@ export const RuntimePart = {
                             :disabled="busy" @click="clear(c)">{{ armed === 'cache:' + c.name ? "Vider ?" : "Vider" }}</button></div></td>
                 </tr>
               </tbody>
-            </table>
+            </table></div>
           </section>
         </template>
       </template>

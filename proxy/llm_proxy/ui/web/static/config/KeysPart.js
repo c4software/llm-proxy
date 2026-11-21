@@ -227,7 +227,7 @@ export const KeysPart = {
       <section class="panel">
         <div class="panel-head"><h2>{{ allKeys ? "Toutes les clés" : "Vos clés" }}</h2>
           <label class="check" v-if="isAdmin"><input type="checkbox" v-model="allKeys"> tous les comptes</label></div>
-        <table v-if="keys.length || tomlKeys.length">
+        <div class="scroll" v-if="keys.length || tomlKeys.length"><table>
           <thead><tr><th>Libellé</th><th v-if="allKeys">Compte</th><th>Clé</th>
             <th>Outils</th><th>Créée</th><th>Dernier usage</th><th></th></tr></thead>
           <tbody>
@@ -269,7 +269,7 @@ export const KeysPart = {
               <td>tous</td><td>—</td><td>—</td><td></td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
         <p class="note" v-else>Aucune clé pour l'instant.</p>
       </section>
     </div>

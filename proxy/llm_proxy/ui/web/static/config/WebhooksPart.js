@@ -237,7 +237,7 @@ export const WebhooksPart = {
             <button type="button" class="btn ghost" @click="editing = false">Annuler</button>
           </div>
         </form>
-        <table v-if="incoming.length">
+        <div class="scroll" v-if="incoming.length"><table>
           <thead><tr><th>Nom</th><th>Adresse</th><th>Modèle</th><th>Conversation</th><th>Réponse</th>
             <th>Dernier message</th><th></th></tr></thead>
           <tbody>
@@ -260,7 +260,7 @@ export const WebhooksPart = {
                         @click="remove('in', h)">{{ armed === "in:" + h.id ? "Supprimer ?" : "Supprimer" }}</button></div></td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
         <p class="note" v-else-if="!editing">Aucun webhook entrant.</p>
       </section>
 
@@ -286,7 +286,7 @@ export const WebhooksPart = {
             <button type="button" class="btn ghost" @click="outEditing = false">Annuler</button>
           </div>
         </form>
-        <table v-if="outgoing.length">
+        <div class="scroll" v-if="outgoing.length"><table>
           <thead><tr><th>Nom</th><th>Service</th><th>URL</th><th>Dernier envoi</th><th></th></tr></thead>
           <tbody>
             <tr v-for="o in outgoing" :key="o.id">
@@ -305,7 +305,7 @@ export const WebhooksPart = {
                         @click="remove('out', o)">{{ armed === "out:" + o.id ? "Supprimer ?" : "Supprimer" }}</button></div></td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
         <p class="note" v-else-if="!outEditing">Aucun webhook sortant.</p>
       </section>
     </div>
