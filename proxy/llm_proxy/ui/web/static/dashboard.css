@@ -965,10 +965,6 @@ a.btn { display: inline-block; text-decoration: none; }
 .item-form textarea { resize: vertical; }
 .item-actions, .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .row-actions { flex-wrap: nowrap; justify-content: flex-end; }
-/* L'URL entière d'un sortant : elle passe à la ligne plutôt que d'élargir
-   le tableau. */
-.owned td.out-url { white-space: normal; min-width: 14em; }
-.owned td.out-url code { overflow-wrap: anywhere; }
 .owned .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0;
   padding: 14px 18px; font-size: 13px; }
 .owned .kv dt { color: var(--muted); }

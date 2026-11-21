@@ -188,8 +188,9 @@ proxy joint. Sont refusés : une URL qui vise un webhook entrant d'un proxy
 message), un en-tête `+User-Agent=`, et un paramètre qui désigne un
 fichier local (`keyfile=/…`).
 
-La page montre le service et l'URL entière, à copier, au seul compte qui
-l'a créée ; l'URL vaut droit d'écrire, comme l'adresse d'un entrant.
+L'URL vaut droit d'écrire. Le tableau n'en montre que le schéma et l'hôte ;
+**Copier** et **Modifier** donnent l'URL entière, au seul compte qui l'a
+créée.
 **Essayer** envoie un message d'essai ; l'erreur d'Apprise s'affiche sur
 le sortant.
 

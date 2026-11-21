@@ -12,8 +12,9 @@
     sortants  une URL Apprise (le salon y est), et s'il est
               exposé à l'outil `webhook` du chat (décoché par défaut) ;
               sinon il ne sert qu'aux réponses des entrants. L'URL
-              s'affiche en entier (à son compte seulement), se copie, et
-              préremplit le formulaire.
+              entière (rendue à son compte seulement) se copie et
+              préremplit le formulaire ; le tableau n'en montre que le
+              schéma et l'hôte.
 */
 import { call } from "../lib/http.js";
 import { stamp as when } from "../lib/format.js";
@@ -123,6 +124,15 @@ export const WebhooksPart = {
         window.scrollTo({ top: 0, behavior: "smooth" });
       } catch (e) { error.value = e.message; }
     }
+    // L'URL d'un sortant dans le tableau : son schéma et son hôte, sans ce
+    // qui vaut droit d'écrire (chemin, identifiants, jeton d'un bot
+    // Telegram avant « : »). Copier et Modifier donnent l'URL entière.
+    function shortUrl(url) {
+      const m = /^([a-z][a-z0-9+.-]*:\/\/)(?:[^/?#@]*@)?([^/?#:]*)/i.exec(url || "");
+      if (!m) return "…";
+      const host = m[2].length > 24 ? m[2].slice(0, 24) + "…" : m[2];
+      return m[1] + host + "/…";
+    }
     const curl = (url) => `curl -X POST -H 'Content-Type: application/json' \\\n  -d '{"text": "Bonjour !"}' ${url}`;
 
     // ── sortants ─────────────────────────────────────────────────────
@@ -157,7 +167,7 @@ export const WebhooksPart = {
 
     return { incoming, outgoing, error, form, editing, fresh, outForm, outEditing, armed, testing, tested,
              convs, toolGroups, outName, convTitle, modelChoices, openIn, toggleTool, saveIn, rotate, remove,
-             openOut, saveOut, test, curl, copied, copy, showLink, when };
+             openOut, saveOut, test, curl, shortUrl, copied, copy, showLink, when };
   },
   template: `
     <div class="config-keys owned">
@@ -283,7 +293,7 @@ export const WebhooksPart = {
               <td>{{ o.name }}<span class="tag" v-if="o.tool" title="Le modèle peut y poster par l'outil Webhooks">outil</span></td>
               <td>{{ o.service }}<span class="dim" v-if="o.channel"> · {{ o.channel }}</span>
                 <span class="tag" v-if="o.legacy" title="Envoi JSON compatible Slack, hors Apprise : ressaisir l'URL en URL Apprise">à ressaisir</span></td>
-              <td class="out-url"><code>{{ o.url }}</code></td>
+              <td><code>{{ shortUrl(o.url) }}</code></td>
               <td>{{ when(o.last_used) }}<span class="dim" v-if="o.calls"> · {{ o.calls }}</span>
                 <div class="err" v-if="o.last_error">{{ o.last_error }}</div>
                 <div class="dim" v-else-if="tested[o.id]">essai : {{ tested[o.id] }}</div></td>
