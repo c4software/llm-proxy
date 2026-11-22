@@ -324,8 +324,9 @@ relu au besoin.
 connectée). Les extensions de `[extensions].path` : celles qui sont
 chargées, avec leurs outils, où chacun s'exécute (proxy, navigateur), où
 il est offert et s'il est configuré, et celles qui sont écartées, avec
-leur raison. *Éteindre* retire tout de suite les outils
-d'une extension, partout ; l'état est gardé dans `data/extensions.json` et
+leur raison. Une extension déposée y paraît éteinte, au démarrage
+suivant : *Allumer* met ses outils en service, *Éteindre* les retire tout
+de suite, partout ; l'état est gardé dans `data/extensions.json` et
 survit aux redémarrages. Voir [Extensions](extensions.md#allumer-et-éteindre).
 
 **Proxy** : toute la configuration, en sections (Accès, Backends,

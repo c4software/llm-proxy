@@ -21,8 +21,9 @@ Outils de la page, webhooks — là où son `offered` le dit. Une extension en
 faute est écartée ENTIÈRE, dite au journal ; elle n'arrête ni le
 démarrage ni les autres.
 
-L'INTERRUPTEUR : une extension chargée s'éteint et se rallume À CHAUD dans
-la page (Configuration → Extensions), état gardé par
+L'INTERRUPTEUR : une extension chargée est ÉTEINTE tant qu'un admin ne
+l'a pas allumée dans la page (Configuration → Extensions) ; elle s'allume
+et s'éteint À CHAUD, état gardé par
 storage/extension_state.py ; active() le lit, tools.active() avec, et le
 service de son .js aussi. `[extensions.<nom>].enabled = false` est l'arrêt
 de l'opérateur : elle n'est pas importée, et la page ne peut pas la
@@ -74,14 +75,14 @@ class Loaded:
 
 
 # L'état du dernier load() : nom d'outil → (extension, outil) ; extension
-# → Loaded ; les écartées (nom, raison) ; les extensions éteintes dans la
+# → Loaded ; les écartées (nom, raison) ; les extensions allumées dans la
 # page.
 _OF: dict[str, tuple[str, Tool]] = {}
 _LOADED: dict[str, Loaded] = {}
 _REFUSED: list[tuple[str, str]] = []
 # Remplacé d'un bloc (jamais vidé puis rempli : active() le lit sans
 # verrou) ; _SWITCH sérialise les bascules et leur écriture.
-_OFF: frozenset[str] = frozenset()
+_ON: frozenset[str] = frozenset()
 _SWITCH = threading.Lock()
 
 
@@ -157,7 +158,7 @@ def load(tools, path: str = PATH) -> tuple[list, list]:
     paquet tools/ : register, register_family, REGISTRY, FAMILIES), et
     relit l'interrupteur de la page. → (chargées [(nom, [outils])],
     écartées [(nom, raison)]), dites au journal. Sans `path`, rien."""
-    global _OFF
+    global _ON
     loaded, refused = [], []
     _OF.clear()
     _LOADED.clear()
@@ -190,22 +191,23 @@ def load(tools, path: str = PATH) -> tuple[list, list]:
                 _LOADED[ext.name] = ext
                 _OF.update({t.name: (ext.name, t) for t in ext.tools})
     _REFUSED.extend(refused)
-    # Un état illisible est dit au journal (extension_state.load) et ne
-    # change rien au fichier : les extensions chargées sont allumées.
-    _OFF = frozenset(f for f, on in (extension_state.load() or {}).items() if on is False)
+    # Une extension que l'admin n'a pas allumée est éteinte. Un état
+    # illisible est dit au journal (extension_state.load), n'allume rien et
+    # n'est pas réécrit.
+    _ON = frozenset(n for n, on in (extension_state.load() or {}).items() if on is True)
     for name, why in refused:
         log.warning("extension %s écartée : %s", name, why)
     for name, names in loaded:
         log.info("extension %s : %s%s", name, ", ".join(names),
-                 " (éteinte dans la page)" if name in _OFF else "")
+                 "" if name in _ON else " (éteinte : à allumer dans Configuration → Extensions)")
     return loaded, refused
 
 
 def active(tool: Tool) -> bool:
-    """Faux pour l'outil d'une extension que la page a éteinte ; vrai pour
-    tout autre outil."""
+    """Faux pour l'outil d'une extension que l'admin n'a pas allumée (ou a
+    éteinte) dans la page ; vrai pour tout autre outil."""
     name, known = _OF.get(tool.name, ("", None))
-    return known is not tool or name not in _OFF
+    return known is not tool or name in _ON
 
 
 def module_url(tool: Tool) -> str:
@@ -222,14 +224,14 @@ def module_url(tool: Tool) -> str:
 def script(name: str) -> Path | None:
     """Le .js d'une extension chargée et allumée, ou None."""
     ext = _LOADED.get(name)
-    return ext.js if ext is not None and ext.js and name not in _OFF else None
+    return ext.js if ext is not None and ext.js and name in _ON else None
 
 
 def listing() -> list[dict]:
     """Pour la page : chaque extension, chargée (ses outils et où chacun
     s'exécute, allumée ou non) ou écartée (sa raison ; `stopped` : arrêtée
     par la configuration)."""
-    out = [{"name": name, "enabled": name not in _OFF,
+    out = [{"name": name, "enabled": name in _ON,
             "tools": [{"name": t.name, "runs": str(t.runs), "offered": sorted(t.offered),
                        "configured": bool(t.enabled)} for t in ext.tools]}
            for name, ext in _LOADED.items()]
@@ -242,13 +244,13 @@ def switch(name: str, on: bool) -> None:
     """Allume ou éteint une extension CHARGÉE, à chaud, et le garde.
     KeyError : extension non chargée (inconnue, écartée, arrêtée par la
     configuration)."""
-    global _OFF
+    global _ON
     if name not in _LOADED:
         raise KeyError(name)
     with _SWITCH:
-        off = (_OFF | {name}) if not on else (_OFF - {name})
-        extension_state.save({n: False for n in off})
-        _OFF = off
+        lit = (_ON | {name}) if on else (_ON - {name})
+        extension_state.save({n: True for n in lit})
+        _ON = lit
     log.info("extension %s %s dans la page", name, "allumée" if on else "éteinte")
 
 

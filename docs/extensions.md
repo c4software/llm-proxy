@@ -18,8 +18,8 @@ dit (voir [Le .py](#le-py)) :
 
 Les extensions sont chargées **au démarrage**. Pour en ajouter, en
 retirer ou en modifier une, il faut redémarrer le proxy. Une extension
-chargée s'allume et s'éteint **à chaud** dans la page : voir
-[Allumer et éteindre](#allumer-et-éteindre).
+déposée paraît alors dans la page, **éteinte** : un admin l'allume, et
+l'éteint, à chaud. Voir [Allumer et éteindre](#allumer-et-éteindre).
 
 ## Activer
 
@@ -83,9 +83,12 @@ présentation au modèle, `/v1/tools`, `/mcp`, menu Outils du chat,
 webhooks ; son `.js` n'est plus servi. *Allumer* les rend (pour un outil
 du navigateur, au prochain chargement de la page). L'état est gardé dans `data/extensions.json`
 (dans la [sauvegarde](deploiement.md#sauvegarde-et-restauration)) et
-survit aux redémarrages. Une extension nouvelle est allumée. Un fichier
-`extensions.json` illisible est dit au journal et laissé tel quel ; les
-extensions sont alors allumées.
+survit aux redémarrages. Une extension nouvellement déposée est
+**éteinte** : ses outils ne servent qu'une fois qu'un admin l'a allumée.
+Un fichier `extensions.json` illisible est dit au journal et laissé tel
+quel (la première bascule le réécrit) ; aucune extension n'est alors
+allumée. Après une mise à jour depuis une version où une extension était
+allumée par défaut, rallumer dans la page celles qui servaient.
 
 `[extensions.<nom>].enabled = false` est l'arrêt de l'opérateur :
 l'extension n'est pas chargée, et la page ne peut pas la rallumer

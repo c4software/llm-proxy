@@ -1,8 +1,8 @@
 /*
   Configuration → Extensions (/ui/extensions, extension_routes.py ; admin,
   ou proxy sans comptes) : les extensions de [extensions].path, un
-  sous-dossier chacune. Une extension chargée s'éteint et se rallume ici,
-  À CHAUD ; ses outils, où chacun s'exécute (proxy, navigateur), où il est
+  sous-dossier chacune. Une extension déposée paraît ici, ÉTEINTE, au
+  démarrage suivant ; elle s'allume et s'éteint ici, À CHAUD ; ses outils, où chacun s'exécute (proxy, navigateur), où il est
   offert (api, web) et s'il est configuré. Une extension
   écartée au chargement est dite avec sa raison ; arrêtée par
   [extensions.<nom>].enabled = false, la page ne la rallume pas.
@@ -48,8 +48,9 @@ export const ExtensionsPart = {
         <p class="note" v-if="!data.path">Aucun dossier d'extensions : <code>[extensions].path</code> n'est pas réglé
           (voir docs/extensions.md).</p>
         <template v-else>
-          <p class="note">Sous-dossiers de <code>{{ data.path }}</code>, chargés au démarrage. Éteindre une extension retire
-            ses outils tout de suite, partout ; l'état est gardé.</p>
+          <p class="note">Sous-dossiers de <code>{{ data.path }}</code>, chargés au démarrage. Une extension déposée y paraît
+            éteinte : l'allumer met ses outils en service, l'éteindre les retire tout de suite,
+            partout ; l'état est gardé.</p>
           <div class="scroll" v-if="data.extensions.length"><table>
             <thead><tr><th>Extension</th><th>Outils</th><th>État</th><th></th></tr></thead>
             <tbody>

@@ -12,7 +12,7 @@ import pytest
 from fakes import everywhere
 
 from llm_proxy.access import accounts
-from llm_proxy.storage import backup, conversations, memories, stats
+from llm_proxy.storage import backup, conversations, extension_state, memories, stats
 from llm_proxy.core import config
 from llm_proxy.core import identity
 
@@ -32,6 +32,10 @@ def data(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "_cache", {})
     everywhere(monkeypatch, stats, "DB_PATH", str(d / "stats.db"))
     monkeypatch.setattr(conversations, "DB_PATH", str(d / "conversations.db"))
+    # L'interrupteur des extensions, à l'ancienne forme (éteintes : false)
+    # mêlée à la nouvelle (allumées : true).
+    monkeypatch.setattr(extension_state, "PATH", str(d / "extensions.json"))
+    (d / "extensions.json").write_text('{"vieille": false, "horloge": true}')
     conversations.save("cle", "c1", {"id": "c1", "title": "à garder", "messages": []})
     memories.write("cle", "/memories/note.md", "à garder")
     accounts.login("https://idp", "alice", "a@x")
@@ -45,7 +49,7 @@ def data(tmp_path, monkeypatch):
     conn.close()
 
 
-def test_backup_check_restore(data, tmp_path):
+def test_backup_check_restore(data, tmp_path, capsys):
     d, live = data
     # Une écriture encore dans le journal (-wal), pas dans stats.db : une
     # copie de fichier la perdrait.
@@ -59,8 +63,9 @@ def test_backup_check_restore(data, tmp_path):
     with tarfile.open(archive) as tar:
         assert sorted(tar.getnames()) == ["accounts.db", "client.secret",
                                          "config.toml", "conversations.db",
-                                         "memory.db", "stats.db"]
+                                         "extensions.json", "memory.db", "stats.db"]
     assert backup.check(archive)
+    assert "extensions.json : 1 extension(s) allumée(s)" in capsys.readouterr().out
 
     target = tmp_path / "restored"
     target.mkdir()

@@ -237,7 +237,7 @@ partie qui l'a importé.
 | `storage/repos.py` | Les sources de dépôts de chaque compte (jeton gardé, jamais rendu ; table à part de `conversations.db`) et celles de `[repos.sources]` |
 | `storage/webhooks.py` | Les webhooks entrants (jeton gardé, retrouvé par son condensé) et sortants (URL Apprise et son service, exposition à l'outil) de chaque compte (tables à part de `conversations.db`) |
 | `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
-| `storage/extension_state.py` | L'interrupteur des extensions (`data/extensions.json`) : les extensions éteintes dans la page, écriture atomique, fichier illisible ignoré et jamais écrasé par une lecture |
+| `storage/extension_state.py` | L'interrupteur des extensions (`data/extensions.json`) : les extensions allumées dans la page (absente : éteinte), écriture atomique, fichier illisible ignoré et jamais écrasé par une lecture |
 | `storage/backup.py` | Sauvegarde et restauration de `data/` |
 
 ### `ui/` : le tableau de bord et le chat
