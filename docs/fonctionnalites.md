@@ -95,7 +95,9 @@ détaille.
 - **Dépôts** (`[repos]`) : l'outil `repository` lit un projet GitLab,
   GitHub, Gitea ou git (arborescence, fichier, recherche ; rien n'est
   exécuté), avec le jeton d'une source du compte ou de l'admin. Le proxy
-  télécharge, un bac de l'exécuteur décompresse et lit. [Dépôts](depots.md)
+  télécharge, un bac de l'exécuteur décompresse et lit. L'outil
+  `pull_request` y propose une modification en PR brouillon, et un webhook
+  entrant accepte les événements de la forge. [Dépôts](depots.md)
 
 ## Suivi et interface
 

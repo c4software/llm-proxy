@@ -432,7 +432,8 @@ Les webhooks entrants et sortants de chaque compte. Voir [Webhooks](webhooks.md)
 
 ## `[repos]`
 
-L'outil `repository` et les sources de dépôts. Voir [Dépôts](depots.md).
+Les outils `repository` et `pull_request`, et les sources de dépôts. Voir
+[Dépôts](depots.md).
 
 | Clé | Défaut | Rôle |
 |---|---|---|
@@ -440,10 +441,16 @@ L'outil `repository` et les sources de dépôts. Voir [Dépôts](depots.md).
 | `max_per_user` | `20` | Sources au plus par compte |
 | `max_bytes` | `20000000` | Taille maximale d'une archive (compressée). C'est un fichier d'entrée du bac : `SANDBOX_MAX_INPUT_BYTES` de l'exécuteur au moins aussi haut |
 | `max_unpacked_bytes` | `100000000` | Taille maximale d'un projet décompressé dans le bac, à tenir dans son `/work` (`SANDBOX_WORK_SIZE`). Un fichier de plus de 2 Mo est listé, mais ni lu ni cherché |
-| `timeout` | `120` | Délai (s) du téléchargement entier, ou du fetch git |
+| `timeout` | `120` | Délai (s) du téléchargement entier, du fetch git, d'une requête à l'API d'une forge, et de toute une pull request |
 | `cache_ttl` | `1800` | Durée (s) de vie d'un dépôt téléchargé après sa dernière lecture, dans le proxy (l'archive, purgée chaque minute) comme dans le bac (détruit après cette inactivité). Voir [Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps) |
 | `cache_bytes` | `200000000` | Taille maximale de toutes les archives gardées (RAM du proxy) |
-| `sources.<nom>` | — | Une source partagée : `forge` (`gitlab`, `github`, `gitea`, `git`), `url`, `token` (en `${VAR}`), `username` (forge `git`), `projects` (motifs), `enabled` |
+| `pull_requests` | `false` | Offre l'outil `pull_request` : une PR en brouillon, sur une branche neuve, dans une source du compte cochée *Écriture*. Exige `enabled`. Voir [Proposer une modification](depots.md#proposer-une-modification-pull_request) |
+| `pr_max_files` | `20` | Fichiers au plus d'une pull request |
+| `pr_max_bytes` | `1000000` | Octets au plus de tous les fichiers d'une pull request |
+| `pr_per_hour` | `10` | Pull requests au plus par compte et par heure glissante. `0` = sans borne |
+| `pr_branch_prefix` | `"llm-proxy/"` | Début du nom des branches créées. Un événement de forge reçu sur une telle branche est ignoré ([Corps d'une forge](webhooks.md#corps-dune-forge)) |
+| `pr_blocked_paths` | `[]` | Chemins refusés en plus de ceux de la CI : des motifs à jokers, sans casse |
+| `sources.<nom>` | — | Une source partagée : `forge` (`gitlab`, `github`, `gitea`, `git`), `url`, `token` (en `${VAR}`), `username` (forge `git`), `projects` (motifs), `enabled`. Toujours en lecture : `write` y est refusé au démarrage |
 
 ## `[fair_share]`
 

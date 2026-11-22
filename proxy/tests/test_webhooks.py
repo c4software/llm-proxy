@@ -13,7 +13,7 @@ import requests
 from fakes import FakeUpstream, everywhere, go, hosted_chat, search_then_answer
 
 from llm_proxy.access import auth
-from llm_proxy.core.settings import INCOGNITO
+from llm_proxy.core.settings import FORGE_SCOPE, INCOGNITO
 from llm_proxy.storage import conversations, webhooks
 from llm_proxy.tools import net, webhook as slack
 from llm_proxy.tools.contract import Call, ToolError
@@ -27,7 +27,7 @@ def base(monkeypatch, tmp_path):
     monkeypatch.setattr(conversations, "DB_PATH", str(tmp_path / "conversations.db"))
     everywhere(monkeypatch, dashboard, "UI_CHAT", True)
     monkeypatch.setattr(slack, "ENABLED", True)
-    webhook_routes._recent.clear()
+    webhook_routes.RECENT.clear()
     webhook_routes._running.clear()
 
 
@@ -292,6 +292,89 @@ def test_boucle_sortant_vers_entrant_refusee(proxy, started):
     assert r.status_code == 403 and started == []
 
 
+def test_corps_natif_d_une_forge_resume(proxy, started):
+    """Le corps d'un webhook de GitHub, de Gitea (qui envoie aussi
+    X-GitHub-Event) ou de GitLab, sans `text` : reconnu à son en-tête, il
+    devient un message court (titre, lien, texte), son auteur en méta ; un
+    événement non résumé passe en JSON."""
+    c, url = proxy.client, address(incoming())
+    issue = {"action": "opened",
+             "repository": {"full_name": "o/r", "html_url": "https://forge.example/o/r"},
+             "sender": {"login": "alice"},
+             "issue": {"number": 7, "title": "Le build casse", "body": "Depuis hier.",
+                       "html_url": "https://forge.example/o/r/issues/7"}}
+    for headers, forge in (({"x-github-event": "issues"}, "[GitHub]"),
+                           ({"x-github-event": "issues", "x-gitea-event": "issues"}, "[Gitea]")):
+        assert c.post(url, json=issue, headers=headers).text == "ok", forge
+        text, meta = started[-1][2], started[-1][3]
+        assert text.startswith(forge + " issue opened #7 — o/r"), (forge, text)
+        for part in ("Le build casse", "https://forge.example/o/r/issues/7", "Depuis hier."):
+            assert part in text, (forge, part)
+        assert meta["user"] == "alice", forge
+        assert meta["forge"] == ("forge.example", "o/r"), forge
+    c.post(url, headers={"x-gitlab-event": "Issue Hook"}, json={
+        "object_kind": "issue", "user": {"username": "bob"},
+        "project": {"path_with_namespace": "equipe/api"},
+        "object_attributes": {"action": "open", "iid": 3, "title": "Panne",
+                              "url": "https://gitlab.exemple.fr/equipe/api/-/issues/3",
+                              "description": "Rien ne répond."}})
+    text = started[-1][2]
+    assert text.startswith("[GitLab] issue open #3 — equipe/api") and "Rien ne répond." in text
+    assert started[-1][3]["user"] == "bob"
+    c.post(url, headers={"x-gitlab-event": "Note Hook"}, json={
+        "object_kind": "note", "user": {"username": "carole"},
+        "project": {"path_with_namespace": "equipe/api"},
+        "object_attributes": {"note": "x" * 9000, "noteable_type": "Issue",
+                              "url": "https://gitlab.exemple.fr/equipe/api/-/issues/3#note_1"},
+        "issue": {"iid": 3, "title": "Panne"}})
+    text = started[-1][2]
+    assert text.startswith("[GitLab] commentaire sur Issue #3") and text.endswith("x […]")
+    assert len(text) < 8300                       # le commentaire coupé à 8 000 caractères
+    c.post(url, data={"payload": json.dumps(issue)}, headers={"x-github-event": "issues"})
+    assert "Le build casse" in started[-1][2]
+    c.post(url, json={"action": "published", "repository": {"full_name": "o/r"}},
+           headers={"x-github-event": "release"})
+    assert "événement release" in started[-1][2] and '"published"' in started[-1][2]
+    # Gitea pose ses en-têtes aussi sur un webhook de type Slack : son texte reste.
+    c.post(url, json={"text": "Nouvelle issue"}, headers={"x-gitea-event": "issues",
+                                                          "x-github-event": "issues"})
+    assert started[-1][2] == "Nouvelle issue"
+    assert len(started) == 7
+
+
+def test_forge_essai_et_branches_du_proxy_ignores(proxy, started):
+    """Le `ping` d'un webhook créé, et tout événement sur une branche du
+    proxy ([repos].pr_branch_prefix : PR, push, création, CI, commentaire
+    sur sa MR) : 200, aucun tour — sinon la PR ouverte par le modèle
+    relancerait le webhook, sans fin."""
+    c, url = proxy.client, address(incoming())
+    ours = "llm-proxy/corrige-le-build-1a2b3c4d"
+    for headers, body in (
+            ({"x-github-event": "ping"}, {"zen": "x", "hook_id": 1}),
+            ({"x-github-event": "pull_request"},
+             {"action": "opened", "pull_request": {"head": {"ref": ours}, "title": "t"}}),
+            ({"x-gitea-event": "push"}, {"ref": "refs/heads/" + ours, "commits": []}),
+            ({"x-gitlab-event": "Merge Request Hook"},
+             {"object_kind": "merge_request", "object_attributes": {"source_branch": ours}}),
+            ({"x-gitlab-event": "Push Hook"},
+             {"object_kind": "push", "ref": "refs/heads/" + ours, "commits": []}),
+            ({"x-github-event": "create"}, {"ref": ours, "ref_type": "branch"}),
+            ({"x-github-event": "check_suite"}, {"check_suite": {"head_branch": ours}}),
+            ({"x-github-event": "workflow_run"}, {"workflow_run": {"head_branch": ours}}),
+            ({"x-github-event": "status"}, {"branches": [{"name": ours}]}),
+            ({"x-gitlab-event": "Pipeline Hook"},
+             {"object_kind": "pipeline", "object_attributes": {"ref": ours}}),
+            ({"x-gitlab-event": "Note Hook"},
+             {"object_kind": "note", "merge_request": {"source_branch": ours}})):
+        r = c.post(url, json=body, headers=headers)
+        assert (r.status_code, r.text) == (200, "ok"), headers
+    assert started == []
+    c.post(url, headers={"x-github-event": "pull_request"}, json={
+        "action": "opened", "pull_request": {"head": {"ref": "fix"}, "base": {"ref": "main"},
+                                             "title": "Un humain"}})
+    assert "Un humain" in started[-1][2] and "fix → main" in started[-1][2]
+
+
 # ── le tour ─────────────────────────────────────────────────────────────
 
 def test_tour_nouvelle_conversation_et_reponse_sortante(proxy, posted):
@@ -419,6 +502,20 @@ def test_response_url_jamais_privee(proxy, monkeypatch):
     proxy.replies = [answer("ok")]
     turn(incoming(), response_url="https://slack.example/r")
     assert seen == [("https://slack.example/r", False)]
+
+
+def test_le_tour_d_un_evenement_de_forge_borne_les_outils_a_son_projet(monkeypatch):
+    """Le projet de l'événement (meta `forge`) devient FORGE_SCOPE pendant
+    tout le tour, et seulement lui ; un message ordinaire n'en a pas."""
+    seen = []
+
+    async def turn_(owner, hook, text, meta):
+        seen.append(FORGE_SCOPE.get())
+    monkeypatch.setattr(webhook_turn, "_turn", turn_)
+    hook = incoming()
+    go(webhook_turn.handle("", hook, "x", {"forge": ("forge.example", "o/r")}))
+    go(webhook_turn.handle("", hook, "x", {}))
+    assert seen == [("forge.example", "o/r"), None]
 
 
 # ── la réponse « en cours » ─────────────────────────────────────────────
