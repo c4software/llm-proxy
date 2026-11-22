@@ -323,6 +323,8 @@ export const MEMBERS = Object.freeze(new Set([
  * @property {PageTool[]} tools
  * @property {boolean} [on]            cochée d'office dans une conversation neuve
  * @property {boolean} [fixed]         toujours active, hors du menu
+ * @property {boolean} [authored]      ses résultats sont écrits par le MODÈLE ou son code (un bac, un artifact) : ils
+ *   ne font connaître aucun site au proxy (provenance des URL, ui/page_tools.json)
  * @property {() => boolean} [available]   ce navigateur sait-il la faire ?
  * @property {(ctx: Ctx) => boolean} [enabled] active pour CE tour ? Un choix de l'utilisateur
  *   (le dossier : s'il l'a ouvert), jamais l'état de la conversation : les outils changeraient
@@ -333,15 +335,15 @@ export const MEMBERS = Object.freeze(new Set([
  */
 /** @typedef {Readonly<Required<FamilyDef>>} Family */
 
-const FAMILY_KEYS = ["key", "label", "hint", "tools", "on", "fixed", "available", "enabled", "guidance",
-                     "state"];
+const FAMILY_KEYS = ["key", "label", "hint", "tools", "on", "fixed", "authored", "available", "enabled",
+                     "guidance", "state"];
 
 /** @param {FamilyDef} def @returns {Family} */
 export function defineFamily(def) {
   for (const k of Object.keys(def)) {
     if (!FAMILY_KEYS.includes(k)) throw new Error(`famille « ${def.key} » : membre inconnu « ${k} »`);
   }
-  return Object.freeze({ on: false, fixed: false, available: () => true, enabled: () => true,
+  return Object.freeze({ on: false, fixed: false, authored: false, available: () => true, enabled: () => true,
                          guidance: () => "", state: () => "", ...def });
 }
 

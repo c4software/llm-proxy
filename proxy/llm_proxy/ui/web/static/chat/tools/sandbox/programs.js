@@ -107,14 +107,25 @@ export function bridge(allowed, send, { max = MAX_CALLS, concurrency = CONCURREN
   };
 }
 
-/** L'appel réel d'un outil hébergé, par la route de la page.
- * @param {string} name @param {string} args @param {any} ctx @param {AbortSignal} signal */
-async function send(name, args, ctx, signal) {
+/** L'appel réel d'un outil hébergé, par la route de la page, avec les
+ * sites connus (`known`, provenance des URL) : ceux que le proxy a donnés
+ * en fin de réponse, et ceux que les appels du programme y ajoutent.
+ * @param {string} name @param {string} args @param {Set<string>} known
+ * @param {any} ctx @param {AbortSignal} signal */
+export async function send(name, args, known, ctx, signal) {
+  // Les arguments, relus en objet : le corps est refait ici, pas collé —
+  // le programme ne glisse rien d'autre dans la requête.
+  let parsed;
+  try { parsed = JSON.parse(args); } catch { parsed = null; }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { text: failure("les arguments doivent être un objet JSON."), error: "invalid_input" };
+  }
   const headers = { "content-type": "application/json",
                     ...(ctx.conv && ctx.conv.incognito ? { "x-incognito": "1" } : {}) };
-  const r = await fetch("/ui/tools/" + encodeURIComponent(name),
-                        { method: "POST", headers, body: args, signal });
+  const r = await fetch("/ui/tools/" + encodeURIComponent(name), { method: "POST", headers, signal,
+    body: JSON.stringify({ arguments: parsed, hosts: [...known] }) });
   const d = await r.json().catch(() => ({}));
+  if (Array.isArray(d.hosts)) for (const h of d.hosts) known.add(String(h));
   if (r.ok) return { text: String(d.result ?? ""), error: d.error ?? null };
   const message = (d.error && d.error.message) || `HTTP ${r.status}`;
   return { text: failure(message), error: statusCode(r.status) };
@@ -165,7 +176,8 @@ class RunToolsProgram extends PageTool {
     const abort = () => stop.abort();
     if (ctx.signal) ctx.signal.addEventListener("abort", abort, { once: true });
     let flooded = false;
-    const pont = bridge(names, (name, a) => send(name, a, ctx, stop.signal),
+    const known = new Set((ctx.live && ctx.live.known) || []);
+    const pont = bridge(names, (name, a) => send(name, a, known, ctx, stop.signal),
                         { onFlood: () => { flooded = true; abort(); } });
     let r;
     try {
@@ -190,7 +202,7 @@ class RunToolsProgram extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.PROGRAMS, label: "Programmes d'outils",
+  key: FAMILY.PROGRAMS, authored: true, label: "Programmes d'outils",
   hint: "enchaîner les outils hébergés cochés dans un programme JavaScript, en une étape",
   guidance: () => "Pour une tâche qui demande plusieurs appels aux outils hébergés (chercher "
     + "puis lire plusieurs pages, comparer, filtrer), écrire un programme run_tools_program qui "

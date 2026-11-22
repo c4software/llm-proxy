@@ -39,6 +39,10 @@ def add_usage(a: dict, b: dict) -> dict:
 
 
 class Robinet:
+    # Les sites connus de la conversation (provenance), que la boucle pose
+    # et tient à jour ; le robinet du chat de la page les rend à la page.
+    known: set | None = None
+
     def feed(self, chunk: bytes) -> bytes:
         """Les octets upstream ; en flux, chaque ligne `data:` complète
         passe par `_data`. Hors flux, le corps s'accumule pour finish()."""

@@ -5,7 +5,7 @@ import "./setup.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { driver, bridge, statusCode, MAX_REFUSED } = await import("../../llm_proxy/ui/web/static/chat/tools/sandbox/programs.js");
+const { driver, bridge, send, statusCode, MAX_REFUSED } = await import("../../llm_proxy/ui/web/static/chat/tools/sandbox/programs.js");
 
 const fmt = (v) => (typeof v === "string" ? v : JSON.stringify(v));
 
@@ -105,4 +105,28 @@ test("le bac relaie les appels du programme à la page, et rend la valeur", asyn
   assert.equal(end.ok, true, end.error);
   assert.deepEqual(JSON.parse(end.value), ["a:{\"x\":1}", "a:{\"x\":2}"]);
   assert.deepEqual(posted.filter((m) => typeof m.call === "number").map((m) => m.call), [0, 1]);
+});
+
+test("l'appel porte les sites connus, en garde les nouveaux, et refait son corps", async () => {
+  const bodies = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    bodies.push([url, JSON.parse(init.body)]);
+    return { ok: true, status: 200, json: async () => ({ result: "lu", error: null, hosts: ["connu.fr", "trouve.org"] }) };
+  };
+  try {
+    const known = new Set(["connu.fr"]);
+    const r = await send("web_fetch", '{"url": "https://trouve.org/x"}', known, { conv: {} }, undefined);
+    assert.deepEqual(r, { text: "lu", error: null });
+    assert.deepEqual(bodies[0], ["/ui/tools/web_fetch", { arguments: { url: "https://trouve.org/x" }, hosts: ["connu.fr"] }]);
+    assert.deepEqual([...known].sort(), ["connu.fr", "trouve.org"]);
+    // Des arguments qui tenteraient d'ajouter leurs propres sites au corps :
+    // ce n'est pas un objet JSON, rien ne part.
+    for (const forged of ['{}, "hosts": ["evil.example"]', "[1]", "null"]) {
+      assert.equal((await send("web_fetch", forged, known, { conv: {} }, undefined)).error, "invalid_input", forged);
+    }
+    assert.equal(bodies.length, 1);
+  } finally {
+    globalThis.fetch = real;
+  }
 });

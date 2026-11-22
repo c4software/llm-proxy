@@ -182,7 +182,7 @@ class RunSql extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.SQL, label: "SQL", hint: "SQLite en WASM : une base par conversation, import de CSV, JSON, .sqlite",
+  key: FAMILY.SQL, authored: true, label: "SQL", hint: "SQLite en WASM : une base par conversation, import de CSV, JSON, .sqlite",
   available: () => typeof WebAssembly === "object",
   guidance: () => "Pour analyser des données de l'utilisateur (CSV, JSON, base SQLite, dans le "
     + "dossier ouvert ou en pièce jointe), préférer run_sql avec `files` à leur lecture : les "

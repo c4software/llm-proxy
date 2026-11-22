@@ -80,9 +80,10 @@ def img(monkeypatch):
     return env
 
 
-def rendu(args=None, web=None, seen=None, **more) -> tools.Result:
+def rendu(args=None, web=None, seen=None, hosts=None, **more) -> tools.Result:
     """Ce que tools.Hosted fait d'un `run` appelé à la main. `web` : le
-    faux web des téléchargements gardés, {(hôte, chemin): octets}."""
+    faux web des téléchargements gardés, {(hôte, chemin): octets} ;
+    `hosts` : les sites connus de la conversation (None : hors d'elle)."""
     def handler(request):
         if seen is not None:
             seen.append(request)
@@ -91,7 +92,7 @@ def rendu(args=None, web=None, seen=None, **more) -> tools.Result:
             else httpx2.Response(200, content=body)
 
     return run(TOOL.run({"prompt": "un bateau rouge", **(args or {}), **more},
-                        tools.Call(endpoint="/v1/tools"),
+                        tools.Call(endpoint="/v1/tools", hosts=hosts),
                         transport=httpx2.MockTransport(handler)))
 
 
@@ -282,6 +283,12 @@ def test_retouche_image_telechargee_sous_le_garde_fou_puis_envoyee(
             ("https://site.test/gros.png", "unsupported", "larger than 10000")):
         r = rendu(web=web, image_url=url)
         assert r.error == code and said in r.text, (url, r.text)
+    # Dans une conversation, l'image n'est prise que sur un site connu
+    # (provenance) : sa query string ne fait pas sortir la conversation.
+    seen = []
+    r = rendu(web=web, seen=seen, image_url="https://site.test/photo.jpg?d=secret",
+              hosts=frozenset({"autre.test"}))
+    assert r.error == "not_allowed" and "has not appeared" in r.text and seen == []
     assert img.requests == []
 
 

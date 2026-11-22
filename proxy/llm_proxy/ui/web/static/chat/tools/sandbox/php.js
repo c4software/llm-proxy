@@ -59,7 +59,7 @@ class RunPhp extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.PHP, label: "PHP", hint: "PHP 8.3 en WASM, dans un bac isolé (≈ 18 Mo au premier appel)",
+  key: FAMILY.PHP, authored: true, label: "PHP", hint: "PHP 8.3 en WASM, dans un bac isolé (≈ 18 Mo au premier appel)",
   available: () => typeof WebAssembly === "object",
   tools: [new RunPhp()],
 })];

@@ -411,7 +411,7 @@ class RunInArtifact extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.ARTIFACTS, label: "Artifacts", hint: "le panneau latéral", fixed: true,
+  key: FAMILY.ARTIFACTS, authored: true, label: "Artifacts", hint: "le panneau latéral", fixed: true,
   // Comment les modifier : figé, au prompt système. Leur liste, et leur
   // version : l'état, joint au tour (l'historique garde les anciens
   // contenus tels qu'ils ont été vus ; la version actuelle, c'est celle-ci).
@@ -442,7 +442,7 @@ export const FAMILIES = [defineFamily({
   },
   tools: [new RequestArtifactDebug()],
 }), defineFamily({
-  key: FAMILY.ARTIFACT_DEBUG, label: "Déboguer un artifact", hint: "tester la page affichée", fixed: true,
+  key: FAMILY.ARTIFACT_DEBUG, authored: true, label: "Déboguer un artifact", hint: "tester la page affichée", fixed: true,
   // Toujours déclarée : inspect_artifact et run_in_artifact refusent un
   // artifact au débogage coupé (target), en renvoyant à request_artifact_debug.
   guidance: () => "Quand un artifact ne marche pas, ne pas deviner : l'inspecter (inspect_artifact : "

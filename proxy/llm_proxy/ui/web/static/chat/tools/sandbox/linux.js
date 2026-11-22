@@ -284,7 +284,7 @@ class ShellWrite extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.LINUX, label: "Linux",
+  key: FAMILY.LINUX, authored: true, label: "Linux",
   hint: "Une VM Linux en WASM (Alpine : bash, python3, git, outils GNU…), sans réseau, partagée avec le panneau Terminal",
   available: () => typeof WebAssembly === "object" && typeof Worker === "function",
   guidance: () => "run_shell exécute du bash dans une VM Linux du navigateur. Ne "

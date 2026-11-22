@@ -48,7 +48,7 @@ import httpx2
 from ..core import config
 from ..core.settings import log
 from ..storage import files
-from . import net
+from . import net, provenance
 from .contract import Artifact, Call, Result, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.code_execution.enabled", False)
@@ -563,7 +563,16 @@ class CodeExecution(Tool):
         if not URL or not TOKEN:
             raise ToolError("unavailable",
                             "code execution is not configured on this proxy.")
-        await download(inputs, call.settings, transport=downloads)
+        # Comme une lecture : une URL d'entrée n'ouvre qu'un site connu de
+        # la conversation (provenance) — sinon sa query string ferait
+        # sortir la conversation.
+        for item in inputs:
+            try:
+                provenance.check(item.url, call)
+            except ToolError as exc:
+                item.refuse(exc.code, exc.message)
+        await download([item for item in inputs if not item.why],
+                       call.settings, transport=downloads)
         ready = [item for item in inputs if not item.why]
         if inputs and not ready:
             # Le programme était écrit pour ces fichiers : sans aucun

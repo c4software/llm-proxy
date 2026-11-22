@@ -152,7 +152,7 @@ class RunJavascript extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.JAVASCRIPT, label: "JavaScript, TypeScript",
+  key: FAMILY.JAVASCRIPT, authored: true, label: "JavaScript, TypeScript",
   hint: "du code dans un bac isolé, sans réseau : fichiers, graphiques ; vérifier les types",
   guidance: () => "Pour un calcul exact, un traitement de données de l'utilisateur ou un "
     + "graphique, exécuter du code avec run_javascript (chart() pour un graphique) plutôt que de "

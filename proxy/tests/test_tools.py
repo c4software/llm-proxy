@@ -1110,36 +1110,47 @@ def test_route_tools_liste_les_outils_actifs_et_les_execute(routes):
 
 def test_la_page_appelle_un_outil_heberge_par_sa_route(routes, monkeypatch):
     """/ui/tools/<nom> : la même exécution que /v1/tools (un programme de
-    la page, run_tools_program), comptée à /ui/tools. Fermée quand le
-    chat de la page, ses outils hébergés ou run_tools_program le sont ;
-    un corps JSON exigé (une page tierce ne peut pas en poster) ; pas de
-    mémoire en incognito."""
+    la page, run_tools_program), comptée à /ui/tools, sous la provenance
+    des sites connus que la page porte (`hosts`) — et rend ceux que le
+    résultat y ajoute. Fermée quand le chat de la page, ses outils
+    hébergés ou run_tools_program le sont ; un corps JSON exigé (une page
+    tierce ne peut pas en poster) ; pas de mémoire en incognito."""
     client, seen = routes
     lines = []
     everywhere(monkeypatch, stats, "record_tool", lambda *a: lines.append(a))
+
+    def call(name, args, hosts=(), **kw):
+        return client.post(f"/ui/tools/{name}", json={"arguments": args, "hosts": list(hosts)}, **kw)
+
     for ui_chat, hosted in ((False, True), (True, False)):
         everywhere(monkeypatch, dashboard, "UI_CHAT", ui_chat)
         everywhere(monkeypatch, chat_api, "ENABLED", hosted)
-        r = client.post("/ui/tools/web_search", json={"query": "é"})
-        assert r.status_code == 404, (ui_chat, hosted)
+        assert call("web_search", {"query": "é"}).status_code == 404, (ui_chat, hosted)
     everywhere(monkeypatch, chat_api, "ENABLED", True)
     everywhere(monkeypatch, dashboard, "UI_CHAT", True)
-    r = client.post("/ui/tools/web_search", content='{"query": "é"}',
+    r = client.post("/ui/tools/web_search", content='{"arguments": {"query": "é"}, "hosts": []}',
                     headers={"content-type": "text/plain"})
     assert r.status_code == 415 and seen == []
-    r = client.post("/ui/tools/web_search", json={"query": "é"})
+    # Sans les sites connus, pas d'appel : la provenance ne se saute pas.
+    for body in ({"query": "é"}, {"arguments": {"query": "é"}}, {"arguments": {}, "hosts": "x"},
+                 {"hosts": []}, {"arguments": None, "hosts": []}):
+        assert client.post("/ui/tools/web_search", json=body).status_code == 400, body
+    r = call("web_search", {"query": "é"}, ["connu.fr"])
     assert r.status_code == 200 and r.json()["result"].startswith("[1] Titre")
+    assert r.json()["hosts"] == ["connu.fr", "e.org"]      # la recherche fait connaître e.org
     assert seen == [{"query": "é"}] and [line[:2] for line in lines] == [
         ("web_search", "/ui/tools")]
-    assert client.post("/ui/tools/rm_rf", json={}).status_code == 404
+    # Une lecture d'un site jamais vu : refusée avant toute requête.
+    monkeypatch.setattr(web_fetch, "ENABLED", True)
+    r = call("web_fetch", {"url": "https://jamais.vu/?d=secret"}, ["connu.fr", "e.org"])
+    assert r.status_code == 200 and r.json()["error"] == "not_allowed"
+    assert call("rm_rf", {}).status_code == 404
     # Incognito : pas de mémoire persistante, quoi que la page envoie.
-    r = client.post("/ui/tools/memory", json={"command": "view", "path": "/memories"},
-                    headers={"x-incognito": "1"})
+    r = call("memory", {"command": "view", "path": "/memories"}, headers={"x-incognito": "1"})
     assert r.status_code == 403
     # L'admin a refusé les programmes : la route est fermée aussi.
     monkeypatch.setattr(page_tools, "DISABLED_TOOLS", ["run_tools_program"])
-    r = client.post("/ui/tools/web_search", json={"query": "é"})
-    assert r.status_code == 404 and len(seen) == 1
+    assert call("web_search", {"query": "é"}).status_code == 404 and len(seen) == 1
 
 
 def test_route_tools_run_refuse_outil_inactif_et_corps_non_objet(routes):

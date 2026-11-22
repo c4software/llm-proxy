@@ -164,7 +164,7 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                       prompt_estimate: int, rebuild,
                       limit: int | dict | None = None,
                       options: dict | None = None, ping: bytes | None = None,
-                      messages: list | None = None):
+                      messages: list | None = None, authored=frozenset()):
     """Une réponse avec outils hébergés, pour les trois surfaces : relaie le tour upstream ouvert,
     exécute les appels que le robinet a mis de côté (`pending`), en rend
     le compte au client, puis relance le backend — jusqu'à un tour sans
@@ -187,7 +187,9 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
         d'un outil, quota d'un tour suivant), ou None ;
       * `messages` : la conversation du premier tour (chat/completions),
         d'où viennent les sites connus des outils qui lisent une URL
-        (tools/provenance.py) ; chaque résultat réussi y ajoute les siens.
+        (tools/provenance.py) ; chaque résultat réussi y ajoute les siens ;
+      * `authored` : des outils du CLIENT dont le résultat ne fait
+        connaître aucun site (les bacs de code de la page).
 
     Un tour qui mêle appels hébergés et appels du client s'arrête après
     les premiers : la main revient au client, qui rejouera le tout.
@@ -211,7 +213,11 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
     client = request_owner(request)
     # Les sites connus de la conversation (provenance), puis de ce que les
     # outils de cette réponse rendent : une recherche ouvre ses résultats.
-    known = provenance.hosts_in_messages(messages) if messages is not None else None
+    # `authored` : des outils du client dont le résultat ne compte pas
+    # (provenance.hosts_in_messages).
+    known = provenance.hosts_in_messages(messages, authored) \
+        if messages is not None else None
+    robinet.known = known           # le même ensemble, tenu à jour ici
     # L'attente en cours (exécution d'un outil, ou porte de quota + envoi
     # du tour suivant) : une tâche, pour pouvoir émettre des pings pendant
     # qu'elle dure, et l'annuler si le client raccroche.

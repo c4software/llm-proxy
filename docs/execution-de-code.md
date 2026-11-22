@@ -161,7 +161,9 @@ dépose dans `/work` avant le programme.
 - **Téléchargement** : par `net.download`, comme `web_fetch`. Adresses
   publiques seulement, listes de `[tools.net]` et du client, vérifiées à
   chaque redirection ; 4 de front. Un fichier au-delà des bornes est
-  refusé, jamais coupé.
+  refusé, jamais coupé. Dans une conversation, son site doit y être déjà
+  apparu ([provenance](outils.md#la-provenance-des-url-toolsnetprovenance)),
+  comme pour une lecture : sinon `not_allowed`.
 - **Nom dans le bac** : le `name` donné par le modèle ; sinon le dernier
   élément de l'URL (`…/iris.csv` → `iris.csv`) ; sinon celui de
   `Content-Disposition` ; sinon `file` et l'extension du type annoncé. Le

@@ -23,7 +23,8 @@ const names = tools.FAMILIES.flatMap((f) => f.tools.map((t) => t.name));
 import { readFileSync, writeFileSync } from "node:fs";
 const MANIFEST = new URL("../llm_proxy/ui/page_tools.json", import.meta.url);
 const manifest = JSON.stringify({ families: Object.fromEntries(tools.FAMILIES.map((f) => [f.key, {
-  label: f.label, fixed: !!f.fixed, tools: f.tools.map((t) => t.name) }])) }, null, 2) + "\n";
+  label: f.label, fixed: !!f.fixed, ...(f.authored ? { authored: true } : {}),
+  tools: f.tools.map((t) => t.name) }])) }, null, 2) + "\n";
 let current = "";
 try { current = readFileSync(MANIFEST, "utf8"); } catch { /* absent */ }
 if (process.argv.includes("--write")) {

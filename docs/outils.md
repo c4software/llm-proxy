@@ -538,22 +538,31 @@ appliqué dans `net.download`, à chaque redirection.
 
 #### La provenance des URL (`[tools.net].provenance`)
 
-`web_fetch`, `web_grep`, `ocr` et `transcribe` n'ouvrent une URL choisie
-par le modèle que si son **site** est déjà apparu dans la conversation.
+`web_fetch`, `web_grep`, `ocr`, `transcribe`, les fichiers d'entrée de
+`code_execution` et l'image à retoucher d'`image_generation` n'ouvrent
+une URL choisie par le modèle que si son **site** est déjà apparu dans la
+conversation.
 C'est la règle du `web_fetch` d'Anthropic, qui exige l'URL exacte, élargie
 au site.
 
 - **Ce qui rend un site connu** :
   - un message de l'utilisateur, le prompt système (donc aussi le résumé
-    d'un `/compact`), le texte d'une réponse précédente ;
+    d'un `/compact`), le texte d'une réponse précédente — pas celui que
+    le modèle écrit depuis le dernier message de l'utilisateur : il y
+    écrirait une URL pour la lire à l'étape suivante ;
   - le résultat **réussi** d'un outil, une recherche web comprise ;
   - une URL comme un domaine écrit nu (« regarde frerestoque.fr »).
 - **Ce qui ne le rend pas connu** : les arguments d'un appel d'outil (ce
   que le modèle demande n'est pas une source), et un résultat en échec.
   Sinon une URL inventée qui a échoué deviendrait connue par son message
-  d'erreur. La sortie de `code_execution` non plus : le modèle écrit le
-  script, donc ce qu'il affiche. Une URL qu'un script tire d'un fichier
-  joint n'est donc pas lisible : l'utilisateur la colle dans son message.
+  d'erreur. Ni ce que le modèle a pu écrire lui-même et relit : la sortie
+  de `code_execution`, ce que `memory` relit (l'utilisateur peut y écrire
+  aussi : une URL qu'il y range ne rend pas non plus son site connu), la
+  sortie des bacs de code de la page (JavaScript, PHP, SQL, PostgreSQL,
+  Linux, programmes d'outils) et ses artifacts. Le dossier ouvert, lui,
+  compte : il contient les fichiers de l'utilisateur.
+  Une URL qu'un script tire d'un fichier joint n'est donc pas lisible :
+  l'utilisateur la colle dans son message.
 - **Pendant une réponse**, chaque résultat réussi ajoute ses sites : une
   recherche rend lisibles ses résultats au tour suivant, et une page lue
   rend lisibles ses liens. Le modèle peut donc naviguer seul : chercher,
@@ -564,9 +573,11 @@ au site.
   Un hôte sorti de la mémoire du modèle est refusé, avec une consigne :
   chercher la page, ou demander l'adresse.
 - **Où elle s'applique** : là où le proxy voit la conversation, c'est-à-dire
-  les trois surfaces et le chat de la page. Pas sur `/v1/tools`, `/mcp`, ni
-  `/ui/tools` (les [programmes d'outils](navigateur.md#programmes-doutils--run_tools_program)
-  de la page), où l'appel arrive sans elle (`Call.hosts` vaut `None`).
+  les trois surfaces et le chat de la page, [programmes d'outils](navigateur.md#programmes-doutils--run_tools_program)
+  compris : le proxy donne à la page, en fin de réponse, les sites connus
+  (`x_known_sites`), que le programme porte à chaque appel. Pas sur
+  `/v1/tools` ni `/mcp`, où l'appel arrive sans elle (`Call.hosts` vaut
+  `None`).
 - `provenance = "off"` la coupe.
 
 Elle limite deux choses : les URL qu'un modèle invente de mémoire (l'hôte
@@ -702,7 +713,8 @@ Ce qu'il montre du contrat :
   l'exécute dans le délai. La description dit ce que l'absence de réseau
   interdit (ni module Go, ni crate), sinon le modèle l'essaie.
 - **Les fichiers d'entrée sont téléchargés par le proxy**, jamais par le bac
-  (sans réseau) : `net.download`, 4 de front, bornes propres (nombre,
+  (sans réseau), sous la [provenance](#la-provenance-des-url-toolsnetprovenance)
+  dans une conversation : `net.download`, 4 de front, bornes propres (nombre,
   taille par fichier et totale, durée totale), refus au-delà, jamais de
   coupe. Ils partent avec le programme (`inputs`, base64) ; l'exécuteur
   rejuge noms et tailles. Leur nom est prévisible (le modèle écrit son

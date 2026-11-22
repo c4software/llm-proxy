@@ -66,6 +66,9 @@ export function take(doc, live, hooks = {}) {
     // Ce que le prompt du dernier tour portait sans que la page l'ait
     // (échanges d'outils hébergés réinsérés par le proxy), en caractères.
     if (d.x_hidden) live.hidden = d.x_hidden.chars || 0;
+    // Les sites connus de la conversation, pour les appels que la page va
+    // exécuter (un programme d'outils les porte : provenance des URL).
+    if (Array.isArray(d.x_known_sites)) live.known = d.x_known_sites;
     if (d.x_hosted_tool) {
       const ev = d.x_hosted_tool;
       const known = live.tools.find((t) => t.id === ev.id);

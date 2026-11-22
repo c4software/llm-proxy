@@ -459,10 +459,11 @@ return Promise.all(urls.map((url) =>
   réponse (`[tools].max_calls`, ceux d'`image_generation` ou de
   `code_execution`) ne s'appliquent pas : seule la borne par minute vaut
   d'un programme à l'autre.
-- Comme pour `/v1/tools`, l'appel ne porte pas la conversation : la
-  [provenance des URL](outils.md#la-provenance-des-url-toolsnetprovenance)
-  n'est pas vérifiée. Les garde-fous de `[tools.net]` (adresses privées,
-  domaines) s'appliquent.
+- La [provenance des URL](outils.md#la-provenance-des-url-toolsnetprovenance)
+  s'applique comme dans le reste du chat : le proxy donne à la page les
+  sites connus de la conversation en fin de réponse, et chaque appel du
+  programme les porte, avec ceux que ses appels précédents ont fait
+  connaître. Ce que le programme rend ne fait connaître aucun site.
 
 ### Installer les runtimes
 
@@ -558,6 +559,7 @@ ses composables une fois, dans une portée qui vit autant que la page
 | `label`, `hint` | ce qu'affiche le menu Outils |
 | `on` | cochée d'office dans une conversation neuve |
 | `fixed` | toujours active, hors du menu (questions, fichiers, artifacts, dossier) |
+| `authored` | ses résultats sont écrits par le modèle ou son code (les bacs, les artifacts) : ils ne font connaître aucun site au proxy ([provenance](outils.md#la-provenance-des-url-toolsnetprovenance)), qui le lit dans `ui/page_tools.json` |
 | `available()` | ce navigateur sait-il la faire ? |
 | `enabled(ctx)` | active pour ce tour ? Un choix de l'utilisateur (le dossier : s'il l'a ouvert), jamais l'état de la conversation |
 | `guidance(ctx)` | une consigne ajoutée au **prompt système** quand la famille est active ; **figée**, elle ne dépend pas de l'état |

@@ -170,8 +170,11 @@ async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
         # aucun (`_settled` sonderait sinon sans attendre).
         ping = b": ping\n\n" if robinet.sse \
             and settings.PING_INTERVAL > 0 else None
+        # Le chat de la page : ses outils dont le résultat est écrit par
+        # le modèle (ses bacs de code) ne font connaître aucun site.
         return hosted_loop(call, request, hosted, robinet, upstream, estimate,
-                           rebuild, ping=ping, messages=base)
+                           rebuild, ping=ping, messages=base,
+                           authored=page_tools.AUTHORED if ctx.progress else ())
 
     # En JSON, la réponse prend le statut de l'issue de la boucle.
     return await start_hosted(

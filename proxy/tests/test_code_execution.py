@@ -94,9 +94,11 @@ def web(request):
     return httpx2.Response(404, text="rien")
 
 
-def rendu(args, reply=None, session="conv", seen=None) -> tools.Result:
-    """Ce que tools.Hosted fait d'un `run` appelé à la main."""
-    call = tools.Call(client="clientA", session=session, endpoint="/v1/tools")
+def rendu(args, reply=None, session="conv", seen=None, hosts=None) -> tools.Result:
+    """Ce que tools.Hosted fait d'un `run` appelé à la main. `hosts` : les
+    sites connus de la conversation (None : hors conversation)."""
+    call = tools.Call(client="clientA", session=session, endpoint="/v1/tools",
+                      hosts=hosts)
     return run(TOOL.run(args, call, transport=executor(
         answer() if reply is None else reply, seen),
         downloads=httpx2.MockTransport(web)))
@@ -229,6 +231,15 @@ def test_fichiers_d_entree_refuses(monkeypatch):
                         ([f"{here}/gros.bin", f"{here}/absent.csv"],
                          "not_accessible")):
         assert rendu({**CODE, "files": asked}, seen=seen).error == code, asked
+    # Dans une conversation, une URL d'entrée n'ouvre qu'un site connu
+    # (provenance) : sinon sa query string ferait sortir la conversation.
+    r = rendu({**CODE, "files": [f"{here}/data/ventes.csv?d=secret"]}, seen=seen,
+              hosts=frozenset({"autre.test"}))
+    assert r.error == "not_allowed" and "has not appeared in this conversation" in r.text
+    r = rendu({**CODE, "files": [f"{here}/data/ventes.csv"]},
+              answer(inputs=[{"name": "ventes.csv", "size": len(CSV)}]),
+              hosts=frozenset({"site.test"}))
+    assert r.error is None
     # Le total de l'appel : le fichier de trop est refusé, pas coupé.
     monkeypatch.setattr(code_execution, "MAX_FILES_BYTES", 620)
     r = rendu({**CODE, "files": [f"{here}/export", f"{here}/data/ventes.csv"]},

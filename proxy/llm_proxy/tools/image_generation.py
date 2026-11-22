@@ -51,7 +51,7 @@ from ..core import config
 from ..core.settings import is_exempt, log
 from ..storage import files, stats
 from ..upstream import albert, backends
-from . import net
+from . import net, provenance
 from .contract import Artifact, Call, Result, Tool, ToolError, ToolName
 
 ENABLED = config.flag("tools.image_generation.enabled", False)
@@ -473,6 +473,10 @@ class ImageGeneration(Tool):
                 f"images cannot be delivered to the user on this proxy "
                 f"({why}). Do not retry: tell the user."))
         if source:
+            # Comme une lecture : l'image n'est prise que sur un site connu
+            # de la conversation (provenance), sa query string ne fait pas
+            # sortir la conversation.
+            provenance.check(source, call)
             # La taille d'une retouche est celle de l'image, sauf demande.
             item = await _ask(
                 PATH_EDITS, {"prompt": prompt.strip(),

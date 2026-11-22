@@ -1,7 +1,9 @@
 """
 Les outils de la PAGE (ceux que le navigateur exécute : chat/tools/ de
 web/static) que la configuration refuse à tous : [ui].page_tools_disabled,
-des familles (« camera », « sql ») ou des outils (« run_php »).
+des familles (« camera », « sql ») ou des outils (« run_php ») ; et ceux
+dont le résultat est écrit par le code du modèle (familles `authored`,
+pour la provenance des URL).
 
 Le proxy ne connaît pas ces outils par lui-même : il lit leur manifeste,
 page_tools.json (famille → outils), tiré du registre de la page par
@@ -25,17 +27,24 @@ from ..core.settings import log
 MANIFEST = os.path.join(os.path.dirname(__file__), "page_tools.json")
 
 
-def _manifest() -> dict[str, list[str]]:
+def _manifest() -> dict[str, dict]:
     try:
         with open(MANIFEST, encoding="utf-8") as f:
-            return {k: list(v.get("tools") or []) for k, v in json.load(f)["families"].items()}
-    except (OSError, ValueError, KeyError, AttributeError) as exc:
+            return {k: dict(v) for k, v in json.load(f)["families"].items()}
+    except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
         log.warning("outils de la page : manifeste illisible (%s) : %s", MANIFEST, exc)
         return {}
 
 
-FAMILIES = _manifest()
+_FAMILIES = _manifest()
+FAMILIES = {k: list(v.get("tools") or []) for k, v in _FAMILIES.items()}
 TOOLS = {t for names in FAMILIES.values() for t in names}
+# Les outils de la page dont le résultat est écrit par le modèle (familles
+# `authored` : ses bacs de code, ses artifacts) : ils ne font connaître
+# aucun site (provenance.hosts_in_messages, que le chat de la page appelle
+# avec eux).
+AUTHORED = frozenset(t for v in _FAMILIES.values() if v.get("authored")
+                     for t in v.get("tools") or ())
 
 
 def _resolve(entries) -> tuple[list[str], list[str]]:

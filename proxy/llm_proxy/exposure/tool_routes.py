@@ -18,6 +18,7 @@ from ..access.auth import request_owner
 from ..core.httputil import error_response, parse_json
 from ..core.settings import log
 from ..storage import files
+from ..tools import provenance
 from . import mcp_server
 
 router = APIRouter()
@@ -90,8 +91,10 @@ async def tools_run(name: str, request: Request):
     return await run_direct(request, name, "/v1/tools")
 
 
-async def run_direct(request: Request, name: str, endpoint: str):
-    """Exécute un outil hébergé. Corps : ses arguments (objet JSON).
+async def run_direct(request: Request, name: str, endpoint: str,
+                     body=None, known: set | None = None):
+    """Exécute un outil hébergé. Corps : ses arguments (objet JSON) —
+    ou `body`, déjà lu (/ui/tools).
     Toujours 200 quand l'outil existe : un échec de l'outil est un texte
     «Error: …» que le modèle doit lire, pas une erreur HTTP — `is_error`
     le signale au client, `error` en donne le code (tools.ERRORS, null
@@ -99,7 +102,10 @@ async def run_direct(request: Request, name: str, endpoint: str):
     de son texte (pages citées ; URL lue, titre, plage de caractères…),
     pour l'affichage — voir docs/outils.md. `endpoint` : la route
     (/v1/tools, ou /ui/tools pour le chat de la page), pour les
-    statistiques."""
+    statistiques. `known` : les sites connus de la conversation
+    (provenance) — None, pas de contrôle ; sinon l'outil s'y tient, la
+    réponse rend `hosts`, ces sites et ceux que le résultat fait
+    connaître."""
     hosted = tools.Hosted()
     if name not in hosted.by_name and tools.GRANTED.get() is not None \
             and any(t.name == name and t.enabled for t in tools.REGISTRY):
@@ -113,7 +119,7 @@ async def run_direct(request: Request, name: str, endpoint: str):
             "openai", 404, "unknown_tool",
             f"outil «{name}» inconnu ou désactivé ([tools.{name}] dans "
             f"config.toml) ; actifs : {', '.join(hosted.by_name) or 'aucun'}")
-    args = parse_json(await request.body())
+    args = parse_json(await request.body()) if body is None else body
     if not isinstance(args, dict):
         return error_response("openai", 400, "invalid_request_error",
                               "corps attendu : les arguments de l'outil, "
@@ -128,7 +134,11 @@ async def run_direct(request: Request, name: str, endpoint: str):
                               message, headers={"Retry-After": str(retry)})
     result = await hosted.run(
         name, json.dumps(args, ensure_ascii=False), 0, endpoint=endpoint,
-        client=client)
+        client=client, hosts=frozenset(known) if known is not None else None)
+    extra = {}
+    if known is not None:
+        provenance.learn(known, result, name)
+        extra["hosts"] = sorted(known)
     return {"name": name, "result": result.text,
             "is_error": result.error is not None, "error": result.error,
             "sources": [dataclasses.asdict(s) for s in result.sources],
@@ -136,7 +146,7 @@ async def run_direct(request: Request, name: str, endpoint: str):
             # Les fichiers produits, rangés au magasin : des LIENS.
             "files": [{"name": s.name, "media_type": s.media_type,
                        "size": len(s.data), "url": s.url}
-                      for s in files.keep(result.files, client)]}
+                      for s in files.keep(result.files, client)], **extra}
 
 
 @router.api_route(files.PATH + "{token}/{name}", methods=["GET", "HEAD"])

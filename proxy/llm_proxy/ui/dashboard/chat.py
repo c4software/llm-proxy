@@ -166,13 +166,21 @@ async def ui_chat(request: Request):
     return await chat(request, page=True)
 
 
+# Sites connus qu'un appel de programme peut porter.
+MAX_KNOWN_SITES = 10_000
+
+
 @router.post("/ui/tools/{name}")
 async def ui_tool(name: str, request: Request):
     """/v1/tools/<nom> sous /ui pour le cookie : un outil hébergé appelé
     par la page elle-même — par un programme de `run_tools_program`
     (chat/tools/sandbox/programs.js). Mêmes droits, même borne par minute
-    ([tools].direct_calls_per_minute), même réponse ; pas de provenance :
-    l'appel ne porte pas la conversation. Fermée aussi quand l'admin a
+    ([tools].direct_calls_per_minute), même réponse. La provenance des URL
+    porte sur les sites que la conversation a fait connaître (`hosts` du
+    corps, que le proxy a donnés à la page en fin de réponse :
+    x_known_sites) et sur ceux que les appels du programme y ajoutent,
+    rendus à chaque réponse (`hosts`). Corps : {"arguments": {...},
+    "hosts": [...]}. Fermée aussi quand l'admin a
     refusé run_tools_program ([ui].page_tools_disabled) : une page
     modifiée ne la rouvre pas. Incognito : pas de mémoire persistante,
     comme /ui/chat/completions."""
@@ -189,7 +197,20 @@ async def ui_tool(name: str, request: Request):
         return error_response("openai", 403, "tool_not_permitted",
                               "conversation incognito : pas de mémoire "
                               "persistante")
-    return await tool_routes.run_direct(request, name, "/ui/tools")
+    body = parse_json(await request.body())
+    body = body if isinstance(body, dict) else {}
+    hosts = body.get("hosts")
+    if not isinstance(hosts, list) or not isinstance(body.get("arguments"), dict):
+        return error_response("openai", 400, "invalid_request_error",
+                              "corps attendu : {\"arguments\": {...}, "
+                              "\"hosts\": [les sites connus]}")
+    if len(hosts) > MAX_KNOWN_SITES:
+        return error_response("openai", 400, "invalid_request_error",
+                              f"plus de {MAX_KNOWN_SITES} sites connus : la "
+                              f"conversation en cite trop pour un programme")
+    known = {h for h in hosts if isinstance(h, str) and 0 < len(h) <= 253}
+    return await tool_routes.run_direct(request, name, "/ui/tools",
+                                        body.get("arguments"), known)
 
 
 def incognito(request: Request) -> None:

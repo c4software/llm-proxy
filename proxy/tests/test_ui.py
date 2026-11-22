@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fakes import everywhere
-from fakes import (ANSWER_TURN, FakeUpstream, hosted_chat, search_then_answer,
-                   stream)
+from fakes import (ANSWER_TURN, FakeUpstream, chunk, hosted_chat, search_then_answer,
+                   stream, tool_call)
 from llm_proxy.core import identity
 from llm_proxy.access import auth
 from llm_proxy.upstream import catalog, relaying
@@ -237,6 +237,43 @@ def test_chat_announces_hosted_tool_runs(ui):
                              "messages": [{"role": "user", "content": "?"}]},
                        headers={"Authorization": f"Bearer {KEY}"})
     assert b"x_hosted_tool" not in r.content and b"x_hidden" not in r.content
+
+
+def test_chat_gives_the_page_its_known_sites_with_its_calls(ui):
+    """Une réponse qui rend des appels à la page (un programme d'outils)
+    lui donne les sites connus de la conversation (`x_known_sites`) : ceux
+    de ses messages, et ceux de la recherche faite par le proxy dans cette
+    réponse, que la page n'a jamais vue. Sans appel à rendre, ou pour un
+    client de l'API, rien."""
+    login(ui)
+    handback = (tool_call(0, "c_p", "run_tools_program", "{}"), chunk(finish="tool_calls"))
+    program = {"type": "function", "function": {"name": "run_tools_program",
+                                                "parameters": {"type": "object", "properties": {}}}}
+
+    def known(r):
+        return [c["delta"]["x_known_sites"] for d in blocks(r.content)
+                for c in d["choices"] if "x_known_sites" in c["delta"]]
+
+    # Un tour précédent : la sortie d'un bac de la page, écrite par le
+    # modèle, cite un site — il ne devient pas connu.
+    bac = [{"role": "user", "content": "Compare avec lemonde.fr"},
+           {"role": "assistant", "content": None, "tool_calls": [{"id": "j", "type": "function",
+            "function": {"name": "run_javascript", "arguments": "{}"}}]},
+           {"role": "tool", "tool_call_id": "j", "content": "Résultat : https://ecrit-par-le-code.exemple/"}]
+    ui.replies = [search_then_answer()[0], FakeUpstream(stream(*handback))]
+    r = chat(ui, tools=[{"type": "web_search"}, program], messages=bac)
+    (sites,) = known(r)
+    assert {"lemonde.fr", "example.org"} <= set(sites), sites
+    assert "ecrit-par-le-code.exemple" not in sites
+    ui.replies = search_then_answer()
+    assert known(chat(ui, tools=[{"type": "web_search"}, program])) == []
+    ui.replies = [search_then_answer()[0], FakeUpstream(stream(*handback))]
+    r = ui.client.post("/v1/chat/completions",
+                       json={"model": "essai/qwen", "stream": True,
+                             "tools": [{"type": "web_search"}, program],
+                             "messages": [{"role": "user", "content": "?"}]},
+                       headers={"Authorization": f"Bearer {KEY}"})
+    assert b"x_known_sites" not in r.content
 
 
 def test_chat_offers_one_switch_per_mcp_server(ui, monkeypatch):

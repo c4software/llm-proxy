@@ -17,6 +17,7 @@
     "artifacts": {
       "label": "Artifacts",
       "fixed": true,
+      "authored": true,
       "tools": [
         "show_artifact",
         "edit_artifact",
@@ -34,6 +35,7 @@
     "artifact_debug": {
       "label": "Déboguer un artifact",
       "fixed": true,
+      "authored": true,
       "tools": [
         "inspect_artifact",
         "run_in_artifact"
@@ -145,6 +147,7 @@
     "compute": {
       "label": "JavaScript, TypeScript",
       "fixed": false,
+      "authored": true,
       "tools": [
         "run_javascript",
         "check_typescript"
@@ -153,6 +156,7 @@
     "php": {
       "label": "PHP",
       "fixed": false,
+      "authored": true,
       "tools": [
         "run_php"
       ]
@@ -160,6 +164,7 @@
     "sql": {
       "label": "SQL",
       "fixed": false,
+      "authored": true,
       "tools": [
         "run_sql"
       ]
@@ -167,6 +172,7 @@
     "postgres": {
       "label": "PostgreSQL",
       "fixed": false,
+      "authored": true,
       "tools": [
         "run_postgres"
       ]
@@ -174,6 +180,7 @@
     "linux": {
       "label": "Linux",
       "fixed": false,
+      "authored": true,
       "tools": [
         "run_shell",
         "shell_read",
@@ -185,6 +192,7 @@
     "programs": {
       "label": "Programmes d'outils",
       "fixed": false,
+      "authored": true,
       "tools": [
         "run_tools_program"
       ]

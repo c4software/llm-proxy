@@ -8,6 +8,7 @@ import pytest
 from fakes import FakeUpstream, SEARCH_TURN, ANSWER_TURN, chunk, go, outil, stream, tool_call
 from llm_proxy import tools
 from llm_proxy.tools import ocr, provenance, transcribe, web_fetch, web_grep
+from llm_proxy.ui import page_tools
 from test_chat_api import chat, post  # noqa: F401 — la fixture `chat`
 
 
@@ -34,14 +35,28 @@ def test_sites_d_une_conversation():
                          "arguments": "{\"url\": \"https://routify-file-proxy.aliyuncs.com/x\"}"}}]},
         {"role": "tool", "tool_call_id": "c1", "content": "Error: https://routify-file-proxy.aliyuncs.com/x returned HTTP 403."},
         {"role": "tool", "tool_call_id": "c2", "content": "1. Serde — https://serde.rs/"},
-        # La sortie d'un script écrit par le modèle : c'est lui qui l'écrit.
-        {"role": "assistant", "content": None, "tool_calls": [{"id": "c3", "function": {
-            "name": "code_execution", "arguments": "{\"code\": \"print(1)\"}"}}]},
-        {"role": "tool", "tool_call_id": "c3", "content": "Exit code: 0\nhttps://invente.exemple/fuite"},
+        {"role": "user", "content": "Et maintenant ?"},
+        # Le texte du modèle depuis le dernier message de l'utilisateur :
+        # écrit pour être lu à l'étape suivante, il ne compte pas.
+        {"role": "assistant", "content": "Je lis https://ecrit.exemple/?d=secret",
+         "tool_calls": [{"id": "c3", "function": {"name": "run_javascript", "arguments": "{}"}}]},
     ]
-    # Ni les arguments d'un appel, ni un résultat en échec, ni la sortie
-    # d'un code écrit par le modèle.
-    assert provenance.hosts_in_messages(msgs) == {"exemple.org", "crates.io", "rust-lang.org", "serde.rs"}
+    # Ce que le modèle a écrit lui-même et relit : la sortie d'un script
+    # (code_execution, et les bacs de la page que la route désigne), un
+    # fichier de sa mémoire.
+    page = frozenset({"run_javascript", "run_tools_program", "read_artifact"})
+    for i, name in enumerate(("code_execution", "memory", *sorted(page))):
+        msgs += [{"role": "assistant", "content": None, "tool_calls": [{"id": f"a{i}", "function": {
+                     "name": name, "arguments": "{}"}}]},
+                 {"role": "tool", "tool_call_id": f"a{i}", "content": f"https://invente{i}.exemple/fuite"}]
+    # Ni les arguments d'un appel, ni un résultat en échec, ni ce que le
+    # modèle a écrit lui-même ; sa réponse précédente, lue par
+    # l'utilisateur, compte.
+    assert provenance.hosts_in_messages(msgs, page) == {
+        "exemple.org", "crates.io", "rust-lang.org", "serde.rs"}
+    # Sans les outils de la page désignés, leur sortie compte (un client
+    # de l'API a ses propres outils).
+    assert "invente2.exemple" in provenance.hosts_in_messages(msgs)
 
 
 def test_le_refus(monkeypatch):
@@ -103,3 +118,14 @@ def test_la_sortie_d_un_code_ne_fait_connaitre_aucun_site_a_la_boucle(chat):
 
 async def _rendu(text):
     return text
+
+
+def test_les_bacs_de_la_page_sont_des_sorties_du_modele():
+    """Le manifeste de la page désigne ses outils dont le résultat est écrit
+    par le modèle : bacs de code, programmes d'outils, artifacts — pas ce
+    qu'elle lit de l'appareil ou du dossier de l'utilisateur."""
+    for name in ("run_javascript", "run_php", "run_sql", "run_postgres", "run_shell",
+                 "shell_read", "run_tools_program", "read_artifact", "run_in_artifact"):
+        assert name in page_tools.AUTHORED, name
+    for name in ("clipboard_read", "folder_read", "device_context"):
+        assert name not in page_tools.AUTHORED, name

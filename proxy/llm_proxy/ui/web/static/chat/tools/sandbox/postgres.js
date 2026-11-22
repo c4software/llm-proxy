@@ -168,7 +168,7 @@ class RunPostgres extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.POSTGRES, label: "PostgreSQL",
+  key: FAMILY.POSTGRES, authored: true, label: "PostgreSQL",
   hint: "PostgreSQL en WASM (PGlite) : une base par conversation, import de CSV, JSON, .sql (≈ 17 Mo au premier appel)",
   available: () => typeof WebAssembly === "object",
   guidance: () => "run_postgres a sa propre base PostgreSQL par conversation, distincte de celle de "

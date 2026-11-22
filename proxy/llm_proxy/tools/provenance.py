@@ -30,9 +30,11 @@ from .contract import Call, ToolError, ToolName
 
 MODE = config.text("tools.net.provenance", "site").strip().lower()
 
-# Les outils dont le TEXTE rendu est écrit par le modèle (la sortie d'un
-# script de code_execution) : il ne fait connaître aucun site.
-AUTHORED = frozenset({ToolName.CODE_EXECUTION})
+# Les outils hébergés dont le TEXTE rendu peut avoir été écrit par le
+# modèle : il ne fait connaître aucun site. La sortie d'un script
+# (code_execution), ce que memory relit. Ceux de la page (ses bacs de
+# code) sont donnés par la route (hosts_in_messages, `authored`).
+AUTHORED = frozenset({ToolName.CODE_EXECUTION, ToolName.MEMORY})
 
 # Une URL, et un nom de domaine écrit nu (« regarde frerestoque.fr »).
 _URL = re.compile(r"https?://[^\s<>\"'`)\]}]+", re.IGNORECASE)
@@ -85,25 +87,33 @@ def _texts(content) -> list[str]:
     return []
 
 
-def hosts_in_messages(messages) -> set[str]:
+def hosts_in_messages(messages, authored=frozenset()) -> set[str]:
     """Les sites connus d'une conversation chat/completions : tout le texte
     des messages, SAUF les arguments des appels d'outils (ce que le modèle
     demande n'est pas une source), les résultats en échec (une URL
-    inventée qui a échoué n'en devient pas connue) et ceux des outils
-    AUTHORED."""
+    inventée qui a échoué n'en devient pas connue), ceux des outils
+    AUTHORED et `authored` (des outils du client : les bacs de la page),
+    et le texte du modèle depuis le dernier message de l'utilisateur — il
+    écrirait une URL pour la lire à l'étape suivante. Ses réponses
+    précédentes, que l'utilisateur a lues, comptent."""
     messages = messages if isinstance(messages, list) else []
-    authored = {c.get("id") for msg in messages if isinstance(msg, dict)
-                for c in msg.get("tool_calls") or () if isinstance(c, dict)
-                and isinstance(c.get("function"), dict)
-                and c["function"].get("name") in AUTHORED}
+    names = AUTHORED | frozenset(authored)
+    ids = {c.get("id") for msg in messages if isinstance(msg, dict)
+           for c in msg.get("tool_calls") or () if isinstance(c, dict)
+           and isinstance(c.get("function"), dict)
+           and c["function"].get("name") in names}
+    last_user = max((i for i, m in enumerate(messages)
+                     if isinstance(m, dict) and m.get("role") == "user"), default=-1)
     out = set()
-    for msg in messages:
+    for i, msg in enumerate(messages):
         if not isinstance(msg, dict):
             continue
         texts = _texts(msg.get("content"))
         if msg.get("role") == "tool" and (
-                msg.get("tool_call_id") in authored
+                msg.get("tool_call_id") in ids
                 or any(t.lstrip().startswith("Error:") for t in texts)):
+            continue
+        if msg.get("role") == "assistant" and i > last_user:
             continue
         for t in texts:
             out |= hosts_in_text(t)
