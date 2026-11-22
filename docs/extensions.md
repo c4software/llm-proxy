@@ -78,17 +78,15 @@ connectée) liste les extensions du dossier :
   service) ;
 - celles qui sont écartées, avec leur raison.
 
-*Désactiver* retire tout de suite les outils d'une extension, partout :
+Chaque outil a son bouton : son outil du proxy s'active sans son outil du
+navigateur, ou l'inverse ; l'état de l'extension dit active, en partie ou
+inactive. *Désactiver* retire tout de suite l'outil, partout :
 présentation au modèle, `/v1/tools`, `/mcp`, menu Outils du chat,
-webhooks ; son `.js` n'est plus servi. *Activer* les rend (pour un outil
-du navigateur, au prochain chargement de la page). Une extension à
-plusieurs outils s'active aussi **outil par outil** : son outil du proxy
-sans son outil du navigateur, ou l'inverse ; son `.js` n'est servi que si
-un de ses outils du navigateur est actif. Activée outil par outil, une
-extension garde la liste de ses outils actifs : un outil qu'une nouvelle
-version de l'extension ajoute reste désactivé ; activée en entier, tous ses
-outils le sont, nouveaux compris. L'état, par outil, est gardé dans
-`data/extensions.json`
+webhooks. *Activer* le rend (pour un outil du navigateur, au prochain
+chargement de la page). Le `.js` de l'extension n'est servi que si un de
+ses outils du navigateur est actif. Un outil qu'une nouvelle version de
+l'extension ajoute reste désactivé tant qu'on ne l'active pas. L'état, par
+outil, est gardé dans `data/extensions.json`
 (dans la [sauvegarde](deploiement.md#sauvegarde-et-restauration)) et
 survit aux redémarrages. Une extension nouvellement déposée est
 **désactivée** : ses outils ne servent qu'une fois qu'un admin l'a activée.
