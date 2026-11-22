@@ -156,6 +156,7 @@ partie qui l'a importé.
 | `core/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON |
 | `core/identity.py` | Le client : condensé stable de sa clé (`owner`), secret `data/client.secret` |
 | `core/reload.py` | Le rechargement à chaud : réglages rechargeables (`SAFE`), réévalués et propagés à leurs copies, tout ou rien |
+| `core/window.py` | Une borne d'événements par clé sur une fenêtre glissante (`Window`) : appels directs d'outils, messages d'un webhook entrant, pull requests d'un compte |
 | `core/sqlite_store.py` | Une base de magasin (comptes, mémoire, conversations) : une connexion par processus, schéma posé une fois, opérations sous verrou |
 | `core/config_docs.py` | La description de chaque réglage, lue dans `config.example.toml` (montrée par Configuration → Proxy, exigée par un test) |
 | `core/multipart.py` | Champ `model` d'un corps multipart : lu pour router, préfixe retiré |
@@ -197,7 +198,7 @@ partie qui l'a importé.
 |---|---|
 | `tools/__init__.py` | Le commun : registre, exécution bornée (délai, taille, appels par réponse), stats, mémoire des résultats |
 | `tools/contract.py` | Le contrat : `Tool`, `Result`, `Call`, `ToolError`, codes d'erreur, liaisons aux protocoles. Voir [outils.md](outils.md) |
-| `tools/net.py` | Garde-fou réseau (`[tools.net]`) : domaines, adresses publiques seulement, redirections vérifiées ; `net.download` (avec, pour une forge, des en-têtes limités à son origine), et `net.post` (un webhook sortant hors Apprise, un `response_url`) |
+| `tools/net.py` | Garde-fou réseau (`[tools.net]`) : domaines, adresses publiques seulement, redirections vérifiées ; `net.download` (avec, pour une forge, des en-têtes limités à son origine), et `net.post` (un webhook sortant hors Apprise, un `response_url`, l'API d'une forge ; `method`, `auth`) |
 | `tools/webcache.py` | Cache web en mémoire vive, quelques minutes, borné |
 | `tools/html_text.py` | HTML → texte lisible par un modèle |
 | `tools/web_search.py` | `web_search` : requête à SearXNG, résultats numérotés, filtre par domaines |
@@ -209,7 +210,9 @@ partie qui l'a importé.
 | `tools/code_execution.py` | `code_execution` : client de l'exécuteur, texte et fichiers produits ; `execute`, l'appel à l'exécuteur, commun avec `repository` |
 | `tools/image_generation.py` | `image_generation` : génération ou retouche par un backend, image rendue en fichier |
 | `tools/memory.py` | `memory` : `view`, `create`, `str_replace`, `insert`, `delete`, `rename` |
-| `tools/repository.py` | `repository` : lire un projet d'une forge (`tree`, `read`, `grep`). Le proxy télécharge l'archive (par `net.download`, ou `git fetch` + `git archive`) et la garde compressée ; un bac de l'exécuteur la décompresse et la lit |
+| `tools/forge.py` | Le commun des outils de forge : la source choisie (`source`, `write` pour l'écriture ; bornée au projet d'un événement de forge par `settings.FORGE_SCOPE`), la base d'API et l'en-tête de chaque forge, `get` (une archive, par `net.download`), `call` (une requête JSON, par `net.post`), `default_branch` |
+| `tools/repository.py` | `repository` : lire un projet d'une forge (`tree`, `read`, `grep`). Le proxy télécharge l'archive (par `forge.get`, ou `git fetch` + `git archive`) et la garde compressée ; un bac de l'exécuteur la décompresse et la lit |
+| `tools/pull_request.py` | `pull_request` : une PR en brouillon sur une branche neuve (GitLab, GitHub, Gitea), par `forge.call` ; chemins refusés (`BLOCKED`), bornes, borne horaire |
 | `tools/repository_bac.py` | Le script que `repository` fait tourner dans le bac : décompression sûre, `tree`, `read`, `grep` (un texte envoyé à l'exécuteur, pas un module importé) |
 | `tools/webhook.py` | `webhook` : poste sur un webhook sortant du compte ; l'envoi (`post` : Apprise, sinon `send` en JSON par `net.post`) ; le format Slack dans les deux sens (`to_mrkdwn`, `from_slack`) |
 | `tools/provenance.py` | Les sites connus d'une conversation : ceux qu'un outil qui lit une URL peut ouvrir |
@@ -251,7 +254,8 @@ partie qui l'a importé.
 | `ui/voice_routes.py` | Routes `/ui/voices` (voix clonées) |
 | `ui/repo_routes.py` | `/ui/repos` : les sources de dépôts du compte |
 | `ui/runtime_routes.py` | `/ui/runtime` : les bacs de l'exécuteur (les siens ; tous pour un admin) et les caches du proxy, à détruire ou vider |
-| `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |
+| `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack ou le corps d'une forge, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |
+| `ui/forge_events.py` | Le corps natif d'un webhook de GitHub, GitLab ou Gitea, reconnu à son en-tête : un message court ; `ping` et les branches de `pull_request` ignorés |
 | `ui/webhook_turn.py` | Le tour d'un message reçu, sans navigateur : la conversation, le seul message reçu et le prompt système envoyés au modèle, `/ui/chat/completions` appelé en interne au nom du créateur, les envois sortants |
 | `ui/dataurl.py` | Lecture des URL `data:` envoyées par la page (images, audio) |
 | `ui/web/templates/index.html` | Squelette de la page |

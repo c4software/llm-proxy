@@ -8,7 +8,9 @@ une recherche. **Rien du projet n'est exécuté**, et son contenu est lu
 Cas typique : un [webhook entrant](webhooks.md) reçoit une alerte de
 sécurité sur une image. Le modèle cherche dans le projet concerné où la
 dépendance est épinglée (`requirements.txt`, `pyproject.toml`…), et répond
-avec le correctif exact.
+avec le correctif exact. Avec l'outil `pull_request`, il peut aussi le
+proposer en pull request : voir
+[Proposer une modification](#proposer-une-modification-pull_request).
 
 ## Activer
 
@@ -82,6 +84,9 @@ projets permis.
   modification, un champ vide le garde. Il est redemandé si l'adresse
   (hôte, port) ou la forge change, pour ne pas partir, sans être ressaisi,
   vers un autre hôte.
+- **Écriture** : une source du compte peut cocher *Écriture*, pour l'outil
+  [`pull_request`](#proposer-une-modification-pull_request), et lister des
+  *Chemins interdits*. Jamais une source partagée ni la forge `git`.
 - **Partagées** : l'admin en déclare pour tous dans
   `[repos.sources.<nom>]`, typiquement avec un jeton d'organisation en
   `${VAR}`. Un compte qui crée une source du même nom (sans tenir compte de
@@ -134,6 +139,8 @@ l'ancien contenu.
 
 Une archive n'a pas d'historique, et le `git fetch` n'en garde qu'un
 commit. L'outil ne fait que lire : ni exécution du projet, ni push.
+Proposer une modification est le rôle de
+[`pull_request`](#proposer-une-modification-pull_request).
 
 ## Ce qui est gardé, et combien de temps
 
@@ -166,6 +173,75 @@ sortant (un message posté sur Slack ou Mattermost ne se rappelle pas).
 le disque du proxy ni de l'exécuteur. Ne plus y faire référence n'est pas
 l'écraser, et le **swap** de l'hôte peut en garder une trace : sur la
 machine qui héberge la pile, un swap chiffré, ou pas de swap.
+
+## Proposer une modification (`pull_request`)
+
+L'outil hébergé `pull_request` ouvre une pull request (une merge request
+sur GitLab) **en brouillon** : une branche neuve, un commit, la PR. Rien
+n'est fusionné : un humain relit. Avec un webhook entrant qui reçoit les
+événements de la forge ([Corps d'une forge](webhooks.md#corps-dune-forge)),
+une issue ouverte arrive au modèle, qui lit le projet avec `repository` et
+propose le correctif.
+
+```toml
+[repos]
+enabled = true
+pull_requests = true
+```
+
+Puis, dans *Configuration → Dépôts*, cocher **Écriture** sur une source du
+compte, avec un jeton qui peut écrire. L'outil apparaît dans le menu Outils
+du chat (« Pull requests ») et dans les outils d'un webhook entrant. Son
+prompt demande au modèle de ne l'appeler que si l'utilisateur, ou le
+message reçu, demande une modification.
+
+| Forge | Appels | Brouillon | Jeton |
+|---|---|---|---|
+| `gitlab` | fichiers existants (`HEAD …/repository/files/<chemin>`), `POST …/repository/commits`, `POST …/merge_requests` | titre préfixé `Draft: ` | `api`, rôle Developer au moins |
+| `github` | fichiers existants (`GET …/contents/<chemin>`), ref et commit de la base, `POST …/git/trees`, `…/git/commits`, `…/git/refs`, `POST …/pulls` | `draft: true` ; si l'offre ne le permet pas, une PR ordinaire au titre préfixé `[Draft] ` | jeton fin, *Contents* et *Pull requests* en écriture |
+| `gitea` | fichiers existants (`GET …/contents/<chemin>`), `POST …/contents`, `POST …/pulls` ; Gitea 1.20 ou plus, Forgejo aussi | titre préfixé `WIP: ` | `write:repository` |
+
+Les écritures passent par l'API de la forge, sans redirection suivie : le
+jeton ne va qu'à l'adresse de la source. Seul un fichier ordinaire se
+remplace (ni lien, ni sous-module), et seul un fichier présent sur la base
+se supprime. Sur GitHub, un fichier remplacé est écrit sans bit
+exécutable. Si la PR échoue après la création de la branche (un jeton
+sans ce droit, par exemple), la branche est supprimée.
+
+`pull_request(project, title, files, description?, base?, source?)` :
+
+- `files` : des fichiers entiers, `{path, content}`, ou `{path, delete:
+  true}`. Le prompt demande au modèle de relire le fichier d'abord ;
+- `base` : la branche de départ et de destination. Absente, la branche par
+  défaut ;
+- `source` : facultatif quand une seule source permet l'écriture.
+
+La branche s'appelle `[repos].pr_branch_prefix` (`llm-proxy/` par défaut),
+suivi du titre réduit et d'un condensé du projet, de la base et des
+fichiers. La même modification redemandée (même titre, mêmes fichiers),
+par exemple après un webhook rejoué, retombe sur la même branche : déjà là,
+elle est refusée. La description finit par une
+mention ajoutée par le proxy. L'issue de l'appel est notée sur la source
+(*Dernier usage*).
+
+| Borne | Défaut |
+|---|---|
+| `[repos].pr_max_files` | 20 fichiers par PR |
+| `[repos].pr_max_bytes` | 1 Mo de contenus par PR |
+| `[repos].pr_per_hour` | 10 PR par compte et par heure glissante |
+| Par réponse | une PR |
+| Titre, description | 200 et 20 000 caractères |
+
+**Chemins refusés**, avant tout appel à la forge : ceux qui sortent du
+projet (`..`, `.git`), les points d'entrée usuels de la CI
+(`.gitlab-ci.yml`, `.gitlab-ci/*`, `.gitlab/ci/*`, `.github/workflows/*`,
+`.github/actions/*`, `.gitea/workflows/*`, `.forgejo/workflows/*`,
+`.woodpecker*`, `.drone.yml`, `.circleci/*`, `Jenkinsfile`, `.travis.yml`,
+`azure-pipelines.yml`, `bitbucket-pipelines.yml`, `.buildkite/*`,
+`.tekton/*`), ceux de `[repos].pr_blocked_paths` et les *Chemins
+interdits* de la source. Les motifs ignorent la casse ; `*` couvre aussi
+`/`. Un projet GitLab dont la CI vit ailleurs (*CI/CD configuration file*)
+doit ajouter ce chemin à ses *Chemins interdits*.
 
 ## Tailles
 
@@ -214,6 +290,25 @@ monter ensemble pour de gros dépôts :
   autres outils cochés (poster sur un webhook sortant exposé, écrire dans
   sa mémoire, aller sur le web). Ne cocher, sur un webhook, que les outils
   utiles.
+- **Écrire** : `pull_request` ne fait qu'une proposition. La branche est
+  neuve et la PR en brouillon. Rien n'est écrit sur une branche existante,
+  et rien n'est fusionné. Le modèle peut y être poussé par une injection
+  de prompt (un message reçu, un fichier lu). La relecture protège ce qui
+  est fusionné, pas ce qui est publié : une branche et une PR sont
+  visibles de qui voit le projet dès leur création.
+- **Un événement de forge** (une issue d'un dépôt public, écrite par
+  n'importe qui) : pendant sa réponse, `repository` et `pull_request`
+  n'ouvrent que le projet de l'événement, sur sa forge
+  ([Corps d'une forge](webhooks.md#corps-dune-forge)). Un message
+  ordinaire reçu par un webhook n'a pas cette borne : ne cocher
+  `pull_request` que sur un webhook dont les messages viennent de sources
+  de confiance.
+- **La CI** : une branche poussée déclenche la CI, avec les secrets du
+  projet. Les points d'entrée usuels sont refusés, mais pas les fichiers
+  qu'ils incluent ou appellent (`include: local`, un script lancé par la
+  CI). Côté forge, ne pas donner de secrets aux pipelines des branches de
+  `[repos].pr_branch_prefix` : variables protégées de GitLab,
+  environnements de GitHub.
 - Les jetons sont gardés en clair dans `data/conversations.db` : voir
   [Secrets gardés en clair](securite.md#secrets-gardés-en-clair).
 - Le conteneur du proxy tourne en lecture seule, sans capacité Linux (voir

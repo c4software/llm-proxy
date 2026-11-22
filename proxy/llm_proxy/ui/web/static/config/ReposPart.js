@@ -3,8 +3,10 @@
   repo_routes.py), que lit l'outil `repository` (arborescence, fichier,
   recherche ; rien n'est exécuté) — une forge (GitLab, GitHub, Gitea/Forgejo, ou git
   en HTTPS), son adresse, un jeton, les projets permis. Le jeton n'est
-  jamais relu : vide à la modification, il reste. En dessous, les sources
-  partagées par l'admin ([repos.sources.<nom>]), en lecture.
+  jamais relu : vide à la modification, il reste. Avec [repos].pull_requests,
+  une source peut aussi permettre l'écriture : l'outil `pull_request` y
+  ouvre des PR en brouillon, hors des chemins interdits. En dessous, les
+  sources partagées par l'admin ([repos.sources.<nom>]), en lecture.
 */
 import { call } from "../lib/http.js";
 import { stamp as when } from "../lib/format.js";
@@ -14,7 +16,8 @@ const { ref, reactive, computed, onMounted } = Vue;
 const FORGE_LABELS = { gitlab: "GitLab", github: "GitHub", gitea: "Gitea / Forgejo", git: "git (HTTPS)" };
 const PLACEHOLDERS = { gitlab: "https://gitlab.exemple.fr", github: "https://github.com",
                        gitea: "https://gitea.exemple.fr", git: "https://git.exemple.fr" };
-const blank = () => ({ id: null, name: "", forge: "gitlab", url: "", token: "", username: "", projects: "" });
+const blank = () => ({ id: null, name: "", forge: "gitlab", url: "", token: "", username: "", projects: "",
+                       write: false, blocked_paths: "" });
 
 export const ReposPart = {
   setup() {
@@ -22,6 +25,9 @@ export const ReposPart = {
     const shared = ref([]);
     const maxBytes = ref(0);
     const ttl = ref(1800);
+    // L'outil pull_request, et les chemins qu'il refuse toujours (la CI).
+    const pullRequests = ref(false);
+    const alwaysBlocked = ref([]);
     const error = ref("");
     const form = reactive(blank());
     const editing = ref(false);
@@ -34,17 +40,21 @@ export const ReposPart = {
         shared.value = d.shared || [];
         maxBytes.value = d.max_bytes || 0;
         ttl.value = d.ttl || 0;
+        pullRequests.value = !!d.pull_requests;
+        alwaysBlocked.value = d.blocked_paths || [];
         error.value = "";
       } catch (e) { error.value = e.message; }
     }
     function open(s = null) {
-      Object.assign(form, blank(), s ? { ...s, token: "", projects: (s.projects || []).join(", ") } : {});
+      Object.assign(form, blank(), s ? { ...s, token: "", projects: (s.projects || []).join(", "),
+                                         blocked_paths: (s.blocked_paths || []).join(", ") } : {});
       editing.value = true;
     }
     async function save() {
       error.value = "";
       const body = { name: form.name, forge: form.forge, url: form.url, username: form.username,
-                     projects: form.projects, ...(form.token ? { token: form.token } : {}) };
+                     projects: form.projects, write: form.write && form.forge !== "git",
+                     blocked_paths: form.blocked_paths, ...(form.token ? { token: form.token } : {}) };
       try {
         if (form.id) await call("PUT", "/ui/repos/" + encodeURIComponent(form.id), body);
         else await call("POST", "/ui/repos", body);
@@ -81,7 +91,7 @@ export const ReposPart = {
 
     onMounted(load);
     return { sources, shared, maxBytes, error, form, editing, armed, open, save, remove, when, mb,
-             forgotten, forgetAll, minutes,
+             forgotten, forgetAll, minutes, pullRequests, alwaysBlocked,
              FORGE_LABELS, PLACEHOLDERS };
   },
   template: `
@@ -113,27 +123,37 @@ export const ReposPart = {
           <label>Jeton <span class="dim" v-if="form.id">(vide : inchangé)</span>
             <input v-model="form.token" type="password" maxlength="1000" autocomplete="off" spellcheck="false"
                    :required="!form.id && form.forge !== 'git'"
-                   :placeholder="form.forge === 'github' ? 'jeton d’accès (fine-grained, Contents: read)'
-                     : form.forge === 'gitlab' ? 'jeton d’accès (read_repository, read_api)' : 'jeton d’accès'"></label>
+                   :placeholder="form.forge === 'github' ? (form.write ? 'jeton d’accès (fine-grained, Contents et Pull requests: write)' : 'jeton d’accès (fine-grained, Contents: read)')
+                     : form.forge === 'gitlab' ? (form.write ? 'jeton d’accès (api)' : 'jeton d’accès (read_repository, read_api)')
+                     : 'jeton d’accès'"></label>
           <label v-if="form.forge === 'git'">Utilisateur du jeton <span class="dim">(défaut : git ; oauth2 pour
             GitLab, x-access-token pour GitHub)</span>
             <input v-model="form.username" maxlength="100" spellcheck="false"></label>
           <label>Projets permis <span class="dim">(facultatif : motifs séparés par des virgules ; vide = tous
             ceux que le jeton voit)</span>
             <input v-model="form.projects" spellcheck="false" placeholder="equipe/*, outils/*"></label>
+          <template v-if="pullRequests && form.forge !== 'git'">
+            <label class="check"><input type="checkbox" v-model="form.write"> Écriture : l'outil « Pull requests »
+              peut proposer une modification (branche neuve, PR en brouillon ; rien n'est fusionné). Le jeton
+              doit alors pouvoir écrire.</label>
+            <label v-if="form.write">Chemins interdits <span class="dim">(facultatif : motifs séparés par des
+              virgules, en plus de {{ alwaysBlocked.join(", ") }})</span>
+              <input v-model="form.blocked_paths" spellcheck="false" placeholder="docs/*, *.lock"></label>
+          </template>
           <div class="item-actions">
             <button type="submit" class="btn">{{ form.id ? "Enregistrer" : "Créer" }}</button>
             <button type="button" class="btn ghost" @click="editing = false">Annuler</button>
           </div>
         </form>
         <div class="scroll" v-if="sources.length"><table>
-          <thead><tr><th>Nom</th><th>Forge</th><th>Adresse</th><th>Projets</th><th>Dernier téléchargement</th><th></th></tr></thead>
+          <thead><tr><th>Nom</th><th>Forge</th><th>Adresse</th><th>Projets</th><th v-if="pullRequests">Écriture</th><th>Dernier usage</th><th></th></tr></thead>
           <tbody>
             <tr v-for="s in sources" :key="s.id">
               <td>{{ s.name }}</td>
               <td>{{ FORGE_LABELS[s.forge] || s.forge }}</td>
               <td><code>{{ s.url }}</code></td>
               <td>{{ s.projects.length ? s.projects.join(", ") : "tous" }}</td>
+              <td v-if="pullRequests">{{ s.write ? "oui" : "non" }}</td>
               <td>{{ when(s.last_used) }}<div class="err" v-if="s.last_error">{{ s.last_error }}</div></td>
               <td><div class="row-actions">
                 <button type="button" class="btn ghost" @click="open(s)">Modifier</button>
