@@ -10,9 +10,7 @@ le chat de la page).
                             commande slash (`text`, `user_name`,
                             `response_url`). En plus : `model` (si le
                             webhook le permet), `thread_ts` (repris par la
-                            réponse à un sortant JSON). Ou le corps natif
-                            d'une forge (forge_events : GitHub, GitLab,
-                            Gitea), reconnu à son en-tête d'événement. → 200 « ok » tout de suite ; la
+                            réponse à un sortant JSON). → 200 « ok » tout de suite ; la
                             réponse du modèle part ensuite vers le sortant
                             du webhook et le `response_url` (webhook_turn).
                             Erreurs comme Slack, en texte : 400
@@ -40,6 +38,8 @@ Sous /ui, ceux du compte connecté (jamais d'un autre) ; écritures en JSON
 
 import asyncio
 import json
+import time
+from collections import deque
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Request
@@ -48,13 +48,12 @@ from fastapi.responses import PlainTextResponse
 from ..access import fairshare
 from ..access.auth import HOOK_PREFIX, ui_client
 from ..core import config
-from ..core.window import Window
 from ..core.httputil import error_response, json_only, parse_json
 from ..core.settings import log
 from ..storage import stats, webhooks
 from ..tools import webhook as slack
 from ..upstream.backends import route_backend
-from . import dashboard, forge_events, webhook_turn
+from . import dashboard, webhook_turn
 from .conversation_routes import run
 
 router = APIRouter()
@@ -64,7 +63,7 @@ MAX_RUNNING = config.integer("webhooks.max_running", 3)
 MAX_TEXT = config.integer("webhooks.max_text_chars", 100_000)
 MAX_BODY = 1_000_000
 
-RECENT = Window(60)                  # id d'un entrant → ses derniers messages
+_recent: dict[str, deque] = {}       # id d'un entrant → ses derniers messages
 _running: dict[str, int] = {}        # client → tours en cours
 _tasks: set[asyncio.Task] = set()    # gardés : une tâche sans référence peut disparaître
 
@@ -102,7 +101,14 @@ def _payload(raw: bytes, content_type: str) -> dict | None:
 
 
 def _limited(wid: str) -> bool:
-    return RECENT.wait(wid, CALLS_PER_MINUTE) > 0
+    now = time.monotonic()
+    q = _recent.setdefault(wid, deque())
+    while q and q[0] < now - 60:
+        q.popleft()
+    if CALLS_PER_MINUTE > 0 and len(q) >= CALLS_PER_MINUTE:
+        return True
+    q.append(now)
+    return False
 
 
 def _start(owner: str, hook: dict, text: str, meta: dict) -> None:
@@ -146,16 +152,8 @@ async def receive_hook(request: Request, token: str):
     payload = _payload(raw, request.headers.get("content-type", "").lower())
     if payload is None:
         return _slack(400, "invalid_payload")
-    author, scope = "", None
     try:
-        native = forge_events.event(request.headers, payload)
-        if native is None:
-            text = slack.from_slack(payload)
-        else:
-            text, author, scope = native
-            if not text:
-                # Un essai (ping), ou un événement sur une branche du proxy.
-                return _slack(200, "ok")
+        text = slack.from_slack(payload)
     except (TypeError, ValueError, AttributeError, RecursionError):
         return _slack(400, "invalid_payload")
     if not text:
@@ -174,13 +172,10 @@ async def receive_hook(request: Request, token: str):
         return _slack(429, "rate_limited")
     response_url = payload.get("response_url")
     meta = {"model": asked,
-            "user": str(author or payload.get("user_name") or payload.get("username")
-                        or "")[:80],
+            "user": str(payload.get("user_name") or payload.get("username") or "")[:80],
             "thread_ts": payload.get("thread_ts") if isinstance(payload.get("thread_ts"), str) else "",
             "response_url": response_url if isinstance(response_url, str)
-            and response_url.startswith("https://") else "",
-            # Un événement de forge : ses outils de forge bornés à son projet.
-            "forge": scope}
+            and response_url.startswith("https://") else ""}
     log.info("webhook %s (« %s ») : message reçu (%d caractères)", hook["id"],
              hook["name"], len(text))
     _start(owner, hook, text, meta)
@@ -279,7 +274,7 @@ async def ui_webhook_in_delete(request: Request, wid: str):
     if bad is not None:
         return bad
     if n:
-        RECENT.forget(wid)
+        _recent.pop(wid, None)
         webhook_turn.forget(owner, wid)
     return {"id": wid, "deleted": bool(n)}
 

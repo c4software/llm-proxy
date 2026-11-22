@@ -107,7 +107,6 @@ export const ChatPanel = {
       web_search: "Web", code_execution: "Code", code_interpreter: "Code",
       image_generation: "Images", memory: "Mémoire", ocr: "OCR",
       transcribe: "Transcription", webhook: "Webhooks", repository: "Dépôts",
-      pull_request: "Pull requests",
     };
 
     const chat = computed(() => props.session.chat || {});

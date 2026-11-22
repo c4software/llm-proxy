@@ -565,8 +565,7 @@ max_bytes = 20000000
 # /work (SANDBOX_WORK_SIZE, 256m par défaut). Fichiers de plus de 2 Mo listés,
 # mais ni lus ni cherchés.
 max_unpacked_bytes = 100000000
-# Délai (s) du téléchargement entier, du fetch git, d'une requête à l'API
-# d'une forge, et de toute une pull request.
+# Délai (s) du téléchargement entier, ou du fetch git.
 timeout = 120
 # Un dépôt téléchargé vit ce temps (s) après sa DERNIÈRE lecture : l'archive
 # dans le cache du proxy (purgé chaque minute), le projet dans le bac (détruit
@@ -574,22 +573,6 @@ timeout = 120
 cache_ttl = 1800
 # Octets au plus de toutes les archives gardées (RAM du proxy).
 cache_bytes = 200000000
-# Outil pull_request : true = il ouvre des pull requests (merge requests) en
-# brouillon, sur une branche neuve, dans une source d'un compte cochée
-# « Écriture » (jamais une source partagée, ni la forge "git").
-pull_requests = false
-# Fichiers au plus d'une pull request.
-pr_max_files = 20
-# Octets au plus de tous les fichiers d'une pull request.
-pr_max_bytes = 1000000
-# Pull requests au plus par compte et par heure glissante (0 = sans borne).
-pr_per_hour = 10
-# Début du nom des branches créées. Un événement de forge reçu par un webhook
-# entrant sur une telle branche est ignoré (la PR ne relance pas le webhook).
-pr_branch_prefix = "llm-proxy/"
-# Chemins refusés en plus de ceux de la CI (.gitlab-ci.yml, .github/workflows/*,
-# .gitea/workflows/*…) : des motifs à jokers, « * » couvre aussi « / ».
-pr_blocked_paths = []
 
 # Sources PARTAGÉES, offertes à tous les comptes (une source d'un compte
 # du même nom la masque pour lui). Champs (un par ligne) :

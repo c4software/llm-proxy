@@ -36,7 +36,6 @@ class ToolName(StrEnum):
     MEMORY = "memory"
     WEBHOOK = "webhook"
     REPOSITORY = "repository"
-    PULL_REQUEST = "pull_request"
 
 # Les codes d'erreur, liste FERMÉE. Un outil n'en rend pas d'autre (un
 # code inconnu est ramené à `unavailable` par l'exécuteur) ; chaque

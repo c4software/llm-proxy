@@ -370,9 +370,6 @@ Avec `[chat] hosted_tools = true`, la section *Proxy* propose les
   compte, à la demande. Voir [Webhooks](webhooks.md) ;
 - *Dépôts* (l'outil `repository`) : lire un projet d'une forge (arborescence,
   fichier, recherche). Voir [Dépôts](depots.md) ;
-- *Pull requests* (l'outil `pull_request`) : proposer une modification en
-  PR brouillon, à la demande. Voir
-  [Proposer une modification](depots.md#proposer-une-modification-pull_request) ;
 - un par serveur MCP configuré : `{"type": "mcp:<serveur>"}`.
 
 Les cases **font foi** : `[chat].always` ne s'ajoute pas aux requêtes du

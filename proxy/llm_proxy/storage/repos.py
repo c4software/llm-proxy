@@ -13,11 +13,6 @@ une forge, son adresse, un jeton.
 
 Chaque source peut borner les projets permis (`projects` : des motifs à
 jokers, « equipe/* ») ; vide = tous ceux que le jeton voit.
-
-Une source du compte peut aussi permettre l'ÉCRITURE (`write`) : l'outil
-`pull_request` (tools/pull_request.py) y ouvre des PR, hors des chemins de
-`blocked_paths` (des motifs, en plus de ceux du proxy). Jamais une source
-partagée, ni la forge `git` (sans API de PR).
 """
 
 import fnmatch
@@ -35,8 +30,7 @@ FORGES = ("gitlab", "github", "gitea", "git")
 MAX_PER_USER = config.integer("repos.max_per_user", 20)
 MAX_TOKEN = 1000
 MAX_PATTERNS = 50
-_FIELDS = ("id, name, forge, url, username, projects, created, last_used, last_error, "
-           "write, blocked_paths")
+_FIELDS = "id, name, forge, url, username, projects, created, last_used, last_error"
 
 # Une opération refusée : celle des magasins par compte (owned.py).
 RepoError = owned.OwnedError
@@ -49,9 +43,6 @@ def _table(c) -> None:
         token TEXT NOT NULL, projects TEXT NOT NULL, created REAL NOT NULL,
         last_used REAL, last_error TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (owner, id))""")
-    owned.add_columns(c, "repo_sources", {
-        "write": "INTEGER NOT NULL DEFAULT 0",
-        "blocked_paths": "TEXT NOT NULL DEFAULT '[]'"})
 
 
 _run = owned.runner(_table)
@@ -62,12 +53,11 @@ def _check_id(sid) -> str:
 
 
 def _meta(row, token: str | None = None) -> dict:
-    (sid, name, forge, url, username, projects, created, last_used, last_error,
-     write, blocked) = row
+    sid, name, forge, url, username, projects, created, last_used, last_error = row
     out = {"id": sid, "name": name, "forge": forge, "url": url, "username": username,
            "projects": json.loads(projects), "created": owned.seconds(created),
            "last_used": owned.seconds(last_used), "last_error": last_error,
-           "write": bool(write), "blocked_paths": json.loads(blocked), "shared": False}
+           "shared": False}
     if token is not None:
         out["token"] = token
     return out
@@ -89,32 +79,15 @@ def _fields(body) -> dict:
     token = str(body.get("token") or "").strip()
     if len(token) > MAX_TOKEN:
         raise RepoError("jeton trop long")
-    write = body.get("write", False)
-    if not isinstance(write, bool):
-        raise RepoError("`write` : vrai ou faux")
-    if write and forge == "git":
-        raise RepoError("l'écriture (pull requests) demande une forge à API : "
-                        "gitlab, github ou gitea")
+    projects = body.get("projects") or []
+    if isinstance(projects, str):
+        projects = [p for p in re.split(r"[\s,]+", projects) if p]
+    if not isinstance(projects, list) or len(projects) > MAX_PATTERNS \
+            or not all(isinstance(p, str) and 0 < len(p) <= 200 for p in projects):
+        raise RepoError("`projects` : une liste de motifs (« groupe/* »)")
     return {"name": owned.name(body.get("name")), "forge": forge, "url": url,
             "username": str(body.get("username") or "").strip()[:100],
-            "token": token,
-            "projects": json.dumps(_patterns(body.get("projects"), "projects",
-                                             "« groupe/* »")),
-            "write": write,
-            "blocked_paths": json.dumps(_patterns(body.get("blocked_paths"), "blocked_paths",
-                                                  "« docs/* »"))}
-
-
-def _patterns(value, field: str, example: str) -> list[str]:
-    """Une liste de motifs à jokers, donnée en liste ou en texte (séparés
-    par des espaces ou des virgules)."""
-    value = value or []
-    if isinstance(value, str):
-        value = [p for p in re.split(r"[\s,]+", value) if p]
-    if not isinstance(value, list) or len(value) > MAX_PATTERNS \
-            or not all(isinstance(p, str) and 0 < len(p) <= 200 for p in value):
-        raise RepoError(f"`{field}` : une liste de motifs ({example})")
-    return value
+            "token": token, "projects": json.dumps(projects)}
 
 
 def _needs_token(forge: str) -> bool:
@@ -140,10 +113,9 @@ def create(owner: str, body) -> dict:
         if owned.taken(c, "repo_sources", owner, f["name"]):
             raise RepoError("une source porte déjà ce nom")
         c.execute("INSERT INTO repo_sources (owner, id, name, forge, url, username, token, "
-                  "projects, created, write, blocked_paths) "
-                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "projects, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   (owner, sid, f["name"], f["forge"], f["url"], f["username"], f["token"],
-                   f["projects"], time.time(), int(f["write"]), f["blocked_paths"]))
+                   f["projects"], time.time()))
         return c.execute(f"SELECT {_FIELDS} FROM repo_sources WHERE owner = ? AND id = ?",
                          (owner, sid)).fetchone()
     return _meta(_run(q))
@@ -169,10 +141,9 @@ def update(owner: str, sid: str, body) -> dict:
         if owned.taken(c, "repo_sources", owner, f["name"], sid):
             raise RepoError("une source porte déjà ce nom")
         c.execute("UPDATE repo_sources SET name = ?, forge = ?, url = ?, username = ?, "
-                  "projects = ?, token = ?, write = ?, blocked_paths = ? "
-                  "WHERE owner = ? AND id = ?",
+                  "projects = ?, token = ? WHERE owner = ? AND id = ?",
                   (f["name"], f["forge"], f["url"], f["username"], f["projects"], token,
-                   int(f["write"]), f["blocked_paths"], owner, sid))
+                   owner, sid))
         return c.execute(f"SELECT {_FIELDS} FROM repo_sources WHERE owner = ? AND id = ?",
                          (owner, sid)).fetchone()
     return _meta(_run(q))
@@ -184,9 +155,8 @@ def delete(owner: str, sid: str) -> int:
                                     (owner, sid)).rowcount)
 
 
-def used(owner: str, sid: str, error: str = "") -> None:
-    """Un usage de la source (un téléchargement, une pull request), réussi
-    («») ou non (son erreur)."""
+def downloaded(owner: str, sid: str, error: str = "") -> None:
+    """Un téléchargement de la source, réussi («») ou non (son erreur)."""
     _run(lambda c: c.execute(
         "UPDATE repo_sources SET last_used = ?, last_error = ? WHERE owner = ? AND id = ?",
         (time.time(), error[:500], owner, sid)))
@@ -199,9 +169,6 @@ def _shared_from(table: dict) -> list[dict]:
     for name, t in (table or {}).items():
         if not isinstance(t, dict) or t.get("enabled") is False:
             continue
-        if t.get("write"):
-            raise SystemExit(f"[repos.sources.{name}] : `write` n'existe que pour une source "
-                             f"d'un compte (une source partagée reste en lecture)")
         try:
             f = _fields({**t, "name": name})
         except RepoError as exc:
@@ -209,7 +176,6 @@ def _shared_from(table: dict) -> list[dict]:
         out.append({"id": "shared:" + f["name"], "name": f["name"], "forge": f["forge"],
                     "url": f["url"], "username": f["username"], "token": f["token"],
                     "projects": json.loads(f["projects"]), "shared": True,
-                    "write": False, "blocked_paths": [],
                     "created": None, "last_used": None, "last_error": ""})
     return out
 
@@ -240,8 +206,3 @@ def permits(source: dict, project: str) -> bool:
     """Le projet est-il permis par les motifs de la source (casse ignorée) ?"""
     patterns = source.get("projects") or []
     return not patterns or any(fnmatch.fnmatch(project.lower(), p.lower()) for p in patterns)
-
-
-def writable(source: dict) -> bool:
-    """La source permet-elle les pull requests ? Une du compte, cochée."""
-    return not source["shared"] and bool(source.get("write")) and source["forge"] != "git"

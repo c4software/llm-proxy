@@ -5,10 +5,8 @@ le jeton n'est jamais rendu. Écritures en JSON (json_only).
 
   GET    /ui/repos          {sources (les siennes), shared (celles de l'admin,
                             sans jeton), max_bytes, ttl (durée de vie d'un
-                            dépôt téléchargé), pull_requests (l'outil actif),
-                            blocked_paths (ceux qu'il refuse toujours)}
-  POST   /ui/repos          crée {name, forge, url, token, username?, projects?,
-                            write?, blocked_paths?}
+                            dépôt téléchargé)}
+  POST   /ui/repos          crée {name, forge, url, token, username?, projects?}
   PUT    /ui/repos/{id}     modifie (token absent ou vide : inchangé, sauf
                             si l'adresse ou la forge change)
   DELETE /ui/repos/{id}
@@ -25,7 +23,7 @@ from fastapi import APIRouter, Request
 from ..access.auth import ui_client
 from ..core.httputil import error_response, json_only, parse_json
 from ..storage import repos
-from ..tools import pull_request, repository
+from ..tools import repository
 from .conversation_routes import run
 
 router = APIRouter()
@@ -44,8 +42,7 @@ async def ui_repos(request: Request):
         return bad
     return {"sources": await asyncio.to_thread(repos.list_own, ui_client(request)),
             "shared": repos.shared(), "max_bytes": repository.MAX_BYTES,
-            "ttl": repository.CACHE.ttl, "pull_requests": pull_request.TOOL.enabled,
-            "blocked_paths": list(pull_request.BLOCKED)}
+            "ttl": repository.CACHE.ttl}
 
 
 async def _write(request: Request, fn, *args):

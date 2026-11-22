@@ -51,7 +51,6 @@ from . import (  # noqa: F401
     web_grep,
     web_search,
     webcache,
-    pull_request,
     repository,
     webhook,
 )
@@ -98,7 +97,6 @@ register(image_generation.TOOL)
 register(memory.TOOL)
 register(webhook.TOOL)
 register(repository.TOOL)
-register(pull_request.TOOL)
 
 # Chaque outil natif de ToolName est inscrit : une entrée sans outil est
 # une erreur de démarrage, pas un outil qui manque en silence.

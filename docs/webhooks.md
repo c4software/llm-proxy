@@ -90,46 +90,6 @@ Le proxy accepte aussi quatre champs facultatifs :
 | `thread_ts` | Repris dans la réponse envoyée à un sortant JSON (hors Apprise) : elle part dans le même fil Slack |
 | `response_url` | Commande slash : la réponse y est aussi postée (`response_type: in_channel`). En `https`, vers une adresse publique seulement, même avec `[webhooks].allow_private` |
 
-### Corps d'une forge
-
-Un webhook de GitHub, de GitLab ou de Gitea (Forgejo aussi) peut viser
-l'adresse directement, sans `text`. Le proxy le reconnaît à son en-tête
-d'événement (`X-Gitea-Event`, `X-GitHub-Event`, `X-Gitlab-Event`), en JSON
-ou en formulaire `payload=`. Un corps qui a `text`, `blocks` ou
-`attachments` reste lu au format Slack (Gitea pose ses en-têtes aussi sur
-un webhook de type Slack). Le proxy en fait un message court :
-
-| Événement | Message |
-|---|---|
-| issue | action, numéro, projet, auteur, titre, lien, texte |
-| commentaire (issue, PR, MR) | auteur, titre de l'issue ou de la PR, lien, commentaire |
-| pull request, merge request | action, branches, auteur, titre, lien, texte |
-| push | branche, auteur, la première ligne de chaque commit (20 au plus) |
-| autre | son nom et son JSON, tronqué |
-
-L'auteur est affiché comme `username`. Un corps d'issue, de commentaire ou
-de PR est coupé à 8 000 caractères. Rien n'est lancé, avec `200 ok`, pour :
-
-- `ping`, l'essai qu'envoie GitHub ou Gitea à la création du webhook ;
-- tout événement sur une branche qui commence par
-  `[repos].pr_branch_prefix` (pull request, merge request, push, création
-  de branche, CI, commentaire GitLab sur la MR) : celles qu'ouvre l'outil
-  [`pull_request`](depots.md#proposer-une-modification-pull_request), qui
-  relanceraient sinon le webhook.
-
-Pendant la réponse à un événement de forge, les outils
-[`repository`](depots.md) et
-[`pull_request`](depots.md#proposer-une-modification-pull_request)
-n'ouvrent que le projet de l'événement, sur sa forge. Un événement sans
-projet n'en ouvre aucun. Sur un dépôt public, n'importe qui peut ouvrir
-une issue : son texte ne peut pas faire lire un autre projet du compte, ni
-le recopier dans une PR.
-
-La signature de la forge (`X-Hub-Signature-256`, `X-Gitlab-Token`) n'est
-pas vérifiée : comme pour tout webhook entrant, l'adresse secrète vaut
-clé. Sur la forge, ne cocher que les événements utiles (les issues, par
-exemple) : chacun lance une réponse du modèle.
-
 ### La réponse
 
 Comme Slack, l'appel reçoit `200 ok` tout de suite. Le modèle répond

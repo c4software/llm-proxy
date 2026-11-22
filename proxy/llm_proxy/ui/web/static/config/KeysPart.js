@@ -22,7 +22,6 @@ const TOOL_LABELS = {
   transcribe: "Transcription audio", code_execution: "Exécution de code",
   image_generation: "Génération d'images", memory: "Mémoire persistante",
   webhook: "Webhooks sortants", repository: "Dépôts de code",
-  pull_request: "Pull requests",
 };
 
 // La liste complète des droits d'une clé (l'info-bulle de la colonne).
