@@ -10,7 +10,7 @@ import sqlite3
 import pytest
 import requests
 
-from fakes import FakeUpstream, everywhere, go
+from fakes import FakeUpstream, everywhere, go, hosted_chat, search_then_answer
 
 from llm_proxy.access import auth
 from llm_proxy.core.settings import INCOGNITO
@@ -315,6 +315,20 @@ def test_tour_nouvelle_conversation_et_reponse_sortante(proxy, posted):
     assert posted == [("https://chat.example/hooks/abc", {"text": "*Rien* de grave.", "thread_ts": "1.2"})]
     assert webhooks.get_in("", hook["id"])["calls"] == 1
     assert webhooks.list_out("")[0]["calls"] == 1
+
+
+def test_seul_le_texte_final_du_modele_est_la_reponse(proxy, posted, monkeypatch):
+    """Le texte que le modèle écrit AVANT un appel d'outil (« Je cherche. »)
+    n'entre ni dans la réponse rangée, ni dans l'envoi au sortant : seul
+    celui qui suit les outils est la réponse du webhook."""
+    hosted_chat(monkeypatch)
+    out = outgoing(url="https://chat.example/hooks/abc")
+    hook = incoming(reply=out["id"], tools=["web_search"])
+    proxy.replies = search_then_answer(streamed=False)
+    turn(hook, "Dernière version de llama.cpp ?")
+    assert [r[0] for r in proxy.hosted.runs] == ["web_search"]
+    assert last_message()["content"] == "Voilà."
+    assert posted == [("https://chat.example/hooks/abc", {"text": "Voilà."})]
 
 
 def test_conversation_dediee_reprise_sans_historique_et_recreee(proxy, posted):

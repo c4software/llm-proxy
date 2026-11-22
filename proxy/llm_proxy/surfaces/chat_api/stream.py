@@ -236,6 +236,11 @@ class Translator(Robinet):
             msg["content"] = "".join(self._all) or None
             for key, texts in self._reasoning.items():
                 msg[key] = GAP.join(texts)
+        if self.ctx.progress and self.turns > 1:
+            # Le chat de la page, hors flux (un webhook, ui/webhook_turn) :
+            # le texte du DERNIER tour seul, liens compris — sans ce que le
+            # modèle a écrit avant ses appels d'outils.
+            msg["x_final_content"] = ("".join(self._text) + links).strip() or None
         if self._client:
             msg["tool_calls"] = self._client
         else:

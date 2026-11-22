@@ -139,7 +139,9 @@ async def complete(owner: str, hook: dict, body: dict) -> dict:
         if isinstance(cite, dict) and cite.get("url") \
                 and not any(s["url"] == cite["url"] for s in sources):
             sources.append({"url": cite["url"], "title": cite.get("title") or cite["url"]})
-    return {"content": msg.get("content") or "",
+    # Le texte écrit après les outils (x_final_content) : celui d'avant
+    # (« je vais lire le dépôt ») n'est pas la réponse. Faute de lui, tout.
+    return {"content": msg.get("x_final_content") or msg.get("content") or "",
             "reasoning": msg.get("reasoning_content") or msg.get("reasoning") or "",
             "usage": j.get("usage"), "sources": sources,
             "cut": "length" if choice.get("finish_reason") == "length" else "",

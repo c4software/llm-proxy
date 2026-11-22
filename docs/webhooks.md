@@ -105,7 +105,9 @@ ensuite, en tâche de fond :
    requête passe par `/ui/chat/completions` au nom du compte qui a créé le
    webhook : ses statistiques, sa part du partage équitable ;
 3. la réponse prend la place de celle en cours, puis part vers le webhook
-   sortant choisi. Une erreur (backend hors ligne,
+   sortant choisi. C'est le texte que le modèle écrit après ses derniers
+   appels d'outils : ce qu'il écrit avant (« je lis le dépôt… ») n'en
+   fait pas partie. Une erreur (backend hors ligne,
    historique plein…) prend aussi la place de la réponse en cours et part
    au sortant et au `response_url`, préfixée « Erreur : ».
 
