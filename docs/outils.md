@@ -551,7 +551,9 @@ au site.
 - **Ce qui ne le rend pas connu** : les arguments d'un appel d'outil (ce
   que le modèle demande n'est pas une source), et un résultat en échec.
   Sinon une URL inventée qui a échoué deviendrait connue par son message
-  d'erreur.
+  d'erreur. La sortie de `code_execution` non plus : le modèle écrit le
+  script, donc ce qu'il affiche. Une URL qu'un script tire d'un fichier
+  joint n'est donc pas lisible : l'utilisateur la colle dans son message.
 - **Pendant une réponse**, chaque résultat réussi ajoute ses sites : une
   recherche rend lisibles ses résultats au tour suivant, et une page lue
   rend lisibles ses liens. Le modèle peut donc naviguer seul : chercher,

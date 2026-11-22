@@ -8,7 +8,6 @@ gardent le flux du client ouvert.
 """
 
 import asyncio
-from urllib.parse import urlsplit
 
 import httpx2
 
@@ -274,9 +273,8 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                 while not await _settled(task, ping):
                     yield ping
                 result, task = task.result(), None
-                if known is not None and result.error is None:
-                    known |= provenance.hosts_in_text(result.text)
-                    known |= {provenance.site(urlsplit(s.url).hostname or "") for s in result.sources}
+                if known is not None:
+                    provenance.learn(known, result, name)
                 ran += 1
                 used += not own
                 spent[name] = spent.get(name, 0) + 1

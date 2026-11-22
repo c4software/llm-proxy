@@ -26,9 +26,13 @@ import re
 from urllib.parse import urlsplit
 
 from ..core import config
-from .contract import Call, ToolError
+from .contract import Call, ToolError, ToolName
 
 MODE = config.text("tools.net.provenance", "site").strip().lower()
+
+# Les outils dont le TEXTE rendu est écrit par le modèle (la sortie d'un
+# script de code_execution) : il ne fait connaître aucun site.
+AUTHORED = frozenset({ToolName.CODE_EXECUTION})
 
 # Une URL, et un nom de domaine écrit nu (« regarde frerestoque.fr »).
 _URL = re.compile(r"https?://[^\s<>\"'`)\]}]+", re.IGNORECASE)
@@ -84,18 +88,37 @@ def _texts(content) -> list[str]:
 def hosts_in_messages(messages) -> set[str]:
     """Les sites connus d'une conversation chat/completions : tout le texte
     des messages, SAUF les arguments des appels d'outils (ce que le modèle
-    demande n'est pas une source) et les résultats en échec (une URL
-    inventée qui a échoué n'en devient pas connue)."""
+    demande n'est pas une source), les résultats en échec (une URL
+    inventée qui a échoué n'en devient pas connue) et ceux des outils
+    AUTHORED."""
+    messages = messages if isinstance(messages, list) else []
+    authored = {c.get("id") for msg in messages if isinstance(msg, dict)
+                for c in msg.get("tool_calls") or () if isinstance(c, dict)
+                and isinstance(c.get("function"), dict)
+                and c["function"].get("name") in AUTHORED}
     out = set()
-    for msg in messages if isinstance(messages, list) else ():
+    for msg in messages:
         if not isinstance(msg, dict):
             continue
         texts = _texts(msg.get("content"))
-        if msg.get("role") == "tool" and any(t.lstrip().startswith("Error:") for t in texts):
+        if msg.get("role") == "tool" and (
+                msg.get("tool_call_id") in authored
+                or any(t.lstrip().startswith("Error:") for t in texts)):
             continue
         for t in texts:
             out |= hosts_in_text(t)
     return out
+
+
+def learn(known: set, result, name: str) -> None:
+    """Ajoute à `known` les sites d'un résultat d'outil RÉUSSI (un
+    tools.Result) de l'outil `name` : ceux de son texte — sauf pour un
+    outil AUTHORED — et de ses sources. Un échec n'apprend rien."""
+    if result.error is not None:
+        return
+    if name not in AUTHORED:
+        known |= hosts_in_text(result.text)
+    known |= {site(urlsplit(s.url).hostname or "") for s in result.sources}
 
 
 def check(url: str, call: Call) -> None:

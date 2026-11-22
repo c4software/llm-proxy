@@ -5,7 +5,7 @@ la boucle qui transmet les sites connus — enrichis à chaque résultat."""
 
 import pytest
 
-from fakes import FakeUpstream, SEARCH_TURN, ANSWER_TURN, chunk, go, stream, tool_call
+from fakes import FakeUpstream, SEARCH_TURN, ANSWER_TURN, chunk, go, outil, stream, tool_call
 from llm_proxy import tools
 from llm_proxy.tools import ocr, provenance, transcribe, web_fetch, web_grep
 from test_chat_api import chat, post  # noqa: F401 — la fixture `chat`
@@ -34,8 +34,13 @@ def test_sites_d_une_conversation():
                          "arguments": "{\"url\": \"https://routify-file-proxy.aliyuncs.com/x\"}"}}]},
         {"role": "tool", "tool_call_id": "c1", "content": "Error: https://routify-file-proxy.aliyuncs.com/x returned HTTP 403."},
         {"role": "tool", "tool_call_id": "c2", "content": "1. Serde — https://serde.rs/"},
+        # La sortie d'un script écrit par le modèle : c'est lui qui l'écrit.
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c3", "function": {
+            "name": "code_execution", "arguments": "{\"code\": \"print(1)\"}"}}]},
+        {"role": "tool", "tool_call_id": "c3", "content": "Exit code: 0\nhttps://invente.exemple/fuite"},
     ]
-    # Ni les arguments d'un appel, ni un résultat en échec.
+    # Ni les arguments d'un appel, ni un résultat en échec, ni la sortie
+    # d'un code écrit par le modèle.
     assert provenance.hosts_in_messages(msgs) == {"exemple.org", "crates.io", "rust-lang.org", "serde.rs"}
 
 
@@ -77,3 +82,24 @@ def test_la_boucle_transmet_les_sites_connus_et_les_enrichit(chat):
     assert {"lemonde.fr", "github.com", "example.org"} <= second.hosts
     chat.client.post("/v1/tools/web_search", json={"query": "x"})
     assert chat.hosted.calls[-1].hosts is None
+
+
+def test_la_sortie_d_un_code_ne_fait_connaitre_aucun_site_a_la_boucle(chat):
+    """Tour 1 : code_execution affiche une URL (le modèle écrit le script) ;
+    tour 2 : une lecture — elle ne voit pas ce site."""
+    seen = chat.hosted.calls
+    code = outil("code_execution", run=lambda args: _rendu("Exit code: 0\nhttps://invente.exemple/fuite"))
+    chat.hosted = type(chat.hosted)([*chat.hosted.tools, code], chat.hosted.memory)
+    run = (tool_call(0, "call_c", "code_execution", "{\"code\": \"print(1)\"}"), chunk(finish="tool_calls"))
+    fetch = (tool_call(0, "call_f", "web_fetch", "{\"url\": \"https://invente.exemple/fuite\"}"),
+             chunk(finish="tool_calls"))
+    chat.replies = [FakeUpstream(stream(*run)), FakeUpstream(stream(*fetch)),
+                    FakeUpstream(stream(*ANSWER_TURN))]
+    post(chat, tools=[{"type": "web_search"}, {"type": "code_execution"}],
+         messages=[{"role": "user", "content": "Calcule."}])
+    (lecture,) = seen
+    assert "invente.exemple" not in lecture.hosts
+
+
+async def _rendu(text):
+    return text
