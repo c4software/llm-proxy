@@ -13,7 +13,7 @@ connectée, le .js qui exécute les outils du navigateur d'une extension.
                                     404 : extension non chargée ; 409 : arrêtée
                                     par [extensions.<nom>].enabled = false
   GET  /ui/extensions/{nom}/{nom}.js  le module de la page (session.chat.page
-                                    en donne l'adresse) ; 404 : éteinte,
+                                    en donne l'adresse) ; 404 : désactivée,
                                     inconnue ou sans .js
 """
 
@@ -50,8 +50,8 @@ async def ui_extension_switch(request: Request, name: str):
     entry = next((e for e in extensions.listing() if e["name"] == name), None)
     if entry is not None and entry.get("stopped"):
         return error_response("openai", 409, "conflict",
-                              f"{name} est désactivée par la configuration "
-                              f"([extensions.{name}].enabled) : la page ne la rallume pas")
+                              f"{name} est bloquée par la configuration "
+                              f"([extensions.{name}].enabled) : la page ne la réactive pas")
     try:
         await asyncio.to_thread(extensions.switch, name, on)
     except KeyError:
@@ -65,7 +65,7 @@ async def ui_extension_script(name: str, script: str):
     path = extensions.script(name) if script == f"{name}.js" else None
     if path is None:
         return error_response("openai", 404, "not_found",
-                              f"pas de module pour l'extension «{name}» (éteinte, "
+                              f"pas de module pour l'extension «{name}» (désactivée, "
                               f"inconnue ou sans .js)")
     # L'adresse porte le condensé du fichier (?v=) : rien à garder d'ancien.
     return FileResponse(path, media_type="text/javascript",

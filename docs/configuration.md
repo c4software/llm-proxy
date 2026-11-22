@@ -454,7 +454,7 @@ sous-dossier par extension, chargés au démarrage. Voir
 | Clé | Défaut | Rôle |
 |---|---|---|
 | `path` | `""` | Le dossier des extensions, un sous-dossier chacune, hors d'atteinte du proxy (montage `:ro`). Vide : aucune extension |
-| `<nom>.enabled` | `true` | `false` : l'extension `<nom>/` n'est pas chargée, et la page ne peut pas la rallumer. Une extension chargée est éteinte jusqu'à ce qu'un admin l'allume dans Configuration → Extensions |
+| `<nom>.enabled` | `true` | `false` : l'extension `<nom>/` n'est pas chargée, et la page ne peut pas la réactiver. Une extension chargée est désactivée jusqu'à ce qu'un admin l'active dans Configuration → Extensions |
 | `<nom>.*` | — | Les réglages de l'extension, lus par `ext.settings("<nom>")`. Ceux de l'extension d'exemple `pull_request` : voir [pull_request](extensions.md#pull_request--proposer-une-modification) |
 
 ## `[fair_share]`

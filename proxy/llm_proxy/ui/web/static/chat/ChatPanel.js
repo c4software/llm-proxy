@@ -130,7 +130,7 @@ export const ChatPanel = {
     // navigateur sait faire, cochées par conversation ; une conversation
     // neuve reprend le dernier choix fait dans ce navigateur. Leurs
     // déclarations viennent du proxy (`chat.page` : sans celles qu'il
-    // refuse, [ui].page_tools_disabled, ni celles d'une extension éteinte) ;
+    // refuse, [ui].page_tools_disabled, ni celles d'une extension désactivée) ;
     // les natives sont installées tout de suite, celles des extensions
     // une fois leurs modules importés.
     const installTick = ref(0);

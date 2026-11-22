@@ -151,7 +151,7 @@ def check(archive: str) -> bool:
                 state = extension_state.load(path)
                 ok &= state is not None
                 print(f"  extensions.json : " + (
-                    "ILLISIBLE" if state is None else f"{sum(v is True for v in state.values())} extension(s) allumée(s)"))
+                    "ILLISIBLE" if state is None else f"{sum(v is True for v in state.values())} extension(s) activée(s)"))
             elif name == "client.secret":
                 size = os.path.getsize(path)
                 ok &= size >= 16

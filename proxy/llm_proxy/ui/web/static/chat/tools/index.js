@@ -109,7 +109,7 @@ export let FAMILIES = [];
 const TOOLS = new Map();
 
 /** Toutes les exécutions connues, installées ou non (refusées, d'une
- * extension éteinte ou pas encore importée) : ce qui RENDRA une carte
+ * extension désactivée ou pas encore importée) : ce qui RENDRA une carte
  * déjà dans une conversation, et nettoiera ce qu'un outil garde.
  * @type {Map<string, PageTool>} */
 const KNOWN = new Map();

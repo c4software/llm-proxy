@@ -18,8 +18,8 @@ dit (voir [Le .py](#le-py)) :
 
 Les extensions sont chargées **au démarrage**. Pour en ajouter, en
 retirer ou en modifier une, il faut redémarrer le proxy. Une extension
-déposée paraît alors dans la page, **éteinte** : un admin l'allume, et
-l'éteint, à chaud. Voir [Allumer et éteindre](#allumer-et-éteindre).
+déposée paraît alors dans la page, **désactivée** : un admin l'active, et
+la désactive, à chaud. Voir [Activer et désactiver](#activer-et-désactiver).
 
 ## Activer
 
@@ -69,7 +69,7 @@ posé à la racine du dossier est écarté. Ce qui commence par `_` ou `.`
 est ignoré. `[extensions.<nom>].enabled = false` laisse de côté
 l'extension sans l'effacer.
 
-## Allumer et éteindre
+## Activer et désactiver
 
 *Configuration → Extensions* (un admin ; sans comptes OIDC, la page
 connectée) liste les extensions du dossier :
@@ -78,20 +78,20 @@ connectée) liste les extensions du dossier :
   service) ;
 - celles qui sont écartées, avec leur raison.
 
-*Éteindre* retire tout de suite les outils d'une extension, partout :
+*Désactiver* retire tout de suite les outils d'une extension, partout :
 présentation au modèle, `/v1/tools`, `/mcp`, menu Outils du chat,
-webhooks ; son `.js` n'est plus servi. *Allumer* les rend (pour un outil
+webhooks ; son `.js` n'est plus servi. *Activer* les rend (pour un outil
 du navigateur, au prochain chargement de la page). L'état est gardé dans `data/extensions.json`
 (dans la [sauvegarde](deploiement.md#sauvegarde-et-restauration)) et
 survit aux redémarrages. Une extension nouvellement déposée est
-**éteinte** : ses outils ne servent qu'une fois qu'un admin l'a allumée.
+**désactivée** : ses outils ne servent qu'une fois qu'un admin l'a activée.
 Un fichier `extensions.json` illisible est dit au journal et laissé tel
 quel (la première bascule le réécrit) ; aucune extension n'est alors
-allumée. Après une mise à jour depuis une version où une extension était
-allumée par défaut, rallumer dans la page celles qui servaient.
+activée. Après une mise à jour depuis une version où une extension était
+activée par défaut, réactiver dans la page celles qui servaient.
 
 `[extensions.<nom>].enabled = false` est l'arrêt de l'opérateur :
-l'extension n'est pas chargée, et la page ne peut pas la rallumer
+l'extension n'est pas chargée, et la page ne peut pas la réactiver
 (`409`).
 
 ```
@@ -99,7 +99,7 @@ GET  /ui/extensions                {path, extensions: [{name, enabled, tools: [{
                                    runs, offered, configured}]} | {name, refused, stopped}]}
 POST /ui/extensions/<nom>          {"enabled": false}
 GET  /ui/extensions/<nom>/<nom>.js le module de la page, pour toute page connectée ;
-                                   404 : éteinte, inconnue ou sans .js
+                                   404 : désactivée, inconnue ou sans .js
 ```
 
 ## Le `.py`

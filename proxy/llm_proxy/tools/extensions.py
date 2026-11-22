@@ -22,12 +22,12 @@ faute est écartée ENTIÈRE, dite au journal ; elle n'arrête ni le
 démarrage ni les autres.
 
 L'INTERRUPTEUR : une extension chargée est ÉTEINTE tant qu'un admin ne
-l'a pas allumée dans la page (Configuration → Extensions) ; elle s'allume
-et s'éteint À CHAUD, état gardé par
+l'a pas activée dans la page (Configuration → Extensions) ; elle s'active
+et se désactive À CHAUD, état gardé par
 storage/extension_state.py ; active() le lit, tools.active() avec, et le
 service de son .js aussi. `[extensions.<nom>].enabled = false` est l'arrêt
 de l'opérateur : elle n'est pas importée, et la page ne peut pas la
-rallumer.
+réactiver.
 
 Une extension a la CONFIANCE TOTALE : son .py tourne dans le processus,
 son .js dans la page, avec la session de l'utilisateur. Son dossier et
@@ -61,7 +61,7 @@ PATH = config.text("extensions.path").strip()
 # de [extensions], pas un nom d'extension.
 STEM = re.compile(r"[a-z0-9][a-z0-9_]*\Z")
 RESERVED_STEMS = {"path"}
-STOPPED = "désactivée par la configuration"
+STOPPED = "bloquée par la configuration"
 
 
 
@@ -75,7 +75,7 @@ class Loaded:
 
 
 # L'état du dernier load() : nom d'outil → (extension, outil) ; extension
-# → Loaded ; les écartées (nom, raison) ; les extensions allumées dans la
+# → Loaded ; les écartées (nom, raison) ; les extensions activées dans la
 # page.
 _OF: dict[str, tuple[str, Tool]] = {}
 _LOADED: dict[str, Loaded] = {}
@@ -191,21 +191,21 @@ def load(tools, path: str = PATH) -> tuple[list, list]:
                 _LOADED[ext.name] = ext
                 _OF.update({t.name: (ext.name, t) for t in ext.tools})
     _REFUSED.extend(refused)
-    # Une extension que l'admin n'a pas allumée est éteinte. Un état
-    # illisible est dit au journal (extension_state.load), n'allume rien et
+    # Une extension que l'admin n'a pas activée est désactivée. Un état
+    # illisible est dit au journal (extension_state.load), n'active rien et
     # n'est pas réécrit.
     _ON = frozenset(n for n, on in (extension_state.load() or {}).items() if on is True)
     for name, why in refused:
         log.warning("extension %s écartée : %s", name, why)
     for name, names in loaded:
         log.info("extension %s : %s%s", name, ", ".join(names),
-                 "" if name in _ON else " (éteinte : à allumer dans Configuration → Extensions)")
+                 "" if name in _ON else " (désactivée : à activer dans Configuration → Extensions)")
     return loaded, refused
 
 
 def active(tool: Tool) -> bool:
-    """Faux pour l'outil d'une extension que l'admin n'a pas allumée (ou a
-    éteinte) dans la page ; vrai pour tout autre outil."""
+    """Faux pour l'outil d'une extension que l'admin n'a pas activée (ou a
+    désactivée) dans la page ; vrai pour tout autre outil."""
     name, known = _OF.get(tool.name, ("", None))
     return known is not tool or name in _ON
 
@@ -222,14 +222,14 @@ def module_url(tool: Tool) -> str:
 
 
 def script(name: str) -> Path | None:
-    """Le .js d'une extension chargée et allumée, ou None."""
+    """Le .js d'une extension chargée et activée, ou None."""
     ext = _LOADED.get(name)
     return ext.js if ext is not None and ext.js and name in _ON else None
 
 
 def listing() -> list[dict]:
     """Pour la page : chaque extension, chargée (ses outils et où chacun
-    s'exécute, allumée ou non) ou écartée (sa raison ; `stopped` : arrêtée
+    s'exécute, activée ou non) ou écartée (sa raison ; `stopped` : arrêtée
     par la configuration)."""
     out = [{"name": name, "enabled": name in _ON,
             "tools": [{"name": t.name, "runs": str(t.runs), "offered": sorted(t.offered),
@@ -241,7 +241,7 @@ def listing() -> list[dict]:
 
 
 def switch(name: str, on: bool) -> None:
-    """Allume ou éteint une extension CHARGÉE, à chaud, et le garde.
+    """Active ou désactive une extension CHARGÉE, à chaud, et le garde.
     KeyError : extension non chargée (inconnue, écartée, arrêtée par la
     configuration)."""
     global _ON
@@ -251,7 +251,7 @@ def switch(name: str, on: bool) -> None:
         lit = (_ON | {name}) if on else (_ON - {name})
         extension_state.save({n: True for n in lit})
         _ON = lit
-    log.info("extension %s %s dans la page", name, "allumée" if on else "éteinte")
+    log.info("extension %s %s dans la page", name, "activée" if on else "désactivée")
 
 
 def _import(folder: Path, tools) -> tuple[Loaded | None, str]:

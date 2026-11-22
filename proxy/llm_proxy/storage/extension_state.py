@@ -2,14 +2,14 @@
 L'interrupteur des EXTENSIONS (Configuration → Extensions, admin) : les
 extensions que l'admin a ALLUMÉES dans la page, `{"<nom>": true}`, dans
 extensions.json à côté de config.toml. Une extension absente du fichier
-est éteinte : déposée dans le dossier, elle paraît dans la page au
-démarrage suivant, et n'est en service qu'une fois allumée. Le fichier ne
+est désactivée : déposée dans le dossier, elle paraît dans la page au
+démarrage suivant, et n'est en service qu'une fois activée. Le fichier ne
 fait que CHOISIR parmi du code déjà monté en lecture seule : il n'en
 ajoute pas (tools/extensions.py).
 
 Écriture atomique (fichier temporaire, puis os.replace). Un fichier
 illisible est dit au journal et n'est jamais écrasé par une lecture : load
-rend None, et l'appelant n'allume rien.
+rend None, et l'appelant n'active rien.
 """
 
 import json
@@ -23,7 +23,7 @@ PATH = config.resolve("extensions.json")
 
 
 def load(path: str | None = None) -> dict[str, bool] | None:
-    """L'état gardé : fichier → allumée ? `{}` sans fichier ; None s'il est
+    """L'état gardé : fichier → activée ? `{}` sans fichier ; None s'il est
     illisible (dit au journal)."""
     path = path or PATH
     try:
@@ -32,7 +32,7 @@ def load(path: str | None = None) -> dict[str, bool] | None:
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
-        log.warning("extensions : %s illisible (%s) — aucune extension allumée, "
+        log.warning("extensions : %s illisible (%s) — aucune extension activée, "
                     "fichier laissé tel quel", path, exc)
         return None
     if not isinstance(doc, dict):
@@ -42,8 +42,8 @@ def load(path: str | None = None) -> dict[str, bool] | None:
 
 
 def save(state: dict[str, bool], path: str | None = None) -> None:
-    """Écrit l'état entier, atomiquement. Seules les extensions allumées
-    sont gardées (absente = éteinte)."""
+    """Écrit l'état entier, atomiquement. Seules les extensions activées
+    sont gardées (absente = désactivée)."""
     path = path or PATH
     on = {k: True for k, v in sorted(state.items()) if v is True}
     folder = os.path.dirname(os.path.abspath(path))

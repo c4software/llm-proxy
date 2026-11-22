@@ -6,7 +6,7 @@ exécution (web/static/chat/tools/) ; et ce que la configuration en refuse
 à tous : [ui].page_tools_disabled, des familles (« camera », « sql ») ou
 des outils (« run_php »).
 
-Ce qui est refusé, ou d'une extension éteinte (Configuration →
+Ce qui est refusé, ou d'une extension désactivée (Configuration →
 Extensions) :
   * n'est pas dans la session : ni au menu, ni présenté au modèle, ni
     exécuté par la page ;
@@ -39,7 +39,7 @@ def _resolve(entries) -> tuple[list[str], list[str]]:
             names.add(e)
         elif e:
             log.warning("[ui].page_tools_disabled : « %s » n'est ni une famille ni un outil "
-                        "natif de la page (tools/page/) ; une extension s'éteint dans "
+                        "natif de la page (tools/page/) ; une extension se désactive dans "
                         "Configuration → Extensions", e)
     # Une famille dont tous les outils sont refusés l'est aussi.
     out += [k for k, ts in families.items() if k not in out and set(ts) <= names]
@@ -51,7 +51,7 @@ DISABLED_FAMILIES, DISABLED_TOOLS = _resolve(config.strings("ui.page_tools_disab
 
 def served(tool) -> bool:
     """La page a-t-elle cet outil du navigateur : ni refusé par la
-    configuration, ni d'une extension éteinte ?"""
+    configuration, ni d'une extension désactivée ?"""
     return tool.name not in DISABLED_TOOLS and tools.active(tool, tools.Offer.WEB)
 
 

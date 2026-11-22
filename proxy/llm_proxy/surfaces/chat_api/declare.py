@@ -102,7 +102,7 @@ def prepare(payload: dict, hosted, kinds, always=()) -> Context:
             raise Refused(
                 f"outil hébergé «{kind}» déclaré mais désactivé ou non offert "
                 f"ici ([tools.<nom>].enabled dans config.toml ; une extension "
-                f"éteinte ou offerte à la page seule ; pour un serveur MCP : "
+                f"désactivée ou offerte à la page seule ; pour un serveur MCP : "
                 f"désactivé, ou pas encore joint)")
         for tool in found:
             if tool.name in taken:

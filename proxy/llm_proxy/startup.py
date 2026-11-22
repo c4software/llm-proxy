@@ -215,7 +215,7 @@ async def lifespan(app: FastAPI):
                     "[chat].always : outil «%s» %s — ignoré tant qu'il "
                     "l'est", name,
                     "désactivé ou non offert à l'API ([tools.<nom>].enabled, "
-                    "extension éteinte, offerte à la page seule)" if name in known
+                    "extension désactivée, offerte à la page seule)" if name in known
                     else "inconnu du registre")
         if chat_api.ENABLED:
             log.info(

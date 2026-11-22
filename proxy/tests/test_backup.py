@@ -32,8 +32,8 @@ def data(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "_cache", {})
     everywhere(monkeypatch, stats, "DB_PATH", str(d / "stats.db"))
     monkeypatch.setattr(conversations, "DB_PATH", str(d / "conversations.db"))
-    # L'interrupteur des extensions, à l'ancienne forme (éteintes : false)
-    # mêlée à la nouvelle (allumées : true).
+    # L'interrupteur des extensions, à l'ancienne forme (désactivées : false)
+    # mêlée à la nouvelle (activées : true).
     monkeypatch.setattr(extension_state, "PATH", str(d / "extensions.json"))
     (d / "extensions.json").write_text('{"vieille": false, "horloge": true}')
     conversations.save("cle", "c1", {"id": "c1", "title": "à garder", "messages": []})
@@ -65,7 +65,7 @@ def test_backup_check_restore(data, tmp_path, capsys):
                                          "config.toml", "conversations.db",
                                          "extensions.json", "memory.db", "stats.db"]
     assert backup.check(archive)
-    assert "extensions.json : 1 extension(s) allumée(s)" in capsys.readouterr().out
+    assert "extensions.json : 1 extension(s) activée(s)" in capsys.readouterr().out
 
     target = tmp_path / "restored"
     target.mkdir()

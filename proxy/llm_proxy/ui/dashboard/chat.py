@@ -98,7 +98,7 @@ async def ui_session(request: Request):
             } if tools.image_generation.UPSCALE_MODEL else None,
             # Les outils du NAVIGATEUR : familles et déclarations, sans
             # ceux qui sont refusés ([ui].page_tools_disabled) ni ceux d'une
-            # extension éteinte (ui/page_tools.py).
+            # extension désactivée (ui/page_tools.py).
             "page": page_tools.declarations(),
             # Le relais réseau de la VM Linux ([ui].linux_relay).
             "linux_relay": linux_relay.allowed(user),

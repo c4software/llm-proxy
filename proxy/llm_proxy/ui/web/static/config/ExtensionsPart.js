@@ -2,10 +2,10 @@
   Configuration → Extensions (/ui/extensions, extension_routes.py ; admin,
   ou proxy sans comptes) : les extensions de [extensions].path, un
   sous-dossier chacune. Une extension déposée paraît ici, ÉTEINTE, au
-  démarrage suivant ; elle s'allume et s'éteint ici, À CHAUD ; ses outils, où chacun s'exécute (proxy, navigateur), où il est
+  démarrage suivant ; elle s'active et se désactive ici, À CHAUD ; ses outils, où chacun s'exécute (proxy, navigateur), où il est
   offert (api, web) et s'il est configuré. Une extension
   écartée au chargement est dite avec sa raison ; arrêtée par
-  [extensions.<nom>].enabled = false, la page ne la rallume pas.
+  [extensions.<nom>].enabled = false, la page ne la réactive pas.
 */
 import { call } from "../lib/http.js";
 
@@ -49,7 +49,7 @@ export const ExtensionsPart = {
           (voir docs/extensions.md).</p>
         <template v-else>
           <p class="note">Sous-dossiers de <code>{{ data.path }}</code>, chargés au démarrage. Une extension déposée y paraît
-            éteinte : l'allumer met ses outils en service, l'éteindre les retire tout de suite,
+            désactivée : l'activer met ses outils en service, la désactiver les retire tout de suite,
             partout ; l'état est gardé.</p>
           <div class="scroll" v-if="data.extensions.length"><table>
             <thead><tr><th>Extension</th><th>Outils</th><th>État</th><th></th></tr></thead>
@@ -60,10 +60,10 @@ export const ExtensionsPart = {
                   <div v-for="t in e.tools" :key="t.name"><code>{{ t.name }}</code> — {{ offered(t) }}<span
                        class="tag" v-if="!t.configured">non configuré</span></div></td>
                 <td v-else class="err">{{ e.refused }}</td>
-                <td>{{ e.tools ? (e.enabled ? "allumée" : "éteinte") : (e.stopped ? "arrêtée par la configuration" : "écartée") }}</td>
+                <td>{{ e.tools ? (e.enabled ? "active" : "inactive") : (e.stopped ? "bloquée par la configuration" : "écartée") }}</td>
                 <td><div class="row-actions">
                   <button type="button" class="btn" v-if="e.tools" :class="e.enabled ? 'ghost' : ''"
-                          :disabled="busy === e.name" @click="toggle(e)">{{ e.enabled ? "Éteindre" : "Allumer" }}</button></div></td>
+                          :disabled="busy === e.name" @click="toggle(e)">{{ e.enabled ? "Désactiver" : "Activer" }}</button></div></td>
               </tr>
             </tbody>
           </table></div>

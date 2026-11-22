@@ -109,8 +109,8 @@ def mounted(tmp_path, monkeypatch):
 
 
 def load(root, *lit) -> tuple[list, list]:
-    """Charge `root`, les extensions de `lit` allumées d'abord (une
-    extension déposée est éteinte tant que l'admin ne l'allume pas)."""
+    """Charge `root`, les extensions de `lit` activées d'abord (une
+    extension déposée est désactivée tant que l'admin ne l'active pas)."""
     if lit:
         extension_state.save({name: True for name in lit})
     return extensions.load(tools, str(root))
@@ -160,7 +160,7 @@ def test_extension_en_faute_ecartee_entiere_les_autres_chargees(mounted, tmp_pat
         "g_sans_libelle": ({"g_sans_libelle.py": PAGE_PY.replace("vibrer", "vib2")
                             + "FAMILY = ext.Family('g2', '', tools=('vib2',))\n",
                             "g_sans_libelle.js": PAGE_JS}, "sans libellé"),
-        "eteinte": ({"eteinte.py": tool_file("eteinte")}, "désactivée"),
+        "eteinte": ({"eteinte.py": tool_file("eteinte")}, "bloquée par la configuration"),
         "Maj": ({"Maj.py": SAIN}, "nom : lettres"),
         "path": ({"path.py": SAIN}, "nom : lettres"),
         "racine.py": ({}, "une extension est un sous-dossier"),
@@ -293,15 +293,15 @@ def test_une_cle_sans_ce_droit_ne_voit_pas_l_extension(idp, mounted, monkeypatch
 
 # ── l'interrupteur de la page ───────────────────────────────────────────
 
-def test_une_extension_deposee_est_eteinte_jusqu_a_ce_que_l_admin_l_allume(idp, mounted,
+def test_une_extension_deposee_est_inactive_jusqu_a_ce_que_l_admin_l_active(idp, mounted,
                                                                            monkeypatch):
-    """Configuration → Extensions : déposée, une extension paraît, éteinte.
-    Éteinte, son outil du proxy n'est ni listé ni exécutable (404), et son
+    """Configuration → Extensions : déposée, une extension paraît, désactivée.
+    Désactivée, son outil du proxy n'est ni listé ni exécutable (404), et son
     outil du navigateur n'est ni déclaré à la page, ni servi (son .js :
-    404), ni laissé dans une requête de la page (strip). L'admin l'allume
-    et l'éteint à chaud ; l'état survit à un redémarrage ; un utilisateur
-    ne bascule rien ; une extension arrêtée par la configuration ne
-    s'allume pas de la page."""
+    404), ni laissé dans une requête de la page (strip). L'admin l'active
+    et la désactive à chaud ; l'état survit à un redémarrage ; un utilisateur
+    ne bascule rien ; une extension bloquée par la configuration ne
+    s'active pas de la page."""
     monkeypatch.setitem(config.CONFIG, "extensions", {"eteinte": {"enabled": False}})
     root = mounted({"sain/sain.py": SAIN + PAGE_PY.replace("TOOL = ", "PAGE = ")
                     + "TOOLS = [TOOL, PAGE]\n", "sain/sain.js": PAGE_JS,
@@ -354,8 +354,8 @@ def test_une_extension_deposee_est_eteinte_jusqu_a_ce_que_l_admin_l_allume(idp, 
 
     assert alice.post("/ui/extensions/sain", json={"enabled": True}).json()["enabled"]
     restart(Path(extension_state.PATH).read_text(encoding="utf-8"))
-    assert "sain" in listed() and "vibrer" in page()   # allumée, elle le reste
-    restart('{"sain": false}')                         # l'ancienne forme : éteinte
+    assert "sain" in listed() and "vibrer" in page()   # activée, elle le reste
+    restart('{"sain": false}')                         # l'ancienne forme : désactivée
     assert "sain" not in listed()
     assert {e["name"]: e for e in alice.get("/ui/extensions").json()["extensions"]}["sain"]["enabled"] is False
     assert alice.post("/ui/extensions/eteinte", json={"enabled": True}).status_code == 409
@@ -363,9 +363,9 @@ def test_une_extension_deposee_est_eteinte_jusqu_a_ce_que_l_admin_l_allume(idp, 
     assert alice.post("/ui/extensions/sain", json={"enabled": "non"}).status_code == 400
 
 
-def test_un_etat_illisible_n_allume_rien_et_reste_tel_quel(mounted, registry):
+def test_un_etat_illisible_n_active_rien_et_reste_tel_quel(mounted, registry):
     """Un extensions.json abîmé : dit au journal, aucune extension n'est
-    allumée, et le fichier n'est pas écrasé par la lecture."""
+    activée, et le fichier n'est pas écrasé par la lecture."""
     Path(extension_state.PATH).write_text("{abîmé", encoding="utf-8")
     load(mounted({"sain/sain.py": SAIN}))
     sain = next(t for t in registry if t.name == "sain")

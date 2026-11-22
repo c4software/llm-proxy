@@ -94,7 +94,7 @@ def _why(name: str, offer) -> str:
     if offer not in tool.offered:
         return f"offert à : {', '.join(sorted(tool.offered))}"
     if not tools.extensions.active(tool):
-        return "extension éteinte dans Configuration → Extensions"
+        return "extension désactivée dans Configuration → Extensions"
     return f"[tools.{name}] ou [extensions] dans config.toml"
 
 

@@ -54,7 +54,7 @@ page_tools_disabled = ["camera", "screen", "run_php"]
 - Une famille dont tous les outils sont refusés l'est aussi.
 - Les noms sont ceux des déclarations (`tools/page/` du proxy, voir
   [Écrire un outil de la page](#écrire-un-outil-de-la-page)). Une entrée
-  inconnue est signalée au journal. Une extension s'éteint dans
+  inconnue est signalée au journal. Une extension se désactive dans
   Configuration → Extensions, pas ici.
 
 Les API du navigateur passent par [VueUse](https://vueuse.org)
