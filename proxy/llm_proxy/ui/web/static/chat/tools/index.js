@@ -36,6 +36,8 @@
     sandbox/postgres.js   PostgreSQL          run_postgres
     sandbox/linux.js      Linux               run_shell, shell_read,  la VM de linuxvm.js, partagée
                                               _grep, _edit, _write    avec le panneau Terminal
+    sandbox/programs.js   Programmes          run_tools_program       le bac ; ses tools.x() passent
+                          d'outils                                    par la page (/ui/tools)
 
   Au chargement, le registre VÉRIFIE tout : chaque outil hérite de
   PageTool, n'a que ses membres, a un mode cohérent ; chaque nom de TOOL
@@ -66,6 +68,7 @@ import * as php from "./sandbox/php.js";
 import * as sql from "./sandbox/sql.js";
 import * as postgres from "./sandbox/postgres.js";
 import * as linux from "./sandbox/linux.js";
+import * as programs from "./sandbox/programs.js";
 
 export { TOOL, FAMILY, failure } from "./contract.js";
 
@@ -76,7 +79,7 @@ export { TOOL, FAMILY, failure } from "./contract.js";
 // L'ordre du menu Outils.
 const MODULES = [ask, save, artifacts, folder, context, location, notifications, clipboard,
                  calendar, links, share, screen, camera, codes, color, wake, speak, javascript, php, sql,
-                 postgres, linux];
+                 postgres, linux, programs];
 
 /** @type {Family[]} */
 export const FAMILIES = MODULES.flatMap((m) => m.FAMILIES);

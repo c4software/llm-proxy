@@ -181,6 +181,13 @@
         "shell_edit",
         "shell_write"
       ]
+    },
+    "programs": {
+      "label": "Programmes d'outils",
+      "fixed": false,
+      "tools": [
+        "run_tools_program"
+      ]
     }
   }
 }

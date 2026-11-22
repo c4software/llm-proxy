@@ -428,6 +428,42 @@ navigateur).
 Construction de la VM, protocole, paquets et limites :
 [La VM Linux du navigateur](linux.md).
 
+### Programmes d'outils — `run_tools_program`
+
+La famille **Programmes d'outils**, décochée d'office, laisse le modèle
+écrire un court programme JavaScript qui appelle les
+[outils hébergés](outils-heberges.md) cochés dans la conversation et
+combine leurs résultats. Une recherche suivie de plusieurs lectures tient
+alors en un seul appel : le modèle ne lit que ce que le programme rend,
+pas chaque page.
+
+```js
+const found = await tools.web_search({query: "release notes llama.cpp"});
+const urls = [...found.matchAll(/https:\/\/\S+/g)].slice(0, 3).map((m) => m[0]);
+return Promise.all(urls.map((url) =>
+  tools.web_grep({url, pattern: "breaking"}).catch((e) => e.code)));
+```
+
+- Le programme tourne dans le [bac](#le-bac), sans réseau. `tools.<nom>`
+  prend les mêmes arguments que la fonction de l'outil et rend son texte ;
+  un échec lève une erreur dont `code` est le
+  [code d'erreur](outils.md#codes-derreur).
+- Chaque appel passe par la page, puis par `POST /ui/tools/<nom>` : la
+  session, les droits du compte et
+  [`[tools].direct_calls_per_minute`](configuration.md#tools) s'appliquent.
+  Seuls les outils hébergés cochés dans la conversation sont joignables
+  (pas `memory` en incognito).
+- Bornes : 20 appels par programme, 4 à la fois, 120 s ; au-delà de 100
+  appels refusés, le programme est arrêté. Un appel encore en cours quand
+  le programme finit est coupé. Comme pour `/v1/tools`, les plafonds par
+  réponse (`[tools].max_calls`, ceux d'`image_generation` ou de
+  `code_execution`) ne s'appliquent pas : seule la borne par minute vaut
+  d'un programme à l'autre.
+- Comme pour `/v1/tools`, l'appel ne porte pas la conversation : la
+  [provenance des URL](outils.md#la-provenance-des-url-toolsnetprovenance)
+  n'est pas vérifiée. Les garde-fous de `[tools.net]` (adresses privées,
+  domaines) s'appliquent.
+
 ### Installer les runtimes
 
 L'image Docker construit les runtimes (PHP, SQLite, PostgreSQL, Chart.js,

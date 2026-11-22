@@ -17,6 +17,7 @@ from ...upstream import albert, catalog, relaying
 from ...upstream.backends import BACKENDS, route_backend, unknown_prefix_message
 from ...access.auth import auth_required, request_user, ui_client
 from ...core.httputil import error_response, json_only, parse_json
+from ...exposure import tool_routes
 from ...surfaces.endpoints import chat, forward_post
 from ...upstream.catalog import CHAT_TYPES, IMAGE_TYPE
 from ...upstream.relaying import Call, forward, gate
@@ -163,6 +164,32 @@ async def ui_chat(request: Request):
         return bad
     incognito(request)
     return await chat(request, page=True)
+
+
+@router.post("/ui/tools/{name}")
+async def ui_tool(name: str, request: Request):
+    """/v1/tools/<nom> sous /ui pour le cookie : un outil hébergé appelé
+    par la page elle-même — par un programme de `run_tools_program`
+    (chat/tools/sandbox/programs.js). Mêmes droits, même borne par minute
+    ([tools].direct_calls_per_minute), même réponse ; pas de provenance :
+    l'appel ne porte pas la conversation. Fermée aussi quand l'admin a
+    refusé run_tools_program ([ui].page_tools_disabled) : une page
+    modifiée ne la rouvre pas. Incognito : pas de mémoire persistante,
+    comme /ui/chat/completions."""
+    if not (UI_CHAT and chat_api.ENABLED) \
+            or "run_tools_program" in page_tools.DISABLED_TOOLS:
+        return error_response("openai", 404, "unknown_route",
+                              "programmes d'outils de la page désactivés "
+                              "([ui].chat, [chat].hosted_tools, "
+                              "[ui].page_tools_disabled)")
+    if (bad := json_only(request)) is not None:
+        return bad
+    incognito(request)
+    if INCOGNITO.get() and name == tools.ToolName.MEMORY:
+        return error_response("openai", 403, "tool_not_permitted",
+                              "conversation incognito : pas de mémoire "
+                              "persistante")
+    return await tool_routes.run_direct(request, name, "/ui/tools")
 
 
 def incognito(request: Request) -> None:

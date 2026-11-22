@@ -215,7 +215,7 @@ Réglages communs aux [outils hébergés](outils-heberges.md).
 | `web_cache_ttl` | `600` | Cache web : secondes pendant lesquelles une page ou une recherche est resservie. `0` = pas de cache |
 | `web_cache_entries` | `256` | Cache web : nombre d'entrées |
 | `web_cache_bytes` | `64000000` | Cache web : taille cumulée, en octets |
-| `direct_calls_per_minute` | `120` | Appels directs d'outils (`/v1/tools/<nom>`, `tools/call` de `/mcp`) par client et par minute glissante. Au-delà : `429` avec `Retry-After`. `0` = sans limite. La boucle des surfaces n'est pas concernée |
+| `direct_calls_per_minute` | `120` | Appels directs d'outils (`/v1/tools/<nom>`, `tools/call` de `/mcp`, `/ui/tools/<nom>` des programmes d'outils de la page) par client et par minute glissante. Au-delà : `429` avec `Retry-After`. `0` = sans limite. La boucle des surfaces n'est pas concernée |
 
 ## `[tools.web_search]`
 

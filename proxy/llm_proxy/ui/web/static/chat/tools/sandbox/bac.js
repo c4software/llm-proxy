@@ -11,29 +11,51 @@
   par proxy/wasm) n'est téléchargé qu'au premier appel, par la PAGE — le bac n'a pas le
   droit de le faire —, gardé en mémoire, puis passé au bac à chaque appel.
 
-  exec({driver, input, runtime, timeout, lib, signal}) → {ok, value, error, logs}
-    driver    une fonction async (input, {mod, wasm, bins, mods, lib}) →
+  exec({driver, input, runtime, timeout, lib, signal, onCall}) → {ok, value, error, logs}
+    driver    une fonction async (input, {mod, wasm, bins, mods, lib, call}) →
               valeur, exécutée dans le Worker : passée en TEXTE, elle ne
               voit rien de ce module ; `mod` est le module du (premier)
               runtime, `bins` ses binaires par nom de fichier, `wasm` le
-              premier d'entre eux, `mods` chaque module par son nom
+              premier d'entre eux, `mods` chaque module par son nom ;
+              `call(nom, args)` une demande à la PAGE (onCall), rendue en
+              promesse
     input     ce qu'elle reçoit (clonable)
     runtime   le nom d'un runtime de RUNTIMES, une liste de noms, ou rien
     lib       des fonctions d'aide {nom: fonction}, passées en texte comme
               `driver` (aucune ne voit ce module) : `lib.nom` dans le Worker
     signal    l'arrêt de la réponse (ctx.signal) : le cadre est supprimé
               aussitôt, comme au délai dépassé
+    onCall    (nom, args) → réponse clonable, dans la PAGE : ce que `call`
+              du Worker obtient (sans lui, une erreur). C'est le seul canal
+              du bac vers le dehors : la page décide de ce qu'elle fait
     logs      ce que le code a écrit sur la console
 */
 
 import { vendorFetch } from "./vendor.js";
 
-const WORKER = `
+// Le Worker du bac (exporté pour les tests, qui le font tourner sous Node).
+export const WORKER = `
 const fmt = (v) => { if (typeof v === "string") return v;
   try { return JSON.stringify(v, null, 2) ?? String(v); } catch { return String(v); } };
 const logs = [];
 for (const k of ["log", "info", "warn", "error", "debug"]) console[k] = (...a) => logs.push(a.map(fmt).join(" "));
-self.onmessage = async ({ data: { driver, input, runtimes, lib } }) => {
+const waiting = new Map();
+let calls = 0;
+const call = (name, args) => new Promise((resolve) => {
+  const id = calls++;
+  waiting.set(id, resolve);
+  postMessage({ call: id, name, args });
+});
+let started = false;
+self.onmessage = async ({ data }) => {
+  if (started) {          // la réponse de la page à un \`call\`
+    const resolve = waiting.get(data.reply);
+    waiting.delete(data.reply);
+    if (resolve) resolve(data.value);
+    return;
+  }
+  started = true;
+  const { driver, input, runtimes, lib } = data;
   try {
     const mods = {};
     for (const r of runtimes) {
@@ -45,7 +67,7 @@ self.onmessage = async ({ data: { driver, input, runtimes, lib } }) => {
     for (const [k, src] of Object.entries(lib)) helpers[k] = (0, eval)("(" + src + ")");
     const drive = (0, eval)("(" + driver + ")");
     const value = await drive(input, { mod: first ? mods[first.name] : null, wasm: Object.values(bins)[0],
-                                       bins, mods, lib: helpers, fmt });
+                                       bins, mods, lib: helpers, fmt, call });
     postMessage({ ok: true, value, logs });
   } catch (err) {
     // Une Error simple : son message seul (« Error: » est ajouté par l'outil).
@@ -57,11 +79,13 @@ const FRAME = `<!doctype html><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src blob:">
 <script>
 const SOURCE = ${JSON.stringify(WORKER)};
+let worker = null;
 onmessage = (e) => {
   if (e.source !== parent) return;
+  if (worker) { worker.postMessage(e.data); return; }   // une réponse à un call
   // Un Worker classique : un Worker module est refusé sans origine (le
   // runtime, lui, se charge par import()).
-  const worker = new Worker(URL.createObjectURL(new Blob([SOURCE], { type: "text/javascript" })));
+  worker = new Worker(URL.createObjectURL(new Blob([SOURCE], { type: "text/javascript" })));
   worker.onmessage = (m) => parent.postMessage(m.data, "*");
   worker.onerror = (err) => { err.preventDefault(); parent.postMessage({ ok: false, error: String(err.message || "erreur du bac"), logs: [] }, "*"); };
   worker.postMessage(e.data, e.data.runtimes.flatMap((r) => Object.values(r.bins)));
@@ -89,8 +113,9 @@ function load(name) {
 }
 
 /** @param {{driver: Function, input: any, runtime?: string | string[], timeout: number,
- *   lib?: Record<string, Function>, signal?: AbortSignal}} o */
-export async function exec({ driver, input, runtime, timeout, lib = {}, signal }) {
+ *   lib?: Record<string, Function>, signal?: AbortSignal,
+ *   onCall?: (name: string, args: any) => any}} o */
+export async function exec({ driver, input, runtime, timeout, lib = {}, signal, onCall }) {
   const stopped = { ok: false, logs: [], error: "arrêté par l'utilisateur." };
   if (signal && signal.aborted) return stopped;
   const names = !runtime ? [] : Array.isArray(runtime) ? runtime : [runtime];
@@ -119,6 +144,15 @@ export async function exec({ driver, input, runtime, timeout, lib = {}, signal }
     function onMessage(e) {
       if (e.source !== frame.contentWindow) return;
       const d = e.data || {};
+      if (typeof d.call === "number") {
+        const ask = onCall ? Promise.resolve().then(() => onCall(String(d.name), d.args))
+          : Promise.reject(new Error("aucun appel possible depuis ce bac"));
+        ask.then((value) => value, (err) => ({ text: "Error: " + (err && err.message || err),
+                                               error: "unavailable" }))
+          .then((value) => frame.contentWindow
+            && frame.contentWindow.postMessage({ reply: d.call, value }, "*"));
+        return;
+      }
       if (!d.ready) { finish({ logs: [], ...d }); return; }
       // Une copie des binaires : celle du cache reste à la page.
       const sent = rts.map((r) => ({ name: r.name, js: r.js,

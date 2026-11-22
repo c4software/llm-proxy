@@ -20,13 +20,15 @@ import httpx2
 import pytest
 
 from fakes import (FOUND, PUBLIC, RESULTS, SEARCHED, Echo, FakeUpstream,
-                   FakeWeb, chat_doc, fake_dns, go, hosted_chat, outil,
-                   pdf_bytes, rendu)
+                   FakeWeb, chat_doc, everywhere, fake_dns, go, hosted_chat,
+                   outil, pdf_bytes, rendu)
 from llm_proxy.core import identity
 from llm_proxy.access import auth
 from llm_proxy.upstream import catalog
-from llm_proxy.surfaces import tool_loop
+from llm_proxy.storage import stats
+from llm_proxy.surfaces import chat_api, tool_loop
 from llm_proxy import tools
+from llm_proxy.ui import dashboard, page_tools
 from llm_proxy.tools import html_text, net, web_fetch, web_grep, web_search, webcache
 
 PUBLIC6 = "2606:4700:4700::1111"
@@ -1104,6 +1106,40 @@ def test_route_tools_liste_les_outils_actifs_et_les_execute(routes):
         "name": "web_search", "result": "Error: moteur éteint.",
         "is_error": True, "error": "unavailable", "sources": [], "meta": {},
         "files": []}
+
+
+def test_la_page_appelle_un_outil_heberge_par_sa_route(routes, monkeypatch):
+    """/ui/tools/<nom> : la même exécution que /v1/tools (un programme de
+    la page, run_tools_program), comptée à /ui/tools. Fermée quand le
+    chat de la page, ses outils hébergés ou run_tools_program le sont ;
+    un corps JSON exigé (une page tierce ne peut pas en poster) ; pas de
+    mémoire en incognito."""
+    client, seen = routes
+    lines = []
+    everywhere(monkeypatch, stats, "record_tool", lambda *a: lines.append(a))
+    for ui_chat, hosted in ((False, True), (True, False)):
+        everywhere(monkeypatch, dashboard, "UI_CHAT", ui_chat)
+        everywhere(monkeypatch, chat_api, "ENABLED", hosted)
+        r = client.post("/ui/tools/web_search", json={"query": "é"})
+        assert r.status_code == 404, (ui_chat, hosted)
+    everywhere(monkeypatch, chat_api, "ENABLED", True)
+    everywhere(monkeypatch, dashboard, "UI_CHAT", True)
+    r = client.post("/ui/tools/web_search", content='{"query": "é"}',
+                    headers={"content-type": "text/plain"})
+    assert r.status_code == 415 and seen == []
+    r = client.post("/ui/tools/web_search", json={"query": "é"})
+    assert r.status_code == 200 and r.json()["result"].startswith("[1] Titre")
+    assert seen == [{"query": "é"}] and [line[:2] for line in lines] == [
+        ("web_search", "/ui/tools")]
+    assert client.post("/ui/tools/rm_rf", json={}).status_code == 404
+    # Incognito : pas de mémoire persistante, quoi que la page envoie.
+    r = client.post("/ui/tools/memory", json={"command": "view", "path": "/memories"},
+                    headers={"x-incognito": "1"})
+    assert r.status_code == 403
+    # L'admin a refusé les programmes : la route est fermée aussi.
+    monkeypatch.setattr(page_tools, "DISABLED_TOOLS", ["run_tools_program"])
+    r = client.post("/ui/tools/web_search", json={"query": "é"})
+    assert r.status_code == 404 and len(seen) == 1
 
 
 def test_route_tools_run_refuse_outil_inactif_et_corps_non_objet(routes):

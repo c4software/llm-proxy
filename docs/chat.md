@@ -548,6 +548,7 @@ envoyer sans requête CORS préliminaire, que le proxy ne sert pas.
 | `POST /ui/images/edits` | corps JSON (`model`, `prompt`, `image` en data URL, `size`) converti en formulaire pour `/v1/images/edits` |
 | `POST /ui/audio/speech`, `GET /ui/audio/voices` | `/v1/audio/*` (voir [Voix](voix.md)) |
 | `POST /ui/audio/transcriptions` | JSON (`model`, `file` en data URL, `language`, `prompt`) relayé en formulaire à `/v1/audio/transcriptions` |
+| `POST /ui/tools/{nom}` | `/v1/tools/{nom}`, pour un [programme d'outils](navigateur.md#programmes-doutils--run_tools_program) ; `404` sans `[ui].chat`, sans `[chat].hosted_tools`, ou si `run_tools_program` est dans `[ui].page_tools_disabled` ; `memory` refusé en incognito |
 | `GET /ui/conversations` | conversations ; `?summary=1&limit=&offset=` : leurs résumés par pages (`next` : la page suivante) ; `?q=` : les résumés de celles qui contiennent chaque mot |
 | `GET` / `PUT` / `DELETE /ui/conversations/{id}` | une conversation |
 | `POST /ui/assets`, `GET /ui/assets/{id}` | images des conversations |

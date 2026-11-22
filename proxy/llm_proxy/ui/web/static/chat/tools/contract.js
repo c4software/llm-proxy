@@ -75,6 +75,7 @@ export const TOOL = Object.freeze(/** @type {const} */ ({
   RUN_PHP: "run_php",
   RUN_SQL: "run_sql",
   RUN_POSTGRES: "run_postgres",
+  RUN_TOOLS_PROGRAM: "run_tools_program",
   RUN_SHELL: "run_shell",
   SHELL_READ: "shell_read",
   SHELL_GREP: "shell_grep",
@@ -111,6 +112,7 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
   SQL: "sql",
   POSTGRES: "postgres",
   LINUX: "linux",
+  PROGRAMS: "programs",
 }));
 
 // ── les types ───────────────────────────────────────────────────────────
@@ -125,6 +127,9 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
  * @property {any} [live]       le message de la réponse (ses fichiers, ses images)
  * @property {any} [ws]         le dossier ouvert, ou null
  * @property {boolean} [vision] le modèle de la conversation lit-il les images ?
+ * @property {string[]} [hosted] les outils hébergés (noms de fonction) cochés dans la
+ *                              conversation et présentés à ce tour : ce qu'un programme
+ *                              d'outils peut appeler
  * @property {(file: {name: string, content: any}, type?: string) => void} [download]
  *                              faire télécharger un fichier à l'utilisateur
  * @property {AbortSignal} [signal]  levé quand l'utilisateur arrête la réponse : un

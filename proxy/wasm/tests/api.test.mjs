@@ -46,8 +46,11 @@ test("après un résumé : lui au prompt système, rien de ce qui le précède",
 test("requestTools : pas de mémoire en incognito, rien d'hébergé sans la capacité", () => {
   const conv = { tools: ["web_search", "memory", "absent"], incognito: true };
   const ctx = { ws: {} };
-  const got = requestTools(conv, ctx, { caps: { hostedTools: true }, available: new Set(["web_search", "memory"]), families: [] });
+  const groups = [{ type: "web_search", tools: ["web_search", "web_fetch"] }, { type: "memory", tools: ["memory"] }];
+  const got = requestTools(conv, ctx, { caps: { hostedTools: true }, available: new Set(["web_search", "memory"]),
+                                        families: [], groups });
   assert.deepEqual(got.hosted, ["web_search"]);
+  assert.deepEqual(ctx.hosted, ["web_search", "web_fetch"], "un programme d'outils ne joint que les outils présentés");
   assert.equal(ctx.ws, null, "sans la capacité folder, le dossier n'est pas présenté");
   assert.deepEqual(requestTools({ ...conv, incognito: false }, {}, { caps: {}, available: new Set(["memory"]), families: [] }).hosted, []);
 });

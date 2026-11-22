@@ -65,6 +65,9 @@ complète sur les backends du proxy ([Le chat](docs/chat.md)) :
   Alpine : bash, python3, git, sqlite…) partagée avec un **terminal**,
   que le proxy peut ouvrir à Internet par un relais Wisp
   ([La VM Linux](docs/linux.md)). Seul le résultat revient au modèle.
+- **Programmes d'outils** : un programme JavaScript du bac enchaîne les
+  outils hébergés cochés (chercher, lire, filtrer) en un seul appel
+  ([Programmes d'outils](docs/navigateur.md#programmes-doutils--run_tools_program)).
 - **Gemini Nano** (Chrome) en modèle local, qui répond sur l'appareil.
 
 **En vidéo** (1 min 20, sans son) : synthèse, recherche web sourcée,

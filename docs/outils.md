@@ -562,8 +562,9 @@ au site.
   Un hôte sorti de la mémoire du modèle est refusé, avec une consigne :
   chercher la page, ou demander l'adresse.
 - **Où elle s'applique** : là où le proxy voit la conversation, c'est-à-dire
-  les trois surfaces et le chat de la page. Pas sur `/v1/tools` ni `/mcp`,
-  où l'appel arrive sans elle (`Call.hosts` vaut `None`).
+  les trois surfaces et le chat de la page. Pas sur `/v1/tools`, `/mcp`, ni
+  `/ui/tools` (les [programmes d'outils](navigateur.md#programmes-doutils--run_tools_program)
+  de la page), où l'appel arrive sans elle (`Call.hosts` vaut `None`).
 - `provenance = "off"` la coupe.
 
 Elle limite deux choses : les URL qu'un modèle invente de mémoire (l'hôte

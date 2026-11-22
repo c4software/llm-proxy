@@ -78,9 +78,10 @@ percentile**, qui n'a pas cette propriété.
 ## Usage des outils hébergés
 
 Chaque exécution d'un [outil hébergé](outils-heberges.md) laisse une
-ligne dans la même base, sous la même purge. Cela vaut pour les trois
+ligne dans la même base, sous la même purge. Cela vaut pour tous les
 chemins : boucle de `/v1/responses`, boucle de `/v1/messages`, appel
-direct `POST /v1/tools/<nom>`. Une réponse qui a utilisé des outils
+direct `POST /v1/tools/<nom>`, programme d'outils de la page
+(`/ui/tools/<nom>`). Une réponse qui a utilisé des outils
 garde **une** ligne côté requêtes, avec ses tokens cumulés.
 
 Par exécution : horodatage, outil, route, modèle préfixé (aucun pour

@@ -531,7 +531,7 @@ export const ChatPanel = {
     // testé). Ici, ce que le composant sait du modèle et du catalogue.
     const requestTools = (conv, ctx) => api.requestTools(conv, ctx, {
       caps: modelCaps(modelEntry(conv.model)), available: available.value,
-      families: conv.device || defaultDevice() });
+      families: conv.device || defaultDevice(), groups: toolGroups.value });
 
     // Ce qui part au modèle sans être dans le fil, pour le PROCHAIN
     // message : le prompt système composé (le sien, un résumé, les

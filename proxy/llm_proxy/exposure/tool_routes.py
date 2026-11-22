@@ -87,13 +87,19 @@ async def tools_list():
 
 @router.post("/v1/tools/{name}")
 async def tools_run(name: str, request: Request):
+    return await run_direct(request, name, "/v1/tools")
+
+
+async def run_direct(request: Request, name: str, endpoint: str):
     """Exécute un outil hébergé. Corps : ses arguments (objet JSON).
     Toujours 200 quand l'outil existe : un échec de l'outil est un texte
     «Error: …» que le modèle doit lire, pas une erreur HTTP — `is_error`
     le signale au client, `error` en donne le code (tools.ERRORS, null
     pour un succès). `sources` et `meta` : ce que le résultat dit en plus
     de son texte (pages citées ; URL lue, titre, plage de caractères…),
-    pour l'affichage — voir docs/outils.md."""
+    pour l'affichage — voir docs/outils.md. `endpoint` : la route
+    (/v1/tools, ou /ui/tools pour le chat de la page), pour les
+    statistiques."""
     hosted = tools.Hosted()
     if name not in hosted.by_name and tools.GRANTED.get() is not None \
             and any(t.name == name and t.enabled for t in tools.REGISTRY):
@@ -116,12 +122,12 @@ async def tools_run(name: str, request: Request):
     delay = direct_wait(client)
     if delay:
         retry, message = _too_many(delay)
-        log.warning("/v1/tools/%s : client au-delà de %d appels/min → 429",
-                    name, DIRECT_PER_MINUTE)
+        log.warning("%s/%s : client au-delà de %d appels/min → 429",
+                    endpoint, name, DIRECT_PER_MINUTE)
         return error_response("openai", 429, "rate_limit_exceeded_proxy",
                               message, headers={"Retry-After": str(retry)})
     result = await hosted.run(
-        name, json.dumps(args, ensure_ascii=False), 0, endpoint="/v1/tools",
+        name, json.dumps(args, ensure_ascii=False), 0, endpoint=endpoint,
         client=client)
     return {"name": name, "result": result.text,
             "is_error": result.error is not None, "error": result.error,
