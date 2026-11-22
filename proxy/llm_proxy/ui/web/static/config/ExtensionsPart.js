@@ -1,9 +1,11 @@
 /*
   Configuration → Extensions (/ui/extensions, extension_routes.py ; admin,
   ou proxy sans comptes) : les extensions de [extensions].path, un
-  sous-dossier chacune. Une extension déposée paraît ici, ÉTEINTE, au
+  sous-dossier chacune. Une extension déposée paraît ici, DÉSACTIVÉE, au
   démarrage suivant ; elle s'active et se désactive ici, À CHAUD ; ses outils, où chacun s'exécute (proxy, navigateur), où il est
-  offert (api, web) et s'il est configuré. Une extension
+  offert (api, web) et s'il est configuré. Une extension à plusieurs
+  outils s'active aussi outil par outil (celui du proxy sans celui du
+  navigateur, par exemple). Une extension
   écartée au chargement est dite avec sa raison ; arrêtée par
   [extensions.<nom>].enabled = false, la page ne la réactive pas.
 */
@@ -26,18 +28,24 @@ export const ExtensionsPart = {
         error.value = "";
       } catch (e) { error.value = e.message; }
     }
-    async function toggle(e) {
+    // Toute l'extension (`t` absent : tout activer, sauf si tout l'est déjà),
+    // ou un seul de ses outils.
+    async function toggle(e, t) {
       busy.value = e.name;
       error.value = "";
+      const all = e.tools.every((x) => x.enabled);
+      const body = t ? { enabled: !t.enabled, tool: t.name } : { enabled: !all };
       try {
-        await call("POST", "/ui/extensions/" + encodeURIComponent(e.name), { enabled: !e.enabled });
+        await call("POST", "/ui/extensions/" + encodeURIComponent(e.name), body);
       } catch (err) { error.value = err.message; }
       finally { busy.value = ""; await load(); }
     }
+    const state = (e) => (e.tools.every((t) => t.enabled) ? "active"
+      : e.tools.some((t) => t.enabled) ? "en partie" : "inactive");
     const offered = (t) => (RUNS[t.runs] || t.runs) + " ; " + t.offered.map((o) => OFFERS[o] || o).join(", ");
 
     onMounted(load);
-    return { data, error, busy, load, toggle, offered };
+    return { data, error, busy, load, toggle, offered, state };
   },
   template: `
     <div class="config-keys owned">
@@ -58,12 +66,14 @@ export const ExtensionsPart = {
                 <td><code>{{ e.name }}</code></td>
                 <td v-if="e.tools">
                   <div v-for="t in e.tools" :key="t.name"><code>{{ t.name }}</code> — {{ offered(t) }}<span
-                       class="tag" v-if="!t.configured">non configuré</span></div></td>
+                       class="tag" v-if="!t.configured">non configuré</span><template v-if="e.tools.length > 1">
+                    · <button type="button" class="btn ghost" :disabled="busy === e.name"
+                              :aria-pressed="String(t.enabled)" @click="toggle(e, t)">{{ t.enabled ? "Désactiver" : "Activer" }}</button></template></div></td>
                 <td v-else class="err">{{ e.refused }}</td>
-                <td>{{ e.tools ? (e.enabled ? "active" : "inactive") : (e.stopped ? "bloquée par la configuration" : "écartée") }}</td>
+                <td>{{ e.tools ? state(e) : (e.stopped ? "bloquée par la configuration" : "écartée") }}</td>
                 <td><div class="row-actions">
-                  <button type="button" class="btn" v-if="e.tools" :class="e.enabled ? 'ghost' : ''"
-                          :disabled="busy === e.name" @click="toggle(e)">{{ e.enabled ? "Désactiver" : "Activer" }}</button></div></td>
+                  <button type="button" class="btn" v-if="e.tools" :class="state(e) === 'active' ? 'ghost' : ''"
+                          :disabled="busy === e.name" @click="toggle(e)">{{ state(e) === "active" ? "Désactiver" : e.tools.length > 1 ? "Tout activer" : "Activer" }}</button></div></td>
               </tr>
             </tbody>
           </table></div>

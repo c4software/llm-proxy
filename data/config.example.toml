@@ -557,7 +557,7 @@ max_text_chars = 100000
 # path = "/app/extensions"
 #
 # Une extension (le nom de son sous-dossier) : ses réglages, lus par
-# ext.settings("<nom>"). Une extension déposée est ÉTEINTE : un admin
+# ext.settings("<nom>"). Une extension déposée est DÉSACTIVÉE : un admin
 # l'active (et la désactive) à chaud dans la page, Configuration → Extensions,
 # après le redémarrage qui la charge ; `enabled = false` est
 # l'arrêt de l'opérateur : le fichier n'est pas chargé, et la page ne peut

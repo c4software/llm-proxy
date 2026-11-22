@@ -237,7 +237,7 @@ partie qui l'a importé.
 | `storage/repos.py` | Les sources de dépôts de chaque compte (jeton gardé, jamais rendu ; table à part de `conversations.db`) et celles de `[repos.sources]` |
 | `storage/webhooks.py` | Les webhooks entrants (jeton gardé, retrouvé par son condensé) et sortants (URL Apprise et son service, exposition à l'outil) de chaque compte (tables à part de `conversations.db`) |
 | `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
-| `storage/extension_state.py` | L'interrupteur des extensions (`data/extensions.json`) : les extensions activées dans la page (absente : désactivée), écriture atomique, fichier illisible ignoré et jamais écrasé par une lecture |
+| `storage/extension_state.py` | L'interrupteur des extensions (`data/extensions.json`) : par extension, `true` (tous ses outils actifs) ou la liste de ses outils actifs (absente : rien d'actif) ; une bascule ne réécrit que son entrée, écriture atomique, fichier illisible ignoré et jamais écrasé par une lecture |
 | `storage/backup.py` | Sauvegarde et restauration de `data/` |
 
 ### `ui/` : le tableau de bord et le chat
@@ -255,7 +255,7 @@ partie qui l'a importé.
 | `ui/voice_routes.py` | Routes `/ui/voices` (voix clonées) |
 | `ui/repo_routes.py` | `/ui/repos` : les sources de dépôts du compte |
 | `ui/runtime_routes.py` | `/ui/runtime` : les bacs de l'exécuteur (les siens ; tous pour un admin) et les caches du proxy, à détruire ou vider |
-| `ui/extension_routes.py` | `/ui/extensions` : les extensions chargées et écartées, l'interrupteur à chaud (admin) ; `/ui/extensions/<nom>/<nom>.js`, le module de la page d'une extension activée |
+| `ui/extension_routes.py` | `/ui/extensions` : les extensions chargées et écartées, l'interrupteur à chaud (admin) ; `/ui/extensions/<nom>/<nom>.js`, le module de la page d'une extension dont un outil du navigateur est actif |
 | `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |
 | `ui/webhook_turn.py` | Le tour d'un message reçu, sans navigateur : la conversation, le seul message reçu et le prompt système envoyés au modèle, `/ui/chat/completions` appelé en interne au nom du créateur, les envois sortants |
 | `ui/dataurl.py` | Lecture des URL `data:` envoyées par la page (images, audio) |

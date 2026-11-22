@@ -81,7 +81,14 @@ connectée) liste les extensions du dossier :
 *Désactiver* retire tout de suite les outils d'une extension, partout :
 présentation au modèle, `/v1/tools`, `/mcp`, menu Outils du chat,
 webhooks ; son `.js` n'est plus servi. *Activer* les rend (pour un outil
-du navigateur, au prochain chargement de la page). L'état est gardé dans `data/extensions.json`
+du navigateur, au prochain chargement de la page). Une extension à
+plusieurs outils s'active aussi **outil par outil** : son outil du proxy
+sans son outil du navigateur, ou l'inverse ; son `.js` n'est servi que si
+un de ses outils du navigateur est actif. Activée outil par outil, une
+extension garde la liste de ses outils actifs : un outil qu'une nouvelle
+version de l'extension ajoute reste désactivé ; activée en entier, tous ses
+outils le sont, nouveaux compris. L'état, par outil, est gardé dans
+`data/extensions.json`
 (dans la [sauvegarde](deploiement.md#sauvegarde-et-restauration)) et
 survit aux redémarrages. Une extension nouvellement déposée est
 **désactivée** : ses outils ne servent qu'une fois qu'un admin l'a activée.
@@ -96,10 +103,13 @@ l'extension n'est pas chargée, et la page ne peut pas la réactiver
 
 ```
 GET  /ui/extensions                {path, extensions: [{name, enabled, tools: [{name,
-                                   runs, offered, configured}]} | {name, refused, stopped}]}
-POST /ui/extensions/<nom>          {"enabled": false}
+                                   runs, offered, configured, enabled}]} |
+                                   {name, refused, stopped}]}
+POST /ui/extensions/<nom>          {"enabled": false} : toute l'extension ;
+                                   {"enabled": true, "tool": "local_time"} : un outil
 GET  /ui/extensions/<nom>/<nom>.js le module de la page, pour toute page connectée ;
-                                   404 : désactivée, inconnue ou sans .js
+                                   404 : aucun outil du navigateur actif, inconnue
+                                   ou sans .js
 ```
 
 ## Le `.py`

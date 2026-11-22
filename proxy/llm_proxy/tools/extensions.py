@@ -21,9 +21,10 @@ Outils de la page, webhooks — là où son `offered` le dit. Une extension en
 faute est écartée ENTIÈRE, dite au journal ; elle n'arrête ni le
 démarrage ni les autres.
 
-L'INTERRUPTEUR : une extension chargée est ÉTEINTE tant qu'un admin ne
+L'INTERRUPTEUR : une extension chargée est DÉSACTIVÉE tant qu'un admin ne
 l'a pas activée dans la page (Configuration → Extensions) ; elle s'active
-et se désactive À CHAUD, état gardé par
+et se désactive À CHAUD — en entier, ou outil par outil (l'outil du proxy
+sans celui du navigateur, par exemple) —, état gardé par
 storage/extension_state.py ; active() le lit, tools.active() avec, et le
 service de son .js aussi. `[extensions.<nom>].enabled = false` est l'arrêt
 de l'opérateur : elle n'est pas importée, et la page ne peut pas la
@@ -82,7 +83,10 @@ _LOADED: dict[str, Loaded] = {}
 _REFUSED: list[tuple[str, str]] = []
 # Remplacé d'un bloc (jamais vidé puis rempli : active() le lit sans
 # verrou) ; _SWITCH sérialise les bascules et leur écriture.
-_ON: frozenset[str] = frozenset()
+_ACTIVE: frozenset[str] = frozenset()        # les outils actifs, par nom
+# L'état gardé tel que lu : une bascule ne réécrit que l'entrée de son
+# extension, celles des extensions non chargées (bloquées, écartées) restent.
+_STATE: dict = {}
 _SWITCH = threading.Lock()
 
 
@@ -158,7 +162,7 @@ def load(tools, path: str = PATH) -> tuple[list, list]:
     paquet tools/ : register, register_family, REGISTRY, FAMILIES), et
     relit l'interrupteur de la page. → (chargées [(nom, [outils])],
     écartées [(nom, raison)]), dites au journal. Sans `path`, rien."""
-    global _ON
+    global _ACTIVE, _STATE
     loaded, refused = [], []
     _OF.clear()
     _LOADED.clear()
@@ -194,20 +198,34 @@ def load(tools, path: str = PATH) -> tuple[list, list]:
     # Une extension que l'admin n'a pas activée est désactivée. Un état
     # illisible est dit au journal (extension_state.load), n'active rien et
     # n'est pas réécrit.
-    _ON = frozenset(n for n, on in (extension_state.load() or {}).items() if on is True)
+    _STATE = dict(extension_state.load() or {})
+    _ACTIVE = _resolve(_STATE)
     for name, why in refused:
         log.warning("extension %s écartée : %s", name, why)
     for name, names in loaded:
+        on = [n for n in names if n in _ACTIVE]
         log.info("extension %s : %s%s", name, ", ".join(names),
-                 "" if name in _ON else " (désactivée : à activer dans Configuration → Extensions)")
+                 "" if len(on) == len(names) else
+                 f" (actifs : {', '.join(on)})" if on else
+                 " (désactivée : à activer dans Configuration → Extensions)")
     return loaded, refused
 
 
+def _resolve(state: dict) -> frozenset:
+    """L'état gardé → les noms des outils actifs, parmi ceux des
+    extensions chargées."""
+    out = set()
+    for name, ext in _LOADED.items():
+        on = state.get(name)
+        out |= {t.name for t in ext.tools if on is True or (isinstance(on, list) and t.name in on)}
+    return frozenset(out)
+
+
 def active(tool: Tool) -> bool:
-    """Faux pour l'outil d'une extension que l'admin n'a pas activée (ou a
-    désactivée) dans la page ; vrai pour tout autre outil."""
-    name, known = _OF.get(tool.name, ("", None))
-    return known is not tool or name in _ON
+    """Faux pour un outil d'extension que l'admin n'a pas activé (ou a
+    désactivé) dans la page ; vrai pour tout autre outil."""
+    _, known = _OF.get(tool.name, ("", None))
+    return known is not tool or tool.name in _ACTIVE
 
 
 def module_url(tool: Tool) -> str:
@@ -222,36 +240,54 @@ def module_url(tool: Tool) -> str:
 
 
 def script(name: str) -> Path | None:
-    """Le .js d'une extension chargée et activée, ou None."""
+    """Le .js d'une extension chargée dont un outil du navigateur est
+    actif, ou None."""
     ext = _LOADED.get(name)
-    return ext.js if ext is not None and ext.js and name in _ON else None
+    if ext is None or not ext.js:
+        return None
+    on = any(t.runs == Runs.BROWSER and t.name in _ACTIVE for t in ext.tools)
+    return ext.js if on else None
 
 
 def listing() -> list[dict]:
     """Pour la page : chaque extension, chargée (ses outils et où chacun
     s'exécute, activée ou non) ou écartée (sa raison ; `stopped` : arrêtée
     par la configuration)."""
-    out = [{"name": name, "enabled": name in _ON,
+    out = [{"name": name, "enabled": any(t.name in _ACTIVE for t in ext.tools),
             "tools": [{"name": t.name, "runs": str(t.runs), "offered": sorted(t.offered),
-                       "configured": bool(t.enabled)} for t in ext.tools]}
+                       "configured": bool(t.enabled), "enabled": t.name in _ACTIVE}
+                      for t in ext.tools]}
            for name, ext in _LOADED.items()]
     out += [{"name": name, "refused": why, "stopped": why.startswith(STOPPED)}
             for name, why in _REFUSED]
     return out
 
 
-def switch(name: str, on: bool) -> None:
-    """Active ou désactive une extension CHARGÉE, à chaud, et le garde.
-    KeyError : extension non chargée (inconnue, écartée, arrêtée par la
-    configuration)."""
-    global _ON
-    if name not in _LOADED:
-        raise KeyError(name)
+def switch(name: str, on: bool, tool: str = "") -> None:
+    """Active ou désactive une extension CHARGÉE — tous ses outils, ou le
+    seul `tool` —, à chaud, et le garde. KeyError : extension non chargée
+    (inconnue, écartée, bloquée par la configuration), ou outil qui n'est
+    pas le sien."""
+    global _ACTIVE, _STATE
+    ext = _LOADED.get(name)
+    if ext is None or (tool and tool not in {t.name for t in ext.tools}):
+        raise KeyError(tool or name)
+    names = {t.name for t in ext.tools}
     with _SWITCH:
-        lit = (_ON | {name}) if on else (_ON - {name})
-        extension_state.save({n: True for n in lit})
-        _ON = lit
-    log.info("extension %s %s dans la page", name, "activée" if on else "désactivée")
+        if tool:
+            # Outil par outil : la liste explicite — un outil qu'une mise à
+            # jour de l'extension ajouterait ne s'active pas seul.
+            mine = {n for n in names if n in _ACTIVE}
+            mine = (mine | {tool}) if on else (mine - {tool})
+            entry = sorted(mine)
+        else:
+            entry = True if on else []
+        state = {**_STATE, name: entry}
+        extension_state.save(state)
+        _STATE = {k: v for k, v in state.items() if v}
+        _ACTIVE = (_ACTIVE - names) | _resolve({name: entry})
+    log.info("extension %s%s %s dans la page", name, f" (outil {tool})" if tool else "",
+             "activée" if on else "désactivée")
 
 
 def _import(folder: Path, tools) -> tuple[Loaded | None, str]:

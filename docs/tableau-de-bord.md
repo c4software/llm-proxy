@@ -325,7 +325,8 @@ connectée). Les extensions de `[extensions].path` : celles qui sont
 chargées, avec leurs outils, où chacun s'exécute (proxy, navigateur), où
 il est offert et s'il est configuré, et celles qui sont écartées, avec
 leur raison. Une extension déposée y paraît désactivée, au démarrage
-suivant : *Activer* met ses outils en service, *Désactiver* les retire tout
+suivant : *Activer* met ses outils en service (tous, ou un par un : celui
+du proxy sans celui du navigateur), *Désactiver* les retire tout
 de suite, partout ; l'état est gardé dans `data/extensions.json` et
 survit aux redémarrages. Voir [Extensions](extensions.md#activer-et-désactiver).
 

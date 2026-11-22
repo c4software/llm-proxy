@@ -121,7 +121,7 @@ Le Dockerfile seul ne livre pas :
 - **`client.secret`** : le perdre ou le remplacer fait perdre toutes les
   mémoires, toutes les clés gérées et toutes les sessions ;
 - `config.toml` ;
-- `extensions.json` : les extensions activées dans la page.
+- `extensions.json` : les extensions et les outils activés dans la page.
 
 `conversations.db` rend au disque la place des conversations et des
 images supprimées (auto_vacuum incrémental). Une base créée avant ce

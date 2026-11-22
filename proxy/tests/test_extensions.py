@@ -108,6 +108,17 @@ def mounted(tmp_path, monkeypatch):
     return make
 
 
+def restart(root, *names) -> None:
+    """Un redémarrage : les outils et la famille des extensions `names`
+    retirés du registre, puis le dossier relu (l'état avec)."""
+    theirs = {t["name"] for e in extensions.listing() if e["name"] in names
+              for t in e.get("tools", [])}
+    for t in [t for t in (*tools.REGISTRY, *tools.PAGE) if t.name in theirs]:
+        (tools.REGISTRY if t in tools.REGISTRY else tools.PAGE).remove(t)
+    tools.FAMILIES[:] = [f for f in tools.FAMILIES if f.key not in names]
+    extensions.load(tools, str(root))
+
+
 def load(root, *lit) -> tuple[list, list]:
     """Charge `root`, les extensions de `lit` activées d'abord (une
     extension déposée est désactivée tant que l'admin ne l'active pas)."""
@@ -320,8 +331,10 @@ def test_une_extension_deposee_est_inactive_jusqu_a_ce_que_l_admin_l_active(idp,
     entries = {e["name"]: e for e in alice.get("/ui/extensions").json()["extensions"]}
     assert entries["sain"]["enabled"] is False and entries["eteinte"]["stopped"] is True
     assert entries["sain"]["tools"] == [
-        {"name": "sain", "runs": "proxy", "offered": ["api", "web"], "configured": True},
-        {"name": "vibrer", "runs": "browser", "offered": ["web"], "configured": True}]
+        {"name": "sain", "runs": "proxy", "offered": ["api", "web"], "configured": True,
+         "enabled": False},
+        {"name": "vibrer", "runs": "browser", "offered": ["web"], "configured": True,
+         "enabled": False}]
     assert bob.get("/ui/extensions").status_code == 403
     assert bob.post("/ui/extensions/sain", json={"enabled": True}).status_code == 403
     assert "sain" not in listed() and "vibrer" not in page()
@@ -344,18 +357,11 @@ def test_une_extension_deposee_est_inactive_jusqu_a_ce_que_l_admin_l_active(idp,
     assert page_tools.strip(sent) and "tools" not in sent
     assert extension_state.load() == {}
 
-    def restart(state: str):
-        """Un redémarrage : registre neuf, `state` dans extensions.json, relu."""
-        for t in [t for t in (*tools.REGISTRY, *tools.PAGE) if t.name in ("sain", "vibrer")]:
-            (tools.REGISTRY if t in tools.REGISTRY else tools.PAGE).remove(t)
-        tools.FAMILIES[:] = [f for f in tools.FAMILIES if f.key != "sain"]
-        Path(extension_state.PATH).write_text(state, encoding="utf-8")
-        load(root)
-
     assert alice.post("/ui/extensions/sain", json={"enabled": True}).json()["enabled"]
-    restart(Path(extension_state.PATH).read_text(encoding="utf-8"))
+    restart(root, "sain")
     assert "sain" in listed() and "vibrer" in page()   # activée, elle le reste
-    restart('{"sain": false}')                         # l'ancienne forme : désactivée
+    Path(extension_state.PATH).write_text('{"sain": false}', encoding="utf-8")
+    restart(root, "sain")                              # l'ancienne forme : désactivée
     assert "sain" not in listed()
     assert {e["name"]: e for e in alice.get("/ui/extensions").json()["extensions"]}["sain"]["enabled"] is False
     assert alice.post("/ui/extensions/eteinte", json={"enabled": True}).status_code == 409
@@ -372,3 +378,55 @@ def test_un_etat_illisible_n_active_rien_et_reste_tel_quel(mounted, registry):
     assert not tools.active(sain)
     assert extension_state.load() is None          # dit illisible, pas « vide »
     assert Path(extension_state.PATH).read_text(encoding="utf-8") == "{abîmé"
+
+
+def test_les_outils_d_une_extension_s_activent_un_par_un(idp, mounted, monkeypatch):
+    """Une extension aux deux moteurs : son outil du navigateur actif sans
+    celui du proxy (le .js servi, l'outil du proxy hors de /v1/tools), puis
+    l'inverse (le .js : 404) ; l'état, par outil, survit à un redémarrage ;
+    un outil qui n'est pas le sien : 404."""
+    root = mounted({"sain/sain.py": SAIN + PAGE_PY.replace("TOOL = ", "PAGE = ")
+                    + "TOOLS = [TOOL, PAGE]\n", "sain/sain.js": PAGE_JS})
+    load(root)
+    monkeypatch.setattr(tools, "Hosted", REAL_HOSTED)
+    alice = connect(idp)
+    key = alice.post("/ui/keys", json={"label": "tout"}).json()["key"]
+
+    def served():
+        listed = {t["name"] for t in idp.client.get("/v1/tools", headers=bearer(key)).json()["data"]}
+        page = {t["name"] for t in alice.get("/ui/session").json()["chat"]["page"]["tools"]}
+        js = alice.get("/ui/extensions/sain/sain.js").status_code
+        return "sain" in listed, "vibrer" in page, js
+
+    r = alice.post("/ui/extensions/sain", json={"enabled": True, "tool": "vibrer"})
+    assert r.status_code == 200 and r.json()["enabled"] is True
+    assert [t["enabled"] for t in r.json()["tools"]] == [False, True]
+    assert served() == (False, True, 200)
+    assert extension_state.load() == {"sain": ["vibrer"]}
+
+    # Outil par outil, la liste reste explicite, même complète.
+    alice.post("/ui/extensions/sain", json={"enabled": True, "tool": "sain"})
+    assert served() == (True, True, 200) and extension_state.load() == {"sain": ["sain", "vibrer"]}
+    alice.post("/ui/extensions/sain", json={"enabled": False, "tool": "vibrer"})
+    assert served() == (True, False, 404) and extension_state.load() == {"sain": ["sain"]}
+
+    restart(root, "sain")                          # l'état, par outil, relu
+    assert served() == (True, False, 404)
+    r = alice.post("/ui/extensions/sain", json={"enabled": True, "tool": "web_search"})
+    assert r.status_code == 404
+    alice.post("/ui/extensions/sain", json={"enabled": False})
+    assert served() == (False, False, 404) and extension_state.load() == {}
+
+
+def test_une_bascule_garde_l_etat_des_extensions_non_chargees(mounted, monkeypatch):
+    """L'entrée d'une extension bloquée ce démarrage-là (ou écartée) reste
+    dans extensions.json quand une autre bascule ; une liste qui nomme un
+    outil disparu n'active rien."""
+    monkeypatch.setitem(config.CONFIG, "extensions", {"bloquee": {"enabled": False}})
+    Path(extension_state.PATH).write_text('{"bloquee": true, "sain": ["disparu"]}', encoding="utf-8")
+    load(mounted({"sain/sain.py": SAIN, "bloquee/bloquee.py": tool_file("bloquee")}))
+    sain = next(t for t in tools.REGISTRY if t.name == "sain")
+    assert not tools.active(sain)
+    extensions.switch("sain", True)
+    assert tools.active(sain)
+    assert extension_state.load() == {"bloquee": True, "sain": True}
