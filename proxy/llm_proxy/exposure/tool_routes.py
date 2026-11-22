@@ -4,16 +4,15 @@ direct (/v1/tools), serveur MCP (/mcp, voir mcp_server.py), et les
 fichiers qu'ils rendent (files.PATH, hors clé du proxy).
 """
 
-import collections
 import dataclasses
 import json
-import time
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from .. import tools
 from ..core import config
+from ..core.window import Window
 from ..access.auth import request_owner
 from ..core.httputil import error_response, parse_json
 from ..core.settings import log
@@ -29,7 +28,7 @@ router = APIRouter()
 # client pouvait enchaîner recherches et exécutions de code sans borne.
 DIRECT_PER_MINUTE = config.integer("tools.direct_calls_per_minute", 120)
 WINDOW = 60.0
-_direct: dict[str, collections.deque] = {}
+DIRECT = Window(WINDOW)
 
 
 def direct_wait(client: str, calls: int = 1,
@@ -37,23 +36,7 @@ def direct_wait(client: str, calls: int = 1,
     """Réserve `calls` appels directs pour `client`. 0 : accepté (et
     compté) ; sinon les secondes avant qu'une place se libère (rien n'est
     compté)."""
-    if DIRECT_PER_MINUTE <= 0 or calls <= 0:
-        return 0.0
-    now = time.monotonic() if now is None else now
-    q = _direct.setdefault(client, collections.deque())
-    while q and q[0] <= now - WINDOW:
-        q.popleft()
-    if len(q) + calls > DIRECT_PER_MINUTE:
-        if calls > DIRECT_PER_MINUTE or not q:
-            return WINDOW
-        return max(q[len(q) + calls - DIRECT_PER_MINUTE - 1] + WINDOW - now,
-                   0.001)
-    q.extend([now] * calls)
-    # Les clients inactifs ne s'accumulent pas.
-    if len(_direct) > 4096:
-        for k in [k for k, v in _direct.items() if not v or v[-1] <= now - WINDOW]:
-            del _direct[k]
-    return 0.0
+    return DIRECT.wait(client, DIRECT_PER_MINUTE, calls, now)
 
 
 def _too_many(delay: float):

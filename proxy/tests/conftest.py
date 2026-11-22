@@ -31,9 +31,9 @@ def fresh_direct_calls():
     """Chaque test repart sans appel direct d'outil compté
     (tool_routes.direct_wait)."""
     from llm_proxy.exposure import tool_routes
-    tool_routes._direct.clear()
+    tool_routes.DIRECT.clear()
     yield
-    tool_routes._direct.clear()
+    tool_routes.DIRECT.clear()
 
 
 @pytest.fixture(autouse=True)

@@ -37,9 +37,9 @@ de [tools.net] valent.
            redirections refusées. git lit le pack DANS le proxy : seule
            exception à « rien n'est décodé ici » (docs/depots.md).
 
-Les forges passent par net.download : adresse résolue et épinglée, corps
-borné, et le jeton envoyé au seul saut qui reste sur l'origine de la
-source (jamais à l'hôte d'une redirection).
+Les forges passent par forge.get (net.download) : adresse résolue et
+épinglée, corps borné, et le jeton envoyé au seul saut qui reste sur
+l'origine de la source (jamais à l'hôte d'une redirection).
 
 CE QUI EST GARDÉ, et combien de temps ([repos].cache_ttl, 30 min) :
 l'archive dans le cache du proxy, 30 min après sa DERNIÈRE lecture
@@ -60,16 +60,15 @@ import base64
 import hashlib
 import json
 import os
-import re
 import signal
 import tempfile
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 from ..core import config
 from ..core.settings import INCOGNITO
 from ..storage import repos
-from . import code_execution, net
+from . import code_execution, forge, net
 from .contract import Call, Result, Tool, ToolError, ToolName
 from .webcache import Cache
 
@@ -82,7 +81,7 @@ MAX_BYTES = config.integer("repos.max_bytes", 20_000_000)
 # son /work, SANDBOX_WORK_SIZE).
 MAX_UNPACKED = config.integer("repos.max_unpacked_bytes", 100_000_000)
 # Délai (s) du téléchargement entier (ou du fetch git).
-TIMEOUT = config.num("repos.timeout", 120)
+TIMEOUT = forge.TIMEOUT
 # 30 min après la DERNIÈRE lecture (sliding), purgé activement
 # (webcache.sweep) ; le bac des dépôts reçoit la même durée d'inactivité.
 CACHE = Cache(config.num("repos.cache_ttl", 1800), 32,
@@ -96,84 +95,28 @@ KEEP = 2
 READ_LINES = 400
 MAX_PATTERN = 500
 SESSION = "repository"
-USER_AGENT = "llm-proxy repository (+https://github.com/c4software/llm-proxy)"
 COMMANDS = ("tree", "read", "grep")
-# Un projet : « groupe/sous-groupe/projet », « propriétaire/dépôt ».
-PROJECT = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.\-]*(/[A-Za-z0-9_.][A-Za-z0-9_.\-]*)*\Z")
-_REF = re.compile(r"[A-Za-z0-9_.\-/]{1,200}\Z")
 # Le script du bac, lu une fois (un texte : il n'est pas importé ici).
 SCRIPT = Path(__file__).with_name("repository_bac.py").read_text(encoding="utf-8")
 
 
-def valid_project(project: str) -> bool:
-    return bool(PROJECT.match(project)) and not {".", ".."} & set(project.split("/"))
-
-
-def valid_ref(ref) -> bool:
-    return isinstance(ref, str) and bool(_REF.match(ref)) and ".." not in ref \
-        and not ref.startswith("-")
-
-
 # ── le téléchargement ───────────────────────────────────────────────────
 
-def _bounded(limit: int):
-    """La borne de net.download : laisse passer une redirection, dit un
-    statut refusé avec les mots de la forge, et refuse une archive trop
-    grosse au lieu de la couper."""
-    def bound(r, body: bytes) -> int:
-        status = r.status_code
-        if 300 <= status < 400:
-            return 0
-        if status in (401, 403):
-            raise ToolError("not_allowed", f"the forge refused access (HTTP {status}): "
-                                           f"the token of this source cannot read it.")
-        if status == 404:
-            raise ToolError("not_accessible", "project or ref not found (or not visible "
-                                              "to the token of this source).")
-        if status >= 400:
-            return 0                      # net.download le dit (429 compris)
-        declared = r.headers.get("content-length", "")
-        if len(body) > limit or (declared.isdigit() and int(declared) > limit):
-            raise ToolError("unsupported", f"the archive is larger than {limit} bytes, "
-                                           f"the limit of this proxy.")
-        return limit + 1
-    return bound
-
-
-async def _download(url: str, auth: dict, limit: int = 0, transport=None,
-                    accept: str = "*/*") -> bytes:
-    _, _, body = await net.download(
-        url, timeout=TIMEOUT, limit=_bounded(limit or MAX_BYTES), user_agent=USER_AGENT,
-        accept=accept, transport=transport, auth=auth, allow_private=True, domains=False)
-    return body
-
-
 async def _archive(source: dict, project: str, ref: str, transport) -> bytes:
-    forge, base, token = source["forge"], source["url"].rstrip("/"), source.get("token") or ""
-    if forge == "gitlab":
-        url = f"{base}/api/v4/projects/{quote(project, safe='')}/repository/archive.tar.gz"
+    base = forge.api(source)
+    if source["forge"] == "gitlab":
+        url = f"{base}{forge.project_path(source, project)}/repository/archive.tar.gz"
         if ref:
             url += "?sha=" + quote(ref, safe="")
-        return await _download(url, {"PRIVATE-TOKEN": token} if token else {}, 0, transport)
-    if forge == "github":
-        host = urlsplit(base).hostname or ""
-        api = "https://api.github.com" if host in ("github.com", "api.github.com") \
-            else f"{base}/api/v3"
-        auth = {"Authorization": f"Bearer {token}"} if token else {}
-        url = f"{api}/repos/{project}/tarball" + (f"/{quote(ref, safe='/')}" if ref else "")
-        return await _download(url, auth, 0, transport, "application/vnd.github+json")
-    # gitea / forgejo
-    auth = {"Authorization": f"token {token}"} if token else {}
-    if not ref:
-        raw = await _download(f"{base}/api/v1/repos/{project}", auth, 1_000_000, transport)
-        try:
-            ref = json.loads(raw)["default_branch"]
-        except (ValueError, KeyError, TypeError):
-            ref = None
-        if not valid_ref(ref):
-            raise ToolError("not_accessible", "could not read the default branch; pass `ref`.")
-    return await _download(f"{base}/api/v1/repos/{project}/archive/"
-                           f"{quote(ref, safe='/')}.tar.gz", auth, 0, transport)
+        return await forge.get(source, url, MAX_BYTES, NAME, transport)
+    if source["forge"] == "github":
+        url = f"{base}/repos/{project}/tarball" + (f"/{quote(ref, safe='/')}" if ref else "")
+        return await forge.get(source, url, MAX_BYTES, NAME, transport,
+                               "application/vnd.github+json")
+    # gitea / forgejo : l'archive demande une référence
+    ref = ref or await forge.default_branch(source, project, NAME, transport)
+    return await forge.get(source, f"{base}/repos/{project}/archive/"
+                                   f"{quote(ref, safe='/')}.tar.gz", MAX_BYTES, NAME, transport)
 
 
 def _git_env(source: dict) -> tuple[dict, list[str]]:
@@ -403,10 +346,10 @@ class RepositoryTool(Tool):
         if command not in COMMANDS:
             raise ToolError("invalid_input", "`command` must be one of " + ", ".join(COMMANDS) + ".")
         project = str(args.get("project") or "").strip().strip("/")
-        if not valid_project(project):
+        if not forge.valid_project(project):
             raise ToolError("invalid_input", "`project` must be a path like group/project.")
         ref = str(args.get("ref") or "").strip()
-        if ref and not valid_ref(ref):
+        if ref and not forge.valid_ref(ref):
             raise ToolError("invalid_input", "`ref` must be a branch, tag or commit name.")
         path = str(args.get("path") or "").strip().strip("/")
         todo = {"command": command, "path": path}
@@ -426,7 +369,7 @@ class RepositoryTool(Tool):
             if len(pattern) > MAX_PATTERN:
                 raise ToolError("invalid_input", f"`pattern` is longer than {MAX_PATTERN} characters.")
             todo.update(pattern=pattern, include=str(args.get("include") or "").strip())
-        source = await _source(call.client, str(args.get("source") or "").strip(), project)
+        source = await forge.source(call.client, str(args.get("source") or "").strip(), project)
         key = _key(call.client, source, project, ref)
         todo["dir"] = hashlib.sha256(repr(key).encode()).hexdigest()[:24]
         # Incognito, rien ne survit à la réponse : un bac d'un seul appel
@@ -469,27 +412,6 @@ async def forget(owner: str, transport=None) -> bool:
     return True
 
 
-async def _source(owner: str, wanted: str, project: str) -> dict:
-    sources = await asyncio.to_thread(repos.available, owner)
-    if not sources:
-        raise ToolError("unavailable", (
-            "no repository source is configured for this user; they can add one in "
-            "the dashboard, Configuration → Dépôts."))
-    if wanted:
-        source = next((s for s in sources if s["name"].casefold() == wanted.casefold()), None)
-    else:
-        source = sources[0] if len(sources) == 1 else None
-    if source is None:
-        names = ", ".join(json.dumps(s["name"], ensure_ascii=False) for s in sources)
-        raise ToolError("invalid_input", (
-            f"unknown source {wanted!r}; " if wanted else
-            "several sources exist, name one; ") + f"available: {names}.")
-    if not repos.permits(source, project):
-        raise ToolError("not_allowed", f"the source {source['name']!r} does not allow "
-                                       f"the project {project!r}.")
-    return source
-
-
 def _key(owner: str, source: dict, project: str, ref: str) -> tuple:
     """Ce qui fait un projet lu : le compte (un projet lu avec le jeton d'un
     compte n'est pas servi à un autre) et la source (adresse, forge,
@@ -518,12 +440,12 @@ async def _archive_for(key: tuple, owner: str, source: dict, project: str, ref: 
                 data = await fetch(source, project, ref, transport)
             except ToolError as exc:
                 if not source["shared"]:
-                    await asyncio.to_thread(repos.downloaded, owner, source["id"], exc.message)
+                    await asyncio.to_thread(repos.used, owner, source["id"], exc.message)
                 raise
             # Une annulation (l'utilisateur arrête la réponse) n'est pas
             # une erreur de la source : rien n'est noté.
             if not source["shared"]:
-                await asyncio.to_thread(repos.downloaded, owner, source["id"])
+                await asyncio.to_thread(repos.used, owner, source["id"])
             if _generation.get(owner, 0) == generation:
                 CACHE.put(key, data, len(data))
             return data

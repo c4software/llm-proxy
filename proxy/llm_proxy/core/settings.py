@@ -19,6 +19,14 @@ from . import config
 # lance, comme stats.CLIENT.
 INCOGNITO = contextvars.ContextVar("incognito", default=False)
 
+# Le tour d'un webhook entrant lancé par un ÉVÉNEMENT DE FORGE
+# (ui/forge_events.py, n'importe qui peut ouvrir une issue d'un dépôt
+# public) : (hôte, projet) de l'événement. Les outils de forge
+# (tools/forge.source) n'ouvrent alors que ce projet, sur cette forge : une
+# injection ne fait pas recopier un projet privé dans une PR publique. None
+# hors d'un tel tour. Posé par webhook_turn.handle, hérité comme INCOGNITO.
+FORGE_SCOPE = contextvars.ContextVar("forge_scope", default=None)
+
 TOOL_CHOICE = config.text("proxy.tool_choice", "auto")
 TIMEOUT = config.num("proxy.upstream_timeout", 600)
 # Court : un backend lent ne doit pas bloquer le catalogue.

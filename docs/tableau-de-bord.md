@@ -301,7 +301,9 @@ Les postes les prennent ici aussi, sur la branche `master` :
 seulement.
 
 **Dépôts** : avec `[repos].enabled`. Chacun y déclare ses sources (forge,
-adresse, jeton, projets permis) pour l'outil `repository`. Voir [Dépôts](depots.md).
+adresse, jeton, projets permis) pour l'outil `repository`. Avec
+`[repos].pull_requests`, une source peut aussi permettre l'écriture, pour
+l'outil `pull_request`. Voir [Dépôts](depots.md).
 
 **Webhooks** : avec `[webhooks].enabled` et `[ui].chat`. Chacun y définit
 ses webhooks entrants (un message reçu au format Slack, auquel le modèle

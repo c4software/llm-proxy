@@ -38,7 +38,7 @@ from fastapi.responses import StreamingResponse
 
 from ..access import accounts, fairshare, oidc
 from ..access.auth import account_owner, auth_required, toml_digests
-from ..core.settings import INCOGNITO, log
+from ..core.settings import FORGE_SCOPE, INCOGNITO, log
 from ..storage import conversations, stats, webhooks
 from ..surfaces import chat_api
 from ..surfaces.endpoints import chat
@@ -276,8 +276,12 @@ async def _ask(owner: str, hook: dict, model: str, body) -> dict:
 async def handle(owner: str, hook: dict, text: str, meta: dict) -> None:
     """Le tour entier d'un message reçu. `meta` : `model` (demandé par le
     corps), `user` (qui l'a écrit, côté Slack), `response_url`,
-    `thread_ts` (un sortant JSON seulement). Ne lève pas : une erreur est gardée sur le webhook, dans
-    la réponse de la conversation, et envoyée aux sortants."""
+    `thread_ts` (un sortant JSON seulement), `forge` ((hôte, projet) d'un
+    événement de forge : settings.FORGE_SCOPE pendant le tour). Ne lève
+    pas : une erreur est gardée sur le webhook, dans la réponse de la
+    conversation, et envoyée aux sortants."""
+    if meta.get("forge") is not None:
+        FORGE_SCOPE.set(tuple(meta["forge"]))     # la tâche du tour, et ce qu'elle lance
     key = (owner, hook["id"])
     lock = _locks.setdefault(key, asyncio.Lock()) if hook["target"] == "conversation" else None
     try:
