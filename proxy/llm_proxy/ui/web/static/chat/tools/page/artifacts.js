@@ -39,16 +39,15 @@ import * as bridge from "../../artifact-bridge.js";
 import { debugOn, shotImage } from "../../artifacts.js";
 
 const MAX_ARTIFACT = 5e5;      // caractères d'un artifact
-const TYPES = ["html", "markdown", "svg", "mermaid", "code"];
 
 // L'identifiant d'un artifact : minuscules, sans accents, des tirets.
 const slug = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "artifact";
 
 // show_artifact : la version rejoint conv.artifacts ; rend l'id montré.
-function showArtifact(conv, args) {
-  const type = TYPES.includes(args.type) ? args.type : "";
-  if (!type) return { result: failure(`\`type\` doit être l'un de ${TYPES.join(", ")}.`) };
+function showArtifact(conv, args, types) {
+  const type = types.includes(args.type) ? args.type : "";
+  if (!type) return { result: failure(`\`type\` doit être l'un de ${types.join(", ")}.`) };
   const content = String(args.content ?? "");
   if (!content.trim()) return { result: "Error: `content` est vide." };
   if (content.length > MAX_ARTIFACT) return { result: `Error: artifact trop long (${MAX_ARTIFACT} caractères au plus).` };
@@ -90,18 +89,16 @@ function editArtifact(conv, args) {
     + `version ${n}, affichée dans le panneau.` };
 }
 
-const MAX_SLICE = text.MAX_SLICE;
-
 // read_artifact : la dernière version, entière (telle quelle), ou une
 // tranche de lignes numérotées.
-function readArtifact(conv, args) {
+function readArtifact(conv, args, settings) {
   const art = findArtifact(conv, args.id);
   if (!art) return failure(`artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).`);
   const last = art.versions[art.versions.length - 1];
   const head = `Artifact « ${art.id} », version ${art.versions.length} (${last.type}, `
     + `${last.content.length} caractères`;
   if (args.start_line === undefined && args.end_line === undefined) return `${head}) :\n${last.content}`;
-  const t = text.slice(last.content, args.start_line, args.end_line);
+  const t = text.slice(last.content, args.start_line, args.end_line, settings);
   if ("error" in t) return failure(`l'artifact ${t.error}`);
   return `${head}, ${t.total} lignes) — lignes ${t.start} à ${t.end} (le numéro et « → » ne font pas `
     + `partie du texte, pour old_string) :\n${t.body}`;
@@ -109,13 +106,13 @@ function readArtifact(conv, args) {
 
 // grep_artifact : les lignes trouvées, numérotées, avec leur contexte
 // (« → » : trouvée ; « · » : contexte ; « … » : saut).
-function grepArtifact(conv, args) {
+function grepArtifact(conv, args, settings) {
   const art = findArtifact(conv, args.id);
   if (!art) return failure(`artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).`);
   const p = text.pattern(args);
   if ("error" in p) return failure(p.error);
   const last = art.versions[art.versions.length - 1];
-  const g = text.grep(last.content, p.re, text.contextOf(args));
+  const g = text.grep(last.content, p.re, text.contextOf(args, settings));
   if (!g.hits) {
     return `Aucune ligne de « ${art.id} » (version ${art.versions.length}, ${g.total} lignes) ne contient « ${args.pattern} ».`;
   }
@@ -125,29 +122,12 @@ function grepArtifact(conv, args) {
 
 class ShowArtifact extends PageTool {
   constructor() {
-    super({
-      name: TOOL.SHOW_ARTIFACT,
-      description: "Affiche dans le panneau latéral du chat une page HTML (scripts permis, "
-        + "bibliothèques depuis cdnjs, jsdelivr ou unpkg ; le reste du réseau — fetch, images "
-        + "et tuiles distantes — est bloqué tant que l'utilisateur ne l'a pas autorisé pour cet "
-        + "artifact par le bouton Réseau du panneau : prévoir alors un message clair si une "
-        + "requête échoue), un document Markdown, un SVG, un schéma Mermaid ou du code. Réutiliser "
-        + "le même `id` pour en publier une nouvelle version. Pour les visualisations, maquettes, "
-        + "petits outils interactifs, documents longs — pas pour une réponse courte.",
-      params: {
-        id: { type: "string", description: "Identifiant stable (ex. « tableau-de-bord ») ; même id = nouvelle version." },
-        title: { type: "string", description: "Titre court." },
-        type: { type: "string", enum: TYPES },
-        content: { type: "string", description: "Le contenu complet (une page HTML entière pour `html`)." },
-        language: { type: "string", description: "Pour `code` : le langage." },
-      },
-      required: ["title", "type", "content"],
-    });
+    super({ name: TOOL.SHOW_ARTIFACT });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
   run(args, ctx) {
-    const { id, result } = showArtifact(ctx.conv, args);
+    const { id, result } = showArtifact(ctx.conv, args, this.settings.types);
     return id ? { result, artifact: id } : result;
   }
 
@@ -158,29 +138,7 @@ class ShowArtifact extends PageTool {
 
 class EditArtifact extends PageTool {
   constructor() {
-    super({
-      name: TOOL.EDIT_ARTIFACT,
-      description: "Retouche un artifact déjà affiché SANS le réécrire : chaque `old_string`, "
-        + "un passage exact et unique de sa dernière version (espaces et retours à la ligne "
-        + "compris, assez long pour être unique), est remplacé par `new_string` — ou, avec "
-        + "`regex`, une expression régulière (un changement répétitif : `replace_all`). À préférer à "
-        + "show_artifact pour toute modification qui ne change pas l'essentiel. Toutes les "
-        + "retouches s'appliquent, ou aucune. Pour trouver le passage : grep_artifact, puis "
-        + "read_artifact sur ses lignes.",
-      params: {
-        id: { type: "string", description: "L'identifiant de l'artifact." },
-        edits: { type: "array", minItems: 1, items: {
-          type: "object", required: ["old_string", "new_string"], properties: {
-            old_string: { type: "string", description: "Le passage exact à remplacer." },
-            new_string: { type: "string", description: "Ce qui le remplace (vide : le supprimer)." },
-            replace_all: { type: "boolean", description: "Remplacer toutes ses occurrences (sinon il doit être unique)." },
-            regex: { type: "boolean", description: "`old_string` est une expression régulière (JavaScript, multiligne) ; `new_string` peut citer ses groupes ($1). Pour un changement répétitif ; sinon, le texte exact." },
-            ignore_case: { type: "boolean", description: "Avec `regex` : sans tenir compte de la casse." },
-          } } },
-        title: { type: "string", description: "Un nouveau titre (facultatif)." },
-      },
-      required: ["id", "edits"],
-    });
+    super({ name: TOOL.EDIT_ARTIFACT });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
@@ -198,23 +156,11 @@ class EditArtifact extends PageTool {
 
 class ReadArtifact extends PageTool {
   constructor() {
-    super({
-      name: TOOL.READ_ARTIFACT,
-      description: "Rend la dernière version d'un artifact : entière, telle quelle, ou une tranche "
-        + "de lignes numérotées (`start_line`, `end_line`) — à préférer pour un gros artifact, après "
-        + "grep_artifact qui dit où chercher. Avant de le retoucher quand son texte exact n'est plus "
-        + "sûr.",
-      params: {
-        id: { type: "string", description: "L'identifiant de l'artifact." },
-        start_line: { type: "integer", description: "Première ligne (à partir de 1) ; absente avec end_line : l'artifact entier." },
-        end_line: { type: "integer", description: `Dernière ligne, incluse (défaut : 80 lignes ; ${MAX_SLICE} au plus).` },
-      },
-      required: ["id"],
-    });
+    super({ name: TOOL.READ_ARTIFACT });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
-  run(args, ctx) { return readArtifact(ctx.conv, args); }
+  run(args, ctx) { return readArtifact(ctx.conv, args, this.settings); }
 
   /** @override @param {any} a */
   summary(a) { return [a.id, a.start_line ? `lignes ${a.start_line}–${a.end_line || "…"}` : ""].filter(Boolean).join(" · "); }
@@ -222,25 +168,11 @@ class ReadArtifact extends PageTool {
 
 class GrepArtifact extends PageTool {
   constructor() {
-    super({
-      name: TOOL.GREP_ARTIFACT,
-      description: "Cherche dans la dernière version d'un artifact, sans le relire en entier : rend "
-        + "les lignes qui contiennent `pattern` (texte, ou expression régulière avec `regex`), "
-        + "numérotées, avec `context` lignes autour. Pour retrouver un passage avant de le lire "
-        + "(read_artifact sur ses lignes) puis de le retoucher (edit_artifact).",
-      params: {
-        id: { type: "string", description: "L'identifiant de l'artifact." },
-        pattern: { type: "string", description: "Le texte cherché (ou une expression régulière si `regex`)." },
-        regex: { type: "boolean", description: "`pattern` est une expression régulière (JavaScript)." },
-        ignore_case: { type: "boolean", description: "Sans tenir compte de la casse (défaut : oui)." },
-        context: { type: "integer", description: "Lignes de contexte avant et après (défaut 2, 10 au plus)." },
-      },
-      required: ["id", "pattern"],
-    });
+    super({ name: TOOL.GREP_ARTIFACT });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
-  run(args, ctx) { return grepArtifact(ctx.conv, args); }
+  run(args, ctx) { return grepArtifact(ctx.conv, args, this.settings); }
 
   /** @override @param {any} a */
   summary(a) { return [a.id, a.pattern].filter(Boolean).join(" · "); }
@@ -269,18 +201,7 @@ const artifactsOf = (conv) => (conv && conv.artifacts) || [];
 
 class RequestArtifactDebug extends PageTool {
   constructor() {
-    super({
-      name: TOOL.REQUEST_ARTIFACT_DEBUG,
-      description: "Propose à l'utilisateur, sur une carte qu'il accepte ou refuse, de rétablir le "
-        + "DÉBOGAGE d'un artifact qu'il a coupé : le modèle pourra alors lire sa console et ses "
-        + "erreurs, y exécuter du code et le capturer (inspect_artifact, run_in_artifact). À proposer "
-        + "quand l'utilisateur dit que cet artifact ne marche pas, plutôt que de deviner la cause.",
-      params: {
-        id: { type: "string", description: "L'identifiant de l'artifact." },
-        reason: { type: "string", description: "Ce qui ne marche pas, en une phrase, montré à l'utilisateur." },
-      },
-      required: ["id"],
-    });
+    super({ name: TOOL.REQUEST_ARTIFACT_DEBUG });
   }
 
   /** @override */
@@ -321,20 +242,7 @@ const which = (art, version) => `Artifact « ${art.id} », version ${version}`
 
 class InspectArtifact extends PageTool {
   constructor() {
-    super({
-      name: TOOL.INSPECT_ARTIFACT,
-      description: "Inspecte un artifact tel qu'il tourne dans le panneau, sous les yeux de "
-        + "l'utilisateur : sa console et ses erreurs depuis le chargement (scripts, ressources "
-        + "bloquées, promesses rejetées), et sa page en texte (un élément par ligne : balise, id, "
-        + "classes, texte, valeurs). `screenshot` : une capture de la page, jointe si le modèle lit "
-        + "les images. À utiliser quand l'utilisateur signale qu'un artifact ne marche pas, avant "
-        + "de le corriger, et après pour vérifier.",
-      params: {
-        id: { type: "string", description: "L'identifiant de l'artifact." },
-        screenshot: { type: "boolean", description: "Joindre une capture de la page (facultatif)." },
-      },
-      required: ["id"],
-    });
+    super({ name: TOOL.INSPECT_ARTIFACT });
   }
 
   /** @override @param {any} a */
@@ -374,21 +282,7 @@ class InspectArtifact extends PageTool {
 
 class RunInArtifact extends PageTool {
   constructor() {
-    super({
-      name: TOOL.RUN_IN_ARTIFACT,
-      description: "Exécute du JavaScript DANS un artifact tel qu'il tourne dans le panneau (l'état "
-        + "que voit l'utilisateur), pour reproduire un bug ou lire un état : le corps d'une fonction "
-        + "async, `return` la valeur voulue. Aides : click(sélecteur), type(sélecteur, texte), "
-        + "key(sélecteur, touche), wait(ms), text(sélecteur), all(sélecteur) ; le DOM et les "
-        + "variables globales de la page sont accessibles. Rend la valeur, et la console et les "
-        + "erreurs survenues pendant l'exécution. Ne corrige rien : pour corriger, edit_artifact, "
-        + "puis revérifier.",
-      params: {
-        id: { type: "string", description: "L'identifiant de l'artifact." },
-        code: { type: "string", description: "Le corps de la fonction async (avec `return`)." },
-      },
-      required: ["id", "code"],
-    });
+    super({ name: TOOL.RUN_IN_ARTIFACT });
   }
 
   /** @override @param {any} a */
@@ -411,15 +305,10 @@ class RunInArtifact extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.ARTIFACTS, authored: true, label: "Artifacts", hint: "le panneau latéral", fixed: true,
-  // Comment les modifier : figé, au prompt système. Leur liste, et leur
-  // version : l'état, joint au tour (l'historique garde les anciens
-  // contenus tels qu'ils ont été vus ; la version actuelle, c'est celle-ci).
-  guidance: () => "Pour modifier un artifact déjà affiché : grep_artifact pour trouver le passage, "
-    + "read_artifact sur ses lignes (start_line, end_line) pour en avoir le texte exact, puis "
-    + "edit_artifact ; ne pas le relire en entier sans besoin. Un contenu d'artifact plus ancien dans "
-    + "la conversation peut être périmé : seule compte la version actuelle (read_artifact). "
-    + "show_artifact seulement pour un nouvel artifact, ou une refonte que l'utilisateur demande.",
+  key: FAMILY.ARTIFACTS,
+  // Leur liste, et leur version : l'état, joint au tour (l'historique garde
+  // les anciens contenus tels qu'ils ont été vus ; la version actuelle,
+  // c'est celle-ci). Comment les modifier : la consigne, déclarée côté proxy.
   state: (ctx) => {
     const arts = artifactsOf(ctx.conv);
     if (!arts.length) return "";
@@ -430,24 +319,17 @@ export const FAMILIES = [defineFamily({
   },
   tools: [new ShowArtifact(), new EditArtifact(), new ReadArtifact(), new GrepArtifact()],
 }), defineFamily({
-  key: FAMILY.ARTIFACT_DEBUG_OFFER, label: "Proposer le débogage", hint: "une carte pour le rétablir", fixed: true,
+  key: FAMILY.ARTIFACT_DEBUG_OFFER,
   // Toujours déclarée (les outils ne changent pas d'un tour à l'autre) :
   // request_artifact_debug répond lui-même si le débogage est déjà actif.
-  guidance: () => "Si l'utilisateur signale qu'un artifact au débogage coupé ne marche pas (un "
-    + "bouton sans effet, une page blanche, une erreur) : proposer de rétablir le débogage avec "
-    + "request_artifact_debug plutôt que de deviner la cause.",
   state: (ctx) => {
     const off = artifactsOf(ctx.conv).filter((a) => !debugOn(a));
     return off.length ? `Débogage coupé par l'utilisateur pour : ${off.map((a) => `« ${a.id} »`).join(", ")}.` : "";
   },
   tools: [new RequestArtifactDebug()],
 }), defineFamily({
-  key: FAMILY.ARTIFACT_DEBUG, authored: true, label: "Déboguer un artifact", hint: "tester la page affichée", fixed: true,
+  key: FAMILY.ARTIFACT_DEBUG,
   // Toujours déclarée : inspect_artifact et run_in_artifact refusent un
   // artifact au débogage coupé (target), en renvoyant à request_artifact_debug.
-  guidance: () => "Quand un artifact ne marche pas, ne pas deviner : l'inspecter (inspect_artifact : "
-    + "console, erreurs, page), reproduire le problème (run_in_artifact), corriger (edit_artifact), "
-    + "puis revérifier de la même façon. Le débogage est actif par défaut ; l'utilisateur peut le "
-    + "couper pour un artifact.",
   tools: [new InspectArtifact(), new RunInArtifact()],
 })];

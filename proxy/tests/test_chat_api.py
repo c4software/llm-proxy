@@ -627,7 +627,7 @@ def test_always_presents_the_hosted_tools_to_a_request_that_declares_nothing(
     assert "tool_calls" not in message and "stream_options" not in chat.sent[-1]
 
     # /healthz dit ce qui est présenté à l'instant : les outils ACTIFS.
-    monkeypatch.setattr(tools, "enabled", lambda: [web_search.TOOL])
+    monkeypatch.setattr(tools, "enabled", lambda offer=None: [web_search.TOOL])
     assert chat.client.get("/healthz").json()["chat"]["always"] == ["web_search"]
 
 

@@ -10,14 +10,7 @@ import { wakeLock } from "./vueuse.js";
 
 class KeepScreenOn extends PageTool {
   constructor() {
-    super({
-      name: TOOL.KEEP_SCREEN_ON,
-      description: "Empêche l'écran de l'utilisateur de se mettre en veille (recette, pas-à-pas, "
-        + "présentation), ou le rend à la normale. Tant que la page est visible ; une carte sous "
-        + "la réponse permet à l'utilisateur de basculer lui-même.",
-      params: { on: { type: "boolean", description: "true : écran allumé ; false : veille normale." } },
-      required: ["on"],
-    });
+    super({ name: TOOL.KEEP_SCREEN_ON });
   }
 
   /** @override @param {any} a */
@@ -55,7 +48,7 @@ class KeepScreenOn extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.WAKE, label: "Écran allumé", hint: "empêcher la mise en veille",
+  key: FAMILY.WAKE,
   available: () => wakeLock.isSupported.value,
   tools: [new KeepScreenOn()],
 })];

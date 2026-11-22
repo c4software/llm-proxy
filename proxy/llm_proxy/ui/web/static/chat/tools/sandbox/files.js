@@ -25,9 +25,6 @@ const MAX_OUTPUTS = 10;
 const IMAGE = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
 const TEXT = /^(txt|csv|tsv|json|jsonl|ndjson|md|markdown|html?|xml|svg|ya?ml|toml|ini|log|sql|js|mjs|css|php|py|sh|ics|tex)$/;
 
-export const FILES_PARAM = { files: { type: "array", items: { type: "string" },
-  description: "Fichiers à fournir au code : chemins dans le dossier ouvert, ou noms de pièces jointes." } };
-
 const clean = (p) => String(p || "").trim().replace(/^\.?\/+/, "").replace(/\/+$/, "");
 const ext = (name) => ((String(name).match(/\.([^./]+)$/) || [])[1] || "").toLowerCase();
 

@@ -40,6 +40,7 @@ from ..core import config
 from ..core.settings import INCOGNITO, log
 from ..storage import stats
 from . import (  # noqa: F401
+    contract,
     code_execution,
     image_generation,
     mcp,
@@ -53,10 +54,16 @@ from . import (  # noqa: F401
     webcache,
     repository,
     webhook,
+    extensions,
+    page,
 )
 from .contract import (  # noqa: F401
     ERRORS,
     Anthropic,
+    BrowserTool,
+    Family,
+    FamilyKey,
+    Offer,
     Artifact,
     Call,
     Responses,
@@ -65,26 +72,72 @@ from .contract import (  # noqa: F401
     Tool,
     ToolError,
     ToolName,
+    Runs,
     failure,
     faults,
 )
 
-# Le registre : tous les outils que le proxy SAIT héberger, actifs ou non,
+# Le registre : tous les outils que le proxy SAIT exécuter, actifs ou non,
 # dans l'ordre où ils sont présentés au modèle.
 REGISTRY: list[Tool] = []
+# Les outils du NAVIGATEUR (Runs.BROWSER) : leurs déclarations, servies à
+# la page (ui/page_tools.py) ; et leurs familles, dans l'ordre du menu.
+PAGE: list[Tool] = []
+FAMILIES: list[Family] = []
 
 
 def register(tool: Tool, provider: str = "") -> Tool:
-    """Ajoute un outil au registre, s'il tient le contrat (faults). Le nom
-    est la clé : deux outils ne le partagent pas. `provider` : celui qui
-    FOURNIT l'outil (« mcp ») ; vide, c'est un outil natif (ToolName)."""
+    """Ajoute un outil, s'il tient le contrat (faults) : au REGISTRE pour
+    un outil du proxy, à PAGE pour un outil du navigateur. Le nom est la
+    clé, pour les deux moteurs : deux outils ne le partagent pas.
+    `provider` : celui qui FOURNIT l'outil (« mcp », « extension ») ; vide,
+    c'est un outil natif (ToolName)."""
     errors = faults(tool, provider)
-    if any(t.name == tool.name for t in REGISTRY):
+    if any(t.name == getattr(tool, "name", None) for t in (*REGISTRY, *PAGE)):
         errors.append(f"outil {tool.name!r} : nom déjà pris")
     if errors:
         raise ValueError("outil hébergé non conforme :\n  " + "\n  ".join(errors))
-    REGISTRY.append(tool)
+    (PAGE if tool.runs == Runs.BROWSER else REGISTRY).append(tool)
     return tool
+
+
+def family_faults(family, provider: str = "", page_names=None, families=None) -> list[str]:
+    """Ce qu'une famille a de travers : une clé hors de FamilyKey (native)
+    ou prise ; sans outil ou sans libellé ; un outil qui n'est pas un outil
+    du navigateur inscrit, ou qui est déjà dans une autre famille.
+    `page_names`, `families` : à la place de PAGE et FAMILIES, pour
+    vérifier avant d'inscrire (une extension, tout ou rien)."""
+    if not isinstance(family, Family):
+        return [f"{family!r} : pas une Family"]
+    where = f"famille {family.key!r}"
+    out = []
+    native = set(FamilyKey)
+    if not provider and family.key not in native:
+        out.append(f"{where} : clé hors de FamilyKey (une famille native)")
+    elif provider and (family.key in native or not isinstance(family.key, str)
+                       or not contract.PROVIDED_NAME.match(family.key)):
+        out.append(f"{where} : clé invalide pour une famille fournie")
+    families = FAMILIES if families is None else families
+    if any(f.key == family.key for f in families):
+        out.append(f"{where} : clé déjà prise")
+    if not family.tools or not family.label:
+        out.append(f"{where} : sans outil ou sans libellé")
+    page_names = {t.name for t in PAGE} if page_names is None else set(page_names)
+    taken = {n for f in families for n in f.tools}
+    for name in family.tools:
+        if name not in page_names:
+            out.append(f"{where} : {name!r} n'est pas un outil du navigateur inscrit")
+        elif name in taken or list(family.tools).count(name) > 1:
+            out.append(f"{where} : {name!r} est déjà dans une famille")
+    return out
+
+
+def register_family(family: Family, provider: str = "") -> Family:
+    """Ajoute une famille d'outils du navigateur, après ses outils."""
+    if errors := family_faults(family, provider):
+        raise ValueError("famille non conforme :\n  " + "\n  ".join(errors))
+    FAMILIES.append(family)
+    return family
 
 
 register(web_search.TOOL)
@@ -97,11 +150,21 @@ register(image_generation.TOOL)
 register(memory.TOOL)
 register(webhook.TOOL)
 register(repository.TOOL)
+for _tool in page.TOOLS:
+    register(_tool)
+for _family in page.FAMILIES:
+    register_family(_family)
 
-# Chaque outil natif de ToolName est inscrit : une entrée sans outil est
-# une erreur de démarrage, pas un outil qui manque en silence.
-if missing := set(ToolName) - {t.name for t in REGISTRY}:
+# Chaque outil natif de ToolName est inscrit, chaque famille de FamilyKey
+# aussi, et chaque outil du navigateur est dans une famille : une entrée
+# sans outil est une erreur de démarrage, pas un outil qui manque en
+# silence.
+if missing := set(ToolName) - {t.name for t in (*REGISTRY, *PAGE)}:
     raise ValueError(f"ToolName sans outil : {sorted(missing)}")
+if missing := set(FamilyKey) - {f.key for f in FAMILIES}:
+    raise ValueError(f"FamilyKey sans famille : {sorted(missing)}")
+if loose := {t.name for t in PAGE} - {n for f in FAMILIES for n in f.tools}:
+    raise ValueError(f"outils du navigateur sans famille : {sorted(loose)}")
 
 # Appels d'outils hébergés exécutés pour UNE réponse. Au-delà, le modèle
 # reçoit une erreur qui lui demande de conclure.
@@ -136,24 +199,46 @@ def granted(tool: Tool, rights: frozenset | None) -> bool:
                if k == mcp.KIND or k.startswith(mcp.KIND + ":"))
 
 
-def enabled() -> list[Tool]:
-    """Les outils actifs, et permis à la clé de la requête (GRANTED)."""
+def active(tool: Tool, offer: Offer = Offer.API) -> bool:
+    """L'outil est-il en service ICI : actif (Tool.enabled), son extension
+    allumée (extensions.active : l'interrupteur de la page), et offert à ce
+    canal (Tool.offered) ? Ignore les droits de la requête."""
+    return bool(tool.enabled) and extensions.active(tool) and offer in tool.offered
+
+
+def enabled(offer: Offer = Offer.API) -> list[Tool]:
+    """Les outils en service pour ce canal (`offer` : Offer.WEB pour le
+    chat de la page et les webhooks), et permis à la clé de la requête
+    (GRANTED)."""
     rights = GRANTED.get()
-    return [t for t in REGISTRY if t.enabled and granted(t, rights)]
+    return [t for t in REGISTRY if active(t, offer) and granted(t, rights)]
+
+
+def serving() -> dict[str, list[str]]:
+    """Les outils en service sur au moins un canal → leurs canaux, pour le
+    journal de démarrage et /healthz. Ignore les droits de la requête."""
+    out = {}
+    for t in REGISTRY:
+        if offers := [o.value for o in Offer if active(t, o)]:
+            out[t.name] = offers
+    return out
 
 
 def grantable() -> list[dict]:
     """Ce qu'on peut permettre à une clé, pour la page : chaque outil
-    natif (actif ou non : `enabled`), puis chaque serveur MCP de la
-    configuration avec les outils qu'il a fait connaître. Ignore les
-    droits de la requête."""
-    out = [{"name": t.name, "enabled": bool(t.enabled), "family": t.family}
-           for t in REGISTRY if not isinstance(t, mcp.McpTool)]
+    natif ou d'extension offert à l'API (en service ou non : `enabled`),
+    puis chaque serveur MCP de la configuration avec les outils qu'il a
+    fait connaître. Un outil offert à la page seule n'y est pas : les
+    droits d'une clé ne s'y appliquent pas. Ignore les droits de la
+    requête."""
+    out = [{"name": t.name, "enabled": active(t), "family": t.family}
+           for t in REGISTRY
+           if not isinstance(t, mcp.McpTool) and Offer.API in t.offered]
     servers: dict[str, list] = {}
     for t in REGISTRY:
         if isinstance(t, mcp.McpTool):
             servers.setdefault(t.server.name, []).append(
-                {"name": t.name, "enabled": bool(t.enabled)})
+                {"name": t.name, "enabled": active(t)})
     for name in (s.name for s in mcp.SERVERS):
         servers.setdefault(name, [])
     return out + [{"name": f"{mcp.KIND}:{name}", "server": name,
@@ -216,8 +301,11 @@ class Hosted:
     présenter au modèle pour ce que le client déclare, l'exécution bornée
     d'un appel, et la mémoire des résultats."""
 
-    def __init__(self, tools=None, memory: Memory | None = None):
-        self.tools = list(enabled() if tools is None else tools)
+    def __init__(self, tools=None, memory: Memory | None = None,
+                 offer: Offer = Offer.API):
+        """`offer` : le canal de la requête (Offer.WEB pour le chat de la
+        page et les webhooks) ; `tools` le remplace (tests)."""
+        self.tools = list(enabled(offer) if tools is None else tools)
         self.memory = MEMORY if memory is None else memory
         self.by_name = {t.name: t for t in self.tools}
         self.expired = EXPIRED

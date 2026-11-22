@@ -134,6 +134,7 @@ Le reste demande un redémarrage.
 | `proxy/requirements.txt`, `requirements-dev.txt` | Dépendances du proxy ; celles de ses tests |
 | `proxy/main.py` | Point d'entrée (`uvicorn main:app`), trois lignes |
 | `proxy/tests/` | Tests du proxy, sans réseau (`cd proxy && pytest`, `pytest.ini`) |
+| `extension.py` | Le contrat public des extensions : réexporte `Tool`, `BrowserTool`, `Family`, `Result`, `Call`, `ToolError`, `Offer`, `Runs`… et `net.download`, `net.post` ; `settings(nom)`, `logger(nom)`, `API` |
 | `app.py` | L'application FastAPI : routes et middlewares, catch-all en dernier |
 | `startup.py` | Démarrage et arrêt : stats, clients upstream, partage équitable, serveurs MCP, journal, limites des backends à quotas |
 
@@ -196,7 +197,7 @@ partie qui l'a importé.
 | Fichier | Rôle |
 |---|---|
 | `tools/__init__.py` | Le commun : registre, exécution bornée (délai, taille, appels par réponse), stats, mémoire des résultats |
-| `tools/contract.py` | Le contrat : `Tool`, `Result`, `Call`, `ToolError`, codes d'erreur, liaisons aux protocoles. Voir [outils.md](outils.md) |
+| `tools/contract.py` | Le contrat de tous les outils : `Tool` (`runs` : proxy ou navigateur ; `offered` : api ou web), `BrowserTool`, `Family`, `Result`, `Call`, `ToolError`, codes d'erreur, liaisons aux protocoles, `ToolName` et `FamilyKey`. Voir [outils.md](outils.md) |
 | `tools/net.py` | Garde-fou réseau (`[tools.net]`) : domaines, adresses publiques seulement, redirections vérifiées ; `net.download` (avec, pour une forge, des en-têtes limités à son origine), et `net.post` (un webhook sortant hors Apprise, un `response_url`) |
 | `tools/webcache.py` | Cache web en mémoire vive, quelques minutes, borné |
 | `tools/html_text.py` | HTML → texte lisible par un modèle |
@@ -213,6 +214,8 @@ partie qui l'a importé.
 | `tools/repository_bac.py` | Le script que `repository` fait tourner dans le bac : décompression sûre, `tree`, `read`, `grep` (un texte envoyé à l'exécuteur, pas un module importé) |
 | `tools/webhook.py` | `webhook` : poste sur un webhook sortant du compte ; l'envoi (`post` : Apprise, sinon `send` en JSON par `net.post`) ; le format Slack dans les deux sens (`to_mrkdwn`, `from_slack`) |
 | `tools/provenance.py` | Les sites connus d'une conversation : ceux qu'un outil qui lit une URL peut ouvrir |
+| `tools/extensions.py` | Le chargement des extensions de `[extensions].path` (un sous-dossier chacune : `<nom>.py`, `<nom>.js`), appelé par `startup.lifespan` avant les serveurs MCP : dossiers et fichiers hors d'atteinte du proxy exigés, outils et familles tous vérifiés puis enregistrés (`register`, `register_family`), une extension en faute écartée entière au journal ; `active`, `listing`, `switch` : l'interrupteur de la page ; `module_url`, `script` : le `.js` servi |
+| `tools/page/` | Les déclarations des outils natifs du navigateur (`BrowserTool`) et de leurs familles (`Family`) : `page.py`, `device.py`, `sandbox.py`, dans l'ordre du menu Outils ; leur exécution est dans `ui/web/static/chat/tools/` |
 | `tools/mcp/` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés. Paquet : `protocol`, `tool` (`McpTool`), `server`, `registry` |
 
 ### `exposure/` : les outils offerts tels quels
@@ -234,6 +237,7 @@ partie qui l'a importé.
 | `storage/repos.py` | Les sources de dépôts de chaque compte (jeton gardé, jamais rendu ; table à part de `conversations.db`) et celles de `[repos.sources]` |
 | `storage/webhooks.py` | Les webhooks entrants (jeton gardé, retrouvé par son condensé) et sortants (URL Apprise et son service, exposition à l'outil) de chaque compte (tables à part de `conversations.db`) |
 | `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
+| `storage/extension_state.py` | L'interrupteur des extensions (`data/extensions.json`) : les extensions éteintes dans la page, écriture atomique, fichier illisible ignoré et jamais écrasé par une lecture |
 | `storage/backup.py` | Sauvegarde et restauration de `data/` |
 
 ### `ui/` : le tableau de bord et le chat
@@ -246,16 +250,17 @@ partie qui l'a importé.
 | `ui/config_view.py` | La configuration effective pour la page (secrets masqués), le formulaire, la vérification d'un TOML modifié. N'écrit jamais |
 | `ui/usage_api.py` | L'Usage API (`/v1/organization/usage/*`) et ce qu'une page connectée en voit |
 | `ui/health.py` | `/healthz` et `/ui/health` : état détaillé du déploiement |
-| `ui/page_tools.py` | Les outils de la page refusés par `[ui].page_tools_disabled`, lus dans `page_tools.json` (tiré du registre de la page) |
+| `ui/page_tools.py` | Les outils du navigateur pour la page : leurs déclarations (`tools.PAGE`, `tools.FAMILIES`) servies par `/ui/session`, moins celles que refuse `[ui].page_tools_disabled` ou d'une extension éteinte, retirées aussi de toute requête du chat de la page ; les familles `authored` (provenance) |
 | `ui/linux_relay.py` | Le relais réseau (Wisp) de la VM Linux : jeton signé, adresses publiques seulement, plafond d'octets et délai d'inactivité |
 | `ui/voice_routes.py` | Routes `/ui/voices` (voix clonées) |
 | `ui/repo_routes.py` | `/ui/repos` : les sources de dépôts du compte |
 | `ui/runtime_routes.py` | `/ui/runtime` : les bacs de l'exécuteur (les siens ; tous pour un admin) et les caches du proxy, à détruire ou vider |
+| `ui/extension_routes.py` | `/ui/extensions` : les extensions chargées et écartées, l'interrupteur à chaud (admin) ; `/ui/extensions/<nom>/<nom>.js`, le module de la page d'une extension allumée |
 | `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |
 | `ui/webhook_turn.py` | Le tour d'un message reçu, sans navigateur : la conversation, le seul message reçu et le prompt système envoyés au modèle, `/ui/chat/completions` appelé en interne au nom du créateur, les envois sortants |
 | `ui/dataurl.py` | Lecture des URL `data:` envoyées par la page (images, audio) |
 | `ui/web/templates/index.html` | Squelette de la page |
 | `ui/web/static/` | Modules ES par domaine : `app.js` (session, vues, menu), `stats/`, `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, thème), plus `dashboard.css`, `vue.global.prod.js` et `vueuse.iife.min.js` (VueUse 15, ses modules `shared` et `core`) |
 | `ui/web/static/chat/` | `ChatPanel.js`, `api.js` (les messages envoyés au modèle, règle « ajout seul »), `turn.js` (les étapes d'un tour), `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.js`, `LinuxPanel.js` (le terminal de la VM Linux), `SidePanel.js` (leur panneau commun : largeur, Large, Réseau), `voice/` (la voix : moteurs navigateur et proxy, voix clonées et leur studio, normalisation de la référence, transcription des modèles ASR), `notify.js` |
-| `ui/web/static/chat/tools/` | Les outils que la page exécute : `contract.js` (les listes `TOOL` et `FAMILY`, l'interface `PageTool`), `index.js` (le registre, qui vérifie chaque outil au chargement), `page/` (questions, fichiers, artifacts, dossier), `device/` (l'appareil ; `vueuse.js`, les composables VueUse des outils ; `media.js`, les flux), `sandbox/` (`bac.js`, le bac commun ; `files.js` ; `javascript.js`, `typescript.js`, `php.js`, `sql.js`, `postgres.js`, `sqlbase.js`, `tables.js` ; `linux.js` et `linuxvm.js`, la VM Linux ; `programs.js`, les programmes d'outils, dont les `tools.x()` passent par la page et `/ui/tools`) ; `text.js`, lire, chercher et retoucher un texte (artifacts et fichiers de la VM). Voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page) |
+| `ui/web/static/chat/tools/` | L'exécution des outils du navigateur (leurs déclarations : `tools/page/` du proxy) : `contract.js` (les listes `TOOL` et `FAMILY`, l'interface `PageTool`), `index.js` (le registre, qui vérifie chaque outil au chargement et y installe les déclarations de `/ui/session`, et les modules des extensions), `page/` (questions, fichiers, artifacts, dossier), `device/` (l'appareil ; `vueuse.js`, les composables VueUse des outils ; `media.js`, les flux), `sandbox/` (`bac.js`, le bac commun ; `files.js` ; `javascript.js`, `typescript.js`, `php.js`, `sql.js`, `postgres.js`, `sqlbase.js`, `tables.js` ; `linux.js` et `linuxvm.js`, la VM Linux ; `programs.js`, les programmes d'outils, dont les `tools.x()` passent par la page et `/ui/tools`) ; `text.js`, lire, chercher et retoucher un texte (artifacts et fichiers de la VM). Voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page) |
 | `ui/web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js), `html-to-image.js` (la capture d'un artifact), `sucrase.js`, `typescript.js` (le compilateur TypeScript 6 et ses `lib.*.d.ts`), `pglite.*` et `initdb.wasm` (PostgreSQL, PGlite), `xterm.*` (le terminal) ; `linux/`, la VM Linux, construite par `proxy/linux/build.sh` |

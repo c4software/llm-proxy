@@ -55,16 +55,7 @@ const comment = (w) => (w.comment ? ` Son commentaire : « ${w.comment} »` : ""
 
 class FolderList extends PageTool {
   constructor() {
-    super({
-      name: TOOL.FOLDER_LIST,
-      description: "Liste le contenu du dossier ouvert par l'utilisateur dans le chat. "
-        + "Sans `path` : sa racine. Les sous-dossiers finissent par « / », avec leur nombre "
-        + "de fichiers ; les fichiers ont leur taille. `recursive` : tous les fichiers sous `path`.",
-      params: {
-        path: { type: "string", description: "Sous-dossier relatif à la racine ; vide = la racine." },
-        recursive: { type: "boolean", description: "Lister tous les fichiers sous `path`." },
-      },
-    });
+    super({ name: TOOL.FOLDER_LIST });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
@@ -76,17 +67,7 @@ class FolderList extends PageTool {
 
 class FolderRead extends PageTool {
   constructor() {
-    super({
-      name: TOOL.FOLDER_READ,
-      description: "Lit un fichier texte du dossier ouvert, lignes numérotées. Un long fichier "
-        + "se lit par tranches : `start_line` et `end_line` (incluses, à partir de 1).",
-      params: {
-        path: { type: "string", description: "Chemin du fichier, relatif à la racine du dossier." },
-        start_line: { type: "integer", description: "Première ligne (défaut : 1)." },
-        end_line: { type: "integer", description: "Dernière ligne (défaut : jusqu'à la limite d'une lecture)." },
-      },
-      required: ["path"],
-    });
+    super({ name: TOOL.FOLDER_READ });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
@@ -100,18 +81,7 @@ class FolderRead extends PageTool {
 
 class FolderSearch extends PageTool {
   constructor() {
-    super({
-      name: TOOL.FOLDER_SEARCH,
-      description: "Cherche un texte dans les fichiers texte du dossier ouvert ; rend "
-        + "« chemin:ligne: texte » pour chaque ligne trouvée.",
-      params: {
-        pattern: { type: "string", description: "Le texte cherché (ou une expression régulière si `regex`)." },
-        path: { type: "string", description: "Ne chercher que sous ce sous-dossier." },
-        regex: { type: "boolean", description: "`pattern` est une expression régulière (JavaScript)." },
-        ignore_case: { type: "boolean", description: "Sans tenir compte de la casse (défaut : oui)." },
-      },
-      required: ["pattern"],
-    });
+    super({ name: TOOL.FOLDER_SEARCH });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
@@ -164,47 +134,22 @@ class FolderWriting extends PageTool {
 
 class FolderWrite extends FolderWriting {
   constructor() {
-    super({
-      name: TOOL.FOLDER_WRITE,
-      description: "Crée ou remplace entièrement un fichier texte du dossier ouvert. "
-        + "L'utilisateur voit le diff et accepte ou refuse ; le résultat le dit. Pour une "
-        + "modification localisée, préférer folder_edit.",
-      params: {
-        path: { type: "string", description: "Chemin relatif à la racine du dossier." },
-        content: { type: "string", description: "Le contenu complet du fichier." },
-      },
-      required: ["path", "content"],
-    });
+    super({ name: TOOL.FOLDER_WRITE });
   }
 }
 
 class FolderEdit extends FolderWriting {
   constructor() {
-    super({
-      name: TOOL.FOLDER_EDIT,
-      description: "Remplace un passage EXACT d'un fichier du dossier ouvert (lire le fichier "
-        + "d'abord). `old_text` doit y être une seule fois, sauf `replace_all`. L'utilisateur "
-        + "voit le diff et accepte ou refuse.",
-      params: {
-        path: { type: "string" },
-        old_text: { type: "string", description: "Le passage actuel, à l'identique (espaces compris)." },
-        new_text: { type: "string", description: "Ce qui le remplace." },
-        replace_all: { type: "boolean", description: "Remplacer toutes les occurrences." },
-      },
-      required: ["path", "old_text", "new_text"],
-    });
+    super({ name: TOOL.FOLDER_EDIT });
   }
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.FOLDER, label: "Dossier ouvert", hint: "lire, chercher, écrire avec accord", fixed: true,
+  key: FAMILY.FOLDER,
   // Ouvrir un dossier est un choix de l'utilisateur : ses outils arrivent
   // alors. Son nom et son nombre de fichiers (qui change à chaque
   // écriture) : l'état, joint au tour.
   enabled: (ctx) => !!ctx.ws,
-  guidance: () => "Un dossier de l'utilisateur est ouvert dans le chat. Le parcourir avec "
-    + "folder_list, folder_read et folder_search plutôt que de supposer son contenu ; toute écriture "
-    + "(folder_write, folder_edit) passe par l'accord de l'utilisateur.",
   state: (ctx) => `Dossier ouvert : « ${ctx.ws.name} » (${ctx.ws.count} fichiers).`,
   tools: [new FolderList(), new FolderRead(), new FolderSearch(), new FolderWrite(), new FolderEdit()],
 })];

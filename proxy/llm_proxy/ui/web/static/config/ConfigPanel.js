@@ -9,6 +9,8 @@
     RuntimePart.js    les bacs de l'exécuteur (les siens ; tous pour un
                       admin) et les caches du proxy (admin), à nettoyer
     ../memory/        ce que l'outil `memory` a gardé (si actif)
+    ExtensionsPart.js les extensions chargées, à éteindre ou rallumer
+                      (admin, ou proxy sans comptes)
     AccountsPart.js   les comptes et leur part, la sauvegarde (admin)
     ProxyPart.js      toute la configuration du proxy (admin, ou proxy
                       sans comptes) — proxy/form.js, proxy/advanced.js
@@ -23,6 +25,7 @@ import { KeysPart } from "./KeysPart.js";
 import { WebhooksPart } from "./WebhooksPart.js";
 import { ReposPart } from "./ReposPart.js";
 import { RuntimePart } from "./RuntimePart.js";
+import { ExtensionsPart } from "./ExtensionsPart.js";
 import { AccountsPart } from "./AccountsPart.js";
 import { ProxyPart } from "./ProxyPart.js";
 import { useAccount, useUsers } from "./shared.js";
@@ -31,7 +34,7 @@ const { computed, onMounted, ref } = Vue;
 const STORE_PART = "llm-proxy-config-part";
 
 export const ConfigPanel = {
-  components: { ClientsPart, KeysPart, WebhooksPart, ReposPart, RuntimePart, AccountsPart, ProxyPart },
+  components: { ClientsPart, KeysPart, WebhooksPart, ReposPart, RuntimePart, ExtensionsPart, AccountsPart, ProxyPart },
   props: {
     session: { type: Object, required: true },
     health: { type: Object, default: null },
@@ -46,6 +49,7 @@ export const ConfigPanel = {
       ...(props.session.webhooks ? [{ id: "webhooks", label: "Webhooks" }] : []),
       ...(props.session.repos ? [{ id: "repos", label: "Dépôts" }] : []),
       ...(props.session.executor ? [{ id: "runtime", label: "Exécution" }] : []),
+      ...(!account.value || isAdmin.value ? [{ id: "extensions", label: "Extensions" }] : []),
       ...(isAdmin.value ? [{ id: "accounts", label: "Comptes" }] : []),
       ...(!account.value || isAdmin.value ? [{ id: "proxy", label: "Proxy" }] : []),
     ]);
@@ -91,6 +95,7 @@ export const ConfigPanel = {
     <div class="config-keys" v-else-if="part === 'memory'">
       <memory-panel expanded></memory-panel>
     </div>
+    <extensions-part v-else-if="part === 'extensions'"></extensions-part>
     <accounts-part v-else-if="part === 'accounts'" :session="session"></accounts-part>
     <proxy-part v-else-if="part === 'proxy'" :session="session"></proxy-part>
   </div>`,

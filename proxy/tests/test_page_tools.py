@@ -1,7 +1,8 @@
-"""Les outils de la page refusés à tous ([ui].page_tools_disabled,
-ui/page_tools.py) : le manifeste (famille → outils), la résolution des
-entrées, ce que /ui/session en dit, et leur retrait de toute requête du
-chat de la page — pas des autres routes."""
+"""Les outils du navigateur pour la page (ui/page_tools.py) : leurs
+déclarations, servies par /ui/session depuis le registre (tools/page/) ;
+ceux que refuse [ui].page_tools_disabled, la résolution des entrées,
+absents de la session et retirés de toute requête du chat de la page —
+pas des autres routes."""
 
 from fakes import FakeUpstream, chunk, stream
 from test_ui import chat, login, ui  # noqa: F401 — la fixture du chat de la page
@@ -10,10 +11,17 @@ from llm_proxy.ui import page_tools
 FN = lambda name: {"type": "function", "function": {"name": name, "parameters": {}}}  # noqa: E731
 
 
-def test_manifeste_tire_du_registre():
-    assert page_tools.FAMILIES["camera"] == ["take_photo"]
-    assert page_tools.FAMILIES["compute"] == ["run_javascript", "check_typescript"]
-    assert len(page_tools.TOOLS) == sum(len(t) for t in page_tools.FAMILIES.values())
+def test_les_declarations_viennent_du_registre():
+    """Chaque famille du menu, dans l'ordre, et la fonction de chacun de
+    ses outils, assemblée par le contrat (Tool.spec) avec ses `settings`."""
+    page = page_tools.declarations()
+    families = {f["key"]: f["tools"] for f in page["families"]}
+    assert families["camera"] == ["take_photo"]
+    assert families["compute"] == ["run_javascript", "check_typescript"]
+    assert [t["name"] for t in page["tools"]] == [n for ts in families.values() for n in ts]
+    sql = next(t for t in page["tools"] if t["name"] == "run_sql")
+    assert sql["settings"] == {"max_rows": 200} and "200 lignes" in sql["spec"]["function"]["description"]
+    assert not any("module" in t for t in page["tools"])          # natifs : la page les a
 
 
 def test_resolution_familles_et_outils():
@@ -42,8 +50,11 @@ def test_strip(monkeypatch):
 def test_retirees_de_la_requete_du_chat_de_la_page(ui, monkeypatch):
     refuse(monkeypatch, ["camera", "run_php"])
     login(ui)
-    s = ui.client.get("/ui/session").json()
-    assert s["chat"]["page_tools_disabled"] == {"families": ["camera", "php"], "tools": ["run_php", "take_photo"]}
+    page = ui.client.get("/ui/session").json()["chat"]["page"]
+    keys = {f["key"] for f in page["families"]}
+    names = {t["name"] for t in page["tools"]}
+    assert not {"camera", "php"} & keys and not {"run_php", "take_photo"} & names
+    assert "location" in keys and "get_location" in names
     ui.replies = [FakeUpstream(stream(chunk({"role": "assistant", "content": "ok"}, "stop")))]
     r = chat(ui, tools=[FN("take_photo"), FN("get_location"), FN("run_php")], tool_choice="auto")
     assert r.status_code == 200

@@ -445,6 +445,18 @@ L'outil `repository` et les sources de dépôts. Voir [Dépôts](depots.md).
 | `cache_bytes` | `200000000` | Taille maximale de toutes les archives gardées (RAM du proxy) |
 | `sources.<nom>` | — | Une source partagée : `forge` (`gitlab`, `github`, `gitea`, `git`), `url`, `token` (en `${VAR}`), `username` (forge `git`), `projects` (motifs), `enabled` |
 
+## `[extensions]` et `[extensions.<nom>]`
+
+Des outils du proxy (Python) et du navigateur (JavaScript), un
+sous-dossier par extension, chargés au démarrage. Voir
+[Extensions](extensions.md).
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `path` | `""` | Le dossier des extensions, un sous-dossier chacune, hors d'atteinte du proxy (montage `:ro`). Vide : aucune extension |
+| `<nom>.enabled` | `true` | `false` : l'extension `<nom>/` n'est pas chargée, et la page ne peut pas la rallumer. Une extension chargée s'éteint à chaud dans Configuration → Extensions |
+| `<nom>.*` | — | Les réglages de l'extension, lus par `ext.settings("<nom>")`. Ceux de l'extension d'exemple `pull_request` : voir [pull_request](extensions.md#pull_request--proposer-une-modification) |
+
 ## `[fair_share]`
 
 | Clé | Défaut | Rôle |

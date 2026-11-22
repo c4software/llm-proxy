@@ -18,17 +18,7 @@ export function webUrl(url) {
 
 class OpenLink extends PageTool {
   constructor() {
-    super({
-      name: TOOL.OPEN_LINK,
-      description: "Propose à l'utilisateur d'ouvrir une adresse web (un itinéraire, une recherche, "
-        + "une page de documentation) : une carte sous la réponse, où il lit l'adresse et l'ouvre "
-        + "dans un nouvel onglet quand il veut. Le résultat ne dit pas s'il l'a ouverte.",
-      params: {
-        url: { type: "string", description: "L'adresse complète, http ou https." },
-        reason: { type: "string", description: "Pourquoi l'ouvrir, en une phrase (facultatif)." },
-      },
-      required: ["url"],
-    });
+    super({ name: TOOL.OPEN_LINK });
   }
 
   /** @override @param {any} a */
@@ -56,7 +46,4 @@ class OpenLink extends PageTool {
   }
 }
 
-export const FAMILIES = [defineFamily({
-  key: FAMILY.LINKS, label: "Liens", hint: "une adresse à ouvrir, en carte sous la réponse", on: true,
-  tools: [new OpenLink()],
-})];
+export const FAMILIES = [defineFamily({ key: FAMILY.LINKS, tools: [new OpenLink()] })];

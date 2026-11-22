@@ -26,7 +26,7 @@ def mcp(monkeypatch):
     monkeypatch.setattr(mcp_server, "ENABLED", True)
     monkeypatch.setattr(mcp_server, "ALLOWED_ORIGINS", [])
     active = [web_search.TOOL]
-    monkeypatch.setattr(tools, "enabled", lambda: list(active))
+    monkeypatch.setattr(tools, "enabled", lambda offer=None: list(active))
     seen = []
 
     async def run(self, args, call):

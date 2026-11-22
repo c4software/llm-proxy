@@ -16,7 +16,6 @@ import { TOOL, PageTool, clip, failure, oneLine } from "../contract.js";
 import { exec } from "./bac.js";
 import { paths as pathsOf, inputs } from "./files.js";
 
-const TIMEOUT = 60_000;              // le premier appel charge le compilateur
 const MAX_OUT = 20_000;
 const MAX_PROJECT = 3000;            // fichiers TypeScript du dossier, au plus
 const MAX_BYTES = 30e6;
@@ -76,23 +75,7 @@ async function project(ctx, wanted, override) {
 
 export class CheckTypescript extends PageTool {
   constructor() {
-    super({
-      name: TOOL.CHECK_TYPESCRIPT,
-      description: "Vérifie les types de fichiers TypeScript du dossier ouvert (ou de pièces jointes) "
-        + "avec le compilateur TypeScript 6, dans un bac isolé du navigateur, sans rien exécuter. "
-        + "Le tsconfig.json à la racine du dossier est appliqué (sinon : strict, ES2022, modules "
-        + "ESNext) ; les imports relatifs sont résolus dans le dossier ; les paquets (pas de "
-        + "node_modules) valent `any`. Rend les erreurs « fichier(ligne,colonne): error TSxxxx: "
-        + "message » (100 au plus). `code` seul : vérifier un extrait (celui de la conversation, "
-        + "sans dossier) ; `code` + `path` : une version modifiée d'un fichier, avant de l'écrire. "
-        + "60 s au plus (le premier appel charge le compilateur).",
-      params: {
-        files: { type: "array", items: { type: "string" },
-                 description: "Fichiers ou sous-dossiers à vérifier (« . » : tout le dossier)." },
-        code: { type: "string", description: "Un texte TypeScript à vérifier : seul (sans dossier ouvert, un extrait de la conversation), ou à la place du fichier `path`." },
-        path: { type: "string", description: "Le chemin de ce texte dans le projet (défaut : extrait.ts)." },
-      },
-    });
+    super({ name: TOOL.CHECK_TYPESCRIPT });
   }
 
   /** @override @param {any} a */
@@ -107,7 +90,7 @@ export class CheckTypescript extends PageTool {
     let input;
     try { input = await project(ctx, wanted, override); } catch (e) { return failure(e.message + "."); }
     if (!input.roots.length) return failure("aucun fichier TypeScript à vérifier.");
-    const r = await exec({ driver, input, runtime: "typescript", timeout: TIMEOUT, signal: ctx.signal });
+    const r = await exec({ driver, input, runtime: "typescript", timeout: this.settings.timeout * 1000, signal: ctx.signal });
     if (!r.ok) return failure(r.error);
     const { diagnostics, total, checked, notes, version } = r.value;
     const head = `Vérifié : ${checked} fichier${checked > 1 ? "s" : ""} (TypeScript ${version}`

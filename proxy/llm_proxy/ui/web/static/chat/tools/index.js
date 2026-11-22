@@ -39,13 +39,24 @@
     sandbox/programs.js   Programmes          run_tools_program       le bac ; ses tools.x() passent
                           d'outils                                    par la page (/ui/tools)
 
-  Au chargement, le registre VÉRIFIE tout : chaque outil hérite de
-  PageTool, n'a que ses membres, a un mode cohérent ; chaque nom de TOOL
-  et chaque clé de FAMILY est implémenté une fois et une seule. Une
-  dérive casse la page tout de suite — et `npm run check` (proxy/wasm)
-  avant elle.
+  Ces modules donnent l'EXÉCUTION. La DÉCLARATION de chaque outil et de
+  chaque famille (prompt, schéma, label, guidance…) vient du proxy, au
+  contrat de tous les outils (tools/contract.py ; tools/page/ pour ceux-ci) :
+  /ui/session la donne (`chat.page`), install() l'attache à l'exécution du
+  même nom. Un outil d'une EXTENSION arrive avec l'adresse de son module
+  (`module`), que installAll() importe : il rend son exécution, au même
+  contrat (`export default (ext) => ({tools, families?})`).
+
+  Au chargement, le registre VÉRIFIE l'exécution native : chaque outil
+  hérite de PageTool, n'a que ses membres, a un mode cohérent ; chaque nom
+  de TOOL et chaque clé de FAMILY est implémenté une fois et une seule. À
+  l'installation, une déclaration sans exécution (ou l'inverse, pour une
+  extension) est dite à la console et laissée hors du menu.
+  `check-tools.mjs` (proxy/wasm, que pytest lance avec les déclarations du
+  proxy) vérifie les deux côtés ensemble.
 */
-import { TOOL, FAMILY, PageTool, MEMBERS, failure } from "./contract.js";
+import { TOOL, FAMILY, PageTool, MEMBERS, defineFamily, failure, refused, REFUSE, clip, oneLine,
+         reasonOf } from "./contract.js";
 import * as ask from "./page/ask.js";
 import * as save from "./page/save.js";
 import * as artifacts from "./page/artifacts.js";
@@ -73,6 +84,7 @@ import * as programs from "./sandbox/programs.js";
 export { TOOL, FAMILY, failure } from "./contract.js";
 
 /** @typedef {import("./contract.js").Family} Family */
+/** @typedef {import("./contract.js").FamilyBehavior} FamilyBehavior */
 /** @typedef {import("./contract.js").Ctx} Ctx */
 /** @typedef {import("./contract.js").Card} Card */
 
@@ -81,11 +93,29 @@ const MODULES = [ask, save, artifacts, folder, context, location, notifications,
                  calendar, links, share, screen, camera, codes, color, wake, speak, javascript, php, sql,
                  postgres, linux, programs];
 
-/** @type {Family[]} */
-export const FAMILIES = MODULES.flatMap((m) => m.FAMILIES);
+/** L'exécution native de chaque famille, dans l'ordre des modules.
+ * @type {FamilyBehavior[]} */
+export const BEHAVIORS = MODULES.flatMap((m) => m.FAMILIES);
 
-/** @type {Map<string, PageTool>} */
+/** L'exécution native de chaque outil. @type {Map<string, PageTool>} */
+const NATIVE = new Map();
+
+/** Les familles INSTALLÉES (déclaration + exécution), dans l'ordre du
+ * proxy : ce que le menu montre et ce qui part au modèle.
+ * @type {Family[]} */
+export let FAMILIES = [];
+
+/** Les outils installés : ceux que le modèle peut appeler. @type {Map<string, PageTool>} */
 const TOOLS = new Map();
+
+/** Toutes les exécutions connues, installées ou non (refusées, d'une
+ * extension éteinte ou pas encore importée) : ce qui RENDRA une carte
+ * déjà dans une conversation, et nettoiera ce qu'un outil garde.
+ * @type {Map<string, PageTool>} */
+const KNOWN = new Map();
+
+/** Une carte dont l'outil n'est plus là : montrée, sans bouton. */
+const GONE = { title: "Outil indisponible sur ce proxy", actions: [] };
 
 // ── la vérification ─────────────────────────────────────────────────────
 /** L'outil réécrit-il ce membre de PageTool ?
@@ -100,8 +130,6 @@ export function faults(tool) {
   if (!(tool instanceof PageTool)) return ["n'hérite pas de PageTool"];
   const out = [];
   const where = `outil « ${tool.name} »`;
-  if (!Object.values(TOOL).includes(tool.name)) out.push(`${where} : nom hors de TOOL`);
-  if (!tool.description || typeof tool.description !== "string") out.push(`${where} : description vide`);
   // Les membres : ceux de l'interface, rien d'autre (une faute de frappe).
   const own = new Set(Object.keys(tool));
   for (let p = Object.getPrototypeOf(tool); p && p !== PageTool.prototype; p = Object.getPrototypeOf(p)) {
@@ -121,61 +149,159 @@ export function faults(tool) {
   }
   if (!["card", "sheet"].includes(tool.placement)) out.push(`${where} : placement inconnu`);
   if (tool.placement === "sheet" && !tool.component) out.push(`${where} : une feuille sans component`);
-  for (const r of tool.required) if (!(r in tool.params)) out.push(`${where} : « ${r} » requis mais pas dans params`);
   return out;
 }
 
-{
+/** Les fautes d'un ensemble de familles exécutées : outils hors contrat,
+ * clés ou noms en double. `native` : clés et noms dans FAMILY et TOOL.
+ * @param {FamilyBehavior[]} families @param {Map<string, PageTool>} into @param {boolean} native */
+function check(families, into, native) {
+  const nativeKeys = /** @type {string[]} */ (Object.values(FAMILY));
+  const nativeNames = /** @type {string[]} */ (Object.values(TOOL));
   const errors = [];
   const keys = new Set();
-  for (const f of FAMILIES) {
-    if (!Object.values(FAMILY).includes(f.key)) errors.push(`famille « ${f.key} » hors de FAMILY`);
+  for (const f of families) {
+    if (native && !nativeKeys.includes(f.key)) errors.push(`famille « ${f.key} » hors de FAMILY`);
+    if (!native && nativeKeys.includes(f.key)) errors.push(`famille « ${f.key} » : clé native`);
     if (keys.has(f.key)) errors.push(`famille « ${f.key} » en double`);
     keys.add(f.key);
     if (!f.tools.length) errors.push(`famille « ${f.key} » sans outil`);
     for (const t of f.tools) {
       errors.push(...faults(t));
-      if (TOOLS.has(t.name)) errors.push(`outil « ${t.name} » en double`);
-      TOOLS.set(t.name, t);
+      if (native && !nativeNames.includes(t.name)) errors.push(`outil « ${t.name} » : nom hors de TOOL`);
+      if (!native && nativeNames.includes(t.name)) errors.push(`outil « ${t.name} » : nom natif`);
+      if (into.has(t.name)) errors.push(`outil « ${t.name} » en double`);
+      into.set(t.name, t);
     }
   }
+  return errors;
+}
+
+{
+  const errors = check(BEHAVIORS, NATIVE, true);
+  const keys = new Set(BEHAVIORS.map((f) => f.key));
   for (const k of Object.values(FAMILY)) if (!keys.has(k)) errors.push(`FAMILY « ${k} » sans famille`);
-  for (const n of Object.values(TOOL)) if (!TOOLS.has(n)) errors.push(`TOOL « ${n} » sans outil`);
+  for (const n of Object.values(TOOL)) if (!NATIVE.has(n)) errors.push(`TOOL « ${n} » sans outil`);
   if (errors.length) throw new Error("Outils de la page :\n  " + errors.join("\n  "));
+  for (const [name, t] of NATIVE) KNOWN.set(name, t);
+}
+
+// ── l'installation : les déclarations du proxy sur l'exécution ──────────
+
+/** Ce que reçoit le module d'une extension : de quoi écrire ses outils
+ * sans chemin d'import (les adresses de la page sont versionnées). */
+export const EXT = Object.freeze({ PageTool, defineFamily, failure, refused, REFUSE, clip, oneLine,
+                                   reasonOf });
+
+/**
+ * Les déclarations de /ui/session (`chat.page`).
+ * @typedef {{families: {key: string, label: string, hint?: string, on?: boolean, fixed?: boolean,
+ *   authored?: boolean, guidance?: string, tools: string[]}[],
+ *   tools: {name: string, spec: object, settings?: object, module?: string}[]}} Declarations
+ */
+
+/** Attache les déclarations à l'exécution : native, ou `extra` (celle des
+ * modules d'extension, installAll). Une déclaration sans exécution est
+ * laissée hors du menu. → les écarts, aussi dits à la console.
+ * @param {Declarations | null | undefined} page @param {FamilyBehavior[]} [extra]
+ * @returns {string[]} */
+export function install(page, extra = []) {
+  const behaviors = new Map(NATIVE);
+  const families = new Map(BEHAVIORS.map((f) => [f.key, f]));
+  for (const f of extra) {
+    families.set(f.key, f);
+    for (const t of f.tools) { behaviors.set(t.name, t); KNOWN.set(t.name, t); }
+  }
+  const declared = new Map(((page && page.tools) || []).map((t) => [t.name, t]));
+  const errors = [], installed = [];
+  TOOLS.clear();
+  // Les outils d'une extension attendent son module (installAll) : sans
+  // lui, ils restent hors du menu, sans écart à dire ici.
+  const awaited = new Set([...declared.values()].filter((t) => t.module).map((t) => t.name));
+  for (const f of (page && page.families) || []) {
+    const b = families.get(f.key);
+    if (!b && f.tools.every((n) => awaited.has(n))) continue;
+    if (!b) { errors.push(`famille « ${f.key} » : déclarée, sans exécution`); continue; }
+    const members = [];
+    for (const name of f.tools) {
+      const t = behaviors.get(name), d = declared.get(name);
+      if (!t || !d) { errors.push(`outil « ${name} » : déclaré, sans exécution`); continue; }
+      t.declaration = d.spec;
+      t.settings = d.settings || {};
+      TOOLS.set(name, t);
+      members.push(t);
+    }
+    if (!members.length) continue;
+    installed.push(Object.freeze({ ...b, tools: members, label: f.label, hint: f.hint || "",
+      on: !!f.on, fixed: !!f.fixed, authored: !!f.authored, guidance: () => f.guidance || "" }));
+  }
+  FAMILIES = installed;
+  if (errors.length) console.error("Outils de la page :\n  " + errors.join("\n  "));
+  return errors;
+}
+
+/** install(), après avoir importé le module de chaque extension que les
+ * déclarations nomment. Un module qui échoue, ou qui rend une exécution
+ * hors contrat, est dit à la console : ses outils restent hors du menu.
+ * Une installation que dépasse une plus récente (une nouvelle session)
+ * n'installe rien. `load` : l'import (les tests le remplacent).
+ * @param {Declarations | null | undefined} page
+ * @param {(url: string) => Promise<any>} [load] @returns {Promise<string[]>} */
+let generation = 0;
+export async function installAll(page, load = (url) => import(url)) {
+  // Une installation plus récente gagne : celle-ci, si elle finit après,
+  // n'installe rien (ses modules restent connus, KNOWN).
+  const mine = ++generation;
+  const errors = [], extra = [];
+  const urls = new Set(((page && page.tools) || []).map((t) => t.module).filter(Boolean));
+  for (const url of urls) {
+    try {
+      const mod = await load(url);
+      const got = mod.default(EXT) || {};
+      const tools = Array.isArray(got.tools) ? got.tools : [];
+      const wanted = new Set(page.tools.filter((t) => t.module === url).map((t) => t.name));
+      // Une famille sans exécution propre : celle de ses outils, sans plus.
+      const given = (Array.isArray(got.families) ? got.families : []).map((f) => defineFamily(f));
+      const covered = new Set(given.flatMap((f) => f.tools.map((t) => t.name)));
+      const families = [...given, ...page.families
+        .filter((f) => !given.some((g) => g.key === f.key) && f.tools.every((n) => wanted.has(n)))
+        .map((f) => defineFamily({ key: f.key, tools: tools.filter((t) => f.tools.includes(t.name)
+                                                                     && !covered.has(t.name)) }))];
+      const found = new Map();
+      const bad = check(families, found, false);
+      const keys = new Set(page.families.filter((f) => f.tools.every((n) => wanted.has(n))).map((f) => f.key));
+      for (const f of given) if (!keys.has(f.key)) bad.push(`famille « ${f.key} » : non déclarée par l'extension`);
+      for (const n of wanted) if (!found.has(n)) bad.push(`outil « ${n} » : sans exécution dans ${url}`);
+      for (const n of found.keys()) if (!wanted.has(n)) bad.push(`outil « ${n} » : non déclaré par l'extension`);
+      if (bad.length) errors.push(...bad);
+      else extra.push(...families);
+    } catch (e) {
+      errors.push(`module ${url} : ${e && e.message}`);
+    }
+  }
+  if (errors.length) console.error("Extensions de la page :\n  " + errors.join("\n  "));
+  if (mine !== generation) return [...errors, "installation dépassée par une plus récente"];
+  return [...errors, ...install(page, extra)];
 }
 
 // ── les familles ────────────────────────────────────────────────────────
 
-// Les outils refusés à tous par le proxy ([ui].page_tools_disabled, reçus
-// par /ui/session) : ni au menu, ni présentés, ni exécutés. Le proxy les
-// retire aussi lui-même de la requête (ui/page_tools.py).
-let OFF = { families: new Set(), tools: new Set() };
-/** @param {{families?: string[], tools?: string[]} | null | undefined} d */
-export function setDisabled(d) {
-  OFF = { families: new Set((d && d.families) || []), tools: new Set((d && d.tools) || []) };
-}
-/** @param {string} name */
-export const isDisabled = (name) => OFF.tools.has(name);
-/** @param {Family} f */
-const offFamily = (f) => OFF.families.has(f.key);
-
 // Celles du menu que ce navigateur sait faire.
-export const menuFamilies = () => FAMILIES.filter((f) => !f.fixed && !offFamily(f) && f.available());
+export const menuFamilies = () => FAMILIES.filter((f) => !f.fixed && f.available());
 // Cochées d'office dans une conversation neuve.
-export const defaultFamilies = () => FAMILIES.filter((f) => !f.fixed && !offFamily(f) && f.on).map((f) => f.key);
+export const defaultFamilies = () => FAMILIES.filter((f) => !f.fixed && f.on).map((f) => f.key);
 
 /** Les familles actives pour ce tour : toujours actives ou cochées,
  * possibles ici, et `enabled` pour ce contexte.
  * @param {Ctx} ctx @param {string[]} keys */
 function active(ctx, keys) {
   const on = new Set(keys || []);
-  return FAMILIES.filter((f) => (f.fixed || on.has(f.key)) && !offFamily(f) && f.available() && f.enabled(ctx));
+  return FAMILIES.filter((f) => (f.fixed || on.has(f.key)) && f.available() && f.enabled(ctx));
 }
 
 /** Les déclarations des outils actifs (la forme chat/completions).
  * @param {Ctx} ctx @param {string[]} keys */
-export const specs = (ctx, keys) => active(ctx, keys)
-  .flatMap((f) => f.tools.filter((t) => !OFF.tools.has(t.name)).map((t) => t.spec));
+export const specs = (ctx, keys) => active(ctx, keys).flatMap((f) => f.tools.map((t) => t.spec));
 
 /** Les consignes des familles actives, pour le prompt système (figées).
  * @param {Ctx} ctx @param {string[]} keys */
@@ -191,7 +317,7 @@ export const state = (ctx, keys) => active(ctx, keys).map((f) => f.state(ctx)).f
 /** @param {string} name */
 export const isTool = (name) => TOOLS.has(name);
 /** @param {Card} w */
-const of = (w) => TOOLS.get(w.name || w.tool);
+const of = (w) => KNOWN.get(w.name || w.tool);
 
 /** Les arguments d'un appel (du JSON), ou null s'ils sont illisibles.
  * @param {string} json */
@@ -203,7 +329,7 @@ export function parseArgs(json) {
 }
 
 /** @param {string} name @param {any} args @param {Ctx} [ctx] */
-export const waits = (name, args, ctx) => !OFF.tools.has(name) && !!TOOLS.get(name)?.waits(args || {}, ctx);
+export const waits = (name, args, ctx) => !!TOOLS.get(name)?.waits(args || {}, ctx);
 
 /** Une carte durable (`keep` d'un résultat) : gardée sous la réponse, dans
  * le message (m.kept).
@@ -235,8 +361,7 @@ function abortable(p, signal) {
  * @param {string} name @param {string} json @param {Ctx} ctx */
 export async function run(name, json, ctx) {
   const t = TOOLS.get(name);
-  if (!t) return { result: failure(`outil inconnu « ${name} ».`) };
-  if (OFF.tools.has(name)) return { result: failure(`l'outil « ${name} » est désactivé sur ce proxy.`) };
+  if (!t) return { result: failure(`outil inconnu ou désactivé sur ce proxy « ${name} ».`) };
   const args = parseArgs(json);
   if (args === null) return { result: failure("arguments illisibles (JSON attendu).") };
   const signal = ctx && ctx.signal;
@@ -261,19 +386,20 @@ export async function prepare(name, json, ctx) {
 }
 
 /** @param {Card} w */
-export const view = (w) => of(w).view(w);
+export const view = (w) => (of(w) ? of(w).view(w) : GONE);
 /** @param {Card} w */
-export const component = (w) => of(w).component;
+export const component = (w) => of(w)?.component || null;
 /** @param {Card} w */
-export const placement = (w) => of(w).placement;
+export const placement = (w) => of(w)?.placement || "card";
 /** @param {Card} w */
-export const notice = (w) => of(w).notice(w);
+export const notice = (w) => (of(w) ? of(w).notice(w) : GONE.title);
 /** @param {Card} w */
-export const pending = (w) => of(w).pending(w);
+export const pending = (w) => (of(w) ? of(w).pending(w) : GONE.title);
 /** Une action de la carte → sa réponse, ou null ; une carte durable qu'elle
  * laisse rejoint le message.
  * @param {Card} w @param {string} action @param {Ctx} ctx @param {any} [payload] */
 export async function act(w, action, ctx, payload) {
+  if (!TOOLS.has(w.name)) throw new Error("outil indisponible sur ce proxy");
   const out = await of(w).act(w, action, ctx, payload);
   keep(w.name, out, ctx);
   return out;
@@ -286,18 +412,19 @@ export function abandon(w) {
   return of(w) ? of(w).abandoned(w) : "Non exécuté.";
 }
 /** Une carte durable (Kept). @param {any} k */
-export const keptView = (k) => TOOLS.get(k.name).keptView(k);
+export const keptView = (k) => (KNOWN.get(k.name) ? KNOWN.get(k.name).keptView(k) : GONE);
 /** Le composant d'une carte durable, ou null (le gabarit commun). @param {any} k */
-export const keptComponent = (k) => TOOLS.get(k.name)?.keptComponent || null;
+export const keptComponent = (k) => KNOWN.get(k.name)?.keptComponent || null;
 /** @param {any} k @param {string} action @param {Ctx} ctx */
-export const keptAct = (k, action, ctx) => TOOLS.get(k.name).keptAct(k, action, ctx);
+export const keptAct = (k, action, ctx) => (TOOLS.has(k.name) ? TOOLS.get(k.name).keptAct(k, action, ctx)
+  : "Outil indisponible sur ce proxy.");
 /** La ligne d'une puce d'appel. @param {string} name @param {any} args */
-export const summary = (name, args) => TOOLS.get(name)?.summary(args || {}) || "";
+export const summary = (name, args) => KNOWN.get(name)?.summary(args || {}) || "";
 
 /** Une conversation supprimée : chaque outil oublie ce qu'il gardait pour elle.
  * @param {string} convId */
 export function forget(convId) {
-  for (const t of TOOLS.values()) Promise.resolve(t.forget(convId)).catch(() => {});
+  for (const t of KNOWN.values()) Promise.resolve(t.forget(convId)).catch(() => {});
 }
 
 /** Le contenu d'un fichier produit sous la réponse : son texte, ou ce
@@ -307,7 +434,7 @@ export function forget(convId) {
 export async function fileContent(f) {
   const source = f.source || (f.base ? { tool: TOOL.RUN_SQL, ref: f.base } : null);
   if (!source) return f.content;
-  const t = TOOLS.get(source.tool);
+  const t = KNOWN.get(source.tool);
   return t ? t.fileContent(source.ref) : null;
 }
 

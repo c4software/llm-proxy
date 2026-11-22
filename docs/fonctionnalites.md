@@ -86,6 +86,12 @@ détaille.
   [Mémoire persistante](outils-heberges.md#mémoire-persistante-memory)
 - **Serveurs MCP** (`[tools.mcp.<serveur>]`) : leurs outils deviennent des
   outils hébergés. [Serveurs MCP](outils.md#serveurs-mcp)
+- **Extensions** (`[extensions].path`) : des outils au contrat de tous les
+  outils, un sous-dossier chacune (un `.py`, et un `.js` pour les outils
+  du navigateur), chargés au démarrage, allumés ou éteints à chaud dans la
+  page ;
+  l'exemple `pull_request` ouvre des PR en brouillon au jeton d'un compte
+  de service. [Extensions](extensions.md)
 - **Serveur MCP** (`[mcp_server].enabled`) : `POST /mcp` offre les outils
   hébergés à tout client MCP. [Serveur MCP](outils-heberges.md#serveur-mcp--mcp)
 - **Webhooks** (`[webhooks]`) : chaque compte reçoit des messages au

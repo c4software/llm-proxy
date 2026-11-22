@@ -30,17 +30,7 @@ export function saveFile(live, args) {
 
 class SaveFile extends PageTool {
   constructor() {
-    super({
-      name: TOOL.SAVE_FILE,
-      description: "Propose à l'utilisateur un fichier à télécharger (CSV, JSON, script, "
-        + "Markdown, configuration…), affiché sous ta réponse. Le contenu est du texte.",
-      params: {
-        name: { type: "string", description: "Nom du fichier, avec son extension." },
-        content: { type: "string", description: "Le contenu complet du fichier." },
-        mime: { type: "string", description: "Type MIME (facultatif, déduit de l'extension)." },
-      },
-      required: ["name", "content"],
-    });
+    super({ name: TOOL.SAVE_FILE });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
@@ -50,7 +40,4 @@ class SaveFile extends PageTool {
   summary(a) { return a.name || ""; }
 }
 
-export const FAMILIES = [defineFamily({
-  key: FAMILY.SAVE, label: "Fichiers", hint: "un fichier à télécharger sous la réponse", fixed: true,
-  tools: [new SaveFile()],
-})];
+export const FAMILIES = [defineFamily({ key: FAMILY.SAVE, tools: [new SaveFile()] })];

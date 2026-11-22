@@ -36,7 +36,7 @@ def chat_tool_groups() -> list[dict]:
     fonctions que le proxy présentera au modèle pour ce groupe, que la
     page montre (le prompt qu'elle n'envoie pas) et compte en tokens."""
     groups: dict[str, list] = {}
-    for tool in tools.Hosted().tools:
+    for tool in tools.Hosted(offer=tools.Offer.WEB).tools:
         if tool.kinds:
             # Un outil MCP se déclare par son nom ou par son serveur
             # (`mcp:<serveur>`) : un interrupteur par SERVEUR, pas par outil.
@@ -96,8 +96,10 @@ async def ui_session(request: Request):
                 "max_pixels": tools.image_generation.UPSCALE_MAX_PIXELS,
                 "strengths": tools.image_generation.UPSCALE_STRENGTHS,
             } if tools.image_generation.UPSCALE_MODEL else None,
-            # Les outils de la page refusés à tous ([ui].page_tools_disabled).
-            "page_tools_disabled": page_tools.disabled(),
+            # Les outils du NAVIGATEUR : familles et déclarations, sans
+            # ceux qui sont refusés ([ui].page_tools_disabled) ni ceux d'une
+            # extension éteinte (ui/page_tools.py).
+            "page": page_tools.declarations(),
             # Le relais réseau de la VM Linux ([ui].linux_relay).
             "linux_relay": linux_relay.allowed(user),
         },
@@ -184,8 +186,8 @@ async def ui_tool(name: str, request: Request):
     refusé run_tools_program ([ui].page_tools_disabled) : une page
     modifiée ne la rouvre pas. Incognito : pas de mémoire persistante,
     comme /ui/chat/completions."""
-    if not (UI_CHAT and chat_api.ENABLED) \
-            or "run_tools_program" in page_tools.DISABLED_TOOLS:
+    program = next(t for t in tools.PAGE if t.name == tools.ToolName.RUN_TOOLS_PROGRAM)
+    if not (UI_CHAT and chat_api.ENABLED) or not page_tools.served(program):
         return error_response("openai", 404, "unknown_route",
                               "programmes d'outils de la page désactivés "
                               "([ui].chat, [chat].hosted_tools, "
@@ -210,7 +212,8 @@ async def ui_tool(name: str, request: Request):
                               f"conversation en cite trop pour un programme")
     known = {h for h in hosts if isinstance(h, str) and 0 < len(h) <= 253}
     return await tool_routes.run_direct(request, name, "/ui/tools",
-                                        body.get("arguments"), known)
+                                        body.get("arguments"), known,
+                                        offer=tools.Offer.WEB)
 
 
 def incognito(request: Request) -> None:

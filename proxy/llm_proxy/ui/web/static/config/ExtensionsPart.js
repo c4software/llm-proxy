@@ -1,0 +1,74 @@
+/*
+  Configuration → Extensions (/ui/extensions, extension_routes.py ; admin,
+  ou proxy sans comptes) : les extensions de [extensions].path, un
+  sous-dossier chacune. Une extension chargée s'éteint et se rallume ici,
+  À CHAUD ; ses outils, où chacun s'exécute (proxy, navigateur), où il est
+  offert (api, web) et s'il est configuré. Une extension
+  écartée au chargement est dite avec sa raison ; arrêtée par
+  [extensions.<nom>].enabled = false, la page ne la rallume pas.
+*/
+import { call } from "../lib/http.js";
+
+const { ref, onMounted } = Vue;
+
+const OFFERS = { api: "API", web: "page et webhooks" };
+const RUNS = { proxy: "proxy", browser: "navigateur" };
+
+export const ExtensionsPart = {
+  setup() {
+    const data = ref(null);
+    const error = ref("");
+    const busy = ref("");
+
+    async function load() {
+      try {
+        data.value = await call("GET", "/ui/extensions");
+        error.value = "";
+      } catch (e) { error.value = e.message; }
+    }
+    async function toggle(e) {
+      busy.value = e.name;
+      error.value = "";
+      try {
+        await call("POST", "/ui/extensions/" + encodeURIComponent(e.name), { enabled: !e.enabled });
+      } catch (err) { error.value = err.message; }
+      finally { busy.value = ""; await load(); }
+    }
+    const offered = (t) => (RUNS[t.runs] || t.runs) + " ; " + t.offered.map((o) => OFFERS[o] || o).join(", ");
+
+    onMounted(load);
+    return { data, error, busy, load, toggle, offered };
+  },
+  template: `
+    <div class="config-keys owned">
+      <p class="err" v-if="error" role="status">{{ error }}</p>
+      <section class="panel" v-if="data">
+        <div class="panel-head"><h2>Extensions</h2>
+          <div class="item-actions"><button type="button" class="btn ghost" @click="load">Rafraîchir</button></div></div>
+        <p class="note" v-if="!data.path">Aucun dossier d'extensions : <code>[extensions].path</code> n'est pas réglé
+          (voir docs/extensions.md).</p>
+        <template v-else>
+          <p class="note">Sous-dossiers de <code>{{ data.path }}</code>, chargés au démarrage. Éteindre une extension retire
+            ses outils tout de suite, partout ; l'état est gardé.</p>
+          <div class="scroll" v-if="data.extensions.length"><table>
+            <thead><tr><th>Extension</th><th>Outils</th><th>État</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="e in data.extensions" :key="e.name">
+                <td><code>{{ e.name }}</code></td>
+                <td v-if="e.tools">
+                  <div v-for="t in e.tools" :key="t.name"><code>{{ t.name }}</code> — {{ offered(t) }}<span
+                       class="tag" v-if="!t.configured">non configuré</span></div></td>
+                <td v-else class="err">{{ e.refused }}</td>
+                <td>{{ e.tools ? (e.enabled ? "allumée" : "éteinte") : (e.stopped ? "arrêtée par la configuration" : "écartée") }}</td>
+                <td><div class="row-actions">
+                  <button type="button" class="btn" v-if="e.tools" :class="e.enabled ? 'ghost' : ''"
+                          :disabled="busy === e.name" @click="toggle(e)">{{ e.enabled ? "Éteindre" : "Allumer" }}</button></div></td>
+              </tr>
+            </tbody>
+          </table></div>
+          <p class="note" v-else>Aucune extension dans ce dossier.</p>
+        </template>
+      </section>
+    </div>
+  `,
+};

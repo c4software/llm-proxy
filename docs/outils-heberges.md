@@ -11,6 +11,8 @@ mémoire, images) se présentent sur `/v1/chat/completions`,
 
 Le contrat d'un outil côté code (prompt, codes d'erreur par surface, liaisons
 aux protocoles) et comment en ajouter un : [`docs/outils.md`](outils.md).
+Un outil propre à un déploiement s'ajoute sans toucher au code, en fichier
+Python : [Extensions](extensions.md).
 
 ## Mise en route
 
@@ -144,7 +146,7 @@ Sur toutes les surfaces :
   taille, **jamais le contenu**), lue par `GET /v1/organization/usage/tools`
   et la section *Outils* du tableau de bord : voir
   [Usage des outils hébergés](statistiques.md#usage-des-outils-hébergés).
-- Logs de démarrage et `/healthz` (`tools`) listent les outils actifs,
+- Logs de démarrage et `/healthz` (`tools.enabled` : chaque outil en service → ses canaux, `api`, `web`) listent les outils actifs,
   `max_calls` et les entrées en mémoire (un état, pas des compteurs).
 
 ## Garde-fous

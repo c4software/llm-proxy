@@ -75,6 +75,35 @@ forge `git` fait lire un pack par git dans le proxy, borné et sans rien
 exécuter du dépôt. Durées et emplacements :
 [Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps).
 
+## Extensions
+
+Une [extension](extensions.md) est du code Python qui tourne dans le
+processus du proxy. Elle voit tout ce qu'il voit : la configuration et ses
+secrets, les jetons des comptes, les bases de `data/`. Son `.js` tourne
+dans la page de chaque utilisateur, avec sa session : il lit ce que la
+page lit (conversations, clés affichées) et appelle ce qu'elle appelle. Seul l'admin en
+dépose, dans un dossier monté en lecture seule. Hors d'un tel montage, le
+proxy refuse un dossier ou un fichier qu'il pourrait écrire ou dont il est
+propriétaire (il pourrait en changer les droits). Une extension n'est pas
+un bac à sable : pour un outil qui n'a pas besoin du proxy, un
+[serveur MCP](outils.md#serveurs-mcp), qui tourne à part, est plus sûr.
+
+L'interrupteur de Configuration → Extensions est réservé aux admins ;
+sans comptes OIDC, il est ouvert à qui ouvre la page, comme la
+configuration. Il ne fait que choisir parmi les fichiers montés.
+`[extensions.<nom>].enabled = false` reste l'arrêt que la page ne lève
+pas.
+
+`offered` (où un outil est offert, `api` ou `web`) règle la
+**présentation**, pas l'autorisation. La page et les webhooks n'ont pas de
+droits de clé : un outil offert au `web` sert à tout compte qui a la page
+et à tout webhook entrant. Sans comptes OIDC, une clé du TOML ouvre aussi
+les routes de la page (`/ui/tools`).
+
+L'extension d'exemple `pull_request` écrit sur une forge au jeton d'un
+compte de service, y compris pour le texte qu'un webhook reçoit : voir
+[Sa sûreté](extensions.md#pull_request--proposer-une-modification).
+
 ## Webhooks sortants
 
 Une URL Apprise de webhook sortant n'a pas de règle d'adresse : un compte

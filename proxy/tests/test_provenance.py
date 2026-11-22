@@ -121,11 +121,12 @@ async def _rendu(text):
 
 
 def test_les_bacs_de_la_page_sont_des_sorties_du_modele():
-    """Le manifeste de la page désigne ses outils dont le résultat est écrit
-    par le modèle : bacs de code, programmes d'outils, artifacts — pas ce
-    qu'elle lit de l'appareil ou du dossier de l'utilisateur."""
+    """Les familles `authored` (tools/page/) désignent les outils de la page
+    dont le résultat est écrit par le modèle : bacs de code, programmes
+    d'outils, artifacts — pas ce qu'elle lit de l'appareil ou du dossier de
+    l'utilisateur."""
     for name in ("run_javascript", "run_php", "run_sql", "run_postgres", "run_shell",
                  "shell_read", "run_tools_program", "read_artifact", "run_in_artifact"):
-        assert name in page_tools.AUTHORED, name
+        assert name in page_tools.authored(), name
     for name in ("clipboard_read", "folder_read", "device_context"):
-        assert name not in page_tools.AUTHORED, name
+        assert name not in page_tools.authored(), name

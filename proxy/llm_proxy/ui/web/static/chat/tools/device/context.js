@@ -28,13 +28,7 @@ function device() {
 
 class DeviceContext extends PageTool {
   constructor() {
-    super({
-      name: TOOL.DEVICE_CONTEXT,
-      description: "Donne la date et l'heure locales de l'utilisateur, son fuseau horaire et ses "
-        + "langues, et ce que son navigateur dit de l'appareil (en ligne, connexion, batterie, "
-        + "thème, taille d'écran). À utiliser avant de parler d'« aujourd'hui », de « demain » "
-        + "ou d'une heure, ou pour adapter une réponse à l'appareil.",
-    });
+    super({ name: TOOL.DEVICE_CONTEXT });
   }
 
   /** @override */
@@ -52,7 +46,4 @@ class DeviceContext extends PageTool {
   }
 }
 
-export const FAMILIES = [defineFamily({
-  key: FAMILY.CONTEXT, label: "Date et heure", hint: "date, heure, fuseau, langues, appareil", on: true,
-  tools: [new DeviceContext()],
-})];
+export const FAMILIES = [defineFamily({ key: FAMILY.CONTEXT, tools: [new DeviceContext()] })];

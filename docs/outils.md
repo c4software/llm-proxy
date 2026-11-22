@@ -7,10 +7,19 @@ Cette page dit ce qu'est un outil pour le code du proxy, et comment en
 écrire un. Le point de vue du client (usage, garde-fous, mise en route) est
 dans [Outils hébergés](outils-heberges.md).
 
+Le contrat est le même pour **tous** les outils, quel que soit le moteur
+qui l'exécute (`Tool.runs`) : le proxy (`run`, en Python) ou le navigateur,
+pour les outils du chat de la page (`BrowserTool` : le proxy n'en a que
+la déclaration, l'exécution est dans la page ; voir
+[Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page)).
+Cette page décrit surtout les premiers.
+
 Le code vit dans `proxy/llm_proxy/tools/` :
 
-- huit outils : `web_search`, `web_fetch`, `web_grep`, `ocr`, `transcribe`,
-  `code_execution`, `image_generation`, `memory` ;
+- les outils du proxy : `web_search`, `web_fetch`, `web_grep`, `ocr`,
+  `transcribe`, `code_execution`, `image_generation`, `memory`, `webhook`,
+  `repository` ;
+- `page/`, les déclarations des outils du navigateur et de leurs familles ;
 - un **fournisseur**, `mcp.py`, qui ajoute les outils des
   [serveurs MCP](#serveurs-mcp) configurés ;
 - le contrat, `contract.py`, réexporté par le paquet :
@@ -110,18 +119,22 @@ arguments. Le reste a un défaut.
 | `responses`, `anthropic` | Les [liaisons](#liaisons-aux-protocoles), ou `None` |
 | `kinds` | Calculé : les types qui le déclarent dans `tools` en chat/completions. Ceux de sa liaison Responses, sinon son nom |
 | `render(args, sources) -> str` | Refait le texte depuis des sources. Seulement pour un outil lié au bloc Anthropic `web_search_tool_result`, dont le client rejoue les sources et non le texte |
+| `offered` | Où l'outil est **offert**, un ensemble de `Offer` : `api` (`/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/tools`, `/mcp`), `web` (le chat de la page, `/ui/tools`, et les réponses des webhooks entrants). Ailleurs, il n'est ni présenté, ni listé, ni exécutable. C'est une présentation, pas une autorisation : voir [Sécurité](securite.md#extensions). Défaut : les deux |
+| `runs` | Où l'outil **s'exécute** : `Runs.PROXY` (défaut, son `run`) ou `Runs.BROWSER` (`BrowserTool` : la page l'exécute ; il n'a ni `run`, ni liaison, ni `timeout`, ni `max_calls`, et n'est offert qu'au `web`) |
+| `settings` | Des valeurs que le prompt cite et que l'exécution applique (une borne, un délai), écrites une fois. Pour un outil du navigateur, la page les reçoit avec la déclaration. Défaut : vide |
 | `extra` | Les membres publics qu'un outil **fourni** ajoute à l'interface (l'état d'un outil MCP : `server`, `schema`…). Vide pour un outil natif |
 
 ### Les noms : `ToolName`
 
-Les outils **natifs** sont nommés par une liste fermée, `ToolName` (une
-`StrEnum`) : `WEB_SEARCH`, `WEB_FETCH`, `OCR`, `WEB_GREP`, `TRANSCRIBE`,
-`CODE_EXECUTION`, `IMAGE_GENERATION`, `MEMORY`. Le reste du proxy les
-nomme par elle (`ToolName.MEMORY`), jamais par une chaîne. Un membre vaut
-sa chaîne partout : en JSON, en SQLite, en comparaison.
+Les outils **natifs**, du proxy comme du navigateur, sont nommés par une
+liste fermée, `ToolName` (une `StrEnum`) : `WEB_SEARCH`, `MEMORY`…,
+`ASK_USER`, `RUN_SQL`… Le reste du proxy les nomme par elle
+(`ToolName.MEMORY`), jamais par une chaîne. Un membre vaut sa chaîne
+partout : en JSON, en SQLite, en comparaison. Les familles des outils du
+navigateur ont la leur, `FamilyKey`.
 
-Les outils **fournis** (ceux des serveurs MCP) n'y sont pas : leurs noms
-se découvrent. Ils ne peuvent pas prendre un nom natif.
+Les outils **fournis** (serveurs MCP, extensions) n'y sont pas. Ils ne
+peuvent pas prendre un nom natif, d'un moteur ou de l'autre.
 
 ### L'interface est fermée
 
@@ -132,13 +145,22 @@ se découvrent. Ils ne peuvent pas prendre un nom natif.
 - un **membre public que `Tool` ne déclare pas**, comme `sumary` au lieu
   de `summary`. Une aide de l'outil est `_privée`, ou une fonction du
   module ; un outil fourni déclare son état dans `extra` ;
-- un `prompt` ou un `run` non écrit ;
+- un `prompt` non écrit ; un `run` non écrit pour un outil du proxy, ou
+  écrit pour un outil du navigateur ;
 - un nom natif hors de `ToolName`, ou un outil fourni qui prend un nom
   natif ; un nom déjà pris ;
 - une liaison `responses` ou `anthropic` qui n'est pas un `Responses`
-  (avec ses `kinds`) ou un `Anthropic`.
+  (avec ses `kinds`) ou un `Anthropic` ;
+- un `offered` vide ou hors de `Offer` ; pour un outil du navigateur, un
+  `offered` autre que `web`, une liaison, un `timeout` ou un `max_calls`.
 
-Au démarrage, chaque entrée de `ToolName` doit avoir son outil inscrit.
+`register_family(family, provider="")` tient de même les familles des
+outils du navigateur : une clé de `FamilyKey` pour une famille native,
+des outils du navigateur inscrits, chacun dans une seule famille.
+
+Au démarrage, chaque entrée de `ToolName` doit avoir son outil inscrit,
+chaque clé de `FamilyKey` sa famille, et chaque outil du navigateur une
+famille.
 Une dérive arrête donc le proxy au lieu de passer en silence ; pytest la
 joue (`test_le_registre_refuse_un_outil_hors_contrat`).
 
@@ -404,6 +426,10 @@ actif, avec `present` = tous les outils actifs. Réponse d'un `POST` :
   corps n'est pas un objet.
 
 ## Écrire un outil
+
+Un outil hors du code du proxy, au même contrat, est une
+[extension](extensions.md) : un sous-dossier chargé au démarrage, son
+`.py`, et son `.js` pour un outil du navigateur.
 
 L'outil minimal, complet, joué par
 `proxy/tests/test_tools.py::test_contrat_outil_minimal_sans_liaison`

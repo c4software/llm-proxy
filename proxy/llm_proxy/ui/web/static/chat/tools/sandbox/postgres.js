@@ -19,12 +19,11 @@
 import { TOOL, FAMILY, PageTool, defineFamily, clip, failure, oneLine } from "../contract.js";
 import { exec } from "./bac.js";
 import * as sqlbase from "./sqlbase.js";
-import { FILES_PARAM, paths as pathsOf, inputs } from "./files.js";
+import { paths as pathsOf, inputs } from "./files.js";
 import { tabular } from "./tables.js";
 
 const TIMEOUT = 60_000;              // le premier appel compile PostgreSQL
 const MAX_OUT = 20_000;
-const MAX_ROWS = 200;                // lignes montrées par résultat
 const key = (/** @type {string} */ id) => `pg:${id}`;
 
 // Exécutée dans le Worker du bac : elle ne voit que ses arguments.
@@ -113,24 +112,7 @@ async function driver({ sql, maxRows, base, files }, { mod, bins, lib }) {
 
 class RunPostgres extends PageTool {
   constructor() {
-    super({
-      name: TOOL.RUN_POSTGRES,
-      description: "Exécute un script SQL PostgreSQL (PGlite : PostgreSQL complet en WASM, PL/pgSQL, "
-        + "JSONB, CTE, fonctions fenêtres, types…) dans un bac isolé du navigateur, sur la base "
-        + "PostgreSQL de la conversation : ses tables restent d'un appel à l'autre (`reset` repart "
-        + "d'une base vide). `files` importe d'abord des fichiers du dossier ouvert ou des pièces "
-        + "jointes : CSV/TSV, JSON, JSONL en tables (nom du fichier ; colonnes de l'en-tête en "
-        + "minuscules sans accents ; bigint, double precision ou text déduits), ou un script .sql "
-        + "exécuté tel quel — leurs données restent sur l'appareil, seuls les résultats reviennent. "
-        + "Le script est une transaction implicite : une erreur l'annule (sauf COMMIT explicite). Rend chaque "
-        + `résultat en tableau (${MAX_ROWS} lignes au plus) et les messages RAISE NOTICE. Revoir les `
-        + "tables : SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'.",
-      params: {
-        sql: { type: "string", description: "Le script : une ou plusieurs instructions séparées par `;` (vide : seulement importer)." },
-        files: { ...FILES_PARAM.files, description: "Fichiers à importer avant le script : chemins dans le dossier ouvert, ou noms de pièces jointes." },
-        reset: { type: "boolean", description: "Vider la base PostgreSQL de la conversation avant (défaut : non)." },
-      },
-    });
+    super({ name: TOOL.RUN_POSTGRES });
   }
 
   /** @override @param {string} convId */
@@ -149,7 +131,7 @@ class RunPostgres extends PageTool {
     const conv = ctx.conv || {};
     const id = conv.id || "";
     const base = args.reset || !id ? null : await sqlbase.load(key(id));
-    const r = await exec({ driver, input: { sql, maxRows: MAX_ROWS, base, files }, runtime: "pglite",
+    const r = await exec({ driver, input: { sql, maxRows: this.settings.max_rows, base, files }, runtime: "pglite",
                            lib: { tabular }, timeout: TIMEOUT, signal: ctx.signal });
     if (!r.ok) return failure(r.error);
     const { text, statements, tables, base: after } = r.value;
@@ -168,11 +150,7 @@ class RunPostgres extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.POSTGRES, authored: true, label: "PostgreSQL",
-  hint: "PostgreSQL en WASM (PGlite) : une base par conversation, import de CSV, JSON, .sql (≈ 17 Mo au premier appel)",
+  key: FAMILY.POSTGRES,
   available: () => typeof WebAssembly === "object",
-  guidance: () => "run_postgres a sa propre base PostgreSQL par conversation, distincte de celle de "
-    + "run_sql (SQLite) : l'utiliser quand l'utilisateur veut du PostgreSQL (son dialecte, PL/pgSQL, "
-    + "JSONB, un schéma à tester avant de le déployer).",
   tools: [new RunPostgres()],
 })];

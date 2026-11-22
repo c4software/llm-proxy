@@ -124,6 +124,9 @@ async def lifespan(app: FastAPI):
              "relue(s)", f"{fairshare.DEFAULT_SHARE} tokens"
              if fairshare.DEFAULT_SHARE else "aucune limite", seeded)
     await open_clients()
+    # Extensions ([extensions].path) : leurs outils entrent au registre
+    # avant ceux des serveurs MCP. Au démarrage seulement.
+    tools.extensions.load(tools)
     # Serveurs MCP ([tools.mcp.<serveur>]) : découverte de leurs outils,
     # attendue quelques secondes au plus — un serveur éteint ne retient
     # pas le démarrage, ses outils s'enregistrent quand il répond.
@@ -173,12 +176,15 @@ async def lifespan(app: FastAPI):
     else:
         log.info("surface Responses inactive ([responses].enabled absent "
                  "ou false) : /v1/responses → 404")
-    if tools.enabled():
+    if serving := tools.serving():
         log.info(
             "outils hébergés ACTIFS (/v1/tools, et selon l'outil "
-            "/v1/responses, /v1/messages, /v1/chat/completions) : %s | "
-            "%d appels au plus par réponse",
-            ", ".join(t.name for t in tools.enabled()), tools.MAX_CALLS,
+            "/v1/responses, /v1/messages, /v1/chat/completions ; le canal "
+            "dit si seulement l'API ou la page) : %s | %d appels au plus "
+            "par réponse",
+            ", ".join(name if len(offers) == len(tools.Offer)
+                      else f"{name} ({', '.join(offers)})"
+                      for name, offers in serving.items()), tools.MAX_CALLS,
         )
     else:
         log.info("aucun outil hébergé ([tools.<nom>].enabled absent ou "
@@ -208,7 +214,8 @@ async def lifespan(app: FastAPI):
                 log.warning(
                     "[chat].always : outil «%s» %s — ignoré tant qu'il "
                     "l'est", name,
-                    f"désactivé ([tools.{name}].enabled)" if name in known
+                    "désactivé ou non offert à l'API ([tools.<nom>].enabled, "
+                    "extension éteinte, offerte à la page seule)" if name in known
                     else "inconnu du registre")
         if chat_api.ENABLED:
             log.info(

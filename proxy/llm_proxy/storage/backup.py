@@ -41,7 +41,7 @@ import tomllib
 from ..core import identity
 from ..access import accounts
 from ..core import config
-from . import conversations, memories, stats
+from . import conversations, extension_state, memories, stats
 
 PREFIX = "llm-proxy-"
 
@@ -52,6 +52,7 @@ def sources() -> dict[str, str]:
             "accounts.db": accounts.DB_PATH,
             "conversations.db": conversations.DB_PATH,
             "client.secret": identity.SECRET_PATH,
+            "extensions.json": extension_state.PATH,
             "config.toml": config.CONFIG_PATH}
 
 
@@ -146,6 +147,11 @@ def check(archive: str) -> bool:
                 except tomllib.TOMLDecodeError as exc:
                     ok = False
                     print(f"  config.toml : INVALIDE — {exc}")
+            elif name == "extensions.json":
+                state = extension_state.load(path)
+                ok &= state is not None
+                print(f"  extensions.json : " + (
+                    "ILLISIBLE" if state is None else f"{len(state)} extension(s) éteinte(s)"))
             elif name == "client.secret":
                 size = os.path.getsize(path)
                 ok &= size >= 16

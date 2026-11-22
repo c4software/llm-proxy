@@ -2,7 +2,7 @@
 // Presse-papiers : écrire aussitôt — le texte copié reste en CARTE
 // DURABLE sous la réponse, à recopier à volonté ; lire seulement sur un
 // clic de la carte (il peut contenir n'importe quoi).
-import { TOOL, FAMILY, PageTool, defineFamily, refused, REFUSE, REASON, clip, reasonOf, failure } from "../contract.js";
+import { TOOL, FAMILY, PageTool, defineFamily, refused, REFUSE, clip, reasonOf, failure } from "../contract.js";
 
 import { clipboard } from "./vueuse.js";
 
@@ -13,13 +13,7 @@ const MAX_READ = 20_000;
 
 class ClipboardWrite extends PageTool {
   constructor() {
-    super({
-      name: TOOL.CLIPBOARD_WRITE,
-      description: "Copie un texte dans le presse-papiers de l'utilisateur (une commande, une "
-        + "adresse, un message à coller ailleurs).",
-      params: { text: { type: "string", description: "Le texte à copier." } },
-      required: ["text"],
-    });
+    super({ name: TOOL.CLIPBOARD_WRITE });
   }
 
   /** @override @param {any} a */
@@ -55,12 +49,7 @@ class ClipboardWrite extends PageTool {
 
 class ClipboardRead extends PageTool {
   constructor() {
-    super({
-      name: TOOL.CLIPBOARD_READ,
-      description: "Demande à l'utilisateur le contenu de son presse-papiers, qu'il accepte ou "
-        + "refuse sur une carte : quand il parle de « ce que j'ai copié ».",
-      params: REASON,
-    });
+    super({ name: TOOL.CLIPBOARD_READ });
   }
 
   /** @override */
@@ -89,7 +78,7 @@ class ClipboardRead extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.CLIPBOARD, label: "Presse-papiers", hint: "copier ; lire sur une carte", on: true,
+  key: FAMILY.CLIPBOARD,
   available: () => !!navigator.clipboard,
   tools: [new ClipboardWrite(), new ClipboardRead()],
 })];

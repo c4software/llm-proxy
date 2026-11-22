@@ -86,13 +86,26 @@ async def tools_list():
         for t in active]}
 
 
+def _why(name: str, offer) -> str:
+    """Où regarder, pour un outil absent de cet appel."""
+    tool = next((t for t in tools.REGISTRY if t.name == name), None)
+    if tool is None:
+        return "aucun outil de ce nom"
+    if offer not in tool.offered:
+        return f"offert à : {', '.join(sorted(tool.offered))}"
+    if not tools.extensions.active(tool):
+        return "extension éteinte dans Configuration → Extensions"
+    return f"[tools.{name}] ou [extensions] dans config.toml"
+
+
 @router.post("/v1/tools/{name}")
 async def tools_run(name: str, request: Request):
     return await run_direct(request, name, "/v1/tools")
 
 
 async def run_direct(request: Request, name: str, endpoint: str,
-                     body=None, known: set | None = None):
+                     body=None, known: set | None = None,
+                     offer: tools.Offer = tools.Offer.API):
     """Exécute un outil hébergé. Corps : ses arguments (objet JSON) —
     ou `body`, déjà lu (/ui/tools).
     Toujours 200 quand l'outil existe : un échec de l'outil est un texte
@@ -105,10 +118,10 @@ async def run_direct(request: Request, name: str, endpoint: str,
     statistiques. `known` : les sites connus de la conversation
     (provenance) — None, pas de contrôle ; sinon l'outil s'y tient, la
     réponse rend `hosts`, ces sites et ceux que le résultat fait
-    connaître."""
-    hosted = tools.Hosted()
+    connaître. `offer` : le canal (Offer.WEB pour /ui/tools)."""
+    hosted = tools.Hosted(offer=offer)
     if name not in hosted.by_name and tools.GRANTED.get() is not None \
-            and any(t.name == name and t.enabled for t in tools.REGISTRY):
+            and any(t.name == name and tools.active(t, offer) for t in tools.REGISTRY):
         return error_response(
             "openai", 403, "tool_not_permitted",
             f"outil «{name}» non permis à cette clé (ses droits se règlent "
@@ -117,8 +130,8 @@ async def run_direct(request: Request, name: str, endpoint: str,
     if name not in hosted.by_name:
         return error_response(
             "openai", 404, "unknown_tool",
-            f"outil «{name}» inconnu ou désactivé ([tools.{name}] dans "
-            f"config.toml) ; actifs : {', '.join(hosted.by_name) or 'aucun'}")
+            f"outil «{name}» inconnu, désactivé ou non offert ici "
+            f"({_why(name, offer)}) ; actifs : {', '.join(hosted.by_name) or 'aucun'}")
     args = parse_json(await request.body()) if body is None else body
     if not isinstance(args, dict):
         return error_response("openai", 400, "invalid_request_error",

@@ -84,7 +84,7 @@ def proxy(monkeypatch):
     from fakes import everywhere
     everywhere(monkeypatch, anthropic_api, "ENABLED", True)
     everywhere(monkeypatch, responses_api, "ENABLED", True)
-    monkeypatch.setattr(tools, "Hosted", lambda: env.hosted)
+    monkeypatch.setattr(tools, "Hosted", lambda **kw: env.hosted)
     monkeypatch.setattr(relaying, "send_upstream", send_upstream)
     everywhere(monkeypatch, stats, "record", lambda *a: env.lines.append(a))
     env.client = TestClient(app.app)

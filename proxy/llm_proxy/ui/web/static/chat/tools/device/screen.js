@@ -1,21 +1,14 @@
 // @ts-check
 // Capture d'écran : un onglet, une fenêtre ou l'écran, montré en aperçu
 // avant d'être envoyé (Envoyer, Reprendre, Refuser).
-import { TOOL, FAMILY, PageTool, defineFamily, refused, REFUSE, REASON, reasonOf } from "../contract.js";
+import { TOOL, FAMILY, PageTool, defineFamily, refused, REFUSE, reasonOf } from "../contract.js";
 import { hasMedia, screenshot, jpeg, imageName, denied } from "./media.js";
 
 /** @typedef {import("../contract.js").Card} Card */
 
 class CaptureScreen extends PageTool {
   constructor() {
-    super({
-      name: TOOL.CAPTURE_SCREEN,
-      description: "Demande à l'utilisateur une capture de son écran (un onglet, une fenêtre ou "
-        + "l'écran entier, qu'il choisit et vérifie avant de l'envoyer) : pour voir une erreur, une "
-        + "interface, un document. Il faut un modèle qui lit les images.",
-      params: REASON,
-      required: ["reason"],
-    });
+    super({ name: TOOL.CAPTURE_SCREEN });
   }
 
   /** @override */
@@ -53,7 +46,7 @@ class CaptureScreen extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.SCREEN, label: "Capture d'écran", hint: "un onglet, une fenêtre ou l'écran, avec aperçu",
+  key: FAMILY.SCREEN,
   available: () => hasMedia("getDisplayMedia"),
   tools: [new CaptureScreen()],
 })];

@@ -34,7 +34,7 @@ FREE = ("backends", "quotas.family_limits", "repos.sources")
 # Les tables MIXTES : des réglages à elles ([tools.mcp].timeout) et des
 # sous-tables nommées ([tools.mcp.<serveur>]) ; seul un chemin à deux
 # niveaux (tools.mcp.docs.url) y devient générique.
-MIXED = ("tools.mcp",)
+MIXED = ("tools.mcp", "extensions")
 
 # Clés lues à leur ancien emplacement, à défaut du nouveau (tools/net.py).
 ALIASES = {f"tools.web_fetch.{k}": f"tools.net.{k}"

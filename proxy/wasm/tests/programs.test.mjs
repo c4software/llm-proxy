@@ -29,7 +29,7 @@ test("un programme enchaîne les outils ; un échec se rattrape par son code", a
 test("le pont refuse sans appeler : outil non coché, arguments trop longs, budget épuisé", async () => {
   const sent = [];
   const pont = bridge(["web_search"], async (name) => { sent.push(name); return { text: "ok", error: null }; },
-                      { max: 2 });
+                      { max: 2, concurrency: 4 });
   for (const [name, args, code] of [["memory", "{}", "invalid_input"],
                                     ["web_search", "x".repeat(1_000_001), "invalid_input"]]) {
     assert.equal((await pont.call(name, args)).error, code, name);
@@ -47,7 +47,7 @@ test("le pont tient la concurrence, et rend une panne de l'appel en erreur", asy
   const pont = bridge(["slow"], (name, args) => new Promise((resolve, reject) => {
     inFlight++; peak = Math.max(peak, inFlight);
     releases.push(() => { inFlight--; args === '"panne"' ? reject(new Error("réseau")) : resolve({ text: "ok", error: null }); });
-  }), { concurrency: 2 });
+  }), { max: 20, concurrency: 2 });
   const all = Promise.all([..."abcde"].map((c) => pont.call("slow", c === "e" ? '"panne"' : "{}")));
   // Libérer un appel à la fois, tant qu'il en reste : jamais plus de deux en vol.
   while (releases.length || inFlight) {
@@ -65,7 +65,7 @@ test("le pont fermé ne lance plus rien ; une inondation de refus arrête le pro
   let flood = 0;
   const releases = [];
   const pont = bridge(["slow"], () => new Promise((resolve) => releases.push(() => resolve({ text: "ok", error: null }))),
-                      { concurrency: 1, onFlood: () => flood++ });
+                      { max: 20, concurrency: 1, onFlood: () => flood++ });
   const first = pont.call("slow", "{}");
   pont.call("slow", "{}");                     // en file, derrière le premier
   pont.close();
@@ -74,7 +74,7 @@ test("le pont fermé ne lance plus rien ; une inondation de refus arrête le pro
   await new Promise((r) => setImmediate(r));
   assert.equal(releases.length, 0, "rien ne part après la fin du programme");
   assert.equal((await pont.call("slow", "{}")).error, "unavailable");
-  const open = bridge([], async () => ({ text: "", error: null }), { onFlood: () => flood++ });
+  const open = bridge([], async () => ({ text: "", error: null }), { max: 20, concurrency: 4, onFlood: () => flood++ });
   for (let i = 0; i <= MAX_REFUSED + 5; i++) open.call("x", "{}");
   assert.equal(flood, 1);
 });

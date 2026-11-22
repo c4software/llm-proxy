@@ -15,11 +15,7 @@
 import { TOOL, FAMILY, PageTool, defineFamily, clip, failure, oneLine } from "../contract.js";
 import { exec } from "./bac.js";
 
-const TIMEOUT = 120_000;
 const MAX_OUT = 20_000;
-// Appels d'outils par programme, et à la fois.
-export const MAX_CALLS = 20;
-export const CONCURRENCY = 4;
 // Caractères des arguments d'un appel (du JSON).
 const MAX_ARGS = 1_000_000;
 // Refus au-delà desquels le programme est arrêté : une boucle qui ne fait
@@ -55,8 +51,9 @@ export async function driver({ code, names }, { call, fmt }) {
  * parti, avec son issue.
  * @param {string[]} allowed
  * @param {(name: string, args: string) => Promise<{text: string, error: string | null}>} send
- * @param {{max?: number, concurrency?: number, onFlood?: () => void}} [o] */
-export function bridge(allowed, send, { max = MAX_CALLS, concurrency = CONCURRENCY, onFlood = () => {} } = {}) {
+ * @param {{max: number, concurrency: number, onFlood?: () => void}} o  max, concurrency :
+ *   appels par programme, et à la fois (les `settings` déclarés de l'outil) */
+export function bridge(allowed, send, { max, concurrency, onFlood = () => {} }) {
   /** @type {string[]} */
   const calls = [];
   /** @type {(() => void)[]} */
@@ -139,26 +136,7 @@ export const statusCode = (status) => ({ 400: "invalid_input", 403: "not_allowed
 
 class RunToolsProgram extends PageTool {
   constructor() {
-    super({
-      name: TOOL.RUN_TOOLS_PROGRAM,
-      description: "Exécute un court programme JavaScript qui appelle les outils hébergés de "
-        + "cette conversation (recherche web, lecture de pages, mémoire…) et combine leurs "
-        + "résultats, en UNE étape : seul ce que le programme rend ou écrit sur la console te "
-        + "revient, pas chaque résultat intermédiaire. Pour une tâche de plusieurs appels "
-        + "(chercher puis lire plusieurs pages, filtrer de longs résultats) ; pour un seul appel, "
-        + "appelle l'outil directement. Le code est le corps d'une fonction async : "
-        + "`await tools.<nom>(args)` appelle l'outil hébergé <nom> avec les MÊMES arguments que "
-        + "sa fonction (un objet), et rend son texte ; un échec lève une Error dont `code` est le "
-        + "code d'erreur (not_allowed, limit…), à attraper pour continuer. `Promise.all` pour des "
-        + "appels indépendants ; `return` la valeur voulue. "
-        + `${MAX_CALLS} appels par programme, ${CONCURRENCY} à la fois, ${TIMEOUT / 1000} s au `
-        + "plus ; attendre (await) chaque appel avant de rendre : ceux qui restent en cours à la "
-        + "fin du programme sont coupés. Aucun réseau ni API du navigateur : seulement ces outils.",
-      params: {
-        code: { type: "string", description: "Le corps de la fonction (avec `return`)." },
-      },
-      required: ["code"],
-    });
+    super({ name: TOOL.RUN_TOOLS_PROGRAM });
   }
 
   /** @override @param {any} a */
@@ -177,11 +155,12 @@ class RunToolsProgram extends PageTool {
     if (ctx.signal) ctx.signal.addEventListener("abort", abort, { once: true });
     let flooded = false;
     const known = new Set((ctx.live && ctx.live.known) || []);
+    const { max_calls: max, concurrency, timeout } = this.settings;
     const pont = bridge(names, (name, a) => send(name, a, known, ctx, stop.signal),
-                        { onFlood: () => { flooded = true; abort(); } });
+                        { max, concurrency, onFlood: () => { flooded = true; abort(); } });
     let r;
     try {
-      r = await exec({ driver, input: { code, names }, timeout: TIMEOUT, signal: stop.signal,
+      r = await exec({ driver, input: { code, names }, timeout: timeout * 1000, signal: stop.signal,
                        onCall: (name, a) => pont.call(name, a) });
     } finally {
       pont.close();
@@ -201,12 +180,4 @@ class RunToolsProgram extends PageTool {
   }
 }
 
-export const FAMILIES = [defineFamily({
-  key: FAMILY.PROGRAMS, authored: true, label: "Programmes d'outils",
-  hint: "enchaîner les outils hébergés cochés dans un programme JavaScript, en une étape",
-  guidance: () => "Pour une tâche qui demande plusieurs appels aux outils hébergés (chercher "
-    + "puis lire plusieurs pages, comparer, filtrer), écrire un programme run_tools_program qui "
-    + "les enchaîne, plutôt qu'un appel par tour. Ne pas deviner d'URL : chercher d'abord, puis "
-    + "lire celles que la recherche a rendues.",
-  tools: [new RunToolsProgram()],
-})];
+export const FAMILIES = [defineFamily({ key: FAMILY.PROGRAMS, tools: [new RunToolsProgram()] })];

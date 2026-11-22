@@ -25,12 +25,10 @@
   comme run_shell.
 */
 import { TOOL, FAMILY, PageTool, defineFamily, failure, oneLine } from "../contract.js";
-import { FILES_PARAM, paths as pathsOf, inputs, deliver } from "./files.js";
+import { paths as pathsOf, inputs, deliver } from "./files.js";
 import * as linux from "./linuxvm.js";
 import * as text from "../text.js";
 
-const TIMEOUT = 60;                  // secondes, par défaut
-const MAX_TIMEOUT = 600;
 const HEAD = 6_000, TAIL = 14_000;   // caractères de sortie gardés : le début, et surtout la fin
 
 // Une longue sortie : son début et sa fin (une erreur est souvent à la fin).
@@ -41,32 +39,7 @@ function cut(/** @type {string} */ s) {
 
 class RunShell extends PageTool {
   constructor() {
-    super({
-      name: TOOL.RUN_SHELL,
-      description: "Exécute un script bash dans une VM Linux du navigateur (Alpine, x86 32 bits, "
-        + "émulée en WASM), sans réseau sauf si l'utilisateur l'ouvre : bash, les outils GNU (coreutils, "
-        + "findutils, grep, sed, diff, patch), python3 et sa bibliothèque standard, git, jq, sqlite3, make, "
-        + "bc, curl, htop, less, tree, xz, et busybox. Rien ne s'installe (ni apk, ni pip). "
-        + "Le dossier courant est "
-        + "/work, gardé avec la conversation d'un appel à l'autre ; l'utilisateur voit et utilise la même "
-        + "machine dans le panneau Terminal. Les fichiers de `files` (dossier ouvert ou pièces jointes, "
-        + "qui restent sur l'appareil) sont copiés sous /work à leur chemin ; les fichiers que le script "
-        + "écrit sous /out pendant l'appel (texte, ou image png/jpeg/webp/gif) sont rendus sous la "
-        + "réponse, et restent dans la VM (/out est /work/out, gardé avec /work). Rend la sortie "
-        + "(stdout et stderr mêlés) et le code de sortie. Quand l'utilisateur a ouvert le panneau "
-        + "Terminal, la commande y est tapée sous ses yeux (« lance … », « montre-moi … ») — un script de "
-        + "plusieurs lignes en un bloc ( … ), un sous-shell : il la voit s'exécuter ; une commande qui dure "
-        + "au-delà du délai (un serveur, un programme interactif) reste alors dans son terminal. "
-        + "Émulée, la machine est lente : quelques secondes pour un gros calcul Python.",
-      params: {
-        script: { type: "string", description: "Le script bash, exécuté dans /work." },
-        ...FILES_PARAM,
-        timeout: { type: "number", description: `Délai en secondes (défaut ${TIMEOUT}, ${MAX_TIMEOUT} au plus) ; le script est tué au-delà.` },
-        reset: { type: "boolean", description: "Repartir d'une machine neuve et d'un /work vide (défaut : non)." },
-        terminal: { type: "boolean", description: "Taper la commande dans le terminal de l'utilisateur s'il est ouvert (défaut : oui) ; false : l'exécuter sans la montrer." },
-      },
-      required: ["script"],
-    });
+    super({ name: TOOL.RUN_SHELL });
   }
 
   /** @override @param {string} convId */
@@ -86,7 +59,8 @@ class RunShell extends PageTool {
     if (bad) return failure(`chemin « ${bad} » : « .. » n'est pas permis.`);
     let files;
     try { files = await inputs(ctx, paths); } catch (e) { return failure(e.message + "."); }
-    const timeout = Math.min(MAX_TIMEOUT, Math.max(1, Number(args.timeout) || TIMEOUT));
+    const { timeout: byDefault, max_timeout: most } = this.settings;
+    const timeout = Math.min(most, Math.max(1, Number(args.timeout) || byDefault));
     let r;
     try {
       if (args.reset) await linux.restart(conv, { wipe: true });
@@ -117,25 +91,13 @@ class RunShell extends PageTool {
 
 // ── éditer les fichiers de la VM ────────────────────────────────────────
 const MAX_WHOLE = 60_000;            // caractères d'un fichier rendu entier
-const PATH = { type: "string", description: "Le chemin du fichier : absolu, ou relatif à /work." };
 const wrap = async (/** @type {() => Promise<string>} */ f) => {
   try { return await f(); } catch (e) { return failure(`VM Linux : ${e.message}.`); }
 };
 
 class ShellRead extends PageTool {
   constructor() {
-    super({
-      name: TOOL.SHELL_READ,
-      description: "Lit un fichier texte de la VM Linux : entier, ou une tranche de lignes numérotées "
-        + "(`start_line`, `end_line`) — à préférer pour un gros fichier, après shell_grep qui dit où "
-        + "chercher. Avant shell_edit quand le texte exact n'est plus sûr.",
-      params: {
-        path: PATH,
-        start_line: { type: "integer", description: "Première ligne (à partir de 1) ; absente avec end_line : le fichier entier." },
-        end_line: { type: "integer", description: `Dernière ligne, incluse (défaut : 80 lignes ; ${text.MAX_SLICE} au plus).` },
-      },
-      required: ["path"],
-    });
+    super({ name: TOOL.SHELL_READ });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
@@ -147,9 +109,9 @@ class ShellRead extends PageTool {
       const head = `Fichier « ${f} » (${content.length} caractères, ${lines} ligne${lines > 1 ? "s" : ""})`;
       if (args.start_line === undefined && args.end_line === undefined) {
         if (content.length <= MAX_WHOLE) return `${head} :\n${content}`;
-        args = { start_line: 1, end_line: text.MAX_SLICE };
+        args = { start_line: 1, end_line: this.settings.max_slice };
       }
-      const t = text.slice(content, args.start_line, args.end_line);
+      const t = text.slice(content, args.start_line, args.end_line, this.settings);
       if ("error" in t) return failure(`le fichier ${t.error}`);
       return `${head} — lignes ${t.start} à ${t.end}${t.end < t.total ? ` (suite : start_line ${t.end + 1})` : ""} `
         + `(le numéro et « → » ne font pas partie du texte, pour old_string) :\n${t.body}`;
@@ -162,22 +124,7 @@ class ShellRead extends PageTool {
 
 class ShellGrep extends PageTool {
   constructor() {
-    super({
-      name: TOOL.SHELL_GREP,
-      description: "Cherche dans les fichiers texte de la VM Linux, sans les relire en entier : rend "
-        + "les lignes qui contiennent `pattern` (texte, ou expression régulière JavaScript avec "
-        + "`regex`), numérotées, avec `context` lignes autour, fichier par fichier. `path` : un "
-        + "fichier, ou un dossier (récursif, fichiers et dossiers cachés exclus ; défaut /work). Pour "
-        + "retrouver un passage avant de le lire (shell_read sur ses lignes) puis de le retoucher (shell_edit).",
-      params: {
-        pattern: { type: "string", description: "Le texte cherché (ou une expression régulière si `regex`)." },
-        path: { type: "string", description: "Un fichier ou un dossier : absolu, ou relatif à /work (défaut : /work)." },
-        regex: { type: "boolean", description: "`pattern` est une expression régulière (JavaScript)." },
-        ignore_case: { type: "boolean", description: "Sans tenir compte de la casse (défaut : oui)." },
-        context: { type: "integer", description: "Lignes de contexte avant et après (défaut 2, 10 au plus)." },
-      },
-      required: ["pattern"],
-    });
+    super({ name: TOOL.SHELL_GREP });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
@@ -187,7 +134,7 @@ class ShellGrep extends PageTool {
       if ("error" in p) return failure(p.error);
       const where = linux.absolute(args.path || ".");
       const files = await linux.readTexts(ctx.conv, where);
-      const ctxLines = text.contextOf(args);
+      const ctxLines = text.contextOf(args, this.settings);
       const out = [];
       let hits = 0, left = text.MAX_HITS, matched = 0;
       for (const f of files) {
@@ -212,26 +159,7 @@ class ShellGrep extends PageTool {
 
 class ShellEdit extends PageTool {
   constructor() {
-    super({
-      name: TOOL.SHELL_EDIT,
-      description: "Retouche un fichier texte de la VM Linux SANS le réécrire : chaque `old_string`, un "
-        + "passage exact et unique du fichier (espaces et retours à la ligne compris, assez long pour "
-        + "être unique), est remplacé par `new_string` — ou, avec `regex`, une expression régulière (un "
-        + "changement répétitif : `replace_all`). Toutes les retouches s'appliquent, ou aucune. Pour "
-        + "trouver le passage : shell_grep, puis shell_read sur ses lignes. Plutôt que sed dans run_shell.",
-      params: {
-        path: PATH,
-        edits: { type: "array", minItems: 1, items: {
-          type: "object", required: ["old_string", "new_string"], properties: {
-            old_string: { type: "string", description: "Le passage exact à remplacer." },
-            new_string: { type: "string", description: "Ce qui le remplace (vide : le supprimer)." },
-            replace_all: { type: "boolean", description: "Remplacer toutes ses occurrences (sinon il doit être unique)." },
-            regex: { type: "boolean", description: "`old_string` est une expression régulière (JavaScript, multiligne) ; `new_string` peut citer ses groupes ($1). Pour un changement répétitif ; sinon, le texte exact." },
-            ignore_case: { type: "boolean", description: "Avec `regex` : sans tenir compte de la casse." },
-          } } },
-      },
-      required: ["path", "edits"],
-    });
+    super({ name: TOOL.SHELL_EDIT });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
@@ -257,17 +185,7 @@ class ShellEdit extends PageTool {
 
 class ShellWrite extends PageTool {
   constructor() {
-    super({
-      name: TOOL.SHELL_WRITE,
-      description: "Écrit un fichier texte entier dans la VM Linux : le crée (dossiers compris), ou le "
-        + "remplace. Pour un nouveau fichier, ou une réécriture complète ; pour une modification, "
-        + "shell_edit. Sans les guillemets et l'échappement d'un heredoc dans run_shell.",
-      params: {
-        path: PATH,
-        content: { type: "string", description: "Le contenu complet du fichier." },
-      },
-      required: ["path", "content"],
-    });
+    super({ name: TOOL.SHELL_WRITE });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
@@ -284,18 +202,8 @@ class ShellWrite extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.LINUX, authored: true, label: "Linux",
-  hint: "Une VM Linux en WASM (Alpine : bash, python3, git, outils GNU…), sans réseau, partagée avec le panneau Terminal",
+  key: FAMILY.LINUX,
   available: () => typeof WebAssembly === "object" && typeof Worker === "function",
-  guidance: () => "run_shell exécute du bash dans une VM Linux du navigateur. Ne "
-    + "s'en servir que si la demande exige d'exécuter quelque chose : lancer ou tester un script "
-    + "shell ou Python (bibliothèque standard seulement), traiter des fichiers déjà dans la VM. "
-    + "Pas pour rédiger une réponse, des notes, un tableau ou un document : répondre directement, "
-    + "ou passer par un artifact. /work est gardé avec la "
-    + "conversation ; l'utilisateur voit la même machine dans le panneau Terminal. Pour modifier "
-    + "un fichier de la VM : shell_grep (où ?), shell_read sur ses lignes, shell_edit — plutôt que "
-    + "sed ou un heredoc dans run_shell ; shell_write pour un fichier neuf. Un contenu de fichier "
-    + "plus ancien dans la conversation peut être périmé : shell_read rend le fichier actuel.",
   // Le réseau, que l'utilisateur ouvre ou ferme dans le panneau Terminal :
   // l'état, joint au tour (le prompt système reste figé).
   state: (ctx) => (ctx && ctx.conv && ctx.conv.linuxNetwork

@@ -68,7 +68,9 @@ def health_detail() -> dict:
         "files": {"public_url": bool(files.PUBLIC_URL),
                   "entries": len(files.STORE), "bytes": files.STORE.size},
         "tools": {
-            "enabled": [t.name for t in tools.enabled()],
+            # En service → leurs canaux (api : les clients de l'API ; web :
+            # le chat de la page et les webhooks).
+            "enabled": tools.serving(),
             "max_calls": tools.MAX_CALLS,
             "memory_entries": len(tools.MEMORY),
             # Cache web (tools/webcache.py) : pages et recherches gardées

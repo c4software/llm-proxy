@@ -17,7 +17,6 @@
 
 export const MAX_LINE = 300;           // caractères d'une ligne rendue par grep
 export const MAX_HITS = 60;            // lignes trouvées par grep, au plus
-export const MAX_SLICE = 400;          // lignes d'une tranche
 
 /** Une ligne numérotée : `   42→ texte` (le numéro ne fait pas partie du texte).
  * @param {number} n @param {string} line @param {string} [mark] */
@@ -81,15 +80,17 @@ export const editCount = (edits, passages) =>
 
 /**
  * Une tranche de lignes numérotées (`start`, `end` : du modèle, rien de
- * validé ; 80 lignes par défaut, MAX_SLICE au plus).
+ * validé ; `o.slice_lines` lignes par défaut, `o.max_slice` au plus : les
+ * `settings` déclarés de l'outil).
  * @param {string} content @param {any} start @param {any} end
+ * @param {Record<string, any>} o  {slice_lines, max_slice}
  * @returns {{total: number, start: number, end: number, body: string} | {error: string}}
  */
-export function slice(content, start, end) {
+export function slice(content, start, end, { slice_lines: byDefault, max_slice: max }) {
   const lines = content.split("\n");
   const s = Math.max(1, Math.floor(Number(start) || 1));
   if (s > lines.length) return { error: `n'a que ${lines.length} lignes.` };
-  const e = Math.min(lines.length, Math.floor(Number(end) || s + 80), s + MAX_SLICE - 1);
+  const e = Math.min(lines.length, Math.floor(Number(end) || s + byDefault), s + max - 1);
   return { total: lines.length, start: s, end: e,
            body: lines.slice(s - 1, e).map((l, k) => numbered(s + k, l)).join("\n") };
 }
@@ -105,8 +106,11 @@ export function pattern(args) {
   } catch (e) { return { error: `expression invalide : ${e.message}` }; }
 }
 
-/** Le contexte demandé (défaut 2, 10 au plus). @param {any} args */
-export const contextOf = (args) => Math.max(0, Math.min(10, Math.floor(Number(args.context ?? 2))));
+/** Le contexte demandé (`o.context` par défaut, `o.max_context` au plus :
+ * les `settings` déclarés de l'outil).
+ * @param {any} args @param {Record<string, any>} o  {context, max_context} */
+export const contextOf = (args, { context, max_context: most }) =>
+  Math.max(0, Math.min(most, Math.floor(Number(args.context ?? context))));
 
 /**
  * Les lignes de `content` trouvées par `re`, numérotées, avec `ctx`

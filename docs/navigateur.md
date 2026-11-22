@@ -42,19 +42,20 @@ outils (`run_php`) :
 page_tools_disabled = ["camera", "screen", "run_php"]
 ```
 
-- La page reçoit cette liste par `/ui/session`. Ces familles disparaissent
-  du menu, et ces outils ne sont plus présentés au modèle. Un appel qui
-  viendrait quand même reçoit « outil désactivé sur ce proxy ».
+- `/ui/session` ne donne pas leurs déclarations à la page : ces familles
+  disparaissent du menu, et ces outils ne sont plus présentés au modèle.
+  Un appel qui viendrait quand même n'est pas exécuté ; une carte déjà
+  dans une conversation reste affichée, et ses boutons répondent que
+  l'outil est indisponible.
 - Le proxy retire **lui-même** ces outils de toute requête du chat de la
   page : une page modifiée ne peut pas les réactiver. Les autres routes
   (`/v1/chat/completions` d'un client) ne sont pas touchées : ces outils
   n'appartiennent qu'à la page.
 - Une famille dont tous les outils sont refusés l'est aussi.
-- Le proxy connaît familles et outils par **`ui/page_tools.json`**, tiré du
-  registre de la page par `proxy/wasm/check-tools.mjs`. Ce manifeste n'est
-  jamais écrit à la main : périmé, la vérification échoue, et pytest avec
-  elle (`node check-tools.mjs --write` le réécrit). Une entrée inconnue est
-  signalée au journal.
+- Les noms sont ceux des déclarations (`tools/page/` du proxy, voir
+  [Écrire un outil de la page](#écrire-un-outil-de-la-page)). Une entrée
+  inconnue est signalée au journal. Une extension s'éteint dans
+  Configuration → Extensions, pas ici.
 
 Les API du navigateur passent par [VueUse](https://vueuse.org)
 (`static/vueuse.iife.min.js`, chargé avec Vue) : presse-papiers,
@@ -482,37 +483,65 @@ runtime manque. `run_javascript` fonctionne toujours, mais sans
 
 ## Écrire un outil de la page
 
-Tous les outils que la page exécute suivent la même **interface** :
-ceux du navigateur, et aussi la question à choix (`ask_user`),
-`save_file`, les artifacts et le dossier ouvert. Ils sont rangés dans
-`chat/tools/` :
+Un outil de la page suit le contrat de **tous les outils** (voir
+[Écrire un outil](outils.md#écrire-un-outil)), avec `runs = browser` : sa
+**déclaration** est côté proxy, son **exécution** dans la page.
 
-| Dossier | Contenu |
+| Où | Contenu |
 |---|---|
-| `tools/contract.js` | le contrat : les listes `TOOL` et `FAMILY`, les types, l'interface `PageTool`, `defineFamily` |
-| `tools/index.js` | le registre : l'inscription des modules, leur vérification, ce que le chat appelle |
-| `tools/page/` | questions (`ask.js`), fichiers (`save.js`), artifacts et leur débogage, dossier ouvert (`folder.js`) |
-| `tools/device/` | l'appareil, un module par famille ; `media.js`, les flux caméra et écran |
-| `tools/sandbox/` | les bacs de code ; `bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits ; `tables.js`, un CSV ou un JSON lu en table (run_sql, run_postgres) |
+| `llm_proxy/tools/page/` (proxy) | les déclarations : un `BrowserTool` par outil (nom, prompt, paramètres, `settings`), une `Family` par famille du menu. `page.py` (questions, fichiers, artifacts, dossier), `device.py` (l'appareil), `sandbox.py` (les bacs de code), dans l'ordre du menu |
+| `chat/tools/contract.js` | le contrat de l'exécution : les listes `TOOL` et `FAMILY`, les types, l'interface `PageTool`, `defineFamily` |
+| `chat/tools/index.js` | le registre : l'inscription des modules, leur vérification, l'installation des déclarations (`install`), ce que le chat appelle |
+| `chat/tools/page/`, `device/`, `sandbox/` | l'exécution, un module par famille ; `media.js`, les flux caméra et écran ; `bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits ; `tables.js`, un CSV ou un JSON lu en table |
 
-Le chat (`ChatPanel.js`) ne nomme aucun outil : il passe toujours par
-le registre.
+La page reçoit les déclarations par `/ui/session` (`chat.page` : les
+familles, et la fonction de chaque outil avec ses `settings`). Le
+registre les attache à l'exécution du même nom : une déclaration sans
+exécution, ou l'inverse, est dite à la console et reste hors du menu. Le
+chat (`ChatPanel.js`) ne nomme aucun outil : il passe toujours par le
+registre.
 
-### L'interface `PageTool`
+### La déclaration (proxy)
+
+```python
+GET_LOCATION = BrowserTool(
+    ToolName.GET_LOCATION,                       # de la liste fermée ToolName
+    description="Demande à l'utilisateur sa position…",
+    params={"reason": REASON},
+    required=("reason",),
+)
+
+LOCATION_FAMILY = Family(
+    FamilyKey.LOCATION, label="Position", tools=(ToolName.GET_LOCATION,),
+    hint="demandée sur une carte, approximative ou précise",
+)
+```
+
+Un texte que le prompt cite et que l'exécution applique (une borne, un
+délai) va dans `settings` : écrit une fois, côté proxy, il arrive à la
+page avec la déclaration (`this.settings` de l'outil). Les textes des
+outils de la page sont en français.
+
+| `Family` | Rôle |
+|---|---|
+| `key` | sa clé, de la liste fermée `FamilyKey` |
+| `label`, `hint` | ce qu'affiche le menu Outils |
+| `tools` | les noms de ses outils |
+| `on` | cochée d'office dans une conversation neuve |
+| `fixed` | toujours active, hors du menu (questions, fichiers, artifacts, dossier) |
+| `authored` | ses résultats sont écrits par le modèle ou son code (les bacs, les artifacts) : ils ne font connaître aucun site au proxy ([provenance](outils.md#la-provenance-des-url-toolsnetprovenance)) |
+| `guidance` | une consigne ajoutée au **prompt système** quand la famille est active ; **figée**, elle ne dépend pas de l'état |
+
+### L'exécution : `PageTool`
 
 Un outil est une **classe** qui hérite de `PageTool`. Son constructeur
-passe ce qu'il déclare ; ses méthodes réécrivent celles de l'interface,
-chacune marquée `@override` :
+passe son nom ; ses méthodes réécrivent celles de l'interface, chacune
+marquée `@override` :
 
 ```js
 class GetLocation extends PageTool {
   constructor() {
-    super({
-      name: TOOL.GET_LOCATION,               // de la liste fermée TOOL
-      description: "Demande à l'utilisateur sa position…",
-      params: { reason: { type: "string", description: "Pourquoi…" } },
-      required: ["reason"],
-    });
+    super({ name: TOOL.GET_LOCATION });        // de la liste fermée TOOL
   }
   /** @override */ waits() { return true; }                   // une carte
   /** @override */ prepare(args) { return reasonOf(args); }   // l'état de la carte
@@ -524,8 +553,9 @@ class GetLocation extends PageTool {
 
 | Membre | Rôle | Défaut |
 |---|---|---|
-| `super({name, description, params, required})` | ce que le modèle lit : le nom (de `TOOL`), la description, les paramètres | — |
+| `super({name})` | le nom de l'outil, celui de sa déclaration | — |
 | `placement`, `component` (dans `super`) | une carte dans le fil ou dans la feuille du bas ; un composant Vue à la place du gabarit commun | dans le fil, gabarit commun |
+| `settings` | les valeurs déclarées avec l'outil (`max_rows`, `timeout`…), posées à l'installation | `{}` |
 | `run(args, ctx)` | l'exécution, aussitôt : un texte, ou `{result, image?, artifact?, keep?}` | — |
 | `waits(args, ctx)` | attend-il l'utilisateur ? | non |
 | `prepare(args, ctx)` | l'état de la carte, ou `{error}` | `{}` |
@@ -549,25 +579,20 @@ ses composables une fois, dans une portée qui vit autant que la page
 `useSpeechSynthesis`…) ; la caméra et l'écran ont la leur, par carte
 (`useUserMedia`, `useDisplayMedia`).
 
-### La famille
-
-`defineFamily({...})` regroupe les outils d'un module :
+`defineFamily({...})` regroupe l'exécution des outils d'une famille, et
+ce qui dépend du navigateur ou du tour :
 
 | Clé | Rôle |
 |---|---|
-| `key` | sa clé, de la liste fermée `FAMILY` |
-| `label`, `hint` | ce qu'affiche le menu Outils |
-| `on` | cochée d'office dans une conversation neuve |
-| `fixed` | toujours active, hors du menu (questions, fichiers, artifacts, dossier) |
-| `authored` | ses résultats sont écrits par le modèle ou son code (les bacs, les artifacts) : ils ne font connaître aucun site au proxy ([provenance](outils.md#la-provenance-des-url-toolsnetprovenance)), qui le lit dans `ui/page_tools.json` |
+| `key` | la clé de sa déclaration, de la liste fermée `FAMILY` |
+| `tools` | ses outils (`new GetLocation()`…) |
 | `available()` | ce navigateur sait-il la faire ? |
 | `enabled(ctx)` | active pour ce tour ? Un choix de l'utilisateur (le dossier : s'il l'a ouvert), jamais l'état de la conversation |
-| `guidance(ctx)` | une consigne ajoutée au **prompt système** quand la famille est active ; **figée**, elle ne dépend pas de l'état |
 | `state(ctx)` | l'état du moment (les artifacts et leur version, le dossier ouvert, le réseau de la VM), joint au message de l'utilisateur du tour quand il a changé |
-| `tools` | ses outils (`new GetLocation()`…) |
 
 Le module exporte `FAMILIES`, et s'inscrit **une fois** dans la liste
-`MODULES` de `tools/index.js`.
+`MODULES` de `tools/index.js`. Un outil de la page fourni par une
+extension suit la même interface : voir [Extensions](extensions.md#le-js).
 
 ### L'historique, en ajout seul
 
@@ -598,17 +623,24 @@ en lit 98 %.
 
 ### Les garde-fous
 
-Trois vérifications empêchent les dérives :
+Ces vérifications empêchent les dérives :
 
-- **Le registre**, au chargement de la page, refuse :
+- **Le proxy**, au démarrage, refuse une déclaration hors contrat (un
+  `run` Python sur un outil du navigateur, un nom hors de `ToolName`, une
+  famille sans outil…), et exige que chaque nom de `ToolName` et chaque
+  clé de `FamilyKey` soit déclaré.
+- **Le registre de la page**, au chargement, refuse :
   - un outil qui n'hérite pas de `PageTool` ;
   - un membre que l'interface ne déclare pas : `sumary()` au lieu de
     `summary()`, ou une aide rangée dans la classe au lieu d'une
     fonction du module ;
   - un mode incohérent : une carte sans `act`, un outil sans `run` ni
-    carte, un paramètre requis absent de `params` ;
-  - un nom de `TOOL` ou une clé de `FAMILY` sans implémentation, ou
-    implémenté deux fois.
+    carte ;
+  - un nom de `TOOL` ou une clé de `FAMILY` sans exécution, ou exécuté
+    deux fois.
+- **Déclarations et exécution ensemble** : pytest donne les déclarations
+  du proxy à `proxy/wasm/check-tools.mjs`, qui exige une exécution pour
+  chacune et une déclaration pour chaque exécution native.
 - **TypeScript** vérifie les modules, tous en `// @ts-check`. Un
   `@override` sur une méthode que `PageTool` n'a pas, une clé inconnue
   dans `super({...})` ou une carte qui rend `{resultat}` au lieu de
@@ -616,11 +648,12 @@ Trois vérifications empêchent les dérives :
 - **Les tests de la logique pure** (`proxy/wasm/tests/*.test.mjs`,
   `node --test`) : le rendu Markdown sûr, le document d'un artifact et
   sa capture, l'enregistrement des conversations (avec le vrai Vue et un
-  proxy simulé), les messages d'une requête (chat/api.js, « ajout seul »)
-  et les tours d'outils (chat/turn.js). `npm test` les lance seuls.
-- **`npm run check`** lance le tout hors du navigateur : TypeScript, le
-  registre chargé par Node (`proxy/wasm/check-tools.mjs`), puis les
-  tests. pytest le lance aussi ; le test est ignoré sans Node.
+  proxy simulé), les messages d'une requête (chat/api.js, « ajout seul »),
+  les tours d'outils (chat/turn.js) et l'installation des déclarations
+  (tools/index.js). `npm test` les lance seuls.
+- **`npm run check`** lance TypeScript, l'exécution chargée par Node
+  (`check-tools.mjs`, sans les déclarations), puis les tests. pytest le
+  lance aussi, avec les déclarations ; le test est ignoré sans Node.
 
 ```bash
 cd proxy/wasm && npm ci && npm run check

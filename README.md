@@ -131,6 +131,7 @@ du cours sur le développement agentique.
 | Webhooks entrants et sortants, au format Slack, par compte | [Webhooks](docs/webhooks.md) |
 | Lire un dépôt GitLab, GitHub, Gitea ou git (arborescence, fichiers, recherche), dans un bac de l'exécuteur | [Dépôts](docs/depots.md) |
 | Écrire un outil hébergé : le contrat | [docs/outils.md](docs/outils.md) |
+| Ajouter des outils, du proxy (Python) ou du navigateur (JavaScript), chargés au démarrage | [Extensions](docs/extensions.md) |
 | Vérifier un déploiement | [Vérification](docs/verification.md) |
 | Ce qui ne marche pas, ou pas encore | [Limites connues](docs/limites.md) |
 | Les bancs de vrais clients | [bench/README.md](bench/README.md) |

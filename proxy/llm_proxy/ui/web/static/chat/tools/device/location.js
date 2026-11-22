@@ -8,14 +8,7 @@ import { TOOL, FAMILY, PageTool, defineFamily, refused, REFUSE, reasonOf, failur
 
 class GetLocation extends PageTool {
   constructor() {
-    super({
-      name: TOOL.GET_LOCATION,
-      description: "Demande à l'utilisateur sa position (latitude, longitude), qu'il accepte ou "
-        + "refuse sur une carte dans le chat. Seulement quand la réponse en dépend vraiment (météo, "
-        + "itinéraire, lieux proches) ; dire pourquoi dans `reason`.",
-      params: { reason: { type: "string", description: "Pourquoi la position est utile, en une phrase, montrée à l'utilisateur." } },
-      required: ["reason"],
-    });
+    super({ name: TOOL.GET_LOCATION });
   }
 
   /** @override */
@@ -53,7 +46,7 @@ class GetLocation extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.LOCATION, label: "Position", hint: "demandée sur une carte, approximative ou précise",
+  key: FAMILY.LOCATION,
   available: () => "geolocation" in navigator,
   tools: [new GetLocation()],
 })];

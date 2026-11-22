@@ -128,14 +128,18 @@ export const ChatPanel = {
 
     // Les familles d'outils du menu (tools/) : celles que ce
     // navigateur sait faire, cochées par conversation ; une conversation
-    // neuve reprend le dernier choix fait dans ce navigateur.
-    // Moins celles que le proxy refuse à tous ([ui].page_tools_disabled).
-    const offTick = ref(0);
-    watch(() => props.session.chat && props.session.chat.page_tools_disabled, (d) => {
-      tools.setDisabled(d);
-      offTick.value++;
-    }, { immediate: true, deep: true });
-    const deviceFamilies = computed(() => (offTick.value, tools.menuFamilies()));
+    // neuve reprend le dernier choix fait dans ce navigateur. Leurs
+    // déclarations viennent du proxy (`chat.page` : sans celles qu'il
+    // refuse, [ui].page_tools_disabled, ni celles d'une extension éteinte) ;
+    // les natives sont installées tout de suite, celles des extensions
+    // une fois leurs modules importés.
+    const installTick = ref(0);
+    watch(() => props.session.chat && props.session.chat.page, (page) => {
+      tools.install(page);
+      installTick.value++;
+      tools.installAll(page).then(() => { installTick.value++; });
+    }, { immediate: true });
+    const deviceFamilies = computed(() => (installTick.value, tools.menuFamilies()));
     // Le relais réseau de la VM Linux, ouvert à ce compte ([ui].linux_relay).
     watch(() => !!(props.session.chat && props.session.chat.linux_relay), (on) => { linuxVm.relay = on; },
           { immediate: true });
@@ -212,7 +216,7 @@ export const ChatPanel = {
     // le proxy refuse la famille ([ui].page_tools_disabled).
     const linuxOpen = ref(false);
     const linuxOffered = computed(() => !!current.value
-      && tools.menuFamilies().some((f) => f.key === tools.FAMILY.LINUX));
+      && deviceFamilies.value.some((f) => f.key === tools.FAMILY.LINUX));
     function toggleLinux(open = !linuxOpen.value) {
       linuxOpen.value = open;
       if (open) { memoryOpen.value = false; artifactsOpen.value = false; assetsOpen.value = false; }

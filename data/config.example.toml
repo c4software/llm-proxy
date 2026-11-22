@@ -492,8 +492,8 @@ conversations_database = "conversations.db"
 # des familles (« camera », « screen », « location », « clipboard », « sql »,
 # « php », « compute »…) ou des outils (« run_php »). Ni au menu Outils, ni
 # présentés au modèle ; le proxy les retire aussi de toute requête du chat
-# de la page. Liste des familles et de leurs outils : ui/page_tools.json
-# (tiré du registre de la page). Voir docs/navigateur.md.
+# de la page. Liste des familles et de leurs outils : leurs déclarations,
+# proxy/llm_proxy/tools/page/. Voir docs/navigateur.md.
 # page_tools_disabled = ["camera", "screen"]
 # Relais réseau de la VM Linux de la page (docs/linux.md, « Le réseau ») :
 # un vrai accès à Internet (https, apk, pip, git, ssh) quand l'utilisateur
@@ -543,6 +543,37 @@ max_running = 3
 # Caractères au plus du texte d'un message reçu (au-delà : 400 msg_too_long).
 max_text_chars = 100000
 
+
+# ── Extensions : des outils au contrat de tous les outils ───────────────
+# Chaque sous-dossier <nom>/ du dossier est chargé au démarrage : <nom>.py
+# expose TOOL (ou TOOLS), au contrat de llm_proxy/extension.py, et <nom>.js
+# exécute dans la page ses outils du navigateur. CONFIANCE TOTALE : le .py
+# tourne dans le proxy, le .js dans la page. Le dossier, chaque
+# sous-dossier et chaque fichier doivent être hors d'atteinte du proxy
+# (montage `:ro`) : un dossier inscriptible n'est pas lu, une extension
+# inscriptible est écartée. Voir docs/extensions.md.
+# [extensions]
+# Le dossier ; vide (défaut) = aucune extension.
+# path = "/app/extensions"
+#
+# Une extension (le nom de son sous-dossier) : ses réglages, lus par
+# ext.settings("<nom>"). Une extension chargée s'éteint et se rallume à
+# chaud dans la page (Configuration → Extensions) ; `enabled = false` est
+# l'arrêt de l'opérateur : le fichier n'est pas chargé, et la page ne peut
+# pas le rallumer.
+# [extensions.horloge]
+# enabled = true
+#
+# L'extension d'exemple examples/extensions/pull_request/ : des PR en
+# brouillon au jeton d'un COMPTE DE SERVICE, pour tout compte qui a la page
+# ou un webhook. `projects` étroit, branche par défaut protégée sur la forge.
+# [extensions.pull_request]
+# forge = "gitlab"                   # gitlab | github | gitea
+# url = "https://gitlab.exemple.fr"  # l'adresse de la forge
+# token = "${PR_TOKEN}"
+# projects = ["equipe/*"]            # obligatoire : aucun projet sinon
+# blocked_paths = ["deploy/*"]       # refusés, en plus des chemins de CI
+# allow_private = false              # true : forge sur le réseau interne
 
 # ── Dépôts : l'outil `repository` ───────────────────────────────────────
 # Lit un projet d'une forge (GitLab, GitHub, Gitea/Forgejo, tout git en

@@ -15,7 +15,7 @@ from fakes import (ANSWER_TURN, FakeUpstream, chunk, hosted_chat, search_then_an
 from llm_proxy.core import identity
 from llm_proxy.access import auth
 from llm_proxy.upstream import catalog, relaying
-from llm_proxy.ui import dashboard, static_files, usage_api
+from llm_proxy.ui import dashboard, page_tools, static_files, usage_api
 from llm_proxy.surfaces import chat_api as C
 from llm_proxy.upstream import backends
 from llm_proxy.access import oidc
@@ -196,7 +196,7 @@ def test_chat_is_closed_unless_enabled(ui, monkeypatch):
     assert ui.client.get("/ui/session").json()["chat"] == {
         "enabled": False, "model": None, "hosted_tools": False, "tools": [], "always": [],
         "image_sizes": ["512x512", "768x768", "1024x1024"],
-        "image_size": "512x512", "image_steps": {}, "image_loras": {}, "image_upscale": None, "page_tools_disabled": {"families": [], "tools": []},
+        "image_size": "512x512", "image_steps": {}, "image_loras": {}, "image_upscale": None, "page": page_tools.declarations(),
         "linux_relay": False}
     assert not ui.sent
 
@@ -289,7 +289,7 @@ def test_chat_offers_one_switch_per_mcp_server(ui, monkeypatch):
              tool("web_fetch", ("web_search",)),
              tool("issues", ("issues", "mcp:github", "mcp")),
              tool("pulls", ("pulls", "mcp:github", "mcp"))]
-    monkeypatch.setattr(tools, "Hosted", lambda: T(tools=found))
+    monkeypatch.setattr(tools, "Hosted", lambda **kw: T(tools=found))
     login(ui)
     web = ["web_fetch", "web_search"]
     github = ["issues", "pulls"]

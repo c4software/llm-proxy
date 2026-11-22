@@ -176,7 +176,7 @@ def proxy(monkeypatch):
     monkeypatch.setattr(auth, "PROXY_API_KEYS", frozenset({"sk-a", "sk-b"}))
     monkeypatch.setattr(mcp_server, "ENABLED", True)
     monkeypatch.setattr(memory, "ENABLED", True)
-    monkeypatch.setattr(tools, "enabled", lambda: [memory.TOOL])
+    monkeypatch.setattr(tools, "enabled", lambda offer=None: [memory.TOOL])
     return TestClient(A.app)
 
 

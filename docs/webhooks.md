@@ -226,6 +226,9 @@ sortants du compte de sa clé.
   comme celui de l'utilisateur. Avec des outils actifs (`webhook`, code,
   mémoire), il peut leur faire faire ce que l'utilisateur pourrait
   demander. Il vaut mieux ne cocher que les outils utiles au webhook.
+  Pour ouvrir une MR en réponse à un message (une alerte, un rapport),
+  voir l'extension d'exemple
+  [pull_request](extensions.md#pull_request--proposer-une-modification).
 - Avec un `response_url`, l'appelant lit la réponse. Il n'atteint pas
   l'historique de la conversation, que le modèle ne reçoit pas, mais il
   atteint le prompt système et ce que lisent les outils cochés (un dépôt,

@@ -1,15 +1,19 @@
 """Le code de la page (web/static), vérifié par l'outillage de
 proxy/wasm (npm run check) : ses types (les fichiers en `// @ts-check`,
-selon proxy/wasm/tsconfig.json), le registre des outils de la page
-contre leur interface (proxy/wasm/check-tools.mjs), et les tests de sa
+selon proxy/wasm/tsconfig.json), l'exécution des outils de la page
+contre leur interface et contre leurs déclarations, celles du proxy
+(proxy/wasm/check-tools.mjs), et les tests de sa
 logique pure (proxy/wasm/tests, `node --test`). Ignoré sans Node ou
 sans `npm ci` dans proxy/wasm (les tests Node, sans Node seulement)."""
 
+import json
 import os
 import shutil
 import subprocess
 
 import pytest
+
+from llm_proxy.ui import page_tools
 
 WASM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "wasm")
 TSC = os.path.join(WASM, "node_modules", "typescript", "bin", "tsc")
@@ -28,13 +32,17 @@ def test_page_code_type_checks():
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-def test_page_tools_follow_their_interface():
-    """Chaque outil hérite de PageTool et n'a que ses membres ; chaque nom
-    de TOOL et clé de FAMILY est implémenté une fois (tools/index.js)."""
-    r = subprocess.run([node(), "check-tools.mjs"], cwd=WASM,
+def test_chaque_outil_de_la_page_a_sa_declaration_et_son_execution(tmp_path):
+    """L'exécution (tools/index.js) : chaque outil hérite de PageTool et
+    n'a que ses membres, chaque nom de TOOL et clé de FAMILY est
+    implémenté une fois ; et chaque déclaration du proxy (tools/page/) a
+    son exécution, chaque exécution native sa déclaration."""
+    declared = tmp_path / "declarations.json"
+    declared.write_text(json.dumps(page_tools.declarations()), encoding="utf-8")
+    r = subprocess.run([node(), "check-tools.mjs", "--declarations", str(declared)], cwd=WASM,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "conformes" in r.stdout
+    assert "déclarations et exécution conformes" in r.stdout
 
 
 def test_page_logic_tests_pass():

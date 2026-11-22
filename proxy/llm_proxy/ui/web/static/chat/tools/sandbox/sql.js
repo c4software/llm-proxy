@@ -18,12 +18,11 @@
 import { TOOL, FAMILY, PageTool, defineFamily, clip, failure, oneLine } from "../contract.js";
 import { exec } from "./bac.js";
 import * as sqlbase from "./sqlbase.js";
-import { FILES_PARAM, paths as pathsOf, inputs } from "./files.js";
+import { paths as pathsOf, inputs } from "./files.js";
 import { tabular } from "./tables.js";
 
 const TIMEOUT = 60_000;              // un gros import compris
 const MAX_OUT = 20_000;
-const MAX_ROWS = 200;                // lignes montrées par résultat
 
 // Exécutée dans le Worker du bac : elle ne voit que ses arguments.
 async function driver({ sql, maxRows, base, files }, { mod, wasm, lib }) {
@@ -121,23 +120,7 @@ async function driver({ sql, maxRows, base, files }, { mod, wasm, lib }) {
 
 class RunSql extends PageTool {
   constructor() {
-    super({
-      name: TOOL.RUN_SQL,
-      description: "Exécute un script SQL (dialecte SQLite 3) dans un bac isolé du navigateur, sur la "
-        + "base de la conversation : ses tables restent d'un appel à l'autre (`reset` repart d'une base "
-        + "vide). `files` importe d'abord des fichiers en tables, depuis le dossier ouvert ou les pièces "
-        + "jointes : CSV/TSV (en-tête, séparateur et types devinés), JSON (tableau d'objets), JSONL, "
-        + "ou une base .sqlite/.db — leurs données restent sur l'appareil, seuls les résultats des "
-        + "requêtes reviennent. Une table importée porte le nom du fichier, ses colonnes ceux de "
-        + "l'en-tête (minuscules, sans accents, « _ ») ; l'import rend son schéma. Revoir les tables : SELECT name, sql FROM sqlite_schema. Rend "
-        + `chaque résultat en tableau (${MAX_ROWS} lignes au plus) : agréger en SQL plutôt que tout lire.`,
-      params: {
-        sql: { type: "string", description: "Le script : une ou plusieurs instructions séparées par `;` (vide : seulement importer)." },
-        files: { ...FILES_PARAM.files, description: "Fichiers à importer avant le script : chemins dans le dossier ouvert, ou noms de pièces jointes." },
-        reset: { type: "boolean", description: "Vider la base de la conversation avant (défaut : non)." },
-        download: { type: "boolean", description: "Proposer à l'utilisateur de télécharger la base (.sqlite) sous la réponse." },
-      },
-    });
+    super({ name: TOOL.RUN_SQL });
   }
 
   /** @override @param {string} convId */
@@ -159,7 +142,7 @@ class RunSql extends PageTool {
     const conv = ctx.conv || {};
     const id = conv.id || "";
     const base = args.reset || !id ? null : await sqlbase.load(id);
-    const r = await exec({ driver, input: { sql, maxRows: MAX_ROWS, base, files }, runtime: "sql",
+    const r = await exec({ driver, input: { sql, maxRows: this.settings.max_rows, base, files }, runtime: "sql",
                            lib: { tabular }, timeout: TIMEOUT, signal: ctx.signal });
     if (!r.ok) return failure(r.error);
     const { text, statements, tables, base: after } = r.value;
@@ -182,11 +165,7 @@ class RunSql extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.SQL, authored: true, label: "SQL", hint: "SQLite en WASM : une base par conversation, import de CSV, JSON, .sqlite",
+  key: FAMILY.SQL,
   available: () => typeof WebAssembly === "object",
-  guidance: () => "Pour analyser des données de l'utilisateur (CSV, JSON, base SQLite, dans le "
-    + "dossier ouvert ou en pièce jointe), préférer run_sql avec `files` à leur lecture : les "
-    + "données restent sur l'appareil, seuls les résultats des requêtes reviennent. Les tables "
-    + "de la conversation restent d'un message à l'autre.",
   tools: [new RunSql()],
 })];

@@ -359,23 +359,27 @@ def refused(url: str) -> None:
                                        f"blocked domain.")
 
 
-async def post(url: str, content: bytes, content_type: str, *, timeout: float,
+async def post(url: str, content: bytes | None, content_type: str, *, timeout: float,
                user_agent: str, allow_private: bool = False, limit: int = 65536,
-               transport=None) -> tuple[int, bytes]:
+               transport=None, method: str = "POST", auth: dict | None = None,
+               accept: str = "*/*") -> tuple[int, bytes]:
     """Un POST vers une URL que le proxy n'a pas choisie (un webhook
     sortant d'un compte, le `response_url` d'un message reçu) : les
     refus de [tools.net] (`blocked_urls`, `blocked_domains` ; pas
     `allowed_domains`, une liste de sites à LIRE), les adresses publiques
     seulement, sauf `allow_private`, pas de redirection suivie (un POST redirigé
-    changerait de cible sans contrôle). → (statut, début du corps).
+    changerait de cible sans contrôle, et `auth` avec lui). `method` : GET,
+    PUT, DELETE… (la même requête, le statut rendu quel qu'il soit : l'API
+    d'une forge), `auth` : des en-têtes de plus. → (statut, début du corps).
 
     Lève ToolError : `not_allowed` (domaine refusé, adresse privée), `invalid_input`
     (URL), `not_accessible` (hôte inconnu, erreur de transport)."""
     refused(url)
     try:
         r, body = await _hop(url, timeout, lambda r, b: limit, user_agent,
-                             "*/*", transport, method="POST", content=content,
-                             content_type=content_type, allow_private=allow_private)
+                             accept, transport, method=method, content=content,
+                             content_type=content_type, allow_private=allow_private,
+                             auth=auth)
     except Blocked as exc:
         raise ToolError(exc.code, f"{exc}.")
     except (httpx2.HTTPError, httpx2.InvalidURL) as exc:

@@ -1,6 +1,6 @@
 // @ts-check
 // Caméra : une photo, montrée en aperçu avant d'être envoyée.
-import { TOOL, FAMILY, PageTool, defineFamily, refused, REFUSE, REASON, reasonOf } from "../contract.js";
+import { TOOL, FAMILY, PageTool, defineFamily, refused, REFUSE, reasonOf } from "../contract.js";
 import { hasMedia, live, stream, stop, camera, frame, jpeg, imageName, denied } from "./media.js";
 
 /** @typedef {import("../contract.js").Card} Card */
@@ -9,13 +9,7 @@ const TITLE = "Le modèle demande une photo";
 
 class TakePhoto extends PageTool {
   constructor() {
-    super({
-      name: TOOL.TAKE_PHOTO,
-      description: "Demande à l'utilisateur une photo prise avec sa caméra (une étiquette, un "
-        + "document, un objet), qu'il vérifie avant de l'envoyer. Il faut un modèle qui lit les images.",
-      params: REASON,
-      required: ["reason"],
-    });
+    super({ name: TOOL.TAKE_PHOTO });
   }
 
   /** @override */
@@ -63,7 +57,7 @@ class TakePhoto extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.CAMERA, label: "Caméra", hint: "une photo, avec aperçu",
+  key: FAMILY.CAMERA,
   available: () => hasMedia("getUserMedia"),
   tools: [new TakePhoto()],
 })];

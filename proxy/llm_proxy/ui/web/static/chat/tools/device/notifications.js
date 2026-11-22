@@ -11,7 +11,6 @@ import { show } from "../../notify.js";
 /** @typedef {import("../contract.js").Card} Card */
 /** @typedef {import("../contract.js").Kept} Kept */
 
-const MAX_DELAY = 24 * 60;          // minutes d'un rappel, au plus
 const supported = () => "Notification" in window;
 const granted = () => supported() && Notification.permission === "granted";
 // Les rappels programmés dans CETTE page : référence → minuteur.
@@ -27,7 +26,8 @@ function schedule(ref, title, body, at) {
 }
 
 /** @param {any} args @returns {import("../contract.js").RunResult} */
-function send(args) {
+/** @param {any} args @param {number} maxDelay  minutes d'un rappel, au plus (settings) */
+function send(args, maxDelay) {
   const title = String(args.title || "").trim().slice(0, 120);
   if (!title) return failure("`title` attendu.");
   if (!supported()) return failure("ce navigateur n'a pas de notifications.");
@@ -36,7 +36,7 @@ function send(args) {
       + "dans les paramètres du site).");
   }
   const body = String(args.body || "").slice(0, 300);
-  const delay = Math.max(0, Math.min(MAX_DELAY, Number(args.delay_minutes) || 0));
+  const delay = Math.max(0, Math.min(maxDelay, Number(args.delay_minutes) || 0));
   const ref = crypto.randomUUID();
   if (!delay) {
     show(title, body);
@@ -50,25 +50,14 @@ function send(args) {
 
 class Notify extends PageTool {
   constructor() {
-    super({
-      name: TOOL.NOTIFY,
-      description: "Envoie une notification du navigateur à l'utilisateur, tout de suite ou après "
-        + "un délai (un rappel : « rappelle-moi dans 20 minutes »). Le rappel n'arrive que si la "
-        + "page reste ouverte ; pour un rendez-vous, préférer add_to_calendar.",
-      params: {
-        title: { type: "string", description: "Le titre, court." },
-        body: { type: "string", description: "Le texte (facultatif)." },
-        delay_minutes: { type: "number", description: `Dans combien de minutes (0 à ${MAX_DELAY}) ; 0 ou absent : tout de suite.` },
-      },
-      required: ["title"],
-    });
+    super({ name: TOOL.NOTIFY });
   }
 
   // La permission manque : une carte la demande d'abord ; sinon, aussitôt.
   /** @override */
   waits() { return supported() && Notification.permission === "default"; }
   /** @override @param {any} args */
-  run(args) { return send(args); }
+  run(args) { return send(args, this.settings.max_delay); }
   /** @override @param {any} args */
   prepare(args) { return String(args.title || "").trim() ? {} : { error: failure("`title` attendu.") }; }
 
@@ -91,7 +80,7 @@ class Notify extends PageTool {
   async act(w, action) {
     if (action === "refuse") return refused("les notifications");
     if ((await Notification.requestPermission()) !== "granted") return refused("les notifications");
-    const got = send(w.args);
+    const got = send(w.args, this.settings.max_delay);
     return typeof got === "string" ? { result: got } : got;
   }
 
@@ -127,7 +116,7 @@ class Notify extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.NOTIFY, label: "Notifications", hint: "tout de suite, ou un rappel dans N minutes", on: true,
+  key: FAMILY.NOTIFY,
   available: supported,
   tools: [new Notify()],
 })];

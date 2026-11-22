@@ -1,10 +1,16 @@
 // @ts-check
 /*
-  Le CONTRAT des outils de la page : ceux que le proxy rend au navigateur
-  en `tool_calls` (comme à tout client) et que la page exécute — question
-  à choix, fichiers, artifacts, dossier ouvert, appareil, bacs de code.
-  Le chat (ChatPanel) et le registre (index.js) ne connaissent d'un outil
-  que ce qui est écrit ici : jamais un outil par son nom en dur.
+  Le CONTRAT des outils de la page, côté EXÉCUTION : ceux que le proxy
+  rend au navigateur en `tool_calls` (comme à tout client) et que la page
+  exécute — question à choix, fichiers, artifacts, dossier ouvert,
+  appareil, bacs de code. Leur DÉCLARATION (nom, prompt, schéma, famille
+  du menu : label, hint, on, fixed, authored, guidance, et leurs
+  `settings`) est celle de tous les outils, côté proxy (tools/contract.py,
+  BrowserTool et Family ; natifs dans tools/page/) : la page la reçoit par
+  /ui/session (`chat.page`) et le registre (index.js) l'attache ici, à
+  l'exécution du même nom. Le chat (ChatPanel) et le registre ne
+  connaissent d'un outil que ce qui est écrit ici : jamais un outil par
+  son nom en dur.
 
   Ce module n'importe rien : un outil l'importe sans cycle.
 
@@ -20,11 +26,11 @@
                         `@override`, qui doit nommer une méthode de
                         PageTool.
 
-  CE QUE LE MODÈLE LIT d'un outil : `description`, les `description` de
-  ses paramètres, le `guidance` de sa famille quand elle est active (au
-  prompt système, FIGÉ), le `state` de sa famille (l'état du moment, joint
-  au message de l'utilisateur du tour), et le texte de ses résultats —
-  une erreur commence par « Error: » (failure), le modèle s'adapte.
+  CE QUE LE MODÈLE LIT d'un outil : sa fonction et le `guidance` de sa
+  famille quand elle est active (au prompt système, FIGÉ), déclarés côté
+  proxy ; le `state` de sa famille (l'état du moment, joint au message de
+  l'utilisateur du tour), et le texte de ses résultats — une erreur
+  commence par « Error: » (failure), le modèle s'adapte.
 
   L'HISTORIQUE EST EN AJOUT SEUL : une requête commence exactement comme
   la précédente (outils, prompt système, messages passés tels quels), et
@@ -185,12 +191,12 @@ export const FAMILY = Object.freeze(/** @type {const} */ ({
 
 const NO_ANSWER = "L'utilisateur n'a pas répondu : il a écrit un nouveau message à la place.";
 
-/** Ce qu'un outil DÉCLARE, passé à son constructeur (super(spec)).
+/** Ce qu'un outil passe à son constructeur (super(spec)) : son nom, et
+ * comment sa carte s'affiche. Sa fonction (prompt, schéma) et ses
+ * `settings` viennent de sa déclaration, côté proxy (install).
  * @typedef {object} ToolSpec
- * @property {ToolName} name           le nom de la fonction présentée au modèle (de TOOL)
- * @property {string} description      ce que le modèle lit pour savoir quand et comment l'appeler
- * @property {Record<string, object>} [params]  ses paramètres : {nom: schéma JSON}, leurs `description` comprises
- * @property {string[]} [required]     ceux qui sont obligatoires
+ * @property {string} name             le nom de la fonction présentée au modèle (de TOOL, ou
+ *                                     celui que déclare une extension)
  * @property {"card" | "sheet"} [placement]  où sa carte s'affiche : dans le fil, ou dans la feuille du bas
  * @property {object} [keptComponent]  un composant Vue de carte DURABLE, à la place du gabarit commun
  *                                     (keptView) : il reçoit `k` (la carte)
@@ -203,8 +209,9 @@ const NO_ANSWER = "L'utilisateur n'a pas répondu : il a écrit un nouveau messa
  * L'INTERFACE d'un outil de la page. Un outil est une classe qui en
  * hérite :
  *
- *   constructor()              super({name, description, params, required…}) :
- *                              ce qu'il déclare (ToolSpec)
+ *   constructor()              super({name, placement?, component?…}) (ToolSpec) ;
+ *                              sa déclaration est attachée à l'installation
+ *                              (this.declaration, this.settings)
  *   run                        s'il s'exécute aussitôt
  *   waits, view (ou component),
  *   act, et prepare            s'il attend l'utilisateur (une carte)
@@ -217,13 +224,14 @@ export class PageTool {
   /** @param {ToolSpec} spec */
   constructor(spec) {
     /** @type {ToolName} */
-    this.name = spec.name;
-    /** @type {string} */
-    this.description = spec.description;
-    /** @type {Record<string, object>} */
-    this.params = spec.params || {};
-    /** @type {string[]} */
-    this.required = spec.required || [];
+    this.name = /** @type {ToolName} */ (spec.name);
+    /** La fonction présentée au modèle, déclarée côté proxy (install).
+     * @type {object | null} */
+    this.declaration = null;
+    /** Les valeurs que le prompt cite et que l'exécution applique (une
+     * borne, un délai), déclarées côté proxy avec l'outil.
+     * @type {Record<string, any>} */
+    this.settings = {};
     /** @type {"card" | "sheet"} */
     this.placement = spec.placement || "card";
     /** @type {object | null} */
@@ -296,55 +304,51 @@ export class PageTool {
    * @param {string} convId @returns {void | Promise<void>} */
   forget(convId) {}
 
-  /** La fonction présentée au modèle, à la forme chat/completions.
-   * Assemblée : un outil ne la réécrit pas. */
+  /** La fonction présentée au modèle, à la forme chat/completions : sa
+   * déclaration, telle que le proxy l'a donnée. Un outil ne la réécrit pas. */
   get spec() {
-    return { type: "function", function: { name: this.name, description: this.description,
-      parameters: { type: "object", properties: this.params,
-                    ...(this.required.length ? { required: this.required } : {}) } } };
+    if (!this.declaration) throw new Error(`${this.name} : pas de déclaration (non installé)`);
+    return this.declaration;
   }
 }
 
 // Les membres de l'interface : un outil n'en a pas d'autres.
 export const MEMBERS = Object.freeze(new Set([
   ...Object.getOwnPropertyNames(PageTool.prototype),
-  "name", "description", "params", "required", "placement", "component", "keptComponent",
+  "name", "declaration", "settings", "placement", "component", "keptComponent",
 ]));
 
 /*
   Une FAMILLE : ce que le menu Outils coche ou non, par conversation —
-  ou, `fixed`, toujours active et hors du menu.
+  ou, `fixed`, toujours active et hors du menu. Sa DÉCLARATION (label,
+  hint, on, fixed, authored, guidance, et la liste de ses outils) vient du
+  proxy (tools/contract.py, Family) ; ici, son COMPORTEMENT, à côté de ses
+  outils : ce qui dépend du navigateur, du tour, de l'état.
 */
 /**
  * @typedef {object} FamilyDef
- * @property {FamilyKey} key
- * @property {string} label            ce qu'affiche le menu
- * @property {string} hint
- * @property {PageTool[]} tools
- * @property {boolean} [on]            cochée d'office dans une conversation neuve
- * @property {boolean} [fixed]         toujours active, hors du menu
- * @property {boolean} [authored]      ses résultats sont écrits par le MODÈLE ou son code (un bac, un artifact) : ils
- *   ne font connaître aucun site au proxy (provenance des URL, ui/page_tools.json)
+ * @property {string} key              sa clé (de FAMILY, ou celle que déclare une extension)
+ * @property {PageTool[]} tools        l'exécution de ses outils
  * @property {() => boolean} [available]   ce navigateur sait-il la faire ?
  * @property {(ctx: Ctx) => boolean} [enabled] active pour CE tour ? Un choix de l'utilisateur
  *   (le dossier : s'il l'a ouvert), jamais l'état de la conversation : les outils changeraient
- * @property {(ctx: Ctx) => string} [guidance] une consigne ajoutée au prompt système quand elle
- *   est active ; FIGÉE (ne dépend pas de l'état : le prompt système resterait différent à chaque tour)
  * @property {(ctx: Ctx) => string} [state] l'état du moment (les artifacts, le dossier ouvert…),
  *   joint au message de l'utilisateur du tour quand il a changé depuis le précédent
  */
-/** @typedef {Readonly<Required<FamilyDef>>} Family */
+/** @typedef {Readonly<Required<FamilyDef>>} FamilyBehavior */
 
-const FAMILY_KEYS = ["key", "label", "hint", "tools", "on", "fixed", "authored", "available", "enabled",
-                     "guidance", "state"];
+/** Une famille INSTALLÉE : son comportement et sa déclaration (le proxy).
+ * @typedef {FamilyBehavior & {label: string, hint: string, on: boolean, fixed: boolean,
+ *   authored: boolean, guidance: (ctx?: Ctx) => string}} Family */
 
-/** @param {FamilyDef} def @returns {Family} */
+const FAMILY_KEYS = ["key", "tools", "available", "enabled", "state"];
+
+/** @param {FamilyDef} def @returns {FamilyBehavior} */
 export function defineFamily(def) {
   for (const k of Object.keys(def)) {
     if (!FAMILY_KEYS.includes(k)) throw new Error(`famille « ${def.key} » : membre inconnu « ${k} »`);
   }
-  return Object.freeze({ on: false, fixed: false, authored: false, available: () => true, enabled: () => true,
-                         guidance: () => "", state: () => "", ...def });
+  return Object.freeze({ available: () => true, enabled: () => true, state: () => "", ...def });
 }
 
 // ── ce que partagent les outils ─────────────────────────────────────────
@@ -359,7 +363,6 @@ export const REFUSE = { id: "refuse", label: "Refuser" };
 export const clip = (s, n) => (s.length > n ? s.slice(0, n) + `\n… (${s.length - n} caractères coupés)` : s);
 /** Un code, sur une ligne (la puce d'un appel). @param {any} s */
 export const oneLine = (s) => String(s || "").replace(/\s+/g, " ").trim().slice(0, 120);
-/** Le paramètre `reason` d'une carte, et sa lecture. */
-export const REASON = { reason: { type: "string", description: "Pourquoi, en une phrase, montrée à l'utilisateur." } };
-/** @param {any} args */
+/** La lecture du paramètre `reason` d'une carte (pourquoi, montré à l'utilisateur).
+ * @param {any} args */
 export const reasonOf = (args) => ({ reason: String(args.reason || "").trim().slice(0, 300) });

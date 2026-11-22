@@ -22,12 +22,7 @@ async function pick() {
 
 class PickColor extends PageTool {
   constructor() {
-    super({
-      name: TOOL.PICK_COLOR,
-      description: "Demande à l'utilisateur de prendre une couleur n'importe où à son écran "
-        + "(pipette) ; rend son code hexadécimal.",
-      params: { reason: { type: "string", description: "Pourquoi, en une phrase (facultatif)." } },
-    });
+    super({ name: TOOL.PICK_COLOR });
   }
 
   /** @override */
@@ -74,7 +69,7 @@ class PickColor extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.COLOR, label: "Pipette", hint: "une couleur prise à l'écran",
+  key: FAMILY.COLOR,
   available: () => eyeDropper.isSupported.value,
   tools: [new PickColor()],
 })];

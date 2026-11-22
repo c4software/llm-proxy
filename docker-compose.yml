@@ -11,6 +11,9 @@ services:
     # config.toml et stats.db survivent aux redémarrages et aux rebuilds.
     volumes:
       - ./data:/app/data
+      # Extensions (docs/extensions.md) : un dossier en LECTURE SEULE, nommé
+      # par [extensions].path = "/app/extensions".
+      # - ./extensions:/app/extensions:ro
     # ./data appartient à l'hôte : écrire avec son uid, sinon le montage
     # n'est pas inscriptible et les fichiers créés exigent sudo.
     user: "${PUID:-1000}:${PGID:-1000}"

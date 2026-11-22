@@ -17,11 +17,10 @@
 */
 import { TOOL, FAMILY, PageTool, defineFamily, clip, failure, oneLine } from "../contract.js";
 import { exec } from "./bac.js";
-import { FILES_PARAM, paths, inputs, deliver } from "./files.js";
+import { paths, inputs, deliver } from "./files.js";
 import { CheckTypescript } from "./typescript.js";
 import { ChartCard } from "./chart-card.js";
 
-const TIMEOUT = 15_000;
 const MAX_OUT = 20_000;
 
 // Exécutée dans le Worker du bac : elle ne voit que ses arguments.
@@ -96,29 +95,7 @@ async function driver({ code, files, typescript }, { mods, fmt }) {
 
 class RunJavascript extends PageTool {
   constructor() {
-    super({
-      name: TOOL.RUN_JAVASCRIPT,
-      keptComponent: ChartCard,
-      description: "Exécute du JavaScript dans un bac isolé du navigateur (un Worker : aucun réseau, "
-        + "aucun accès à la page ni au DOM), pour calculer exactement, transformer des données, "
-        + "produire un fichier ou un graphique. Le code est le corps d'une fonction async : `return` "
-        + "la valeur voulue ; console.log est rendu aussi. Fonctions fournies : readText(chemin) et "
-        + "readBytes(chemin) lisent les fichiers passés dans `files` (dossier ouvert ou pièces jointes, "
-        + "qui restent sur l'appareil) ; output(nom, données) produit un fichier sous la réponse (texte, "
-        + "Uint8Array, Blob, OffscreenCanvas en PNG) ; chart(config, {width, height, name}) dessine un "
-        + "graphique Chart.js 4 (config : {type, data, options}, sans fonctions), montré INTERACTIF "
-        + "dans la réponse (survol, légende) et joint en PNG au résultat si le modèle lit les "
-        + "images ; le résultat dit comment le placer dans le texte. Une image produite par output "
-        + "est montrée sous la réponse. "
-        + "`language: \"typescript\"` accepte du TypeScript (types retirés, non vérifiés : "
-        + "check_typescript les vérifie). 15 s au plus.",
-      params: {
-        code: { type: "string", description: "Le corps de la fonction (avec `return`)." },
-        language: { type: "string", enum: ["javascript", "typescript"], description: "Le langage du code (défaut : javascript)." },
-        ...FILES_PARAM,
-      },
-      required: ["code"],
-    });
+    super({ name: TOOL.RUN_JAVASCRIPT, keptComponent: ChartCard });
   }
 
   /** @override @param {any} a */
@@ -132,7 +109,7 @@ class RunJavascript extends PageTool {
     try { files = await inputs(ctx, paths(args)); } catch (e) { return failure(e.message + "."); }
     const typescript = args.language === "typescript";
     const runtime = [...(/\bchart\s*\(/.test(code) ? ["chart"] : []), ...(typescript ? ["sucrase"] : [])];
-    const r = await exec({ driver, input: { code, files, typescript }, runtime, timeout: TIMEOUT, signal: ctx.signal });
+    const r = await exec({ driver, input: { code, files, typescript }, runtime, timeout: this.settings.timeout * 1000, signal: ctx.signal });
     const out = [];
     let image = "";
     let keep = [];
@@ -152,11 +129,6 @@ class RunJavascript extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.JAVASCRIPT, authored: true, label: "JavaScript, TypeScript",
-  hint: "du code dans un bac isolé, sans réseau : fichiers, graphiques ; vérifier les types",
-  guidance: () => "Pour un calcul exact, un traitement de données de l'utilisateur ou un "
-    + "graphique, exécuter du code avec run_javascript (chart() pour un graphique) plutôt que de "
-    + "calculer de tête ; pas pour mettre en forme une réponse. Avant de proposer une modification d'un fichier TypeScript du "
-    + "dossier, la vérifier avec check_typescript (`code` et `path`).",
+  key: FAMILY.JAVASCRIPT,
   tools: [new RunJavascript(), new CheckTypescript()],
 })];

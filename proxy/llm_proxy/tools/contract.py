@@ -1,12 +1,20 @@
 """
-Le CONTRAT d'un outil hébergé : ce qu'un outil doit offrir, ce qu'il
-reçoit, ce qu'il rend. Tout le reste du proxy (tools.Hosted, les trois
-surfaces, /v1/tools, les statistiques) ne connaît d'un outil que ce qui
-est écrit ici — décrit membre par membre dans docs/outils.md.
+Le CONTRAT d'un outil — un seul, quel que soit le moteur qui l'exécute
+(Tool.runs) : ce qu'un outil DÉCLARE (nom, prompt, schéma, où il est
+offert ; pour ceux du navigateur, leur Family), ce qu'il reçoit, ce qu'il
+rend. Tout le reste du proxy (tools.Hosted, les trois surfaces,
+/v1/tools, les statistiques, la session de la page) ne connaît d'un outil
+que ce qui est écrit ici — décrit membre par membre dans docs/outils.md.
+
+Un outil `Runs.PROXY` s'exécute ici (`run`). Un outil `Runs.BROWSER`
+(BrowserTool) n'a ici que sa déclaration : la page la reçoit par
+/ui/session et l'exécute en JS (chat/tools/, le comportement : son run ou
+sa carte, et pour sa famille `available`, `enabled`, `state`).
 
 Ce module n'importe rien du paquet : un outil l'importe sans cycle.
 
-CE QU'UN OUTIL FAIT LIRE AU MODÈLE, toujours en anglais : son prompt
+CE QU'UN OUTIL DU PROXY FAIT LIRE AU MODÈLE, toujours en anglais (ceux
+du navigateur, écrits pour le chat de la page, sont en français) : son prompt
 (`Tool.prompt`, lu à CHAQUE requête où l'outil est présenté), les
 descriptions de ses paramètres (`Tool.parameters`), `Result.text`, le
 texte d'une erreur («Error: <message>»), et les textes que tools/
@@ -15,17 +23,20 @@ illisibles, «[truncated]», EXPIRED). Ce qui est en vigueur se relit par
 GET /v1/tools.
 """
 
+import copy
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Mapping
 
 
 class ToolName(StrEnum):
-    """Les outils NATIFS du proxy, liste FERMÉE : le nom de la fonction
-    présentée au modèle. Le reste du proxy les nomme par elle, jamais par
-    une chaîne ; chacun est implémenté une fois (tools/__init__.py le
-    vérifie au démarrage). Les outils FOURNIS (les serveurs MCP) n'y
-    sont pas : leurs noms se découvrent."""
+    """Les outils NATIFS, liste FERMÉE, ceux du proxy comme ceux du
+    navigateur : le nom de la fonction présentée au modèle. Le reste du
+    proxy les nomme par elle, jamais par une chaîne ; chacun est déclaré
+    une fois (tools/__init__.py le vérifie au démarrage). Les outils
+    FOURNIS (serveurs MCP, extensions) n'y sont pas."""
     WEB_SEARCH = "web_search"
     WEB_FETCH = "web_fetch"
     OCR = "ocr"
@@ -36,6 +47,96 @@ class ToolName(StrEnum):
     MEMORY = "memory"
     WEBHOOK = "webhook"
     REPOSITORY = "repository"
+    # Ceux que le NAVIGATEUR exécute (Runs.BROWSER, déclarés dans tools/page/,
+    # exécutés par chat/tools/ de la page).
+    ASK_USER = "ask_user"
+    SAVE_FILE = "save_file"
+    SHOW_ARTIFACT = "show_artifact"
+    EDIT_ARTIFACT = "edit_artifact"
+    READ_ARTIFACT = "read_artifact"
+    GREP_ARTIFACT = "grep_artifact"
+    REQUEST_ARTIFACT_DEBUG = "request_artifact_debug"
+    INSPECT_ARTIFACT = "inspect_artifact"
+    RUN_IN_ARTIFACT = "run_in_artifact"
+    FOLDER_LIST = "folder_list"
+    FOLDER_READ = "folder_read"
+    FOLDER_SEARCH = "folder_search"
+    FOLDER_WRITE = "folder_write"
+    FOLDER_EDIT = "folder_edit"
+    DEVICE_CONTEXT = "device_context"
+    GET_LOCATION = "get_location"
+    NOTIFY = "notify"
+    CLIPBOARD_WRITE = "clipboard_write"
+    CLIPBOARD_READ = "clipboard_read"
+    ADD_TO_CALENDAR = "add_to_calendar"
+    OPEN_LINK = "open_link"
+    SHARE = "share"
+    CAPTURE_SCREEN = "capture_screen"
+    TAKE_PHOTO = "take_photo"
+    SCAN_CODE = "scan_code"
+    PICK_COLOR = "pick_color"
+    KEEP_SCREEN_ON = "keep_screen_on"
+    SPEAK = "speak"
+    RUN_JAVASCRIPT = "run_javascript"
+    CHECK_TYPESCRIPT = "check_typescript"
+    RUN_PHP = "run_php"
+    RUN_SQL = "run_sql"
+    RUN_POSTGRES = "run_postgres"
+    RUN_TOOLS_PROGRAM = "run_tools_program"
+    RUN_SHELL = "run_shell"
+    SHELL_READ = "shell_read"
+    SHELL_GREP = "shell_grep"
+    SHELL_EDIT = "shell_edit"
+    SHELL_WRITE = "shell_write"
+
+class FamilyKey(StrEnum):
+    """Les FAMILLES natives des outils du navigateur (Family), liste
+    FERMÉE : ce que le menu Outils de la page coche ou non. Une clé ne
+    change pas : les conversations gardent celles qui sont cochées."""
+    ASK = "ask"
+    SAVE = "save"
+    ARTIFACTS = "artifacts"
+    ARTIFACT_DEBUG_OFFER = "artifact_debug_offer"
+    ARTIFACT_DEBUG = "artifact_debug"
+    FOLDER = "folder"
+    CONTEXT = "context"
+    LOCATION = "location"
+    NOTIFY = "notify"
+    CLIPBOARD = "clipboard"
+    CALENDAR = "calendar"
+    LINKS = "links"
+    SHARE = "share"
+    SCREEN = "screen"
+    CAMERA = "camera"
+    CODES = "codes"
+    COLOR = "color"
+    WAKE = "wake"
+    SPEAK = "speak"
+    JAVASCRIPT = "compute"
+    PHP = "php"
+    SQL = "sql"
+    POSTGRES = "postgres"
+    LINUX = "linux"
+    PROGRAMS = "programs"
+
+
+class Runs(StrEnum):
+    """Où un outil S'EXÉCUTE (Tool.runs) : `proxy`, son `run` Python ;
+    `browser`, la page — le proxy n'en a que la DÉCLARATION, qu'il sert
+    à la page (/ui/session), et l'exécution est en JS (chat/tools/)."""
+    PROXY = "proxy"
+    BROWSER = "browser"
+
+
+class Offer(StrEnum):
+    """Où un outil est OFFERT (Tool.offered) : `api`, aux clients de l'API
+    (/v1/chat/completions, /v1/responses, /v1/messages, /v1/tools, /mcp) ;
+    `web`, au chat de la page et aux réponses des webhooks entrants (qui
+    passent par lui). Une présentation, pas une autorisation : la page et
+    les webhooks n'ont pas de droits de clé (docs/securite.md)."""
+    API = "api"
+    WEB = "web"
+
 
 # Les codes d'erreur, liste FERMÉE. Un outil n'en rend pas d'autre (un
 # code inconnu est ramené à `unavailable` par l'exécuteur) ; chaque
@@ -197,6 +298,15 @@ class Tool:
     # Ce que le refus par limite d'appels dit des appels comptés au
     # plafond commun : «the limit of 8 <family> tool calls». «» = rien.
     family = ""
+    # Où l'outil est offert (Offer) : présenté, listé et exécutable là
+    # seulement. Défaut : partout. Un outil du navigateur : web seulement.
+    offered: frozenset = frozenset(Offer)
+    # Où il s'exécute (Runs) : ici (`run`), ou dans la page (BrowserTool).
+    runs = Runs.PROXY
+    # Des valeurs que le prompt cite et que l'exécution applique (une
+    # borne, un délai) : écrites UNE fois, ici ; la page les reçoit avec la
+    # déclaration d'un outil du navigateur (PageTool.settings).
+    settings: Mapping = MappingProxyType({})
     # Les membres publics qu'un outil FOURNI ajoute à l'interface (l'état
     # d'un outil MCP : son serveur, son schéma…). Un outil natif n'en a pas.
     extra: frozenset[str] = frozenset()
@@ -251,10 +361,61 @@ class Tool:
         raise NotImplementedError
 
 
+class BrowserTool(Tool):
+    """Un outil que le NAVIGATEUR exécute : sa déclaration, rien d'autre.
+    `description` : son prompt ; `params` : {nom: schéma JSON} ;
+    `required` : les paramètres obligatoires ; `settings` : voir Tool.
+    Sa fonction est la même que celle d'un outil du proxy (Tool.spec)."""
+    runs = Runs.BROWSER
+    offered = frozenset({Offer.WEB})
+
+    def __init__(self, name: str, description: str, params: Mapping | None = None,
+                 required=(), settings: Mapping | None = None):
+        self.name = name
+        self._description = description
+        self._params = dict(params or {})
+        self._required = tuple(required)
+        self.settings = MappingProxyType(dict(settings or {}))
+
+    def prompt(self, present) -> str:
+        return self._description
+
+    def parameters(self, present) -> dict:
+        out = {"type": "object", "properties": copy.deepcopy(self._params)}
+        if self._required:
+            out["required"] = list(self._required)
+        return out
+
+
+@dataclass(frozen=True)
+class Family:
+    """Une FAMILLE d'outils du navigateur : ce que le menu Outils de la
+    page coche ou non, par conversation — ou, `fixed`, toujours active et
+    hors du menu. `tools` : les noms de ses outils (BrowserTool) ;
+    `on` : cochée d'office dans une conversation neuve ; `authored` : ses
+    résultats sont écrits par le MODÈLE ou son code (un bac, un artifact),
+    ils ne font connaître aucun site (provenance) ; `guidance` : une
+    consigne ajoutée au prompt système quand elle est active, FIGÉE (le
+    prompt système ne change pas d'un tour à l'autre). Son comportement
+    (`available`, `enabled`, `state`) est en JS, à côté de ses outils."""
+    key: str
+    label: str
+    tools: tuple[str, ...]
+    hint: str = ""
+    on: bool = False
+    fixed: bool = False
+    authored: bool = False
+    guidance: str = ""
+
+
 NATIVE = frozenset(ToolName)
 
 # Les membres publics de l'interface : un outil n'en a pas d'autres.
 MEMBERS = frozenset(n for n in dir(Tool) if not n.startswith("_"))
+# Le nom d'un outil FOURNI (MCP, extension), et ceux qu'il ne peut pas
+# prendre : des types de `tools` qui disent autre chose qu'un outil.
+PROVIDED_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
+RESERVED = frozenset({"function", "custom", "mcp"})
 
 
 def faults(tool, provider: str = "") -> list[str]:
@@ -272,6 +433,11 @@ def faults(tool, provider: str = "") -> list[str]:
         out.append(f"{where} : nom hors de ToolName (un outil natif)")
     elif provider and tool.name in NATIVE:
         out.append(f"{where} : fourni par {provider}, mais un nom d'outil natif")
+    elif provider and (not PROVIDED_NAME.match(tool.name) or tool.name in RESERVED):
+        # Le nom d'une fonction pour tous les backends, et pas un type que
+        # les surfaces ou les droits lisent autrement (`function`, `mcp`).
+        out.append(f"{where} : nom invalide pour un outil fourni ([A-Za-z0-9_-], 64 "
+                   f"caractères au plus, ni {', '.join(sorted(RESERVED))})")
     if tool.extra and not provider:
         out.append(f"{where} : `extra` est réservé aux outils fournis")
     # Les membres : ceux de l'interface, et ce que l'outil fourni déclare.
@@ -284,14 +450,34 @@ def faults(tool, provider: str = "") -> list[str]:
     for name in sorted(own):
         if not name.startswith("_") and name not in allowed:
             out.append(f"{where} : membre public inconnu {name!r} (pas dans Tool)")
-    # Ce qui est à écrire.
-    for method in ("prompt", "run"):
-        if getattr(type(tool), method) is getattr(Tool, method):
-            out.append(f"{where} : {method}() non écrit")
+    # Ce qui est à écrire : le prompt ; `run` pour un outil du proxy, et
+    # jamais pour un outil du navigateur (la page l'exécute).
+    if getattr(type(tool), "prompt") is Tool.prompt:
+        out.append(f"{where} : prompt() non écrit")
+    written = getattr(type(tool), "run") is not Tool.run
+    if tool.runs not in set(Runs):
+        out.append(f"{where} : `runs` doit être un Runs")
+    elif tool.runs == Runs.PROXY and not written:
+        out.append(f"{where} : run() non écrit")
+    elif tool.runs == Runs.BROWSER:
+        if written:
+            out.append(f"{where} : run() écrit, mais le navigateur l'exécute")
+        if set(tool.offered) != {Offer.WEB}:
+            out.append(f"{where} : un outil du navigateur n'est offert qu'au web")
+        if tool.responses or tool.anthropic or tool.timeout is not None \
+                or tool.max_calls is not None or tool.extra:
+            out.append(f"{where} : un outil du navigateur n'a ni liaison, ni timeout, "
+                       f"ni max_calls, ni extra")
     # Les liaisons aux protocoles.
     if tool.responses is not None and not (
             isinstance(tool.responses, Responses) and tool.responses.kinds):
         out.append(f"{where} : `responses` doit être un Responses, avec ses kinds")
     if tool.anthropic is not None and not isinstance(tool.anthropic, Anthropic):
         out.append(f"{where} : `anthropic` doit être un Anthropic")
+    if not isinstance(tool.settings, Mapping):
+        out.append(f"{where} : `settings` doit être un dict")
+    if not isinstance(tool.offered, (set, frozenset)) or not tool.offered \
+            or not set(tool.offered) <= set(Offer):
+        out.append(f"{where} : `offered` doit être un ensemble non vide de "
+                   f"{', '.join(Offer)}")
     return out

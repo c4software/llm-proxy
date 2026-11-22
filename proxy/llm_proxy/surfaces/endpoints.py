@@ -97,7 +97,8 @@ async def chat(request: Request, page: bool = False):
         always = not page and chat_api.unasked(payload) \
             and converses(backend, model) and not chat_api.spares(backend, model)
     if declared or always:
-        hosted = tools.Hosted()
+        # Le chat de la page et les webhooks : les outils offerts au web.
+        hosted = tools.Hosted(offer=tools.Offer.WEB if page else tools.Offer.API)
         try:
             ctx = chat_api.prepare(
                 payload, hosted, tools.kinds(),
@@ -174,7 +175,7 @@ async def chat_hosted(call: Call, request: Request, payload: dict, ctx,
         # le modèle (ses bacs de code) ne font connaître aucun site.
         return hosted_loop(call, request, hosted, robinet, upstream, estimate,
                            rebuild, ping=ping, messages=base,
-                           authored=page_tools.AUTHORED if ctx.progress else ())
+                           authored=page_tools.authored() if ctx.progress else ())
 
     # En JSON, la réponse prend le statut de l'issue de la boucle.
     return await start_hosted(

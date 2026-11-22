@@ -191,30 +191,7 @@ const AskSheet = {
 
 class AskUser extends PageTool {
   constructor() {
-    super({
-      name: TOOL.ASK_USER,
-      description: "Pose à l'utilisateur de 1 à 4 questions à choix, dans le chat, et attend "
-        + "sa réponse avant de continuer. À utiliser quand une décision lui revient ou qu'une "
-        + "précision manque pour bien répondre — pas pour des confirmations inutiles. Chaque "
-        + "question a 2 à 6 options courtes, chacune avec une brève description de ce "
-        + "qu'elle implique ; l'utilisateur peut aussi répondre librement.",
-      params: {
-        questions: { type: "array", minItems: 1, maxItems: 4, items: {
-          type: "object", required: ["question", "header", "options"], properties: {
-            question: { type: "string", description: "La question, complète." },
-            header: { type: "string", description: "Un titre très court (1 à 3 mots), l'onglet de la question : « Budget », « Hébergement »." },
-            options: { type: "array", minItems: 2, maxItems: 6, items: {
-              type: "object", required: ["label"], properties: {
-                label: { type: "string", description: "La réponse, courte." },
-                description: { type: "string", description: "Ce qu'elle implique, en une phrase." },
-              } } },
-            multiple: { type: "boolean", description: "Plusieurs options peuvent être choisies." },
-          } } },
-      },
-      required: ["questions"],
-      placement: "sheet",
-      component: AskSheet,
-    });
+    super({ name: TOOL.ASK_USER, placement: "sheet", component: AskSheet });
   }
 
   /** @override */
@@ -262,7 +239,4 @@ class AskUser extends PageTool {
   }
 }
 
-export const FAMILIES = [defineFamily({
-  key: FAMILY.ASK, label: "Questions", hint: "des questions à choix, dans la feuille du bas", fixed: true,
-  tools: [new AskUser()],
-})];
+export const FAMILIES = [defineFamily({ key: FAMILY.ASK, tools: [new AskUser()] })];

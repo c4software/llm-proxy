@@ -10,7 +10,6 @@ import * as voice from "../../voice/index.js";
 
 /** @typedef {import("../contract.js").Kept} Kept */
 
-const MAX_TEXT = 4000;
 
 /** @param {string} ref @param {string} text @param {string} lang */
 function say(ref, text, lang) {
@@ -20,17 +19,7 @@ function say(ref, text, lang) {
 
 class Speak extends PageTool {
   constructor() {
-    super({
-      name: TOOL.SPEAK,
-      description: "Lit un texte à voix haute sur l'appareil de l'utilisateur (synthèse vocale du "
-        + "navigateur) : une étape d'un pas-à-pas mains libres, un résumé à écouter. Un texte "
-        + "court et oral, sans Markdown ; une carte sous la réponse permet de le relire.",
-      params: {
-        text: { type: "string", description: `Le texte à lire (${MAX_TEXT} caractères au plus).` },
-        lang: { type: "string", description: "La langue, au format BCP 47 (« fr-FR », « en-US ») ; défaut : celle du navigateur." },
-      },
-      required: ["text"],
-    });
+    super({ name: TOOL.SPEAK });
   }
 
   /** @override @param {any} a */
@@ -38,7 +27,7 @@ class Speak extends PageTool {
 
   /** @override @param {any} args */
   run(args) {
-    const text = String(args.text || "").replace(/[*_#`>]/g, "").trim().slice(0, MAX_TEXT);
+    const text = String(args.text || "").replace(/[*_#`>]/g, "").trim().slice(0, this.settings.max_text);
     if (!text) return failure("`text` attendu.");
     const lang = String(args.lang || navigator.language || "fr-FR");
     const ref = crypto.randomUUID();
@@ -66,7 +55,7 @@ class Speak extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.SPEAK, label: "Lecture à voix haute", hint: "le navigateur lit un texte (synthèse vocale)",
+  key: FAMILY.SPEAK,
   available: () => voice.supported.value,
   tools: [new Speak()],
 })];

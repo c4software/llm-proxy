@@ -3,7 +3,7 @@
 // (BarcodeDetector) ; seul le texte lu part au modèle, pas d'image. Le
 // code lu reste en CARTE DURABLE : à copier, ou à ouvrir si c'est une
 // adresse.
-import { TOOL, FAMILY, PageTool, defineFamily, refused, REFUSE, REASON, reasonOf } from "../contract.js";
+import { TOOL, FAMILY, PageTool, defineFamily, refused, REFUSE, reasonOf } from "../contract.js";
 import { hasMedia, live, stream, stop, camera, screenshot, every, player, denied } from "./media.js";
 
 import { clipboard } from "./vueuse.js";
@@ -19,12 +19,7 @@ const read = (codes) => codes.map((c) => `${c.format} : ${c.rawValue}`).join("\n
 
 class ScanCode extends PageTool {
   constructor() {
-    super({
-      name: TOOL.SCAN_CODE,
-      description: "Demande à l'utilisateur de lire un QR code ou un code-barres, à la caméra ou "
-        + "sur son écran ; rend le texte lu (pas d'image).",
-      params: REASON,
-    });
+    super({ name: TOOL.SCAN_CODE });
   }
 
   /** @override */
@@ -94,7 +89,7 @@ class ScanCode extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.CODES, label: "QR et codes-barres", hint: "lus à la caméra ou à l'écran",
+  key: FAMILY.CODES,
   available: () => "BarcodeDetector" in window && hasMedia("getUserMedia"),
   tools: [new ScanCode()],
 })];

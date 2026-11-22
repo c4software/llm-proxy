@@ -51,21 +51,7 @@ function event(args, ctx) {
 
 class AddToCalendar extends PageTool {
   constructor() {
-    super({
-      name: TOOL.ADD_TO_CALENDAR,
-      description: "Propose à l'utilisateur un événement à ajouter à son agenda (un fichier .ics "
-        + "sous la réponse, qu'il ouvre dans son agenda). Les heures sont locales à l'utilisateur "
-        + "(appeler device_context si la date du jour est utile).",
-      params: {
-        title: { type: "string", description: "Le titre de l'événement." },
-        start: { type: "string", description: "Début, heure locale : « 2026-10-18T09:30 », ou « 2026-10-18 » pour une journée entière." },
-        end: { type: "string", description: "Fin, même format (facultatif : 1 h après le début, ou la journée)." },
-        location: { type: "string", description: "Le lieu (facultatif)." },
-        description: { type: "string", description: "Les détails (facultatif)." },
-        alarm_minutes: { type: "number", description: "Une alerte N minutes avant (facultatif)." },
-      },
-      required: ["title", "start"],
-    });
+    super({ name: TOOL.ADD_TO_CALENDAR });
   }
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
@@ -74,7 +60,4 @@ class AddToCalendar extends PageTool {
   summary(a) { return [a.title, a.start].filter(Boolean).join(" · "); }
 }
 
-export const FAMILIES = [defineFamily({
-  key: FAMILY.CALENDAR, label: "Agenda", hint: "un événement à ajouter (.ics)", on: true,
-  tools: [new AddToCalendar()],
-})];
+export const FAMILIES = [defineFamily({ key: FAMILY.CALENDAR, tools: [new AddToCalendar()] })];

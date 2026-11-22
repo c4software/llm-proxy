@@ -16,19 +16,7 @@ const full = (k) => k.text + (k.url ? "\n" + k.url : "");
 
 class Share extends PageTool {
   constructor() {
-    super({
-      name: TOOL.SHARE,
-      description: "Propose à l'utilisateur de partager un texte (et une adresse) vers une autre "
-        + "application — messagerie, mail, notes — par le partage du système : une carte sous la "
-        + "réponse, avec un bouton Partager… qu'il utilise quand il veut (et autant de fois qu'il "
-        + "veut). Le résultat ne dit pas s'il a partagé.",
-      params: {
-        title: { type: "string", description: "Un titre (facultatif)." },
-        text: { type: "string", description: "Le texte à partager." },
-        url: { type: "string", description: "Une adresse (facultatif)." },
-      },
-      required: ["text"],
-    });
+    super({ name: TOOL.SHARE });
   }
 
   /** @override @param {any} a */
@@ -69,7 +57,7 @@ class Share extends PageTool {
 }
 
 export const FAMILIES = [defineFamily({
-  key: FAMILY.SHARE, label: "Partage", hint: "une carte sous la réponse, à partager quand on veut",
+  key: FAMILY.SHARE,
   available: canShare,
   tools: [new Share()],
 })];

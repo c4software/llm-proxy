@@ -31,6 +31,9 @@ from llm_proxy import tools
 from llm_proxy.ui import dashboard, page_tools
 from llm_proxy.tools import html_text, net, web_fetch, web_grep, web_search, webcache
 
+# Le vrai annuaire : la fixture `proxy` le remplace par sa doublure.
+REAL_HOSTED = tools.Hosted
+
 PUBLIC6 = "2606:4700:4700::1111"
 T = html_text.html_to_text
 
@@ -1390,6 +1393,43 @@ def test_contrat_outil_minimal_sans_liaison(proxy, monkeypatch):
         {"type": "echo_20260101", "name": "echo"}]}, h).hosted
 
 
+def test_contrat_un_outil_n_est_offert_que_la_ou_il_le_dit(proxy, monkeypatch):
+    """Tool.offered : un outil offert au web (chat de la page, webhooks)
+    n'est ni listé, ni exécutable, ni déclarable par un client de l'API,
+    et l'est par la page ; un outil offert à l'API seule, l'inverse."""
+    monkeypatch.setattr(tools, "REGISTRY", [])
+    monkeypatch.setattr(tools, "Hosted", REAL_HOSTED)
+    everywhere(monkeypatch, dashboard, "UI_CHAT", True)
+    hosted_chat(monkeypatch)
+
+    class Web(Echo):
+        name = "echo_web"
+        offered = frozenset({tools.Offer.WEB})
+
+    class Api(Echo):
+        name = "echo_api"
+        offered = frozenset({tools.Offer.API})
+
+    tools.register(Web(), provider="exemple")
+    tools.register(Api(), provider="exemple")
+    c = proxy.client
+    assert [t["name"] for t in c.get("/v1/tools").json()["data"]] == ["echo_api"]
+    page = [n for g in c.get("/ui/session").json()["chat"]["tools"] for n in g["tools"]]
+    assert page == ["echo_web"]
+    assert [g["name"] for g in tools.grantable()] == ["echo_api"]
+    for route, name, body, status in [
+            ("/v1/tools/", "echo_web", {"text": "x"}, 404),
+            ("/v1/tools/", "echo_api", {"text": "x"}, 200),
+            ("/ui/tools/", "echo_web", {"arguments": {"text": "x"}, "hosts": []}, 200),
+            ("/ui/tools/", "echo_api", {"arguments": {"text": "x"}, "hosts": []}, 404)]:
+        r = c.post(route + name, json=body)
+        assert r.status_code == status, (route, name, r.text)
+    r = c.post("/v1/chat/completions", json={
+        "model": "essai/qwen", "tools": [{"type": "echo_web"}],
+        "messages": [{"role": "user", "content": "?"}]})
+    assert r.status_code == 400 and proxy.sent == []
+
+
 def test_contrat_prompt_membre_de_l_outil():
     """Le prompt est un membre du contrat : un outil qui ne l'écrit pas
     ne peut pas être présenté, et l'erreur le nomme. Le schéma des
@@ -1734,8 +1774,10 @@ def test_net_download_bornes_de_l_outil_et_erreurs_du_contrat(monkeypatch):
 def test_le_registre_refuse_un_outil_hors_contrat(monkeypatch):
     """register() tient l'interface fermée de Tool : un membre public
     inconnu (une faute de frappe), un prompt ou un run non écrit, un nom
-    natif pris par un outil fourni, une liaison mal formée. Et chaque
-    entrée de ToolName a son outil dans le registre du proxy."""
+    natif pris par un outil fourni, une liaison mal formée ; pour un outil
+    du navigateur, un run écrit, un canal hors du web, un délai.
+    register_family tient les familles. Et chaque entrée de ToolName a son
+    outil, d'un moteur ou de l'autre."""
     monkeypatch.setattr(tools, "REGISTRY", [])
 
     class Typo(Echo):
@@ -1757,12 +1799,34 @@ def test_le_registre_refuse_un_outil_hors_contrat(monkeypatch):
     class Etat(Echo):
         extra = frozenset({"server"})               # réservé aux outils fournis
 
+    class Nulle(Echo):
+        offered = frozenset()                       # offert nulle part
+
+    class Ailleurs(Echo):
+        offered = frozenset({"mobile"})             # un canal inconnu
+
+    class PageRun(tools.BrowserTool):               # le navigateur l'exécute
+        async def run(self, args, call):
+            return tools.Result("x")
+
+    class PageApi(tools.BrowserTool):
+        offered = frozenset({tools.Offer.API})
+
+    class PageDelai(tools.BrowserTool):
+        timeout = 5
+
     for tool, provider, fault in [
             (Typo(), "exemple", "membre public inconnu 'sumary'"),
             (SansRun(), "exemple", "run() non écrit"),
             (Usurpe(), "exemple", "un nom d'outil natif"),
             (Liaison(), "exemple", "`responses` doit être un Responses"),
             (Etat(), "", "`extra` est réservé"),
+            (Nulle(), "exemple", "`offered` doit être"),
+            (Ailleurs(), "exemple", "`offered` doit être"),
+            (PageRun("p", "x"), "exemple", "run() écrit, mais le navigateur l'exécute"),
+            (PageApi("p", "x"), "exemple", "qu'au web"),
+            (PageDelai("p", "x"), "exemple", "ni liaison, ni timeout"),
+            (tools.BrowserTool(tools.ToolName.ASK_USER, "x"), "exemple", "un nom d'outil natif"),
             (object(), "exemple", "n'hérite pas de Tool")]:
         assert any(fault in f for f in tools.faults(tool, provider)), fault
         with pytest.raises(ValueError):
@@ -1773,8 +1837,23 @@ def test_le_registre_refuse_un_outil_hors_contrat(monkeypatch):
     for tool in (web_search.TOOL, web_fetch.TOOL):
         assert tools.faults(tool) == []
     assert tools.faults(mcp.McpTool(None, "lire", "srv__lire"), "mcp") == []
+    # Une famille du navigateur : une clé native seulement pour une famille
+    # native, des outils du navigateur inscrits, chacun dans une seule.
+    monkeypatch.setattr(tools, "PAGE", [tools.BrowserTool("p", "x")])
+    monkeypatch.setattr(tools, "FAMILIES", [tools.Family("prise", "P", ("p",))])
+    for family, provider, fault in [
+            (tools.Family("hors", "H", ("p",)), "", "clé hors de FamilyKey"),
+            (tools.Family(tools.FamilyKey.ASK, "A", ("p",)), "exemple", "clé invalide"),
+            (tools.Family("prise", "P", ("q",)), "exemple", "clé déjà prise"),
+            (tools.Family("vide", "V", ()), "exemple", "sans outil"),
+            (tools.Family("autre", "A", ("echo",)), "exemple", "n'est pas un outil du navigateur"),
+            (tools.Family("double", "D", ("p",)), "exemple", "déjà dans une famille")]:
+        assert any(fault in f for f in tools.family_faults(family, provider)), fault
+        with pytest.raises(ValueError):
+            tools.register_family(family, provider)
     monkeypatch.undo()
-    assert {t.name for t in tools.REGISTRY} >= set(tools.ToolName)
+    # Chaque nom de ToolName a son outil, d'un moteur ou de l'autre.
+    assert {t.name for t in (*tools.REGISTRY, *tools.PAGE)} == set(tools.ToolName)
 
 
 def test_blocked_urls_refusees_avec_leur_message(monkeypatch):
