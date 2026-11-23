@@ -42,7 +42,7 @@ import httpx2
 from ..core import config
 from ..core.settings import log
 from ..storage import stats
-from ..upstream import albert
+from ..upstream import quotas
 from ..upstream.backends import Backend, route_backend
 from . import net, provenance, webcache
 from .contract import Call, Result, Source, Tool, ToolError, ToolName
@@ -397,10 +397,10 @@ async def transcribe(images) -> tuple[str, bool]:
         "stream": False,
     }
     if backend.quotas:
-        cost = len(PROMPT) // albert.CHARS_PER_TOKEN + IMAGE_TOKENS * len(images)
+        cost = len(PROMPT) // quotas.CHARS_PER_TOKEN + IMAGE_TOKENS * len(images)
         try:
             await backend.quota_state.get_limiter(payload).acquire(cost)
-        except albert.QuotaWaitTooLong as exc:
+        except quotas.QuotaWaitTooLong as exc:
             raise ToolError("too_many_requests", (
                 f"the OCR model's quota is exhausted; retry in about "
                 f"{max(int(exc.delay), 1)} s."))

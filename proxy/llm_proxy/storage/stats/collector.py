@@ -19,7 +19,7 @@ TAIL_BYTES = 64 << 10
 MAX_LINE_BYTES = 1 << 20
 
 
-# Même approximation que le limiteur (albert.CHARS_PER_TOKEN).
+# Même approximation que le limiteur (quotas.CHARS_PER_TOKEN).
 CHARS_PER_TOKEN = 4
 
 

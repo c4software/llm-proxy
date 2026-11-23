@@ -13,7 +13,7 @@ from ..core.settings import EXEMPT_SUFFIXES, TOOL_CHOICE
 from ..exposure import mcp_server
 from ..storage import files
 from ..surfaces import anthropic_api, chat_api, responses_api
-from ..upstream import albert
+from ..upstream import quotas
 from ..upstream.backends import served
 from ..upstream.catalog import CHAT_TYPES
 from .dashboard import ui_login_mode
@@ -118,7 +118,7 @@ def health_detail() -> dict:
             }
             for name, b in served().items()
         },
-        "generic_limits": {"rpm": albert.GENERIC_RPM, "tpm": albert.GENERIC_TPM},
-        "max_queue_seconds": albert.MAX_QUEUE_SECONDS,
+        "generic_limits": {"rpm": quotas.GENERIC_RPM, "tpm": quotas.GENERIC_TPM},
+        "max_queue_seconds": quotas.MAX_QUEUE_SECONDS,
         "exempt_paths": list(EXEMPT_SUFFIXES),
     }

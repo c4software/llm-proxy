@@ -56,7 +56,7 @@ Le relais traite les requêtes selon les étapes suivantes.
    `{"type": "error", …}` pour Anthropic.
 2. **Porte (`gate`).** `share_gate` applique d'abord le partage équitable :
    un client qui dépasse sa part attend qu'elle se libère. Pour un backend
-   `quotas = true`, `QuotaState` (`albert.py`) réserve ensuite une place et la
+   `quotas = true`, `QuotaState` (`quotas.py`) réserve ensuite une place et la
    range dans `Call.tickets`. Après la réponse, la fenêtre est recalée sur
    l'`usage` réel. Le flux de `/v1/messages` (`pinged_stream`) ne renvoie pas
    une réponse HTTP par `gate` ; il applique les mêmes attentes et envoie des
@@ -153,6 +153,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `core/settings.py` | La table `[proxy]` en constantes typées |
 | `core/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON |
 | `core/identity.py` | Le client : condensé stable de sa clé (`owner`), secret `data/client.secret` |
+| `core/limits.py` | La forme des règles `limits` d'un backend à quotas, du TOML comme d'un compte |
 | `core/reload.py` | Le rechargement à chaud : réglages rechargeables (`SAFE`), réévalués et propagés à leurs copies, tout ou rien |
 | `core/sqlite_store.py` | Une base de magasin (comptes, mémoire, conversations) : une connexion par processus, schéma posé une fois, opérations sous verrou |
 | `core/config_docs.py` | La description de chaque réglage, lue dans `config.example.toml` (montrée par Configuration → Proxy, exigée par un test) |
@@ -172,7 +173,8 @@ remplacer aussi les copies importées dans ses sous-modules.
 | Fichier | Rôle |
 |---|---|
 | `upstream/backends.py` | Backends, clients HTTP, routage au préfixe de modèle ; les backends des comptes (`refresh`, `visible` ; `served` : ceux du TOML et les partagés, pour les outils hébergés et le partage équitable ; `watch_quotas` : la tâche de fond d'un backend à quotas, du TOML comme d'un compte) et les modèles permis du compte (`permitted`, `no_route` : `403 model_not_allowed`) |
-| `upstream/albert.py` | Spécificités d'Albert : limiteur de quotas, familles de modèles, `/v1/me/info` |
+| `upstream/quotas.py` | Le limiteur des backends à quotas : fenêtres minute et jour, buckets (compte, règles `limits`, familles, générique), `settle` |
+| `upstream/albert.py` | Les limites du compte Albert : `/v1/limits`, un bucket par routeur, alias compris (`refresh`) |
 | `upstream/anthropic.py` | Le backend Anthropic natif (`api = "anthropic"`) : chat/completions ↔ Messages, flux compris |
 | `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), `forward`, `relay`, `drain` |
 | `upstream/catalog.py` | Catalogue fusionné et préfixé (servi par `/v1/models`), type et contexte de chaque modèle |

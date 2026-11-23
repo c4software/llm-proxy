@@ -10,7 +10,7 @@ Attendu de la sous-classe : `sse`, `_buf` (bytearray), `usage` (l'usage du
 tour en cours), `_past` (ceux des tours faits), `out_chars`, `_data()`.
 """
 
-# Même approximation que le limiteur (albert.CHARS_PER_TOKEN).
+# Même approximation que le limiteur (quotas.CHARS_PER_TOKEN).
 CHARS_PER_TOKEN = 4
 
 

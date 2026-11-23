@@ -353,18 +353,18 @@ def fake_backend(monkeypatch, name, conf, handler):
     return b
 
 
-def quotas(monkeypatch, backend, accepted=1) -> list:
+def quota_limited(monkeypatch, backend, accepted=1) -> list:
     """Un backend à quotas dont le limiteur accepte `accepted` requêtes,
     puis répond « quota épuisé pour 20 min ». Rendu : le coût de chaque
     demande au limiteur."""
-    from llm_proxy.upstream import albert
+    from llm_proxy.upstream import quotas
     taken = []
 
     class Limiter:
         async def acquire(self, cost, wait_gone=None, ticket=None):
             taken.append(cost)
             if len(taken) > accepted:
-                raise albert.QuotaWaitTooLong(1200, "minute")
+                raise quotas.QuotaWaitTooLong(1200, "minute")
             return 0.0
 
     monkeypatch.setattr(backend, "quotas", True)

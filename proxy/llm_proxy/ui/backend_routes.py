@@ -13,11 +13,15 @@ autre, sauf les partagés, en lecture ; la clé n'est jamais rendue.
                              (vide : selon le protocole), tokenize_path?,
                              enabled? (vrai par défaut ; faux : gardé, pas routé),
                              tool_choice? ("", auto, required, none),
-                             quotas? (le limiteur Albert : posé par un admin)}
+                             quotas?, limits? (le limiteur et ses règles : posés par un admin)}
   PUT    /ui/backends/{id}   modifie (api_key absente ou vide : inchangée,
                              sauf si l'adresse change d'origine) ; ?all=1
                              (admin) : celui de n'importe qui (ses quotas…)
   DELETE /ui/backends/{id}   le sien ; ?all=1 (admin) : celui de n'importe qui
+  GET    /ui/quotas          (admin) le limiteur de chaque backend à quotas :
+                             buckets, consommation, plafonds, restant annoncé
+                             par le compte, modèles au générique, 429 reçus ;
+                             ?refresh=1 relit d'abord les limites du compte
 
 Admin : un compte admin, ou toute session sans comptes OIDC (comme les
 parties Extensions et Proxy).
@@ -31,7 +35,7 @@ from ..access import accounts, oidc
 from ..access.auth import account_owner, live_owners, request_user, ui_client
 from ..core.httputil import error_response, json_only, parse_json
 from ..storage import backends as user_backends
-from ..upstream import backends, catalog
+from ..upstream import backends, catalog, quotas
 from .conversation_routes import run
 
 router = APIRouter()
@@ -112,6 +116,25 @@ async def _write(request: Request, fn, *args, anyone: bool = False):
     await changed()
     got.pop("owner")
     return {"backend": got}
+
+
+@router.get("/ui/quotas")
+async def ui_quotas(request: Request):
+    """Configuration → Quotas (admin) : le limiteur de chaque backend à
+    quotas, du TOML et de tous les comptes (upstream/backends.quota_view).
+    ?refresh=1 relit d'abord les limites de leur compte (une fois par
+    backends.REREAD_SECONDS au plus)."""
+    if not _admin(request):
+        return error_response("openai", 403, "forbidden", "réservé aux admins")
+    chosen = backends.quota_backends()
+    if request.query_params.get("refresh") in ("1", "true"):
+        await asyncio.gather(*(backends.reread_account(b) for b in chosen))
+    views = [backends.quota_view(b) for b in chosen]
+    # `by` : le compte qui l'a déclaré (vide : un backend du TOML).
+    owners = [{"owner": v.pop("owner") or ""} for v in views]
+    for v, r in zip(views, await asyncio.to_thread(_named, owners)):
+        v["by"] = r["by"]
+    return {"backends": views, "margin": quotas.MARGIN}
 
 
 @router.post("/ui/backends")

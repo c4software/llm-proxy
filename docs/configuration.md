@@ -87,9 +87,10 @@ url = "http://bigchuck:8009"
 | `url` | *(requis)* | Base du backend |
 | `api` | `"openai"` | Protocole du backend : `"openai"` (`/v1/chat/completions`) ou `"anthropic"` (`/v1/messages`). Voir [Backend Anthropic](#backend-anthropic) |
 | `api_key` | *(aucune)* | Champ de configuration de la clé du backend (clé Albert, `--api-key` de llama-server). Si définie, elle remplace l'`Authorization` du client |
-| `quotas` | `false` | Active le limiteur Albert (fenêtres minute et jour, `/v1/me/info`). Voir [`[quotas]`](#quotas) |
+| `quotas` | `false` | Active le limiteur : fenêtres minute et jour, attente puis `429` local. Voir [`[quotas]`](#quotas) |
+| `limits` | `[]` | Avec `quotas` : règles `[[backends.<nom>.limits]]`, `models = ["claude-*", …]` (motifs, casse ignorée, nom sans préfixe) et des plafonds `rpm`, `tpm`, `rpd`, `tpd` (absent = illimité). La première règle qui correspond s'applique ; ses modèles partagent ses compteurs. Sans `quotas`, ignorées |
 | `timeout` | `proxy.upstream_timeout` | Secondes pour la génération |
-| `meta_timeout` | `proxy.meta_timeout` | Secondes pour `/v1/models`, `/v1/me/info`, `tokenize_path` |
+| `meta_timeout` | `proxy.meta_timeout` | Secondes pour `/v1/models`, `/v1/limits`, `tokenize_path` |
 | `connect_timeout` | `1` sans quota, `15` avec quotas ou `api = "anthropic"` | Délai limité à l'établissement de la connexion TCP. Un backend local arrêté échoue en 1 s ; un hôte joignable répond rapidement, même s'il est occupé |
 | `verify_ssl` | `true` | `false` pour un certificat auto-signé |
 | `force_tool_choice` | *(aucune injection)* | Injecte `tool_choice` quand `tools` est présent sans lui. `true` → `proxy.tool_choice` ; `"auto"`, `"required"`… → cette valeur. Albert en a besoin (`"auto"`) : son schéma a `"none"` pour défaut |
@@ -168,7 +169,7 @@ router : `400 model_required`.
 |---|---|---|
 | `api_keys` | `[]` | Clés exigées des clients : `Authorization: Bearer <clé>` (OpenAI) ou `x-api-key: <clé>` (Anthropic). Liste vide = proxy ouvert. Sinon 401, sauf `/healthz` (réduit à `{"status": "ok"}`). `/ui` demande la clé à l'entrée. Voir [Sécurité](securite.md) |
 | `upstream_timeout` | `600` | Secondes. Large pour les longues générations |
-| `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info` et `tokenize_path`. Délai court pour ne pas bloquer le catalogue sur un backend lent |
+| `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/limits` et `tokenize_path`. Délai court pour ne pas bloquer le catalogue sur un backend lent |
 | `catalog_ttl` | `30` | Durée de mise en cache du catalogue d'un backend, réponse ou silence. À expiration, le proxy le relit en arrière-plan et continue de servir l'ancien |
 | `tool_choice` | `"auto"` | Valeur injectée lorsque `force_tool_choice = true` pour un backend |
 | `forward_post_paths` | `["/v1/completions", "/v1/embeddings", "/v1/rerank", "/v1/audio/transcriptions", "/v1/audio/speech", "/v1/images/generations", "/v1/images/edits", "/v1/ocr"]` | Routes POST relayées telles quelles, en plus des handlers dédiés. Toute autre route sans handler répond 404 |
@@ -518,28 +519,42 @@ Voir [Comptes OIDC](tableau-de-bord.md#comptes-oidc).
 ## `[quotas]`
 
 Pour les backends à `quotas = true`, du TOML ou des
-[comptes](backends.md). Les limites du compte (`/v1/me/info`) sont lues en
-tâche de fond au démarrage ; en attendant, les familles statiques
-s'appliquent.
+[comptes](backends.md). Le limiteur fait attendre une requête plutôt que la
+refuser, sous des fenêtres d'une minute et d'un jour. Le coût d'une requête
+est estimé à l'entrée (4 caractères par token, plus le `max_tokens`
+demandé hors chat ; une requête pour les images et la transcription), puis
+recalé sur les tokens réellement consommés, entrée et sortie. Une pointe peut donc dépasser un
+plafond ; les fenêtres repartent de zéro au redémarrage.
+
+Les limites d'un modèle, par priorité :
+
+1. les règles `limits` du backend ([`[backends.<nom>]`](#backendsnom)) :
+   posées par l'admin, elles l'emportent sur ce que le backend publie ;
+2. celles du compte, lues sur `/v1/limits` (Albert, voir
+   [plus bas](#limites-du-compte-albert)) ; un backend sans clé, ou dont
+   `/v1/limits` répond `404` ou `405`, n'en a pas et n'est plus interrogé ;
+3. les familles `[quotas.family_limits]` ;
+4. la limite générique, par modèle.
+
+`margin` s'applique à toutes. Les limites du compte sont lues en tâche de
+fond au démarrage ; en attendant, les suivantes s'appliquent.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
 | `margin` | `0.9` | Fraction des limites réellement utilisée (marge de sécurité) |
 | `max_queue_seconds` | `900` | Attente maximale avant un 429 local (quota journalier épuisé), file derrière les requêtes précédentes comprise. Un client qui raccroche pendant l'attente quitte la file sans consommer de quota |
-| `limits_refresh` | `3600` | Période de rechargement de `/v1/me/info`. `0` = jamais. Si les limites n'ont pas pu être lues au démarrage (Albert injoignable), nouvel essai toutes les 60 s jusqu'à la première lecture |
-| `generic_rpm` / `generic_tpm` | `30` / `128000` | Limites des modèles hors familles connues |
+| `limits_refresh` | `3600` | Période de rechargement de `/v1/limits`. `0` = jamais. Si les limites n'ont pas pu être lues au démarrage (Albert injoignable), nouvel essai toutes les 60 s jusqu'à la première lecture |
+| `generic_rpm` / `generic_tpm` | `30` / `128000` | Limites d'un modèle hors règles, compte et familles, chacun son compteur |
 | `status_interval` | `600` | Période du résumé des compteurs dans les logs |
-| `[quotas.family_limits.<famille>]` | *intégré* | `rpm`, `tpm`, `models = [préfixes]` : limites statiques de repli par famille |
-| `[quotas.router_models]` | *(vide)* | `<router_id> = ["préfixe", …]` : association manuelle routeurs ↔ modèles, prioritaire sur la détection |
+| `[quotas.family_limits.<famille>]` | *(aucune)* | `rpm`, `tpm`, `models = [préfixes]` : limites par famille de noms de modèles, pour tous les backends à quotas. `data/config.example.toml` donne celles d'Albert |
 
-### Association routeurs ↔ modèles (Albert)
+### Limites du compte (Albert)
 
-`/v1/me/info` donne les limites par `router_id`, sans dire quels modèles
-chaque routeur sert. Le proxy les associe par **signature** : chaque
-famille de `[quotas.family_limits]` est rattachée au routeur qui porte
-ses (rpm, tpm).
+`GET /v1/limits` donne, pour chaque modèle permis au compte, ses plafonds
+(`rpm`, `tpm`, `rpd`, `tpd`) et ce qu'il en reste. Les modèles d'un même
+routeur Albert partagent un compteur, comme un modèle et ses alias
+(`/v1/models`). Un modèle absent de `/v1/limits` relève des règles, des
+familles ou du générique.
 
-- Association ambiguë : la famille garde ses limites statiques.
-  `[quotas.router_models]` permet de la fixer.
-- Un id et son alias (`openai/gpt-oss-120b` ↔ `openweight-large`)
-  partagent le même compteur.
+L'état du limiteur se lit dans
+[*Configuration → Quotas*](tableau-de-bord.md#longlet-configuration).

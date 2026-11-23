@@ -1,0 +1,102 @@
+/*
+  Configuration → Quotas (admin) : le limiteur de chaque backend à quotas
+  (/ui/quotas, backend_routes.py). Par bucket — un routeur du compte, une
+  règle du backend, une famille, un générique — une barre par fenêtre
+  (minute, jour) : la part prise du plafond (requêtes ou tokens, la plus
+  haute), et, la fenêtre presque pleine, le délai avant que sa plus
+  ancienne requête la quitte (une place se libère). Le
+  restant annoncé par le compte (Albert), les modèles laissés au générique,
+  les 429 reçus de l'amont. Relu toutes les REFRESH_MS ; « Relire les
+  limites » interroge le compte tout de suite.
+*/
+import { call } from "../lib/http.js";
+
+const { ref, onMounted, onUnmounted } = Vue;
+
+const REFRESH_MS = 10_000;
+const SOURCES = { compte: "compte", backend: "règle", famille: "famille", "générique": "générique" };
+
+function short(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + " M";
+  if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + " k";
+  return String(n);
+}
+function delay(s) {
+  if (!s) return "";
+  if (s < 60) return `${Math.ceil(s)} s`;
+  const min = Math.ceil(s / 60);
+  if (min < 60) return `${min} min`;
+  return min % 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min / 60} h`;
+}
+/** Une fenêtre : sa part prise (0 à 1, la plus haute des deux), son texte. */
+function gauge(w) {
+  const parts = [];
+  let used = 0;
+  if (w.max_requests) { used = Math.max(used, w.requests / w.max_requests); parts.push(`${w.requests}/${short(w.max_requests)} req`); }
+  if (w.max_tokens) { used = Math.max(used, w.tokens / w.max_tokens); parts.push(`${short(w.tokens)}/${short(w.max_tokens)} tok`); }
+  return { used: Math.min(used, 1), limited: parts.length > 0, text: parts.join(" · ") || "illimité" };
+}
+function left(remaining) {
+  const keys = Object.keys(remaining || {});
+  return keys.length ? keys.map((k) => `${short(remaining[k])} ${k}`).join(" · ") : "";
+}
+
+export const QuotasPart = {
+  setup() {
+    const list = ref([]);
+    const error = ref("");
+    const loading = ref(false);
+    let timer = null;
+
+    async function load(refresh = false) {
+      loading.value = refresh;
+      try {
+        const d = await call("GET", "/ui/quotas" + (refresh ? "?refresh=1" : ""));
+        list.value = d.backends || [];
+        error.value = "";
+      } catch (e) { error.value = e.message; }
+      loading.value = false;
+    }
+    onMounted(() => { load(); timer = setInterval(() => load(), REFRESH_MS); });
+    onUnmounted(() => clearInterval(timer));
+    const read = (t) => t ? new Date(t * 1000).toLocaleTimeString() : "";
+    return { list, error, loading, load, gauge, delay, left, read, SOURCES };
+  },
+  template: `
+    <div class="config-keys quotas">
+      <p class="err" v-if="error" role="status">{{ error }}</p>
+      <section class="panel">
+        <div class="panel-head"><h2>Quotas</h2>
+          <div class="item-actions">
+            <button type="button" class="btn" :disabled="loading" @click="load(true)">Relire les limites</button></div></div>
+        <p class="note">Le limiteur de chaque backend à quotas : une barre par fenêtre (minute, jour),
+          la part prise du plafond (marge comprise) et, presque pleine, le délai avant qu'une place se libère.
+          Rafraîchi toutes les 10 s.</p>
+        <p class="note" v-if="!list.length">Aucun backend à quotas.</p>
+      </section>
+      <section class="panel" v-for="b in list" :key="b.name + b.by">
+        <div class="panel-head"><h2><code>{{ b.name }}/</code></h2>
+          <span class="dim">{{ b.by || "config.toml" }}<template v-if="b.account_read"> · limites du compte lues à {{ read(b.account_read) }}</template></span></div>
+        <p class="err" v-if="b.upstream_429" role="status">{{ b.upstream_429 }} réponse(s) 429 du backend malgré le
+          limiteur : ses plafonds réels sont plus bas que ceux du proxy.</p>
+        <div class="quota-rows">
+          <div class="quota-row" v-for="q in b.buckets" :key="q.key">
+            <div class="quota-name"><strong>{{ q.name }}</strong>
+              <span class="tag">{{ SOURCES[q.source] || q.source }}</span>
+              <span class="dim" v-if="left(q.remaining)">reste au compte : {{ left(q.remaining) }}</span></div>
+            <template v-for="[label, w] in [['minute', q.minute], ['jour', q.day]]" :key="label">
+              <span class="quota-label">{{ label }}</span>
+              <span class="quota-bar" :class="{ off: !gauge(w).limited }" role="meter" :aria-label="label"
+                    :aria-valuenow="Math.round(gauge(w).used * 100)" aria-valuemin="0" aria-valuemax="100">
+                <i :style="{ width: (gauge(w).used * 100) + '%' }" :class="{ high: gauge(w).used >= 0.8 }"></i></span>
+              <span class="quota-text">{{ gauge(w).text }}<template v-if="w.frees_in && gauge(w).used >= 0.8"> · place libre dans {{ delay(w.frees_in) }}</template></span>
+            </template>
+          </div>
+        </div>
+        <p class="note" v-if="!b.buckets.length">Aucune requête encore, ni limite de compte.</p>
+        <p class="note" v-if="b.generic_models.length">Au générique, faute de limite du compte, de règle ou de
+          famille : <code v-for="m in b.generic_models" :key="m">{{ m }} </code></p>
+      </section>
+    </div>
+  `,
+};

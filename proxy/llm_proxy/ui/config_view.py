@@ -35,8 +35,7 @@ router = APIRouter()
 MASK = "••• masqué •••"
 # Les tables dont les clés sont libres : des noms (backends, familles,
 # serveurs MCP, alias de modèles), pas des réglages connus d'avance.
-FREE = ("backends", "anthropic.model_map", "quotas.family_limits",
-        "quotas.router_models")
+FREE = ("backends", "anthropic.model_map", "quotas.family_limits")
 _SECRET = re.compile(r"(^|_)(api_keys?|secret|password|token)s?$|secret|password",
                      re.IGNORECASE)
 _VAR = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")

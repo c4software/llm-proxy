@@ -13,7 +13,7 @@ from ...core import config
 from ...core.settings import INCOGNITO
 from ...storage import backends as user_backends, files, stats
 from ...surfaces import chat_api, relay_routes
-from ...upstream import albert, catalog, relaying
+from ...upstream import catalog, quotas, relaying
 from ...upstream.backends import no_route, route_backend, visible
 from ...access.auth import auth_required, request_user, ui_client
 from ...core.httputil import error_response, json_only, parse_json
@@ -337,7 +337,7 @@ async def _relay_form(request: Request, payload: dict, fields: dict,
     relayed = Request({**request.scope, "headers": headers}, request.receive)
     call = Call(backend, model_key, normalized, "openai")
     blocked = await gate(call, relayed, payload,
-                         albert.estimate_generic_cost(cost, payload))
+                         quotas.estimate_generic_cost(cost, payload))
     if blocked is not None:
         return blocked
     return await forward(call, relayed, normalized.lstrip("/"), raw)

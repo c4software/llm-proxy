@@ -23,7 +23,7 @@ import pytest
 import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
 
 from fakes import (PUBLIC, FakeWeb, fake_backend, fake_dns, go, net_guard,
-                   quotas, rendu, sans_liaison)
+                   quota_limited, rendu, sans_liaison)
 from llm_proxy.core import multipart
 from llm_proxy import tools
 from llm_proxy.tools import net, transcribe
@@ -379,7 +379,7 @@ def test_modele_non_configure_dit_avant_tout_telechargement(monkeypatch, asr):
 def test_backend_a_quotas_passe_par_son_limiteur_sauf_chemin_exempte(
         monkeypatch, asr):
     """Ce que fait relaying.gate pour une transcription relayée."""
-    pris = quotas(monkeypatch, asr.backend)
+    pris = quota_limited(monkeypatch, asr.backend)
     web = un_son()
     # Exempté (le défaut de proxy.exempt_paths) : pas de limiteur.
     monkeypatch.setattr(transcribe, "is_exempt", lambda path: True)

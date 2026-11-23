@@ -54,7 +54,7 @@ import httpx2
 from ..core import config
 from ..core.settings import is_exempt, log
 from ..storage import stats
-from ..upstream import albert, backends
+from ..upstream import backends, quotas
 from . import net, provenance, webcache
 from .contract import Call, Result, Source, Tool, ToolError, ToolName
 
@@ -397,7 +397,7 @@ async def _transcribe(name: str, content_type: str, body: bytes,
     if backend.quotas and not is_exempt(PATH):
         try:
             await backend.quota_state.get_limiter({"model": model}).acquire(1)
-        except albert.QuotaWaitTooLong:
+        except quotas.QuotaWaitTooLong:
             raise ToolError("too_many_requests", (
                 "the transcription model is over its rate limit. "
                 "Try again later."))

@@ -23,7 +23,7 @@ from ..core.httputil import error_response
 from ..core import settings
 from ..core.settings import HOP_BY_HOP, is_exempt, log
 from ..storage import stats
-from . import albert, anthropic
+from . import anthropic, quotas
 from .backends import Backend, backend_offline_message
 
 
@@ -140,7 +140,7 @@ class Call:
         self._done = True
         self.status = status
         if status < 400 or partial:
-            albert.settle(self.tickets, prompt_tokens + completion_tokens)
+            quotas.settle(self.tickets, prompt_tokens + completion_tokens)
         # Erreur sans `usage` upstream (500, 429 local, client parti…) :
         # rien n'a été consommé de mesurable — des zéros exacts, pas le
         # corps envoyé compté en tokens estimés.
@@ -274,22 +274,22 @@ async def gate(call: Call, request: Request, payload, cost: int) -> Response | N
     try:
         waited = await limiter.acquire(cost, lambda: wait_disconnect(request),
                                        ticket=call.tickets)
-    except albert.QuotaWaitTooLong as exc:
+    except quotas.QuotaWaitTooLong as exc:
         return quota_error(call, exc, limiter)
-    except albert.ClientGone:
+    except quotas.ClientGone:
         client_gone(call, limiter)
         return Response(status_code=CLIENT_CLOSED)
     released(call, limiter, waited, cost)
     return None
 
 
-def quota_error(call: Call, exc: albert.QuotaWaitTooLong,
-                limiter: albert.Limiter) -> JSONResponse:
+def quota_error(call: Call, exc: quotas.QuotaWaitTooLong,
+                limiter: quotas.Limiter) -> JSONResponse:
     retry_after = max(int(exc.delay), 1)
     log.warning(
         "[%s] quota %s : attente %.0fs > MAX_QUEUE_SECONDS (%ds) → 429 local",
         limiter.name, exc.window_name, exc.delay,
-        int(albert.MAX_QUEUE_SECONDS),
+        int(quotas.MAX_QUEUE_SECONDS),
     )
     return call.error(
         429, "rate_limit_exceeded_proxy",
@@ -299,13 +299,13 @@ def quota_error(call: Call, exc: albert.QuotaWaitTooLong,
     )
 
 
-def client_gone(call: Call, limiter: albert.Limiter) -> None:
+def client_gone(call: Call, limiter: quotas.Limiter) -> None:
     log.info("[%s] client parti pendant l'attente : %s abandonné, "
              "quota préservé", limiter.name, call.endpoint)
     call.done(CLIENT_CLOSED)
 
 
-def released(call: Call, limiter: albert.Limiter, waited: float,
+def released(call: Call, limiter: quotas.Limiter, waited: float,
              cost: int) -> None:
     if waited:
         log.info(
@@ -336,7 +336,7 @@ async def send_upstream(call: Call, request: Request, path: str,
     éteint, 502 sinon — et 502 pour un 401 upstream, voir
     upstream_auth_message)."""
     b = call.backend
-    albert.maybe_log_status()
+    quotas.maybe_log_status()
     stream = False
     if b.api == "anthropic":
         req = await _anthropic_request(call, path, body)
@@ -378,11 +378,10 @@ async def send_upstream(call: Call, request: Request, path: str,
     if b.api == "anthropic":
         upstream = anthropic.Upstream(upstream, stream)
     if upstream.status_code == 429 and b.quotas:
-        log.warning(
-            "429 reçu d'Albert malgré le limiteur — comparer /healthz avec "
-            "/v1/me/info ; l'association routeur est peut-être fausse "
-            "(fixer via ROUTER_MODELS)"
-        )
+        b.quota_state.upstream_429 += 1
+        log.warning("[%s] 429 reçu du backend malgré le limiteur (%s) : ses "
+                    "plafonds sont plus bas que ceux du proxy — voir "
+                    "Configuration → Quotas", b.name, call.model_key)
     return upstream
 
 
@@ -502,7 +501,7 @@ async def forward(call: Call, request: Request, path: str, body: bytes,
     robinet = tap(upstream.status_code, upstream.headers.get("content-type", ""))
     # Filet de sécurité si l'upstream ne renvoie aucun `usage` : même
     # approximation que le limiteur (corps envoyé ≈ tokens d'entrée).
-    prompt_estimate = albert.estimate_chat_cost(body) if body else 0
+    prompt_estimate = quotas.estimate_chat_cost(body) if body else 0
     return StreamingResponse(
         relay(call, upstream, robinet, prompt_estimate),
         status_code=upstream.status_code,

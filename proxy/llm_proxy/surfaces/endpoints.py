@@ -16,7 +16,7 @@ from .. import tools
 from ..core import multipart
 from ..core import settings
 from ..ui import page_tools
-from ..upstream import albert, relaying
+from ..upstream import quotas, relaying
 from . import anthropic_api, chat_api, responses_api
 from ..upstream.backends import (
     Backend,
@@ -127,7 +127,7 @@ async def chat(request: Request, page: bool = False):
     raw = strip_backend_prefix(payload, backend)
 
     call = Call(backend, model_key, "/v1/chat/completions")
-    blocked = await gate(call, request, payload, albert.estimate_chat_cost(raw))
+    blocked = await gate(call, request, payload, quotas.estimate_chat_cost(raw))
     if blocked is not None:
         return blocked
     if ctx is None or not ctx.hosted:
@@ -192,7 +192,7 @@ async def start_hosted(call: Call, request: Request, raw: bytes, tap, loop,
     upstream = await relaying.send_upstream(call, request, "v1/chat/completions", raw)
     if isinstance(upstream, JSONResponse):
         return upstream
-    estimate = albert.estimate_chat_cost(raw)
+    estimate = quotas.estimate_chat_cost(raw)
     status, content_type = upstream.status_code, upstream.headers.get("content-type", "")
     if status >= 400 and error_tap is not None:
         return StreamingResponse(
@@ -265,7 +265,7 @@ async def messages(request: Request):
     raw = strip_backend_prefix(openai_payload, backend)
 
     call = Call(backend, resolved, "/v1/messages", dialect)
-    cost = albert.estimate_chat_cost(raw)
+    cost = quotas.estimate_chat_cost(raw)
     tap = lambda status, ct: anthropic_api.Translator(status, ct, resolved, ctx)
     if ctx.hosted:
         base = payload.get("messages")
@@ -353,7 +353,7 @@ async def pinged_stream(call: Call, request: Request, payload: dict,
             yield ping
         try:
             waited = waiter.result()
-        except albert.QuotaWaitTooLong as exc:
+        except quotas.QuotaWaitTooLong as exc:
             acquired = True          # compté par quota_error : pas « parti »
             body = json.loads(quota_error(call, exc, limiter).body)
             yield anthropic_api.sse_error(body)
@@ -500,7 +500,7 @@ async def responses(request: Request):
 
     call = Call(backend, model_key, "/v1/responses")
     blocked = await gate(call, request, chat_payload,
-                         albert.estimate_chat_cost(raw))
+                         quotas.estimate_chat_cost(raw))
     if blocked is not None:
         return blocked
     tap = lambda status, ct: responses_api.Translator(status, ct, ctx)
@@ -544,7 +544,7 @@ async def forward_post(request: Request, normalized: str, dialect: str):
 
     call = Call(backend, model_key, normalized, dialect)
     blocked = await gate(call, request, payload,
-                         albert.estimate_generic_cost(raw, payload))
+                         quotas.estimate_generic_cost(raw, payload))
     if blocked is not None:
         return blocked
     return await forward(call, request, normalized.lstrip("/"), raw)

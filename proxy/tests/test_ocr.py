@@ -20,7 +20,7 @@ import pytest
 
 from fakes import (PUBLIC, FakeWeb, fake_backend, fake_dns, go, net_guard,
                    pdf_bytes, rendu, sans_liaison)
-from llm_proxy.upstream import albert, backends
+from llm_proxy.upstream import backends, quotas
 from llm_proxy import tools
 from llm_proxy.tools import ocr, webcache
 
@@ -572,7 +572,7 @@ def test_ocr_passe_par_le_limiteur_du_backend_a_quotas(env, monkeypatch):
         async def acquire(self, cost, wait_gone=None, ticket=None):
             pris.append(cost)
             if self.attente:
-                raise albert.QuotaWaitTooLong(self.attente, "minute")
+                raise quotas.QuotaWaitTooLong(self.attente, "minute")
             return 0.0
 
     limiteur = Limiteur()

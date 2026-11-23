@@ -1,4 +1,4 @@
-"""Le limiteur d'Albert (albert.Limiter) : l'attente du verrou guettée
+"""Le limiteur des backends à quotas (quotas.Limiter) : l'attente du verrou guettée
 comme celle du quota, et les fenêtres recalées sur l'usage réel ; puis, à
 travers le proxy, une coupure upstream en plein flux et le partage
 équitable du flux à pings de /v1/messages."""
@@ -11,10 +11,10 @@ import types
 import httpx2
 import pytest
 
-from fakes import FakeUpstream, chunk, everywhere, quotas, sse, usage
-from llm_proxy.core import identity
+from fakes import FakeUpstream, chunk, everywhere, quota_limited, sse, usage
+from llm_proxy.core import identity, limits
 from llm_proxy.access import auth, fairshare
-from llm_proxy.upstream import albert
+from llm_proxy.upstream import albert, backends, quotas
 
 
 def run(coro):
@@ -23,13 +23,13 @@ def run(coro):
 
 def test_a_client_gone_while_queued_behind_the_lock_leaves_the_queue():
     async def scenario():
-        lim = albert.Limiter("l", "générique", rpm=10, tpm=10_000)
+        lim = quotas.Limiter("l", "générique", rpm=10, tpm=10_000)
         await lim.lock.acquire()          # une requête devant, qui attend
         gone = asyncio.Event()
         task = asyncio.ensure_future(lim.acquire(5, gone.wait))
         await asyncio.sleep(0.05)
         gone.set()
-        with pytest.raises(albert.ClientGone):
+        with pytest.raises(quotas.ClientGone):
             await asyncio.wait_for(task, 1)
         lim.lock.release()
         assert not lim.lock.locked() and not lim.minute.events
@@ -40,7 +40,7 @@ def test_a_client_gone_while_queued_behind_the_lock_leaves_the_queue():
 
 def test_the_lock_wait_counts_in_the_waited_time():
     async def scenario():
-        lim = albert.Limiter("l", "générique", rpm=10, tpm=10_000)
+        lim = quotas.Limiter("l", "générique", rpm=10, tpm=10_000)
         await lim.lock.acquire()
         task = asyncio.ensure_future(
             lim.acquire(5, asyncio.Event().wait))
@@ -52,17 +52,17 @@ def test_the_lock_wait_counts_in_the_waited_time():
 
 def test_the_windows_are_settled_on_the_real_usage():
     async def scenario():
-        lim = albert.Limiter("l", "générique", rpm=10, tpm=10_000,
+        lim = quotas.Limiter("l", "générique", rpm=10, tpm=10_000,
                              tpd=100_000)
         ticket = []
         await lim.acquire(1000, ticket=ticket)       # image en base64
         await lim.acquire(300, ticket=ticket)        # un second tour
         assert lim.minute.tokens == 1300
-        albert.settle(ticket, 260)                   # tokens réels
+        quotas.settle(ticket, 260)                   # tokens réels
         assert lim.minute.tokens == lim.day.tokens == 260
         assert [e[1] for e in lim.minute.events] == [200, 60]
         # Un événement sorti de la fenêtre ne se recale plus.
-        lim.minute.evict(time.monotonic() + albert.MINUTE + 1)
+        lim.minute.evict(time.monotonic() + quotas.MINUTE + 1)
         lim.minute.adjust(ticket[0][1], 999)
         assert lim.minute.tokens == 0
     run(scenario())
@@ -70,7 +70,7 @@ def test_the_windows_are_settled_on_the_real_usage():
 
 def test_an_unlimited_window_keeps_no_ticket():
     async def scenario():
-        lim = albert.Limiter("l", "générique")
+        lim = quotas.Limiter("l", "générique")
         ticket = []
         await lim.acquire(10, ticket=ticket)
         assert ticket == [] and not lim.minute.events
@@ -85,26 +85,163 @@ class Broken(FakeUpstream):
         raise httpx2.ReadError("boom")
 
 
-def test_unreadable_account_limits_keep_the_fallbacks():
-    """A 200 that is not the expected JSON leaves the static families in
-    place instead of killing the background refresh."""
+def test_a_failed_reread_keeps_what_was_read():
+    """A later /v1/limits that is not the expected JSON changes nothing; a
+    /v1/models that fails keeps the known aliases on their router."""
+    replies = iter([
+        (200, {"data": [{"router_id": 1, "model": "big", "limits": [
+            {"type": "rpm", "value": 50, "remaining": 50}]}]}, {"data": [{"id": "big", "aliases": ["b"]}]}),
+        (200, "<html>maintenance</html>", {"data": []}),
+        (200, {"data": [{"router_id": 1, "model": "big", "limits": [
+            {"type": "rpm", "value": 40, "remaining": 40}]}]}, None),
+    ])
+
     def handler(request):
-        if request.url.path == "/v1/me/info":
-            return httpx2.Response(200, text="<html>maintenance</html>")
-        return httpx2.Response(200, json={"data": []})
+        if request.url.path == "/v1/limits":
+            handler.current = next(replies)
+            status, body, _ = handler.current
+            return (httpx2.Response(status, text=body) if isinstance(body, str)
+                    else httpx2.Response(status, json=body))
+        models = handler.current[2]
+        return httpx2.Response(500) if models is None else httpx2.Response(200, json=models)
 
     async def go():
         client = httpx2.AsyncClient(base_url="http://albert.invalid",
                                     transport=httpx2.MockTransport(handler))
         backend = types.SimpleNamespace(client=client, api_key="k", meta_timeout=1,
                                         auth_headers=lambda: {})
-        state = albert.QuotaState("test")
+        state = quotas.QuotaState("test")
         try:
-            return await state.refresh(backend)
+            got = [await albert.refresh(state, backend)]
+            got.append(await albert.refresh(state, backend))
+            kept = state.get_limiter({"model": "b"}).minute.max_req
+            got.append(await albert.refresh(state, backend))
+            return got, kept, state.get_limiter({"model": "b"})
         finally:
             state.close()
             await client.aclose()
-    assert asyncio.run(go()) is False
+    got, kept, alias = asyncio.run(go())
+    assert got == [True, False, True] and kept == 45
+    assert (alias.source, alias.minute.max_req) == ("compte", 36)
+
+
+def test_account_limits_are_read_per_model_from_v1_limits():
+    """/v1/limits: each model gets its router's caps (null = unlimited),
+    shared with its aliases and the other models of that router; what Albert
+    says is left is kept for the view; a model it does not list falls back.
+    Without a key there is no account to read."""
+    def caps(rpm, tpm):
+        return [{"type": "rpm", "value": rpm, "remaining": rpm - 1},
+                {"type": "tpm", "value": tpm, "remaining": 0},
+                {"type": "rpd", "value": None, "remaining": 0}]
+
+    def handler(request):
+        if request.url.path == "/v1/limits":
+            return httpx2.Response(200, json={"data": [
+                {"router_id": 1, "model": "Big-Model", "limits": caps(50, None)},
+                {"router_id": 1, "model": "big-model-2", "limits": caps(50, None)},
+                {"router_id": 2, "model": "small", "limits": caps(10, 1000)}]})
+        return httpx2.Response(200, json={"data": [{"id": "big-model", "aliases": ["big"]}]})
+
+    async def go(key):
+        client = httpx2.AsyncClient(base_url="http://albert.invalid",
+                                    transport=httpx2.MockTransport(handler))
+        backend = types.SimpleNamespace(client=client, api_key=key, meta_timeout=1,
+                                        auth_headers=lambda: {})
+        state = quotas.QuotaState("test")
+        try:
+            got = await albert.refresh(state, backend)
+            get = lambda m: state.get_limiter({"model": m})
+            return got, get, state.snapshot()
+        finally:
+            state.close()
+            await client.aclose()
+    got, get, snap = asyncio.run(go("k"))
+    assert got is True
+    assert get("big") is get("BIG-MODEL") is get("big-model-2")
+    big = get("big")
+    assert (big.source, big.minute.max_req, big.minute.max_tok, big.day.max_req) == \
+        ("compte", 45, 0, 0)
+    assert get("small").minute.max_tok == 900 and get("small") is not big
+    assert get("absent").source == "générique"
+    assert snap["routers"]["1"]["remaining"] == {"rpm": 49}
+    assert asyncio.run(go(""))[0] is None
+
+
+def test_backend_rules_come_before_the_account_and_the_families(monkeypatch):
+    """A `limits` rule shares one bucket among the models it names and wins
+    over what the account publishes and over the families; new rules restart
+    only their own buckets."""
+    monkeypatch.setattr(quotas, "FAMILY_LIMITS",
+                        {"qwen": {"rpm": 50, "tpm": 1000, "models": ["qwen"]}})
+    monkeypatch.setattr(quotas, "PREFIX_MAP", [("qwen", "qwen")])
+    state = quotas.QuotaState("test", [{"models": ["claude-*", "qwen-big"], "rpm": 10,
+                                        "tpm": 0, "rpd": 0, "tpd": 5000}])
+    try:
+        get = lambda m: state.get_limiter({"model": m})
+        assert get("claude-a") is get("claude-b") is get("org/qwen-big")
+        assert (get("claude-a").source, get("claude-a").day.max_tok) == ("backend", 4500)
+        assert get("qwen-small").source == "famille"
+        assert get("autre").source == "générique"
+        state.set_account({7: {"rpm": 5, "tpm": 0, "rpd": 0, "tpd": 0}},
+                          {"claude-a": "router:7", "gpt-x": "router:7"},
+                          {"router:7": "gpt-x"}, {}, 0.0)
+        assert get("claude-a").source == "backend" and get("gpt-x").source == "compte"
+        account, family, generic = get("gpt-x"), get("qwen-small"), get("autre")
+        before = get("claude-b")
+        state.set_rules(list(state.rules))           # mêmes règles : rien ne bouge
+        assert get("claude-b") is before
+        state.set_rules([{"models": ["qwen-*"], "rpm": 1, "tpm": 0, "rpd": 0, "tpd": 0}])
+        assert get("qwen-small").source == "backend" and get("claude-b").source == "générique"
+        # Le compte, les familles et les génériques gardent leurs fenêtres.
+        assert get("gpt-x") is account and get("autre") is generic
+        assert get("claude-a").source == "compte"   # sans règle : le compte
+        assert get("qwen-tiny") is not family and get("qwen-small") is get("qwen-tiny")
+    finally:
+        state.close()
+
+
+def test_a_malformed_limits_rule_is_refused_even_in_the_toml():
+    for bad in ([{"rpm": 1}], [{"models": ["x"]}], [{"models": ["x"], "rpm": -1}],
+                [{"models": ["x"], "rpm": True}], [{"models": [], "rpm": 1}],
+                [{"models": ["x"], "rpm": 1, "rpx": 2}], {"models": ["x"]}):
+        with pytest.raises(ValueError):
+            limits.rules(bad)
+    assert limits.rules([{"models": "Claude-*", "tpd": 9}]) == [
+        {"models": ["claude-*"], "rpm": 0, "tpm": 0, "rpd": 0, "tpd": 9}]
+    with pytest.raises(ValueError):
+        limits.rules([{"models": [f"m{i}" for i in range(21)], "rpm": 1}])
+    # Une table [[backends.<nom>.limits]] : lue, ou le démarrage s'arrête.
+    b = backends.Backend("zen", {"url": "http://zen.invalid", "quotas": True,
+                                 "limits": [{"models": ["claude-*"], "rpm": 5}]})
+    try:
+        assert b.quota_state.get_limiter({"model": "claude-x"}).source == "backend"
+    finally:
+        b.quota_state.close()
+    with pytest.raises(SystemExit):
+        backends.Backend("zen", {"url": "http://zen.invalid", "limits": [{"rpm": 5}]})
+
+
+def test_no_account_limits_stops_the_background_refresh(monkeypatch):
+    """/v1/limits → 404 (not Albert): said once, never asked again."""
+    asked = []
+
+    def handler(request):
+        asked.append(request.url.path)
+        return httpx2.Response(404, json={"detail": "Not Found"})
+
+    async def go():
+        b = backends.Backend("zen", {"url": "http://zen.invalid", "api_key": "k",
+                                     "quotas": True})
+        b.client = httpx2.AsyncClient(base_url=b.url, transport=httpx2.MockTransport(handler))
+        monkeypatch.setattr(quotas, "RETRY_UNLOADED", 0.0)
+        try:
+            await asyncio.wait_for(backends.watch_quotas(b), 2)
+        finally:
+            b.quota_state.close()
+            await b.client.aclose()
+    asyncio.run(go())
+    assert asked == ["/v1/limits"]
 
 
 def test_a_stream_cut_midway_is_told_and_counted_502(proxy, monkeypatch):
@@ -155,7 +292,7 @@ def test_the_pinged_messages_stream_waits_for_the_share(shared, monkeypatch):
     """Claude Code sur un backend à quotas : le flux à pings passait outre
     le partage équitable."""
     from llm_proxy.upstream.backends import BACKENDS
-    quotas(monkeypatch, BACKENDS["essai"], accepted=10)
+    quota_limited(monkeypatch, BACKENDS["essai"], accepted=10)
 
     def ask():
         shared.replies.append(FakeUpstream(sse(

@@ -47,12 +47,20 @@ def env(idp, monkeypatch, tmp_path):
     everywhere(monkeypatch, dashboard, "UI_CHAT", True)
     idp.got = []
 
+    idp.limits_asked = []
+
     def handler(request):
+        if request.url.path == "/v1/limits":
+            idp.limits_asked.append(request.url.host)
+            return httpx2.Response(500)
         if request.method == "GET":
             return httpx2.Response(200, json={"data": [{"id": m} for m in MODELS]})
         if request.url.path == "/tokenize":
             return httpx2.Response(200, json={"tokens": [1] * 42})
         idp.got.append((request.url.host, dict(request.headers), json.loads(request.content)))
+        if idp.got[-1][2].get("model") == "trop":
+            return httpx2.Response(429, stream=Body(b'{"error": {"message": "rate limited"}}'),
+                                   headers={"content-type": "application/json"})
         return httpx2.Response(200, stream=Body(chat_doc(
             {"role": "assistant", "content": "ok"}, "stop", 3, 1)),
             headers={"content-type": "application/json"})
@@ -301,14 +309,27 @@ def test_seul_un_admin_pose_les_quotas_d_un_backend(env):
     for quotas, status in ((True, 200), (False, 200), (True, 403)):
         r = bob.put(f"/ui/backends/{bid}", json={**body, "quotas": quotas})
         assert r.status_code == status, (quotas, r.text)
+    # Les règles `limits` : de même, posées par l'admin, gardées ou ôtées.
+    rule = [{"models": ["m*"], "rpm": 5}]
+    assert bob.put(f"/ui/backends/{bid}", json={**body, "limits": rule}).status_code == 403
+    r = alice.put(f"/ui/backends/{bid}?all=1", json={**body, "quotas": True, "limits": rule})
+    assert r.status_code == 200 and r.json()["backend"]["limits"][0]["rpm"] == 5, r.text
+    assert alice.get("/ui/health").json()["backends"]["perso"]["limits"][0]["models"] == ["m*"]
+    for limits, status in ((rule, 200), ([{"models": ["*"], "rpm": 99}], 403), ([], 200)):
+        r = bob.put(f"/ui/backends/{bid}", json={**body, "quotas": True, "limits": limits})
+        assert r.status_code == status, (limits, r.text)
+    assert bob.post("/ui/backends", json={**MINE, "name": "x", "limits": rule}).status_code == 403
+    assert alice.post("/ui/backends", json={**MINE, "name": "x", "limits": [{"rpm": 1}]}
+                      ).status_code == 400
     assert alice.patch(f"/ui/users/{bob_id}", json={"role": "admin"}).status_code == 200
     assert bob.patch(f"/ui/users/{alice_id}", json={"role": "user"}).status_code == 200
     assert alice.put(f"/ui/backends/{bid}?all=1", json={**body, "quotas": True}).status_code == 403
 
 
 def test_modifier_un_reglage_garde_les_fenetres_du_limiteur(env):
-    """Changer le tool_choice ou le nom d'un backend à quotas ne remet pas
-    ses compteurs à zéro ; changer son adresse, si."""
+    """Changer le tool_choice, le nom ou les règles d'un backend à quotas ne
+    remet pas à zéro les compteurs hors règles ; la règle neuve s'applique.
+    Changer son adresse remet tout à zéro."""
     alice, _, _ = admin_and_user(env)
     body = {k: v for k, v in MINE.items() if k != "api_key"} | {"shared": True, "quotas": True}
     bid = alice.post("/ui/backends", json={**MINE, "shared": True, "quotas": True}
@@ -319,9 +340,51 @@ def test_modifier_un_reglage_garde_les_fenetres_du_limiteur(env):
     assert used, used
     alice.put(f"/ui/backends/{bid}", json={**body, "tool_choice": "auto", "name": "autre"})
     assert limits("autre") == used
+    rule = [{"models": ["n*"], "rpm": 7}]
+    alice.put(f"/ui/backends/{bid}", json={**body, "name": "autre", "limits": rule})
+    assert ask(alice, "autre/n1").status_code == 200
+    got = limits("autre")
+    assert got["rule:0"]["limits_source"] == "backend" and got["rule:0"]["minute"]["requests"] == 1
+    assert {k: v for k, v in got.items() if k != "rule:0"} == used
     alice.put(f"/ui/backends/{bid}", json={**body, "name": "autre",
                                           "url": "https://ailleurs.exemple.fr"})
     assert limits("autre") == {}
+
+
+def test_l_admin_voit_l_etat_des_quotas(env):
+    """Configuration → Quotas : par backend à quotas, ses buckets (la
+    règle, sa consommation et son plafond, marge comprise), les modèles de
+    son catalogue laissés au générique, les 429 reçus malgré le limiteur.
+    Réservé à l'admin."""
+    alice, bob, _ = admin_and_user(env)
+    alice.post("/ui/backends", json={**MINE, "shared": True, "quotas": True,
+                                     "limits": [{"models": ["permis-*"], "rpm": 7}]})
+    alice.get("/ui/models")                         # le catalogue lu
+    assert ask(alice, "perso/permis-1").status_code == 200
+    assert ask(alice, "perso/trop").status_code == 429
+    assert bob.get("/ui/quotas").status_code == 403
+    view = next(b for b in alice.get("/ui/quotas").json()["backends"] if b["name"] == "perso")
+    assert (view["by"], view["upstream_429"], view["generic_models"]) == \
+        ("alice@example.org", 1, ["autre"])
+    rule = next(x for x in view["buckets"] if x["key"] == "rule:0")
+    assert (rule["source"], rule["name"], rule["minute"]["requests"],
+            rule["minute"]["max_requests"]) == ("backend", "permis-*", 1, 6)
+    assert rule["minute"]["frees_in"] > 0
+    assert "sk-perso" not in alice.get("/ui/quotas").text
+
+
+def test_relire_les_limites_ne_martele_pas_l_amont(env):
+    """?refresh=1 : un essai par backend toutes les 30 s au plus, réussi ou
+    non ; un backend sans limites de compte (404) n'est plus redemandé."""
+    alice, _, _ = admin_and_user(env)
+    alice.post("/ui/backends", json={**MINE, "shared": True, "quotas": True})
+    b = next(x for x in backends.ACCOUNTS.values() if x.name == "perso")
+    b.quota_state.no_account = False
+    b.quota_state.account_tried = 0.0
+    before = len(env.limits_asked)
+    for _ in range(3):
+        assert alice.get("/ui/quotas?refresh=1").status_code == 200
+    assert len(env.limits_asked) == before + 1
 
 
 def test_sans_table_backends_aucun_backend_du_toml(monkeypatch):

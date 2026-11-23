@@ -17,7 +17,8 @@ Un backend de compte a ces champs :
 | Images | Comme [`images`](configuration.md#backendsnom) d'une table `[backends.<nom>]` : *oui*, *non*, ou *selon le protocole* (oui en `anthropic`, non en `openai`) |
 | Tokenisation | Comme [`tokenize_path`](configuration.md#backendsnom) : un chemin sous l'adresse (`/tokenize` pour llama.cpp) qui rend `count_tokens` exact. Vide : estimation |
 | tool_choice | Comme [`force_tool_choice`](configuration.md#backendsnom) : `auto`, `required` ou `none`, injecté quand une requête a des outils sans `tool_choice`. Albert : `auto`. Vide : aucune injection |
-| Quotas | Comme [`quotas`](configuration.md#backendsnom) : le limiteur Albert, avec les limites du compte lues sur `/v1/me/info` et les réglages de [`[quotas]`](configuration.md#quotas). Posé par un admin seulement, sur ses backends ou, depuis *Backends de tous les comptes*, sur ceux d'un autre compte ; un compte garde ou ôte celui de son backend |
+| Quotas | Comme [`quotas`](configuration.md#backendsnom) : le limiteur, avec ses règles *Limites*, les limites du compte quand le backend les publie (Albert) et les réglages de [`[quotas]`](configuration.md#quotas). Posé par un admin seulement, sur ses backends ou, depuis *Backends de tous les comptes*, sur ceux d'un autre compte ; un compte garde ou ôte celui de son backend |
+| Limites | Comme [`limits`](configuration.md#backendsnom), avec *Quotas* : une règle par ligne, des motifs de noms puis des plafonds, `claude-*, qwen-big rpm=10 tpd=5000000`. Posées par un admin, comme les quotas ; un compte garde ou ôte celles de son backend |
 
 Ses modèles s'emploient comme les autres : dans le chat de la page, et
 avec toutes les clés du compte sur `/v1/*`. Ils apparaissent dans

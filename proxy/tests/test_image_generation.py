@@ -16,7 +16,7 @@ import conftest  # noqa: F401 — pose CONFIG_PATH avant tout import du paquet
 import httpx2
 import pytest
 
-from fakes import (PUBLIC, fake_backend, fake_dns, go, net_guard, quotas,
+from fakes import (PUBLIC, fake_backend, fake_dns, go, net_guard, quota_limited,
                    rendu as run)
 from llm_proxy.storage import files
 from llm_proxy import tools
@@ -246,7 +246,7 @@ def test_image_rendue_par_url_lue_chez_le_backend_ou_sous_le_garde_fou(img):
 
 def test_backend_a_quotas_passe_par_son_limiteur(monkeypatch, img):
     """Ce que fait relaying.gate pour une génération relayée."""
-    pris = quotas(monkeypatch, img.backend)
+    pris = quota_limited(monkeypatch, img.backend)
     assert rendu().error is None and pris == [1]
     assert rendu().error == "too_many_requests" and len(img.requests) == 1
 

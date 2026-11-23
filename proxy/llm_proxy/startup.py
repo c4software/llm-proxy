@@ -22,7 +22,7 @@ from .core import config, reload
 from .core.settings import EXEMPT_SUFFIXES, is_exempt, log
 from .storage import files, stats, webhooks
 from .surfaces import anthropic_api, chat_api, responses_api
-from .upstream import albert
+from .upstream import quotas
 from .upstream.backends import (BACKENDS, close_clients, open_clients, refresh, served,
                                 watch_quotas)
 
@@ -280,8 +280,6 @@ async def lifespan(app: FastAPI):
         else:
             log.info("transcribe : pas de conversion — seul l'audio en %s "
                      "est transcrit", ", ".join(tr.ACCEPTED))
-    if albert.ROUTER_MODELS:
-        log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 
     for b in BACKENDS.values():
         if not b.quotas:
@@ -295,8 +293,8 @@ async def lifespan(app: FastAPI):
     log.info(
         "générique %d RPM / %d TPM | marge %.0f%% | attente max %ds | "
         "cartouche %.0fs | exemptés : %s",
-        albert.GENERIC_RPM, albert.GENERIC_TPM, albert.MARGIN * 100,
-        int(albert.MAX_QUEUE_SECONDS), albert.STATUS_INTERVAL,
+        quotas.GENERIC_RPM, quotas.GENERIC_TPM, quotas.MARGIN * 100,
+        int(quotas.MAX_QUEUE_SECONDS), quotas.STATUS_INTERVAL,
         ", ".join(EXEMPT_SUFFIXES) or "aucun",
     )
 

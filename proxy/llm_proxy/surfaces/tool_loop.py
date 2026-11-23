@@ -19,7 +19,7 @@ from ..access.auth import request_owner
 from ..core.httputil import parse_json
 from ..core import settings
 from ..core.settings import log
-from ..upstream import albert, relaying
+from ..upstream import quotas, relaying
 from ..upstream.backends import strip_backend_prefix
 from . import responses_api
 from ..upstream.relaying import (
@@ -333,7 +333,7 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
             inject_tool_choice(chat_payload, call.backend)
             cap_max_tokens(chat_payload, call.backend)
             raw = strip_backend_prefix(chat_payload, call.backend)
-            cost = albert.estimate_chat_cost(raw)
+            cost = quotas.estimate_chat_cost(raw)
             prompt_estimate += cost
             task = asyncio.ensure_future(
                 _next_upstream(quiet, request, chat_payload, raw, cost))

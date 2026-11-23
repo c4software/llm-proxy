@@ -1,7 +1,7 @@
 """
 Réglages généraux du proxy : la table [proxy] de data/config.toml, lue
 une fois et exposée en constantes typées. Les autres sections ont leur
-propre module (quotas → albert.py, stats → stats.py, backends →
+propre module (quotas → upstream/quotas.py, stats → stats.py, backends →
 backends.py) : chacun lit ce qui le regarde, personne ne centralise tout.
 """
 

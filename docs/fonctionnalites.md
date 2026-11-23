@@ -22,14 +22,15 @@ réglage et outil.
   `image-text-to-text` donne `text+image->text`. Les clients s'en servent
   pour savoir si un modèle lit les images (extensions de pi, omp,
   OpenCode).
-- **Limiteur de quotas** (`quotas = true`, Albert) : retarde les requêtes
-  pour rester sous les limites minute et jour du compte, lues sur
-  `/v1/me/info`. Au-delà de `quotas.max_queue_seconds` : 429 local avec
+- **Limiteur de quotas** (`quotas = true`) : retarde les requêtes pour
+  rester sous des limites minute et jour : celles du compte (Albert,
+  `/v1/limits`), les règles du backend, des familles de modèles. Leur
+  état se lit dans *Configuration → Quotas*. Au-delà de `quotas.max_queue_seconds` : 429 local avec
   `Retry-After` (la file derrière les requêtes précédentes compte dans
   cette attente). Un client qui raccroche quitte la file sans rien
   consommer (compté `499`), même avant son tour. L'entrée est estimée à
   la taille du corps, puis la fenêtre est recalée sur l'`usage` réel de
-  la réponse (sortie comprise). Deux comptes Albert ont des limiteurs
+  la réponse (sortie comprise). Deux backends à quotas ont des limiteurs
   indépendants.
 - **Un seul processus par dossier de données** : quotas, partage
   équitable et mémoires vivent en mémoire du processus. Un second

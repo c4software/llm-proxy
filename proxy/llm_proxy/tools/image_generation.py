@@ -50,7 +50,7 @@ import httpx2
 from ..core import config
 from ..core.settings import is_exempt, log
 from ..storage import files, stats
-from ..upstream import albert, backends
+from ..upstream import backends, quotas
 from . import net, provenance
 from .contract import Artifact, Call, Result, Tool, ToolError, ToolName
 
@@ -242,7 +242,7 @@ async def _ask(path: str, fields: dict, image=None) -> dict:
     if backend.quotas and not is_exempt(path):
         try:    # une requête, coût 1 : une image n'est pas des tokens
             await backend.quota_state.get_limiter({"model": model}).acquire(1)
-        except albert.QuotaWaitTooLong:
+        except quotas.QuotaWaitTooLong:
             raise ToolError("too_many_requests", (
                 "the image model is over its rate limit. Do not retry now."))
     fields = {"model": model, **fields}

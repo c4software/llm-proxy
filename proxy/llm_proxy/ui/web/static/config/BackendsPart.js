@@ -3,7 +3,8 @@
   backend_routes.py) — un nom (le préfixe de ses modèles), un protocole, une
   adresse, une clé, et pour qui : soi seul, ou tout le monde (avec la clé du
   créateur), et deux réglages d'une table [backends.<nom>] : images et
-  tokenize_path, l'injection de tool_choice et (admin) les quotas Albert.
+  tokenize_path, l'injection de tool_choice et (admin) le limiteur : quotas,
+  et ses règles `limits`, une par ligne (« claude-*, qwen-big rpm=10 tpd=5000 »).
   Désactivé, il reste (clé comprise) sans être routé. La clé
   n'est jamais relue : vide à la modification, elle reste.
   En dessous, ceux que d'autres comptes partagent, en lecture, et pour
@@ -17,7 +18,24 @@ const { ref, reactive, onMounted } = Vue;
 
 const API_LABELS = { openai: "OpenAI (chat/completions)", anthropic: "Anthropic (Messages)" };
 const blank = () => ({ id: null, name: "", api: "openai", url: "", api_key: "", shared: false,
-                       images: null, tokenize_path: "", enabled: true, tool_choice: "", quotas: false });
+                       images: null, tokenize_path: "", enabled: true, tool_choice: "", quotas: false,
+                       limits: [], limitsText: "" });
+const KINDS = ["rpm", "tpm", "rpd", "tpd"];
+// Une règle par ligne : des motifs de noms, puis des plafonds « rpm=10 ».
+const rulesText = (limits) => (limits || []).map((r) => [r.models.join(", "),
+  ...KINDS.filter((k) => r[k]).map((k) => `${k}=${r[k]}`)].join(" ")).join("\n");
+function rulesOf(text) {
+  return text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+    const rule = { models: [] };
+    for (const word of line.split(/[\s,]+/).filter(Boolean)) {
+      const [k, v] = word.split("=");
+      if (v === undefined) rule.models.push(k);
+      else if (KINDS.includes(k) && /^\d+$/.test(v)) rule[k] = Number(v);
+      else throw new Error(`limites : « ${word} » (attendu : rpm=, tpm=, rpd=, tpd=)`);
+    }
+    return rule;
+  });
+}
 const TOOL_CHOICES = [["", "aucune injection"], ["auto", "auto"], ["required", "required"], ["none", "none"]];
 const IMAGES = [[null, "selon le protocole"], [true, "oui"], [false, "non"]];
 
@@ -46,18 +64,19 @@ export const BackendsPart = {
       } catch (e) { error.value = e.message; }
     }
     function open(b = null) {
-      Object.assign(form, blank(), b ? { ...b, api_key: "" } : {});
+      Object.assign(form, blank(), b ? { ...b, api_key: "", limitsText: rulesText(b.limits) } : {});
       editing.value = true;
     }
     const fields = (b) => ({ name: b.name, api: b.api, url: b.url, shared: b.shared,
                              images: b.images, tokenize_path: b.tokenize_path, enabled: b.enabled,
-                             tool_choice: b.tool_choice, quotas: b.quotas,
+                             tool_choice: b.tool_choice, quotas: b.quotas, limits: b.limits || [],
                              ...(b.api_key ? { api_key: b.api_key } : {}) });
     async function save() {
       error.value = "";
       try {
-        if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id), fields(form));
-        else await call("POST", "/ui/backends", fields(form));
+        const body = fields({ ...form, limits: rulesOf(form.limitsText) });
+        if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id), body);
+        else await call("POST", "/ui/backends", body);
         editing.value = false;
         await load();
       } catch (e) { error.value = e.message; }
@@ -141,7 +160,11 @@ export const BackendsPart = {
             </select></label>
           <label v-if="admin || form.quotas" class="check">
             <input type="checkbox" v-model="form.quotas" :disabled="!admin && !form.quotas">
-            Quotas Albert <span class="dim">(le limiteur : limites du compte lues sur /v1/me/info ; admin)</span></label>
+            Quotas <span class="dim">(le limiteur : règles ci-dessous, limites du compte Albert, familles de [quotas] ; admin)</span></label>
+          <label v-if="form.quotas && (admin || form.limitsText)">Limites
+            <span class="dim">(une règle par ligne : motifs de noms puis plafonds, « claude-*, qwen-big rpm=10 tpd=5000000 » ; admin)</span>
+            <textarea v-model="form.limitsText" rows="3" spellcheck="false" :readonly="!admin"
+                      placeholder="claude-* rpm=50 tpm=200000 tpd=5000000"></textarea></label>
           <div class="item-actions">
             <button type="submit" class="btn">{{ form.id ? "Enregistrer" : "Créer" }}</button>
             <button type="button" class="btn ghost" @click="editing = false">Annuler</button>
@@ -192,7 +215,7 @@ export const BackendsPart = {
               <td>{{ b.shared ? "tout le monde" : "lui seul" }}</td>
               <td>{{ b.enabled ? "actif" : "désactivé" }}{{ b.quotas ? " · quotas" : "" }}</td><td>{{ b.by }}</td>
               <td><div class="row-actions">
-                <button type="button" class="btn ghost" @click="quotas(b)">{{ b.quotas ? "Sans quotas" : "Quotas Albert" }}</button>
+                <button type="button" class="btn ghost" @click="quotas(b)">{{ b.quotas ? "Sans quotas" : "Quotas" }}</button>
                 <button type="button" class="btn danger" :class="{ armed: armed === b.id }"
                         @click="remove(b, true)">{{ armed === b.id ? "Supprimer ?" : "Supprimer" }}</button></div></td>
             </tr>

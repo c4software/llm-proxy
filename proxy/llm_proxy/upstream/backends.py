@@ -18,28 +18,30 @@ backend PARTAGÉ sert aussi les outils hébergés (served) et compte dans le
 partage équitable, comme un backend du TOML ; un backend à soi, non. Un
 outil hébergé ne vise qu'un backend partagé par un ADMIN : son nom, pris
 par le premier qui le partage, ne doit pas pouvoir capter le trafic des
-outils. Les QUOTAS (limiteur Albert) et l'injection de `tool_choice` valent
+outils. Les QUOTAS (limiteur, quotas.py) et l'injection de `tool_choice` valent
 pour les deux ; seul un admin pose les quotas d'un backend de compte.
 """
 
 import asyncio
 import json
+import time
 
 import httpx2
 
 from ..access import accounts, fairshare
-from ..core import config
+from ..core import config, limits
 from ..core.httputil import error_response
 from ..core.settings import META_TIMEOUT, TIMEOUT, TOOL_CHOICE, log
 from ..storage import backends as user_backends
-from . import albert, anthropic
+from . import albert, anthropic, quotas
 
 
 class Backend:
     """Un backend OpenAI-compatible, identifié par son nom = préfixe de
-    routage. Celui marqué quotas=True (unique, Albert) passe par le
-    limiteur ; les autres sont illimités mais pas toujours allumés —
-    contactés uniquement à la demande, jamais sondés en tâche de fond."""
+    routage. Ceux marqués quotas=True passent par le limiteur (quotas.py),
+    selon leurs règles `limits` et, pour Albert, les limites du compte ;
+    les autres sont illimités mais pas toujours allumés — contactés
+    uniquement à la demande, jamais sondés en tâche de fond."""
 
     def __init__(self, name: str, cfg: dict):
         self.name = name
@@ -89,7 +91,11 @@ class Backend:
         self.tokenize_path = str(cfg.get("tokenize_path", "") or "").strip()
         # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
         # Albert avec des clés différentes ne partagent rien).
-        self.quota_state = albert.QuotaState(name) if self.quotas else None
+        try:
+            self.limits = limits.rules(cfg.get("limits"))
+        except ValueError as exc:
+            raise SystemExit(f"backends.{name} : {exc}")
+        self.quota_state = quotas.QuotaState(name, self.limits) if self.quotas else None
         self.client: httpx2.AsyncClient | None = None
         # Le backend d'un compte (storage/backends.py) : son client (None :
         # un backend du TOML) et s'il est offert à tous.
@@ -280,18 +286,95 @@ async def open_clients() -> None:
 
 def watch_quotas(b: Backend) -> asyncio.Task:
     """La tâche de fond d'un backend à quotas, du TOML comme d'un compte :
-    lit les limites de son compte Albert, puis les relit toutes les
-    [quotas].limits_refresh s. Arrêtée quand le backend est retiré."""
+    lit les limites de son compte (albert.refresh), puis les relit toutes
+    les [quotas].limits_refresh s ; tant qu'elles n'ont jamais pu être lues
+    (backend injoignable), toutes les RETRY_UNLOADED s. Un backend sans
+    limites de compte (sans clé, /v1/limits → 404 ou 405) n'est plus
+    interrogé, même s'il en avait publié avant (les dernières lues restent). Arrêtée
+    quand le backend est retiré."""
     async def run():
-        got = await b.quota_state.refresh(b)
-        if not got:
-            log.info("[%s] limites du compte indisponibles — familles statiques : %s",
-                     b.name, ", ".join(f"{fam}({cfg['rpm']}rpm/{cfg['tpm']}tpm)"
-                                       for fam, cfg in albert.FAMILY_LIMITS.items()))
-        if albert.LIMITS_REFRESH > 0:
-            await b.quota_state.refresh_loop(b, loaded=got)
+        loaded = False
+        while True:
+            b.quota_state.account_tried = time.time()
+            got = await albert.refresh(b.quota_state, b)
+            if got is None:
+                b.quota_state.no_account = True
+                log.info("[%s] pas de limites de compte (sans clé, ou /v1/limits "
+                         "absent) : règles du backend, familles, générique", b.name)
+                return
+            if got and not loaded:
+                log.info("[%s] limites du compte lues", b.name)
+            elif not got and not loaded:
+                log.info("[%s] limites du compte indisponibles — règles du backend, "
+                         "familles, générique en attendant", b.name)
+            loaded = loaded or got
+            if quotas.LIMITS_REFRESH <= 0:
+                return
+            await asyncio.sleep(quotas.LIMITS_REFRESH if loaded
+                                else min(quotas.LIMITS_REFRESH, quotas.RETRY_UNLOADED))
     b.watch = asyncio.create_task(run())
     return b.watch
+
+
+# Une relecture des limites du compte demandée par la page, au plus une
+# par backend dans ce délai (s) : un bouton ne martèle pas l'amont.
+REREAD_SECONDS = 30.0
+
+
+def _bucket(lim, caps: dict | None = None) -> dict:
+    """Un bucket pour la page : ses fenêtres (consommation, plafonds, délai
+    avant libération) ; sans limiteur encore créé, les plafonds seuls."""
+    if lim is not None:
+        snap = lim.snapshot()
+        return {"source": snap["limits_source"], "minute": snap["minute"], "day": snap["day"]}
+    caps = {k: quotas.with_margin(caps[k]) for k in limits.KINDS if (caps or {}).get(k)}
+    window = lambda r, t: {"requests": 0, "tokens": 0, "frees_in": 0.0,
+                           "max_requests": caps.get(r) or None, "max_tokens": caps.get(t) or None}
+    return {"minute": window("rpm", "tpm"), "day": window("rpd", "tpd")}
+
+
+def quota_view(b: Backend) -> dict:
+    """L'état du limiteur d'un backend à quotas, pour Configuration →
+    Quotas : un bucket par routeur du compte (même inutilisé, avec le restant
+    annoncé), par règle, puis les familles et génériques en service ; les
+    modèles de son dernier catalogue qui tombent sur le générique ; les 429
+    reçus de l'amont malgré le limiteur."""
+    st = b.quota_state
+    rows = []
+    for rid, caps in sorted(st.router_limits.items(),
+                            key=lambda kv: st.bucket_display.get(f"router:{kv[0]}", "")):
+        key = f"router:{rid}"
+        rows.append({"key": key, "name": st.bucket_display.get(key, key), "source": "compte",
+                     **_bucket(st.limiters.get(key), caps),
+                     "remaining": st.account_left.get(rid, {})})
+    for i, rule in enumerate(st.rules):
+        key = f"rule:{i}"
+        rows.append({"key": key, "name": ", ".join(rule["models"]), "source": "backend",
+                     **_bucket(st.limiters.get(key), rule)})
+    for key, lim in sorted(st.limiters.items()):
+        if not key.startswith(("router:", "rule:")):
+            rows.append({"key": key, "name": lim.name, **_bucket(lim)})
+    generic = sorted(m for m in b.models if st.bucket_of(m).startswith("generic:"))
+    return {"name": b.name, "owner": b.owner,
+            "account_read": st.account_read or None, "upstream_429": st.upstream_429,
+            "buckets": rows, "generic_models": generic}
+
+
+def quota_backends() -> list[Backend]:
+    """Les backends à quotas : ceux du TOML, puis ceux de tous les comptes."""
+    return [b for b in (*BACKENDS.values(), *ACCOUNTS.values()) if b.quotas]
+
+
+async def reread_account(b: Backend) -> None:
+    """Relit tout de suite les limites du compte de `b` (bouton de la page),
+    au plus un essai par REREAD_SECONDS, réussi ou non ; jamais pour un
+    backend sans limites de compte."""
+    st = b.quota_state
+    if st.no_account or time.time() - st.account_tried < REREAD_SECONDS:
+        return
+    st.account_tried = time.time()
+    if await albert.refresh(st, b) is None:
+        st.no_account = True
 
 
 def _stop(b: Backend) -> None:
@@ -305,7 +388,8 @@ def _cfg(row: dict) -> dict:
     """La table [backends.<nom>] d'une ligne du magasin."""
     cfg = {"url": row["url"], "api_key": row["api_key"], "api": row["api"],
            "tokenize_path": row["tokenize_path"], "connect_timeout": 15.0,
-           "quotas": row["quotas"], "force_tool_choice": row["tool_choice"] or None}
+           "quotas": row["quotas"], "force_tool_choice": row["tool_choice"] or None,
+           "limits": row["limits"]}
     if row["images"] is not None:
         cfg["images"] = row["images"]
     return cfg
@@ -321,8 +405,10 @@ def _retune(b: Backend, name: str, cfg: dict) -> None:
     other = Backend(name, {**cfg, "quotas": False})
     b.name, b.cfg = name, cfg
     b.images, b.tokenize_path, b.tool_choice = other.images, other.tokenize_path, other.tool_choice
+    b.limits = other.limits
     if b.quota_state is not None:
         b.quota_state.name = name
+        b.quota_state.set_rules(other.limits)
 
 
 async def refresh(live) -> None:
@@ -348,7 +434,11 @@ async def refresh(live) -> None:
             cfg = _cfg(row)
             if b is not None and all(b.cfg[k] == cfg[k] for k in _STRUCTURE):
                 if (b.name, b.cfg) != (row["name"], cfg):
-                    _retune(b, row["name"], cfg)
+                    try:
+                        _retune(b, row["name"], cfg)
+                    except SystemExit as exc:    # une ligne abîmée : gardée telle quelle
+                        log.warning("backend de compte %s : réglages écartés : %s",
+                                    row["name"], exc)
             else:
                 try:
                     b = Backend(row["name"], _cfg(row))

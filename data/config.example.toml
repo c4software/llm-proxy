@@ -14,7 +14,7 @@
 tool_choice = "auto"
 # Timeout (s) des appels aux backends.
 upstream_timeout = 600
-# Timeout (s) des méta-données (/v1/models, /v1/me/info) : court, un backend
+# Timeout (s) des méta-données (/v1/models, /v1/limits) : court, un backend
 # lent ne bloque pas le catalogue.
 meta_timeout = 5
 # Durée (s) pendant laquelle le catalogue d'un backend est gardé, réponse
@@ -34,7 +34,7 @@ forward_post_paths = [
   "/v1/audio/transcriptions", "/v1/audio/speech",
   "/v1/images/generations", "/v1/images/edits", "/v1/ocr",
 ]
-# Suffixes jamais temporisés par le limiteur Albert (hors quota chat) ni
+# Suffixes jamais temporisés par le limiteur des quotas (hors quota chat) ni
 # comptés au partage équitable.
 exempt_paths = ["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]
 
@@ -684,28 +684,27 @@ database = "stats.db"
 retention_days = 90
 
 
-# ── Quotas Albert ───────────────────────────────────────────────────────
+# ── Quotas (le limiteur des backends à quotas = true) ──────────────────
+# Limites d'un modèle, par priorité : les [[backends.<nom>.limits]], celles
+# du compte (/v1/limits, Albert ; un 404 n'est plus redemandé), les familles
+# ci-dessous, le générique.
 [quotas]
-# Marge appliquée aux limites du compte (0.9 = 90 %).
+# Marge appliquée à toutes les limites (0.9 = 90 %).
 margin = 0.9
-# Rafraîchissement (s) des limites via GET /v1/me/info.
+# Rafraîchissement (s) des limites via GET /v1/limits.
 limits_refresh = 3600
 # Attente au-delà de N s (quota journalier épuisé), file comprise → 429
 # local avec Retry-After plutôt que de bloquer.
 max_queue_seconds = 900
-# Limites des modèles inconnus de /v1/me/info et de family_limits.
+# Limites des modèles hors compte, règles et familles.
 generic_rpm = 30
 generic_tpm = 128000
 # Ligne d'état dans les logs, au plus toutes les N s (0 = désactivé).
 status_interval = 600
 
-# Routeur → préfixes de modèles, prioritaire sur la détection automatique
-# (si les logs signalent une famille non associée).
-# [quotas.router_models]
-# 3 = ["openweight-code", "qwen"]
-
-# Limites par famille, pour les modèles absents de /v1/me/info (ou s'il est
-# injoignable). `models` = préfixes du nom de modèle (le plus long gagne).
+# Limites par famille (aucune par défaut ; celles-ci sont celles d'Albert),
+# pour tous les backends à quotas : `models` = préfixes du nom de modèle (le
+# plus long gagne).
 [quotas.family_limits.deepseek]
 rpm = 50
 tpm = 246000
@@ -758,7 +757,9 @@ max_per_user = 10
 #   timeout — délai (s) d'une requête ([proxy].upstream_timeout par défaut) ;
 #   meta_timeout — délai (s) de /v1/models et des appels de service
 #     ([proxy].meta_timeout par défaut) ;
-#   quotas — limiteur Albert (false) ;
+#   quotas — limiteur : fenêtres minute et jour, attente puis 429 (false) ;
+#   limits — avec quotas, ses règles : [[backends.<nom>.limits]], models =
+#     motifs de noms (sans préfixe), rpm, tpm, rpd, tpd (absent = illimité) ;
 #   connect_timeout — s, poignée de main TCP (15 avec quotas ou Anthropic, 1 sinon :
 #     un backend local éteint → 503 backend_offline vite) ;
 #   force_tool_choice — `tool_choice` injecté si `tools` sans lui : absent/
@@ -783,6 +784,11 @@ api_key = "${ALBERT_API_KEY}"
 quotas = true
 force_tool_choice = "auto"
 # max_tokens = 8192
+# Règle du limiteur, prioritaire sur les limites publiées par le compte :
+# [[backends.albert.limits]]
+# models = ["openweight-large", "gpt-oss-*"]
+# rpm = 10
+# tpd = 2000000
 
 # Anthropic, en natif (Messages) : « claude/claude-opus-5-5 ».
 # [backends.claude]
