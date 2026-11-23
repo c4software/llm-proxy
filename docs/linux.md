@@ -1,21 +1,22 @@
 # La VM Linux du navigateur
 
-Dans le [chat](chat.md) de la page, la famille **Linux** donne au modèle
-une vraie machine Linux, qui tourne **dans le navigateur** : l'outil
-`run_shell` y exécute des scripts bash, et l'utilisateur ouvre la même
-machine dans le panneau **Terminal**.
+Dans le [chat](chat.md) de la page, la famille **Linux** fournit au modèle
+une machine Linux émulée dans le navigateur. L'outil `run_shell` y exécute
+des scripts bash ; l'utilisateur accède à la même machine dans le panneau
+**Terminal**.
 
-Tout se passe côté client. Le proxy ne fait que servir les fichiers de la
+L'exécution a lieu côté client. Le proxy sert uniquement les fichiers de la
 VM, comme ceux des autres bacs du navigateur ([Les outils du
-navigateur](navigateur.md)). Le code, les fichiers et `/work` ne
-repassent jamais par lui.
+navigateur](navigateur.md)). Le code, les fichiers et `/work` ne transitent
+pas par lui.
 
-Ce n'est pas `code_execution` ([Exécution de code](execution-de-code.md)).
-`code_execution` est un outil **hébergé** : un conteneur sur le serveur, avec
-Python, Node, Go, et des paquets installables si le réseau est ouvert. La VM
-Linux est une machine **émulée dans l'onglet**. Elle coûte au serveur ce
-que coûte un fichier statique, mais elle est plus lente, et n'a pas de
-paquets à installer.
+À la différence de `code_execution` ([Exécution de code](execution-de-code.md)),
+outil hébergé exécuté dans un conteneur sur le serveur avec Python, Node,
+Go et des paquets installables lorsque le réseau est ouvert, la VM Linux est
+émulée dans l'onglet. Elle ne sollicite le serveur que pour le service de
+fichiers statiques ; elle est plus lente et ne permet pas d'installer des
+paquets.
+
 
 ## Ce qu'elle est
 
@@ -30,22 +31,23 @@ paquets à installer.
 | Démarrage | ≈ 1,5 s : la VM reprend un état déjà démarré, sauvé au build |
 | Un appel | ≈ 0,3 s pour un script court, sauvegarde de `/work` comprise |
 
-L'émulation est lente : compter quelques secondes pour un gros calcul
-Python (`sum(i*i for i in range(10**6))` prend environ 3 s).
+L'émulation est lente : un calcul Python important peut prendre plusieurs
+secondes (`sum(i*i for i in range(10**6))` prend environ 3 s).
 
 ## Côté utilisateur
 
 ![Panneau Terminal ouvert : le modèle tape dans le terminal le décompte par adresse des erreurs 404 d'un journal nginx joint (awk, sort, uniq) et en résume le résultat dans un tableau ; l'utilisateur lance ensuite, dans le même terminal, la commande qu'il suggère](navigateur-linux.png)
 
-**Le terminal** est toujours là : bouton **Terminal** de l'en-tête du
-chat. Il s'**ouvre** de lui-même dès que le modèle se sert de la VM
-(`run_shell`, `shell_read`, `shell_grep`, `shell_edit`, `shell_write`), dans
-la conversation affichée. Pour que le **modèle** s'en serve aussi, cocher **Linux** dans le
-menu **Outils**, section *Navigateur* : il reçoit alors `run_shell`.
+Le bouton **Terminal** de l'en-tête du chat ouvre le panneau. Celui-ci
+s'ouvre automatiquement dès que le modèle utilise la VM (`run_shell`,
+`shell_read`, `shell_grep`, `shell_edit`, `shell_write`), dans la
+conversation affichée. Pour permettre au **modèle** d'utiliser la VM,
+cocher **Linux** dans le menu **Outils**, section *Navigateur* : le modèle
+reçoit alors `run_shell`.
 
-**Le panneau Terminal.** Il montre la VM de la conversation, ou la démarre.
-On y tape comme dans n'importe quel terminal : c'est un bash root dans
-`/work`, sur la même machine que celle du modèle.
+**Le panneau Terminal** affiche la VM de la conversation ou la démarre.
+Il donne accès à un bash exécuté en root dans `/work`, sur la même machine
+que celle du modèle.
 
 | Bouton | Effet |
 |---|---|
@@ -57,9 +59,9 @@ On y tape comme dans n'importe quel terminal : c'est un bash root dans
 | Large | élargit le panneau ; sa largeur se tire aussi par son bord gauche (gardée dans ce navigateur), comme celle des artifacts |
 | Fermer | le panneau seulement : la VM continue |
 
-**`/work` est gardé par conversation**, en `tar.gz`, dans ce navigateur
-(IndexedDB). Il est rechargé quand la conversation reprend la VM. Il est
-gardé :
+**`/work` est conservé par conversation**, dans une archive `tar.gz` stockée
+dans ce navigateur (IndexedDB). Le contenu est rechargé à la reprise de la
+VM. Il est enregistré :
 
 - après chaque appel du modèle ;
 - 10 s après la dernière frappe dans le terminal ;
@@ -67,64 +69,64 @@ gardé :
 - à la fermeture du panneau ;
 - quand l'onglet passe en arrière-plan.
 
-Une conversation incognito le garde en mémoire seulement. Supprimer la
-conversation efface son `/work`. Au-delà de 100 Mo compressés, `/work`
-n'est plus gardé (le résultat le dit). Le reste du système (`/tmp`, `/root`,
-ce qui serait écrit ailleurs) repart propre à chaque démarrage.
+En navigation privée, le contenu reste en mémoire uniquement. La
+suppression de la conversation efface son `/work`. Au-delà de 100 Mo
+compressés, `/work` n'est plus conservé (le résultat le signale). Le reste
+du système (`/tmp`, `/root` et les autres emplacements d'écriture) est
+réinitialisé à chaque démarrage.
 
-**Une seule VM à la fois** : celle de la conversation qui s'en sert. Passer
-à une autre conversation garde le `/work` de la première, puis démarre une
-VM neuve pour la seconde. Le panneau ne montre que la VM de **sa**
-conversation : si le modèle d'une autre conversation s'en sert (sa réponse
-continue en arrière-plan), le panneau le dit, masque le terminal, et
-propose *La reprendre pour celle-ci*. Ce qu'on tape pendant que la VM
-démarre est gardé, puis envoyé quand elle est prête.
-
+**Une seule VM est active à la fois** : celle de la conversation qui
+l'utilise. Le passage à une autre conversation conserve le `/work` de la
+première, puis démarre une nouvelle VM pour la seconde. Le panneau affiche
+uniquement la VM de sa conversation. Si le modèle d'une autre conversation
+utilise la VM (sa réponse continue en arrière-plan), le panneau le signale,
+masque le terminal et propose *La reprendre pour celle-ci*. Les commandes
+saisies pendant le démarrage sont conservées et envoyées lorsque la VM est
+prête.
 ## Le modèle tape dans le terminal
 
-Quand le panneau Terminal est **ouvert** sur la conversation (le modèle
-l'ouvre en se servant de la VM), ce que `run_shell` exécute est **tapé
-dans le terminal** de l'utilisateur, qui le voit partir et s'exécuter : une
-commande d'une ligne telle quelle, un script de plusieurs lignes en un bloc
-`( … )`. Bash affiche le bloc ligne à ligne (invite `>`) et l'exécute d'un
-coup. C'est un sous-shell : un `exit` ou un `cd` du script ne touchent pas
-le shell de l'utilisateur. Demander « lance le
-script », « montre-moi les fichiers » suffit : la consigne du modèle lui
-dit que le terminal est ouvert. Le modèle reçoit la sortie et le code de
-sortie, comme d'habitude.
+Lorsque le panneau Terminal est **ouvert** sur la conversation (le modèle
+l'ouvre en utilisant la VM), `run_shell` **tape la commande dans le
+terminal** de l'utilisateur, qui en voit l'exécution : une commande d'une
+ligne telle quelle, ou un script multiligne dans un bloc `( … )`. Bash
+affiche le bloc ligne à ligne (invite `>`) et l'exécute d'un coup. Il s'agit
+d'un sous-shell : un `exit` ou un `cd` du script ne modifie pas le shell de
+l'utilisateur. La consigne indique au modèle que le terminal est ouvert ;
+les demandes « lance le script » ou « montre-moi les fichiers » suffisent.
+Le modèle reçoit la sortie et le code de sortie.
+- **Une commande qui dépasse le délai** (un serveur, une boucle, `top`)
+  reste dans le terminal à la disposition de l'utilisateur, qui l'arrête
+  avec Ctrl-C. Le modèle en est informé ; la consigne lui demande de définir
+  un `timeout` court pour ce type de commande.
+- **Un terminal occupé** — commande en cours ou ligne en saisie — n'est
+  **jamais** modifié : la commande passe par le canal invisible et le
+  résultat le signale.
+- **Un script de plus de 6 000 caractères** ou contenant des tabulations
+  (qui déclencheraient la complétion de bash lors de la saisie) passe par le
+  canal invisible ; le résultat le signale.
+- `terminal: false` exécute sans afficher la commande, même lorsque le
+  panneau est ouvert.
 
-- **Une commande qui ne finit pas** dans le délai (un serveur, une boucle,
-  `top`) reste dans le terminal, laissée à l'utilisateur, qui l'arrête par
-  Ctrl-C. Le modèle le sait ; pour ce genre de commande, la consigne lui
-  demande un `timeout` court.
-- **Un terminal pas libre** — une commande en cours, ou une ligne que
-  l'utilisateur est en train de taper — n'est **jamais** touché : la
-  commande passe par le canal invisible, et le résultat le dit.
-- **Un script de plus de 6 000 caractères**, ou avec des tabulations
-  (tapées, elles déclencheraient la complétion de bash), passe par le
-  canal invisible, et le résultat le dit.
-- `terminal: false` exécute sans montrer, même panneau ouvert.
-
-Comment la page sait qu'une commande est finie : le bash du terminal émet
-des séquences **OSC 633** que xterm.js n'affiche pas, comme l'intégration
-shell de VS Code (`guest/bashrc`). `PS0` émet `C` quand une commande part,
-`PROMPT_COMMAND` émet `D;<code>` quand l'invite revient. La sortie est ce
-qui s'affiche entre les deux, séquences d'échappement retirées
-(`vm.mjs`, `Console` et `typeExec`).
+La page détecte la fin d'une commande grâce aux séquences **OSC 633** émises
+par bash dans le terminal. xterm.js ne les affiche pas ; le mécanisme est
+analogue à l'intégration shell de VS Code (`guest/bashrc`). `PS0` émet `C`
+au démarrage d'une commande et `PROMPT_COMMAND` émet `D;<code>` au retour de
+l'invite. La sortie correspond au texte affiché entre ces marqueurs, après
+retrait des séquences d'échappement (`vm.mjs`, `Console` et `typeExec`).
 
 ## Le réseau
 
-Coupé par défaut. Le bouton **Réseau** du panneau l'ouvre pour **cette
-conversation** (`conv.linuxNetwork`, gardé avec elle), après un
-avertissement, comme pour un artifact : le code qui tourne dans la VM, écrit
-par le modèle ou par l'utilisateur, peut alors envoyer ce que contient
-`/work` à un site qui l'accepte.
+Le réseau est coupé par défaut. Le bouton **Réseau** du panneau l'active
+pour **cette conversation** (`conv.linuxNetwork`, conservé avec elle), après
+un avertissement comme pour un artifact. Le code exécuté dans la VM, qu'il
+ait été écrit par le modèle ou par l'utilisateur, peut alors transmettre à
+un site qui l'accepte le contenu de `/work`.
 
 Deux façons de relier la VM, selon le compte :
 
-- **Le relais du proxy** (`[ui].linux_relay`) : un vrai accès à Internet.
-- **Le backend `fetch` de v86**, sans relais, pour les autres comptes :
-  des requêtes HTTP vers les sites qui permettent CORS.
+- **Le relais du proxy** (`[ui].linux_relay`) fournit un accès à Internet.
+- **Le backend `fetch` de v86**, sans relais, est utilisé pour les autres
+  comptes et permet des requêtes HTTP vers les sites qui autorisent CORS.
 
 Dans les deux cas :
 
@@ -137,9 +139,9 @@ Dans les deux cas :
 
 ### Le relais (Wisp)
 
-`[ui].linux_relay` nomme les comptes qui y ont droit (`"*"` : tous les
-comptes actifs, ou des adresses de comptes ; vide par défaut). La page
-l'apprend par `/ui/session` (`chat.linux_relay`).
+`[ui].linux_relay` définit les comptes autorisés (`"*"` pour tous les
+comptes actifs, ou des adresses de compte ; valeur vide par défaut). La page
+lit cette configuration dans `/ui/session` (`chat.linux_relay`).
 
 Au démarrage d'une VM avec réseau, la page demande un jeton
 (`POST /ui/linux/relay`, avec sa session ; valable 24 h). v86 ouvre alors
@@ -149,39 +151,42 @@ nativement (`relay_url: "wisps://…"`). Chaque connexion TCP de l'invité y
 devient un flux, que le proxy ouvre vers la cible (`ui/linux_relay.py`) :
 https, `apk add`, `pip install`, `git clone`, ssh marchent.
 
-Le trafic **part du serveur**. Le relais ne joint donc que les adresses
-publiques (`tools/net.py`, `is_public`) : ni le réseau local, ni Tailscale,
-ni le loopback, ni les conteneurs voisins, quel que soit
-`[tools.net].allow_private`. Les noms sont résolus dans la VM : le relais
-juge l'adresse, pas un domaine (`[tools.net]` et ses listes de domaines ne
-s'y appliquent pas). Ports refusés : `[ui].linux_relay_blocked_ports` (25
-par défaut). UDP refusé. Bornes : 64 flux par VM, 4 relais ouverts par
-compte, `[ui].linux_relay_max_bytes` octets par compte sur 24 h, dans les
-deux sens (2 Go par défaut ; atteints, ses connexions sont fermées
-jusqu'à la fenêtre suivante), et une connexion sans trafic pendant
-`[ui].linux_relay_idle_seconds` (900 s) est fermée. 0 lève l'une ou
-l'autre borne. Chaque connexion est écrite au journal (compte, cible).
+Le trafic **sort du serveur**. Le relais se connecte uniquement aux
+adresses publiques (`tools/net.py`, `is_public`) : il ne peut pas atteindre
+le réseau local, Tailscale, le loopback ou les conteneurs voisins, quelle
+que soit la valeur de `[tools.net].allow_private`. Les noms sont résolus
+dans la VM ; le relais vérifie l'adresse IP et non le domaine. Les listes de
+domaines de `[tools.net]` ne s'appliquent pas. Les ports configurés dans
+`[ui].linux_relay_blocked_ports` sont refusés (25 par défaut), ainsi que
+UDP. Limites : 64 flux par VM, 4 relais ouverts par compte et
+`[ui].linux_relay_max_bytes` octets par compte sur 24 h, dans les deux sens
+(2 Go par défaut). Une fois cette limite atteinte, les connexions du compte
+sont fermées jusqu'à la fenêtre suivante. Une connexion sans trafic pendant
+`[ui].linux_relay_idle_seconds` (900 s) est fermée. La valeur 0 désactive
+l'une ou l'autre limite. Chaque connexion est consignée (compte, cible).
 
-Le droit est relu à chaque connexion du WebSocket : un compte bloqué perd
-le relais à la reconnexion suivante.
+Le droit est vérifié à chaque connexion WebSocket : un compte bloqué perd
+l'accès au relais à la reconnexion suivante.
 
 ### Sans relais (`fetch`)
 
-Chaque requête HTTP de l'invité devient un `fetch()` du navigateur, fait
-en **https**. Ce que ça permet, et ce que ça ne permet pas :
+Chaque requête HTTP de l'invité est exécutée par un `fetch()` du
+navigateur en **https**. Le tableau récapitule les adresses utilisées, les
+sites accessibles et les opérations non prises en charge.
 
 | | |
 |---|---|
 | Adresses | écrites en `http://…` dans la VM ; le navigateur les demande en https |
 | Sites | seulement ceux qui permettent CORS à une origine `null` (`Access-Control-Allow-Origin: *`) : API publiques, `pypi.org/pypi/<paquet>/json`, `raw.githubusercontent.com`, `api.github.com`, `registry.npmjs.org`… Les autres répondent `502 Fetch Error` |
-| Pas possible | `https://` direct depuis la VM (port 443), ssh, `git clone`, `apk add` (son miroir ne permet pas CORS), `pip install` (ses fichiers sont en https) |
+| Non pris en charge | `https://` direct depuis la VM (port 443), ssh, `git clone`, `apk add` (son miroir ne permet pas CORS), `pip install` (ses fichiers sont en https) |
 
 ## Éditer les fichiers de la VM
 
-Pour modifier un fichier, le modèle a le même chemin que pour un artifact,
-plutôt que `sed` ou un heredoc dans `run_shell` : il cherche (où ?), lit
-la tranche (le texte exact), puis remplace le passage. Le code est commun
-avec `grep_artifact`, `read_artifact` et `edit_artifact` (`tools/text.js`).
+Pour modifier un fichier, le modèle utilise les mêmes outils que pour un
+artifact plutôt que `sed` ou un heredoc dans `run_shell` : il recherche le
+fichier et le passage concerné, lit le texte exact, puis remplace ce
+passage. La logique est partagée avec `grep_artifact`, `read_artifact` et
+`edit_artifact` (`tools/text.js`).
 
 | Outil | Rôle |
 |---|---|
@@ -190,11 +195,11 @@ avec `grep_artifact`, `read_artifact` et `edit_artifact` (`tools/text.js`).
 | `shell_edit` | des retouches (`old_string` exact et unique → `new_string`, ou `regex` avec groupes `$1`, `replace_all`, `ignore_case`) : toutes ou aucune, le fichier garde ses droits |
 | `shell_write` | un fichier entier, créé (dossiers compris) ou remplacé |
 
-Les chemins sont absolus, ou relatifs à `/work`. Un fichier binaire, un
-dossier passé à `shell_read` ou un fichier absent donnent une erreur
-claire. Les fichiers passent par le dossier 9p, comme les scripts. Dans
-l'historique, une lecture, une recherche ou une écriture passée n'est pas
-rejouée au modèle : le fichier a pu changer depuis.
+Les chemins peuvent être absolus ou relatifs à `/work`. Un fichier binaire,
+un dossier passé à `shell_read` ou un fichier absent provoque une erreur
+explicite. Comme les scripts, les fichiers transitent par le dossier 9p.
+Dans l'historique, les lectures, recherches et écritures précédentes ne
+sont pas rejouées au modèle, car le fichier a pu changer depuis.
 
 ## Côté modèle : `run_shell`
 
@@ -206,16 +211,16 @@ rejouée au modèle : le fichier a pu changer depuis.
 | `reset` | repartir d'une VM neuve et d'un `/work` vide |
 | `terminal` | `false` : ne pas taper la commande dans le terminal ouvert (défaut : la taper) |
 
-Le résultat donne le code de sortie, puis la sortie (stdout et stderr
-mêlés). Au-delà de 20 000 caractères, seuls le début et surtout la fin sont
-gardés, puisqu'une erreur est souvent à la fin.
+Le résultat contient le code de sortie, puis la sortie combinée (stdout et
+stderr). Au-delà de 20 000 caractères, il conserve le début et principalement
+la fin, où les erreurs sont souvent indiquées.
 
-Les fichiers que le script écrit sous **`/out`** pendant l'appel (neufs ou
-modifiés) arrivent sous la réponse, comme avec `run_php` : un fichier
-texte s'ouvre en aperçu, une image s'affiche (et part au modèle s'il lit
-les images). Ils **restent dans la VM** : `/out` est un lien vers
-`/work/out`, gardé avec `/work`. Le terminal montre donc ce que la réponse
-présente.
+Les fichiers créés ou modifiés sous **`/out`** pendant l'appel sont joints
+sous la réponse, comme avec `run_php`. Un fichier texte s'ouvre en aperçu ;
+une image s'affiche et est transmise au modèle s'il lit les images. Les
+fichiers **restent dans la VM** : `/out` est un lien vers `/work/out`, qui
+est conservé avec `/work`. Le terminal affiche donc les mêmes fichiers que
+la réponse.
 
 ## Comment elle tourne dans la page
 
@@ -233,27 +238,28 @@ LinuxPanel ─┘   │                         │   ▲
 ```
 
 - **Le cadre** est un `<iframe sandbox="allow-scripts">` sans origine.
-  Sa politique de sécurité coupe tout réseau (`default-src 'none'`) : ni
-  la page, ni sa session, ni ses cookies ne lui sont visibles. La page
-  télécharge les fichiers de `vendor/linux/` et les lui passe en
-  `ArrayBuffer`. v86 ne reçoit jamais d'URL.
-- **v86 tourne dans un Worker** du cadre : la page reste fluide pendant
-  un calcul. Le terminal (xterm.js) est dans le cadre lui-même.
-- Le cadre est posé dans `<body>` et **placé par-dessus** le panneau
-  quand il est ouvert : un `<iframe>` déplacé dans le DOM se recharge, et
-  la VM serait perdue. Fermé, il est hors de l'écran.
+  Sa politique de sécurité désactive tout accès réseau (`default-src 'none')` ;
+  la page, sa session et ses cookies ne lui sont pas accessibles. La page
+  télécharge les fichiers de `vendor/linux/` et les transmet sous forme
+  d'`ArrayBuffer`. v86 ne reçoit aucune URL.
+- **v86 s'exécute dans un Worker** du cadre, ce qui évite de bloquer la page
+  pendant les calculs. Le terminal (xterm.js) est rendu dans le cadre.
+- Le cadre reste dans `<body>` et est **placé par-dessus** le panneau
+  lorsqu'il est ouvert. Son déplacement dans le DOM rechargerait l'`<iframe>`
+  et réinitialiserait la VM. Lorsqu'il est fermé, il est hors écran.
 - **Deux ports série** :
-  - `ttyS0` est le terminal de l'utilisateur, un bash de connexion
+  - `ttyS0` correspond au terminal de l'utilisateur, un bash de connexion
     (`console-shell`, sans getty ni mot de passe) ;
-  - `ttyS1` est le canal du modèle, `vm-agent`, brut et sans écho, que
-    l'utilisateur ne voit pas.
-- **Le dossier 9p** (`/mnt/host` dans la VM, en mémoire dans v86) porte
-  les scripts, leurs sorties et les fichiers. Le port série ne passe
-  qu'environ 8 Ko/s, le 9p plusieurs Mo/s.
+  - `ttyS1` correspond au canal du modèle, `vm-agent`, brut et sans écho,
+    invisible pour l'utilisateur.
+- **Le dossier 9p** (`/mnt/host` dans la VM, en mémoire dans v86) contient
+  les scripts, leurs sorties et les fichiers. Le débit du port série est
+  d'environ 8 Ko/s ; celui de 9p atteint plusieurs Mo/s.
 
 ### Le protocole de `vm-agent`
 
-Une requête par ligne sur `ttyS1`, une réponse encadrée de repères :
+Le protocole utilise une requête par ligne sur `ttyS1` et délimite chaque
+réponse par des marqueurs :
 
 | Requête | Effet | Réponse |
 |---|---|---|
@@ -262,52 +268,53 @@ Une requête par ligne sur `ttyS1`, une réponse encadrée de repères :
 | `ping` | — | `__PONG__` |
 | `init <epoch> <hex>` | remettre l'horloge, réensemencer l'aléa du noyau | `__INIT_OK__` |
 
-Un appel de `run_shell` se passe ainsi (`vm.mjs`, `VM.exec`) :
+Un appel `run_shell` suit les étapes suivantes (`vm.mjs`, `VM.exec`) :
 
-1. La page pose sur le 9p le script du modèle (`<id>.user`), les fichiers
-   fournis (`<id>.in<k>`), et un script d'enveloppe (`<id>.sh`). Cette
+1. La page écrit sur 9p le script du modèle (`<id>.user`), les fichiers
+   fournis (`<id>.in<k>`) et un script d'enveloppe (`<id>.sh`). Cette
    enveloppe :
    - range les fichiers sous `/work` ;
-   - lance le script sous `timeout` ;
-   - archive `/out` en `<id>.tar`, puis vide `/out`.
+   - lance le script avec `timeout` ;
+   - archive `/out` dans `<id>.tar`, puis vide `/out`.
 2. Elle envoie `<id> <délai>` sur `ttyS1` et attend `__END_<id>_<code>__`.
 3. Elle lit `<id>.log` et `<id>.tar`, puis envoie `done <id>`.
 
-`/work` se garde par le même chemin : `tar -czf - .` rend l'archive dans le
-journal, et `tar -xzf` la reprend au démarrage.
+La persistance de `/work` utilise le même mécanisme : `tar -czf - .` écrit
+l'archive dans le journal ; `tar -xzf` la restaure au démarrage.
 
-**Après une reprise d'état**, toutes les VM partent de la même mémoire :
-même horloge (celle du build), même générateur aléatoire. `init` les
-remet : l'heure de la page, et 64 octets d'aléa de la page mêlés au noyau
-(`vm-reseed`, ioctl `RNDADDENTROPY` puis `RNDRESEEDCRNG`). Écrire dans
-`/dev/urandom` ne suffirait pas.
+**Après une reprise d'état**, toutes les VM utilisent la même mémoire
+sauvegardée, avec la même horloge (celle du build) et le même générateur
+aléatoire. `init` rétablit l'heure de la page et mélange au noyau 64 octets
+d'aléa fournis par la page (`vm-reseed`, ioctl `RNDADDENTROPY` puis
+`RNDRESEEDCRNG`). Écrire dans `/dev/urandom` ne suffirait pas.
 
 ## Construire la VM
 
-Une seule commande, avec Docker (BuildKit, le défaut) :
+Avec Docker (BuildKit activé par défaut), exécuter :
 
 ```bash
 proxy/linux/build.sh       # → proxy/llm_proxy/ui/web/static/vendor/linux/
 ```
 
-Le script lance les étapes `linux-guest`, `linux-initrd` et `linux` de
-`proxy/Dockerfile` et en exporte le résultat. Il faut compter environ
-1 min la première fois, puis quelques secondes grâce au cache. L'image du
-proxy (`docker compose up -d --build`) construit la **même** VM par les
-mêmes étapes : rien à faire à la main en production.
+Le script exécute les étapes `linux-guest`, `linux-initrd` et `linux` de
+`proxy/Dockerfile`, puis exporte leur résultat. Le premier build prend
+environ 1 min ; les builds suivants prennent quelques secondes grâce au
+cache. L'image du proxy (`docker compose up -d --build`) construit la même
+VM avec les mêmes étapes ; aucune opération manuelle supplémentaire n'est
+nécessaire en production.
 
-Hors Docker, la page sert la VM si `vendor/linux/` existe. Sans elle,
-`run_shell` et le panneau répondent que la VM manque et qu'elle se
-construit par `proxy/linux/build.sh`.
+Hors Docker, la page sert la VM lorsque `vendor/linux/` existe. Sinon,
+`run_shell` et le panneau indiquent que la VM est absente et qu'elle doit
+être construite avec `proxy/linux/build.sh`.
 
 ### Les étapes
 
 | Étape (`proxy/Dockerfile`) | Ce qu'elle fait |
 |---|---|
-| `linux-guest` (`alpine:3.24.2`, `linux/386`) | `apk add $LINUX_PACKAGES linux-virt`. Garde le noyau, et de ses modules ceux du 9p et de `virtio_net` seuls (le reste pèse 20 Mo). Retire pages de manuel, documentation, cache apk, tests de Python. Pose la configuration de `proxy/linux/guest/`. |
-| `linux-initrd` | Tout le système en une archive cpio (`initrd.cpio`, ≈ 50 Mo), plus `/dev/console` et `/dev/null` (`devnodes-cpio.py`, car `mknod` n'est pas permis dans un build). |
-| `linux` (depuis l'étape `wasm`, où v86 est installé) | `node /linux/state.mjs` : démarre la VM une fois sous Node (≈ 4 s), vide ses caches, sauve son état (zstd niveau 19), puis **le vérifie**. Une VM reprise doit exécuter `python3`, lire un fichier fourni et rendre `/out`, sinon le build échoue. |
-| `linux-vendor` | Les seuls fichiers de la VM, pour `build.sh` (`--output`). |
+| `linux-guest` (`alpine:3.24.2`, `linux/386`) | Installe `LINUX_PACKAGES` et `linux-virt` avec `apk add`. Conserve le noyau et uniquement les modules 9p et `virtio_net` (les autres occupent 20 Mo). Supprime les pages de manuel, la documentation, le cache apk et les tests Python. Applique la configuration de `proxy/linux/guest/`. |
+| `linux-initrd` | Regroupe le système dans une archive cpio (`initrd.cpio`, ≈ 50 Mo) et ajoute `/dev/console` et `/dev/null` (`devnodes-cpio.py`, car `mknod` n'est pas autorisé dans un build). |
+| `linux` (depuis l'étape `wasm`, où v86 est installé) | `node /linux/state.mjs` démarre une fois la VM sous Node (≈ 4 s), vide ses caches, enregistre son état (zstd niveau 19), puis **le vérifie**. La vérification exécute `python3`, lit un fichier fourni et écrit dans `/out` ; en cas d'échec, le build échoue. |
+| `linux-vendor` | Exporte uniquement les fichiers de la VM pour `build.sh` (`--output`). |
 
 ### Les fichiers produits (`vendor/linux/`)
 
@@ -341,16 +348,16 @@ Le terminal, xterm.js, est servi avec les autres runtimes
 
 ### Ajouter des paquets
 
-La VM n'a pas de réseau : ce qui n'est pas installé au build n'y sera pas.
-Les paquets se choisissent par `LINUX_PACKAGES`, une liste de paquets
-Alpine **i386** (`x86`) :
+La VM ne dispose pas de réseau ; seuls les paquets inclus au build sont
+disponibles. Définir les paquets avec `LINUX_PACKAGES`, une liste de
+paquets Alpine **i386** (`x86`) :
 
 ```bash
 LINUX_PACKAGES="bash python3 jq sqlite git coreutils" proxy/linux/build.sh
 ```
 
-Pour l'image du proxy, la même variable se passe en argument de build
-(`docker-compose.override.yml`) :
+Pour configurer l'image du proxy, transmettre la même variable comme
+argument de build dans `docker-compose.override.yml` :
 
 ```yaml
 services:
@@ -360,12 +367,13 @@ services:
         LINUX_PACKAGES: "bash python3 jq sqlite git coreutils"
 ```
 
-Chaque Mo ajouté pèse sur la mémoire de la VM, sur l'état téléchargé, et
-sur la description de `run_shell` à garder juste : elle annonce les
-outils de la VM (`sandbox/linux.js`). **Pas d'`apk add` à la volée** :
-aucun miroir Alpine n'autorise CORS, le navigateur refuserait leurs
-réponses à la VM ; un paquet utile s'ajoute ici. Ce qu'ajoute chaque paquet
-à l'initramfs, compressé en zstd :
+Chaque Mo supplémentaire augmente l'usage mémoire de la VM, la taille de
+l'état téléchargé et la description de `run_shell`. Cette dernière doit
+rester cohérente avec les outils disponibles dans la VM (`sandbox/linux.js`).
+L'installation à la volée avec `apk add` n'est pas prise en charge : aucun
+miroir Alpine n'autorise CORS, et le navigateur refuserait ses réponses.
+Ajouter au build tout paquet nécessaire. Le tableau indique la taille
+compressée en zstd ajoutée à l'initramfs par chaque paquet :
 
 | Paquets | Initramfs compressé |
 |---|---|
@@ -379,35 +387,38 @@ réponses à la VM ; un paquet utile s'ajoute ici. Ce qu'ajoute chaque paquet
 | `+ vim` | +32 Mo bruts, son runtime (déconseillé : `nano`, et le `vi` de busybox) |
 | `+ file` | +10 Mo bruts, sa base `magic` |
 
-Le défaut (`LINUX_PACKAGES` de `proxy/Dockerfile`) donne un état de
-≈ 33 Mo ; le strict minimum (`bash python3 jq sqlite htop`), ≈ 26 Mo. **L'initramfs se décompresse dans un tmpfs limité à la moitié de
-la mémoire** (128 Mo sur 256) : au-delà, ses derniers fichiers manquent,
-l'agent avec eux, et la VM ne démarre plus ; `state.mjs` le dit alors, avec
-la fin de la console. Le système fait ≈ 72 Mo par défaut.
+La configuration par défaut (`LINUX_PACKAGES` dans `proxy/Dockerfile`)
+produit un état d'environ 33 Mo ; le minimum strict (`bash python3 jq sqlite
+htop`) produit un état d'environ 26 Mo. **L'initramfs est décompressé dans
+un tmpfs limité à la moitié de la mémoire** (128 Mo sur 256). Si cette
+limite est dépassée, les derniers fichiers copiés, dont l'agent, manquent
+et la VM ne démarre pas. `state.mjs` signale alors l'erreur avec la fin de
+la console. Le système occupe environ 72 Mo par défaut.
 
-Avec beaucoup de paquets, la mémoire peut manquer : 192 Mo est le
-minimum avec `bash python3`, et la VM en a 256 (`MEMORY_MB` de
-`vm.mjs`).
+Une configuration comportant de nombreux paquets peut manquer de mémoire :
+avec `bash python3`, 192 Mo constituent le minimum ; la VM est configurée
+avec 256 Mo (`MEMORY_MB` dans `vm.mjs`).
 
 ### Mettre à jour v86
 
-v86 est figé dans `proxy/wasm/package.json` (`npm i --save-exact
-v86@<version>`). Un **état ne se reprend qu'avec le même build de v86** et
-les mêmes périphériques (`uart1`, `filesystem` de `createVM`) : après
-une mise à jour, ou un changement de ces options, il faut reconstruire la
-VM. L'image Docker le fait toute seule, `build.sh` le fait sur une machine
-de développement. Le BIOS vient du dépôt de v86, au commit de la version
-npm ; il change rarement.
+La version de v86 est fixée dans `proxy/wasm/package.json` (`npm i
+--save-exact v86@<version>`). Un **état ne peut être repris qu'avec le
+même build de v86** et les mêmes périphériques (`uart1`, `filesystem` de
+`createVM`). Après une mise à jour ou une modification de ces options,
+reconstruire la VM. Le build Docker le fait automatiquement ; `build.sh`
+effectue cette opération sur une machine de développement. Le BIOS provient
+du dépôt v86 au commit correspondant à la version npm ; il change rarement.
 
-Le pilote (`vm.js`) et l'état (`state.bin.zst`) vont **ensemble** : un
-ancien pilote ne reprend pas un état neuf (`Cannot read properties of null`
-dans `set_state`). Un proxy devant la page peut pourtant garder les `.js`
-en cache de son côté, quoi que demande le navigateur : Nginx Proxy Manager,
-avec *Cache Assets*, les garde 30 min. La page demande donc chaque fichier
-de `vendor/` **à son empreinte** (`vm.js?v=db5a66eba01e`), lue dans le
-`versions.json` de son dossier, écrit au build et jamais mis en cache.
-Un fichier qui change change d'adresse ; inchangé, il garde la sienne et
-n'est pas retéléchargé (`chat/tools/sandbox/vendor.js`).
+Le pilote (`vm.js`) et l'état (`state.bin.zst`) doivent **correspondre** :
+un ancien pilote ne peut pas reprendre un état récent (`Cannot read
+properties of null` dans `set_state`). Un proxy placé devant la page peut
+mettre les fichiers `.js` en cache indépendamment des demandes du navigateur.
+Par exemple, Nginx Proxy Manager avec *Cache Assets* les conserve 30 min.
+La page demande donc chaque fichier de `vendor/` **avec son empreinte**
+(`vm.js?v=db5a66eba01e`), lue dans le `versions.json` du dossier. Ce fichier
+est généré au build et n'est jamais mis en cache. Une modification change
+l'adresse du fichier ; une version inchangée conserve la même adresse et
+n'est pas retéléchargée (`chat/tools/sandbox/vendor.js`).
 
 ## Licences
 
@@ -418,25 +429,25 @@ n'est pas retéléchargé (`chat/tools/sandbox/vendor.js`).
   (GPL-2.0), bash (GPL-3.0+), Python (PSF), musl (MIT), et les licences des
   autres paquets.
 
-Servir l'état, c'est distribuer ces binaires. Leurs sources sont celles
-d'Alpine Linux (aports) aux versions exactes de
-`vendor/linux/packages.txt`.
+La distribution de l'état implique la distribution de ces binaires. Leurs
+sources correspondent aux versions exactes des paquets Alpine Linux
+(aports) répertoriées dans `vendor/linux/packages.txt`.
 
 ## Limites
 
-- **Réseau coupé par défaut** ; ouvert, un vrai accès à Internet par le
-  relais du proxy pour les comptes de `[ui].linux_relay`, sinon des
-  requêtes web vers les sites qui permettent CORS, rien d'autre
-  (ci-dessus).
+- **Réseau coupé par défaut** ; lorsqu'il est activé, les comptes autorisés
+  par `[ui].linux_relay` accèdent à Internet via le relais du proxy. Les
+  autres comptes disposent uniquement de requêtes web vers les sites qui
+  autorisent CORS (voir ci-dessus).
 - **x86 32 bits** : les binaires sont i686.
-- **Lente** : une émulation, environ 10 à 50 fois plus lente que la
-  machine.
-- **Mémoire** : la VM prend environ 300 Mo à l'onglet tant qu'elle
-  tourne. *Arrêter* les rend.
-- **Un seul utilisateur, root** : le modèle et l'utilisateur sont tous
-  deux root sur la même machine, et voient les mêmes fichiers.
-- **`/work` seul est gardé.** Un `/work` de plus de 100 Mo compressés ne
-  l'est plus.
-- **Le terminal** montre ce que le modèle exécute, sauf un script très
-  long ou avec des tabulations, qui passe par `ttyS1` (la puce de l'appel
-  dans le fil le montre). Les outils `shell_*` ne s'y voient pas.
+- **Émulation lente** : environ 10 à 50 fois plus lente que la machine hôte.
+- **Mémoire** : la VM utilise environ 300 Mo dans l'onglet pendant son
+  exécution. Le bouton *Arrêter* libère cette mémoire.
+- **Un seul utilisateur, root** : le modèle et l'utilisateur sont root sur
+  la même machine et accèdent aux mêmes fichiers.
+- **`/work` seul est conservé.** Une archive `/work` de plus de 100 Mo
+  compressés n'est pas conservée.
+- **Le terminal** affiche les commandes exécutées par le modèle, sauf les
+  scripts très longs ou contenant des tabulations, qui passent par `ttyS1`
+  (la puce de l'appel dans le fil l'indique). Les outils `shell_*` ne sont
+  pas affichés dans le terminal.

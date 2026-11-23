@@ -1,40 +1,39 @@
 # Les outils du navigateur
 
-Dans le [chat](chat.md) de la page, le modèle peut solliciter
-l'**appareil** de l'utilisateur : son heure, sa position, son
-presse-papiers, sa caméra, son écran. Il peut aussi faire tourner du
-**code** (JavaScript, TypeScript, PHP, SQLite, PostgreSQL) dans un bac isolé du
-navigateur, sur des fichiers qui ne quittent pas l'appareil, et même une
-[VM Linux](linux.md) que l'utilisateur ouvre aussi dans un terminal.
+Dans le [chat](chat.md) de la page, le modèle peut demander l'accès à
+l'**appareil** de l'utilisateur : heure, position, presse-papiers, caméra
+et écran. Il peut aussi exécuter du **code** (JavaScript, TypeScript, PHP,
+SQLite, PostgreSQL) dans un bac isolé du navigateur. Les fichiers restent
+sur l'appareil. Une [VM Linux](linux.md), également accessible à l'utilisateur
+dans un terminal, est aussi disponible.
 
-Ces outils ne passent pas par le proxy. Il les rend au navigateur en
-`tool_calls`, comme à tout client : la page les exécute et renvoie leur
-résultat au modèle.
+Ces outils ne transitent pas par le proxy. Celui-ci les transmet au
+navigateur sous forme de `tool_calls`, comme pour tout client ; la page
+exécute les appels et renvoie leurs résultats au modèle.
 
-Cette page présente chaque outil avec un exemple réel. Les captures ont
-été prises dans la page, avec un modèle de démonstration qui appelle les
-outils ; les résultats affichés sont ceux qu'ils ont vraiment rendus.
+Les captures ont été réalisées dans la page avec un modèle de démonstration ;
+elles montrent les résultats produits par les outils.
 
 ## Activer les outils
 
 ![Le menu Outils, section Navigateur : seize familles cochables (Date et heure, Position, Notifications, Presse-papiers, Agenda, Liens, Partage, Capture d'écran, Caméra, QR et codes-barres, Pipette, Écran allumé, Lecture à voix haute, JavaScript et TypeScript, PHP, SQL), chacune avec une ligne d'explication](navigateur-outils.png)
 
-Les outils sont rangés par **famille**, dans la section *Navigateur* du
-menu **Outils**. On les coche par conversation, et une conversation
-neuve reprend le dernier choix fait dans ce navigateur.
+Les outils sont regroupés par **famille** dans la section *Navigateur* du
+menu **Outils**. Leur activation est définie par conversation ; une
+nouvelle conversation reprend le dernier choix effectué dans ce navigateur.
 
-- Seules les familles que le navigateur sait faire sont proposées : pas
-  de *Partage* sous Linux, pas de *Pipette* hors Chrome et Edge, pas de
-  *QR et codes-barres* hors macOS, Android et ChromeOS.
-- Seules les familles cochées sont déclarées au modèle, car chaque outil
-  coûte des tokens à chaque requête.
-- Cochées d'office : Date et heure, Notifications, Presse-papiers,
-  Agenda, Liens.
-- Un modèle qui tourne dans le navigateur (Gemini Nano) ne reçoit pas
+- Seules les familles prises en charge par le navigateur sont proposées :
+  *Partage* n'est pas proposé sous Linux, *Pipette* hors de Chrome et Edge,
+  et *QR et codes-barres* hors de macOS, Android et ChromeOS.
+- Seules les familles activées sont déclarées au modèle ; chaque outil
+  consomme des tokens à chaque requête.
+- Activées par défaut : Date et heure, Notifications, Presse-papiers,
+  Agenda et Liens.
+- Les modèles exécutés dans le navigateur (Gemini Nano) ne reçoivent pas
   ces outils.
 
-**Refuser des outils à tous les comptes** : `[ui].page_tools_disabled`,
-dans `config.toml`, liste des familles (`camera`, `screen`, `sql`…) ou des
+**Désactiver des outils pour tous les comptes** : `[ui].page_tools_disabled`
+dans `config.toml` accepte des familles (`camera`, `screen`, `sql`…) et des
 outils (`run_php`) :
 
 ```toml
@@ -42,20 +41,20 @@ outils (`run_php`) :
 page_tools_disabled = ["camera", "screen", "run_php"]
 ```
 
-- `/ui/session` ne donne pas leurs déclarations à la page : ces familles
-  disparaissent du menu, et ces outils ne sont plus présentés au modèle.
-  Un appel qui viendrait quand même n'est pas exécuté ; une carte déjà
-  dans une conversation reste affichée, et ses boutons répondent que
-  l'outil est indisponible.
-- Le proxy retire **lui-même** ces outils de toute requête du chat de la
-  page : une page modifiée ne peut pas les réactiver. Les autres routes
-  (`/v1/chat/completions` d'un client) ne sont pas touchées : ces outils
-  n'appartiennent qu'à la page.
-- Une famille dont tous les outils sont refusés l'est aussi.
-- Les noms sont ceux des déclarations (`tools/page/` du proxy, voir
+- `/ui/session` ne transmet pas les déclarations désactivées à la page : les
+  familles correspondantes disparaissent du menu et les outils ne sont plus
+  présentés au modèle. Un appel reçu malgré tout n'est pas exécuté. Une carte
+  déjà présente dans une conversation reste affichée ; ses boutons signalent
+  que l'outil est indisponible.
+- Le proxy retire ces outils de toute requête du chat de la page ; une page
+  modifiée ne peut pas les réactiver. Les autres routes, dont
+  `/v1/chat/completions` pour les clients, ne sont pas concernées : ces outils
+  sont propres à la page.
+- Une famille dont tous les outils sont désactivés l'est également.
+- Les noms correspondent aux déclarations (`tools/page/` du proxy ; voir
   [Écrire un outil de la page](#écrire-un-outil-de-la-page)). Une entrée
-  inconnue est signalée au journal. Une extension se désactive dans
-  Configuration → Extensions, pas ici.
+  inconnue est consignée dans le journal. Désactiver les extensions dans
+  Configuration → Extensions.
 
 Les API du navigateur passent par [VueUse](https://vueuse.org)
 (`static/vueuse.iife.min.js`, chargé avec Vue) : presse-papiers,
@@ -64,28 +63,28 @@ réseau, batterie.
 
 ## Deux sortes de cartes
 
-**Une carte qui attend.** Ce qui touche à l'appareil n'est **jamais** lu
-sans un clic de l'utilisateur. Le modèle n'obtient pas la position, le
-presse-papiers, une photo ou une capture parce que la permission du
-navigateur est déjà accordée : une carte apparaît dans le fil, avec la
-raison donnée par le modèle, et la réponse attend.
+Les outils qui accèdent à l'appareil attendent une action explicite de
+l'utilisateur. Une permission déjà accordée par le navigateur ne suffit pas
+à lire une position, le presse-papiers, une photo ou une capture : une carte
+apparaît dans le fil avec la raison fournie par le modèle, puis attend une
+réponse.
 
-- Répondue, la carte devient le résultat de l'outil, et la réponse du
-  modèle reprend.
-- Refusée, le modèle lit « L'utilisateur a refusé… » et s'adapte.
-- Une nouvelle question pendant qu'une carte attend la ferme sans
+- Après une réponse, la carte devient le résultat de l'outil et la réponse
+  du modèle reprend.
+- En cas de refus, le modèle reçoit « L'utilisateur a refusé… » et adapte sa
   réponse.
-- La caméra et l'écran sont coupés dès que la carte est répondue ou
+- Une nouvelle question ferme la carte en attente sans réponse.
+- La caméra et l'écran sont désactivés dès que la carte est répondue ou
   abandonnée.
-- Tout l'état est dans le message : une carte survit à un rechargement
-  de la page.
+- L'état est stocké dans le message ; la carte est conservée après le
+  rechargement de la page.
 
-**Une carte durable.** Ce qui reste utile après la réponse laisse une
-carte **sous la réponse**, que l'utilisateur rejoue quand il veut :
-partager, rouvrir un lien, recopier un texte, reprendre une couleur,
-rallumer l'écran, annuler un rappel, relire un texte. Elle est gardée
-avec la conversation et revient après un rechargement. Ses boutons
-n'envoient plus rien au modèle : la réponse est finie.
+**Une carte durable.** Les résultats réutilisables après la réponse sont
+affichés dans une carte **sous la réponse**. L'utilisateur peut ainsi
+partager, rouvrir un lien, recopier un texte, reprendre une couleur, rallumer
+l'écran, annuler un rappel ou relire un texte. La carte est conservée avec la
+conversation et restaurée après un rechargement. Ses boutons n'envoient plus
+de requête au modèle, dont la réponse est terminée.
 
 | Outil | Carte qui attend | Carte durable |
 |---|---|---|
@@ -101,7 +100,7 @@ n'envoient plus rien au modèle : la réponse est finie.
 | `keep_screen_on` | — | l'état de l'écran : le basculer |
 | `speak` | — | le texte : *Relire*, *Arrêter* |
 
-Les autres outils (date, agenda, code) s'exécutent aussitôt.
+Les outils de date, d'agenda et de code s'exécutent immédiatement.
 
 ## Les outils un par un
 
@@ -109,132 +108,142 @@ Les autres outils (date, agenda, code) s'exécutent aussitôt.
 
 ![Le modèle appelle device_context, qui rend la date et l'heure locales, le fuseau, les langues, et l'état de l'appareil ; il en déduit dans combien de jours ouvre le marché de Noël](navigateur-date.png)
 
-La date et l'heure locales, le fuseau horaire et les langues, et ce que
-le navigateur dit de l'appareil : en ligne ou non, le type et le débit
-de la connexion, la batterie, le thème et le mouvement préférés, la
-taille de la fenêtre. Ce que le navigateur ne sait pas n'est pas dit. Le
-modèle l'appelle avant de parler d'« aujourd'hui », ou pour adapter sa
-réponse à l'appareil. Pas de carte.
+`device_context` renvoie la date et l'heure locales, le fuseau horaire,
+les langues et les informations que le navigateur expose sur l'appareil :
+état de connexion, type et débit réseau, batterie, préférences de thème et
+de mouvement, et dimensions de la fenêtre. Les données indisponibles ne sont
+pas incluses. Le modèle peut appeler cet outil avant de faire référence à
+« aujourd'hui » ou pour adapter sa réponse à l'appareil. Aucune carte n'est
+créée.
 
 ### Position — `get_location`
 
 ![Carte « Le modèle demande votre position », avec la raison et trois boutons : Position approximative, Position précise, Refuser](navigateur-position.png)
 
-Le modèle donne la raison, montrée sur la carte. L'utilisateur choisit :
-**approximative** (arrondie à environ 1 km), **précise**, ou refus.
+La carte affiche le motif fourni par le modèle. L'utilisateur choisit une
+position **approximative** (arrondie à environ 1 km), une position
+**précise**, ou refuse la demande.
 
 ### Notifications — `notify`
 
 ![Carte durable « Rappel programmé à 13:39 » : Sortir le pain du four, avec Annuler le rappel](navigateur-notification.png)
 
-Une notification tout de suite, ou un rappel dans N minutes (24 h au
-plus). Le rappel n'arrive que si la page reste ouverte ; pour un
-rendez-vous, l'agenda vaut mieux.
+`notify` envoie une notification immédiate ou programme un rappel dans N
+minutes (24 h au plus). Le rappel est émis uniquement si la page reste
+ouverte. Pour un rendez-vous, utiliser l'agenda.
 
-- Si le navigateur n'a pas encore la permission, une carte la demande
-  d'abord, puisqu'il ne la demande que sur un clic.
-- Chaque notification laisse une carte durable. Un rappel programmé
-  s'**annule** ; perdu par un rechargement, il se **reprogramme** ;
-  passé, il se **renvoie**.
+- Si l'autorisation du navigateur n'a pas encore été accordée, une carte la
+  demande ; le navigateur ne peut demander cette autorisation qu'après un
+  clic.
+- Chaque notification crée une carte durable. Un rappel programmé peut être
+  **annulé** ; s'il est perdu après un rechargement, il peut être
+  **reprogrammé** ; une fois son heure passée, il peut être **renvoyé**.
 
 ### Presse-papiers — `clipboard_write`, `clipboard_read`
 
 ![clipboard_write copie une commande de déploiement et la laisse en carte durable, avec Copier ; clipboard_read affiche une carte « Le modèle demande le contenu de votre presse-papiers » avec Coller le presse-papiers et Refuser](navigateur-presse-papiers.png)
 
-**Copier** se fait aussitôt : une commande, une adresse, un message à
-coller ailleurs. Le texte reste en carte durable, à recopier. Si le
-navigateur refuse la copie (la page n'avait pas le focus), la carte
-permet de copier d'un clic. **Lire** passe par une carte qui attend, car
-le presse-papiers peut contenir n'importe quoi.
+`clipboard_write` copie immédiatement une commande, une adresse ou un
+message. Le texte est conservé dans une carte durable, qui permet de le
+recopier. Si le navigateur refuse la copie parce que la page n'avait pas le
+focus, la carte permet de lancer la copie par clic. `clipboard_read` attend
+une action sur une carte, car le presse-papiers peut contenir un contenu
+arbitraire.
 
 ### Agenda — `add_to_calendar`
 
 ![add_to_calendar produit un fichier Revue-du-proxy-LLM.ics sous la réponse, avec titre, horaires, lieu et rappel](navigateur-agenda.png)
 
-Un événement au format `.ics` sous la réponse, que l'utilisateur ouvre
-dans son agenda (Google, Outlook, Apple…). Les heures sont locales ; un
-rappel N minutes avant est possible. Contrairement à un rappel par
-notification, le rendez-vous survit à la page.
+L'outil génère un événement au format `.ics` sous la réponse ; l'utilisateur
+l'ouvre dans son agenda (Google, Outlook, Apple…). Les heures sont locales
+et un rappel peut être défini N minutes avant. Contrairement à un rappel
+par notification, l'événement reste disponible après la fermeture de la
+page.
 
 ### Liens — `open_link`
 
 ![open_link laisse une carte durable « Lien proposé » : la raison, l'adresse complète d'un itinéraire OpenStreetMap, avec Ouvrir dans un onglet et Copier](navigateur-lien.png)
 
-Une adresse http(s) à ouvrir dans un nouvel onglet : un itinéraire, une
-recherche, une page de documentation. L'appel n'attend pas : il laisse
-une carte durable où l'adresse se lit **en entier**, à ouvrir quand on
-veut, et à rouvrir plus tard. Le modèle ne sait pas si elle a été
-ouverte.
+`open_link` crée une carte durable contenant une adresse http(s) complète
+(itinéraire, recherche ou page de documentation). L'appel n'attend pas ;
+l'utilisateur peut ouvrir l'adresse dans un nouvel onglet, la copier ou la
+rouvrir plus tard. Le modèle ne reçoit pas d'information indiquant si le lien
+a été ouvert.
 
 ### Partage — `share`
 
 ![share laisse sous la réponse une carte durable : la recette des crêpes et un lien, boutons Partager… et Copier](navigateur-partage.png)
 
-Un texte, et éventuellement une adresse, à envoyer vers une autre
-application (messagerie, mail, notes) par le partage du système. L'appel
-n'attend pas : il laisse une carte durable, que l'utilisateur partage
-quand il veut, et autant de fois qu'il veut. Sur un appareil sans
-partage (Linux, ou la conversation rouverte ailleurs), elle propose
-seulement *Copier*.
+`share` crée une carte durable contenant un texte et, éventuellement, une
+adresse à transmettre à une autre application (messagerie, e-mail, notes)
+via le partage du système. L'appel n'attend pas ; l'utilisateur peut
+partager le contenu à tout moment et autant de fois que nécessaire. Si
+l'appareil ne prend pas en charge le partage (Linux ou conversation rouverte
+ailleurs), la carte propose uniquement *Copier*.
 
 ### Capture d'écran — `capture_screen`
 
 ![Carte « Le modèle demande une capture d'écran », avec la raison et Choisir quoi capturer](navigateur-capture-ecran.png)
 
-L'utilisateur choisit un onglet, une fenêtre ou l'écran entier dans le
-sélecteur du navigateur, voit l'**aperçu**, puis envoie, reprend ou
-refuse. L'image part au modèle jointe au résultat : il faut un modèle
-qui lit les images.
+Dans le sélecteur du navigateur, l'utilisateur choisit un onglet, une
+fenêtre ou l'écran entier, puis consulte l'**aperçu**. Il peut envoyer,
+reprendre ou refuser la capture. L'image est jointe au résultat transmis au
+modèle ; elle ne peut être interprétée que par un modèle qui prend en charge
+les images.
 
 ### Caméra — `take_photo`
 
 ![Carte « Le modèle demande une photo » : l'aperçu de la photo d'une étiquette de confiture, avec Envoyer la photo, Reprendre et Refuser](navigateur-photo.png)
 
-La caméra arrière s'active sur un clic. L'utilisateur prend la photo, la
-vérifie en aperçu, puis l'envoie ou la reprend. L'image est réduite à
-1920 pixels de côté au plus.
+Un clic active la caméra arrière. L'utilisateur prend une photo, la vérifie
+dans l'aperçu, puis l'envoie ou la reprend. La résolution est limitée à
+1920 pixels par côté.
 
 ### QR et codes-barres — `scan_code`
 
 ![Le code lu (la configuration d'un réseau Wi-Fi) part au modèle et reste en carte durable « Code lu », avec Copier](navigateur-qr-code.png)
 
-Un QR code ou un code-barres lu à la caméra ou sur une capture d'écran
-(API `BarcodeDetector` : macOS, Android, ChromeOS), sur une carte qui
-attend. Seul le **texte** lu part au modèle, pas d'image. Le code reste
-en carte durable : à copier, ou à ouvrir si c'est une adresse.
+`scan_code` lit un QR code ou un code-barres depuis la caméra ou une capture
+d'écran avec l'API `BarcodeDetector` (macOS, Android, ChromeOS). La carte
+attend une action de l'utilisateur. Seul le **texte** décodé est transmis au
+modèle, sans image ; la carte durable permet de copier le code ou d'ouvrir
+son adresse s'il s'agit d'une URL.
 
 ### Pipette — `pick_color`
 
 ![La couleur prise part au modèle et reste en carte durable « Couleur prise » : le code #4f7cac, sa pastille, Copier et Prendre une autre couleur](navigateur-pipette.png)
 
-Une couleur prise n'importe où à l'écran, rendue en hexadécimal (API
-`EyeDropper` : Chrome et Edge). La carte durable montre la pastille et
-le code, à copier ; *Prendre une autre couleur* la remplace.
+`pick_color` sélectionne une couleur n'importe où à l'écran et la renvoie
+au format hexadécimal (API `EyeDropper`, Chrome et Edge). La carte durable
+affiche la pastille et le code à copier ; *Prendre une autre couleur*
+remplace la sélection.
 
 ### Écran allumé — `keep_screen_on`
 
 ![keep_screen_on laisse une carte durable « Écran maintenu allumé », avec Rendre à la veille, puis le modèle commence la recette](navigateur-ecran-allume.png)
 
-Empêche la mise en veille pendant une recette, un pas-à-pas ou une
-présentation, tant que la page est visible ; le verrou est repris quand
-la page revient au premier plan. La carte durable montre l'état de
-l'écran et le bascule, après un rechargement aussi.
+`keep_screen_on` empêche la mise en veille pendant une recette, un pas-à-pas
+ou une présentation, tant que la page est visible. Le verrou est repris au
+retour de la page au premier plan. La carte durable affiche l'état de l'écran
+et permet de le basculer, y compris après un rechargement.
 
 ### Lecture à voix haute — `speak`
 
 ![speak lit une étape de recette et laisse une carte durable « Lu à voix haute », avec Relire](navigateur-voix.png)
 
-La page lit un texte à voix haute : une étape d'un pas-à-pas mains
-libres, un résumé à écouter — avec le moteur choisi dans les *Réglages*
-du chat (le navigateur, ou un modèle de synthèse du proxy : voir
-[Chat](chat.md)). La lecture part aussitôt
-(l'utilisateur vient d'écrire, la page a eu son geste) ; la carte
-durable permet de **relire**, ou d'**arrêter** pendant la lecture. La
-voix et le débit sont ceux choisis dans les *Réglages* du chat (ceux
-d'*Écouter*). Avec le navigateur, si la voix parle la langue du texte ;
-sinon une voix de cette langue (`lang`, celle du navigateur par défaut).
-Avec un modèle du proxy, `lang` donne la langue de lecture, sauf si les
-réglages en fixent une.
+`speak` lit un texte à voix haute, par exemple une étape de procédure
+mains libres ou un résumé. Le moteur est celui des *Réglages* du chat : le
+navigateur ou un modèle de synthèse du proxy (voir [Chat](chat.md)). La
+lecture démarre immédiatement, car l'utilisateur vient d'écrire et la page
+a reçu le geste associé. La carte durable permet de **relire** le texte ou
+d'**arrêter** la lecture.
+
+La voix et le débit sont définis dans les *Réglages* du chat, comme pour
+*Écouter*. Avec le moteur du navigateur, la voix choisie est utilisée si
+elle parle la langue du texte ; sinon, le navigateur sélectionne une voix
+dans cette langue (`lang`, voix par défaut du navigateur). Avec un modèle du
+proxy, `lang` définit la langue de lecture, sauf si les réglages en
+spécifient une.
 
 ## Le code dans le navigateur
 
@@ -244,49 +253,48 @@ TypeScript), la **vérification de types TypeScript**, **PHP**, **SQL**
 
 ### Le bac
 
-- Le code tourne dans un **Worker**, créé dans un cadre `sandbox` sans
-  origine : il n'a accès ni à la page, ni à sa session, ni à ses
-  cookies.
-- Une politique de sécurité coupe **tout réseau** : `fetch`, ou
-  `file_get_contents` sur une URL en PHP, échouent.
-- Une boucle sans fin ne fige pas la page : le bac est supprimé au délai
-  dépassé (15 s pour JavaScript, 30 s pour PHP, 60 s pour SQL,
+- Le code s'exécute dans un **Worker** créé dans un cadre `sandbox` sans
+  origine. Il n'a accès ni à la page, ni à sa session, ni aux cookies.
+- La politique de sécurité désactive **tout accès réseau** : `fetch` et
+  `file_get_contents` sur une URL en PHP échouent.
+- Une boucle infinie ne bloque pas la page : le bac est supprimé à
+  l'expiration du délai (15 s pour JavaScript, 30 s pour PHP, 60 s pour SQL,
   PostgreSQL et la vérification TypeScript).
-- PHP 8.3 (≈ 18 Mo), SQLite (≈ 700 Ko), PostgreSQL (PGlite, ≈ 17 Mo), Chart.js et sucrase (≈ 200 Ko
-  chacun) et le compilateur TypeScript (≈ 7 Mo) sont servis par le proxy sous `/ui/static/vendor/`. Ils ne sont téléchargés
-  qu'au premier appel, puis revalidés par le navigateur sans être
-  retéléchargés. Chacun est demandé à son empreinte (`?v=`, lue dans
-  `vendor/versions.json`) : un cache devant la page ne peut pas servir un
-  runtime périmé après une mise à jour.
+- PHP 8.3 (≈ 18 Mo), SQLite (≈ 700 Ko), PostgreSQL (PGlite, ≈ 17 Mo),
+  Chart.js et sucrase (≈ 200 Ko chacun) ainsi que le compilateur TypeScript
+  (≈ 7 Mo) sont servis par le proxy sous `/ui/static/vendor/`. Ils sont
+  téléchargés au premier appel, puis revalidés par le navigateur sans être
+  retéléchargés. Chaque fichier est demandé avec son empreinte (`?v=`, lue
+  dans `vendor/versions.json`) afin qu'un cache devant la page ne fournisse
+  pas un runtime périmé après une mise à jour.
 
 ### Fichiers fournis, fichiers produits
 
-Ces outils prennent un paramètre `files` : des chemins du
-**dossier ouvert** (*Joindre → Dossier…*) ou des noms de **pièces
-jointes** texte du fil. La page lit ces fichiers et les passe au bac :
-ils ne partent pas au modèle, qui ne reçoit que ce que son code
-renvoie.
+Le paramètre `files` désigne des chemins du **dossier ouvert** (*Joindre →
+Dossier…*) ou des noms de **pièces jointes** texte du fil. La page lit ces
+fichiers et les transmet au bac ; leur contenu n'est pas envoyé au modèle,
+qui ne reçoit que les données renvoyées par le code.
 
-Ce que le code produit arrive sous la réponse :
+Les fichiers produits par le code sont joints sous la réponse :
 
-- un fichier **texte** (CSV, JSON, SVG, Markdown…) s'**ouvre en aperçu**
-  d'un clic, comme avec `save_file` : le Markdown rendu, le reste tel
-  quel, d'où il se copie ou se télécharge ;
+- un fichier **texte** (CSV, JSON, SVG, Markdown…) s'**ouvre en aperçu** au
+  clic, comme avec `save_file` ; le Markdown est rendu, les autres formats
+  sont affichés tels quels et peuvent être copiés ou téléchargés ;
 - une **image** (png, jpeg, webp, gif) s'affiche. Si le modèle de la
-  conversation lit les images, la première lui est jointe : il peut
-  vérifier son graphique.
+  conversation lit les images, la première lui est jointe pour qu'il puisse
+  vérifier le graphique.
 
-Dix fichiers au plus par appel, et 5 Mo par image. Les autres binaires
-sont refusés.
+Limites : dix fichiers par appel et 5 Mo par image. Les autres fichiers
+binaires sont refusés.
 
 ### SQL — `run_sql`
 
 ![run_sql importe data/ventes-2026.csv du dossier ouvert (2 400 lignes, types déduits) et agrège le chiffre d'affaires par région ; run_javascript en dessine le graphique en barres avec Chart.js ; le modèle résume avec un tableau](navigateur-sql-graphique.png)
 
-`run_sql` travaille sur une base **SQLite propre à la conversation**.
-Elle est gardée dans ce navigateur (IndexedDB) et jamais envoyée au
-proxy. En incognito, elle reste en mémoire seulement. Elle est effacée
-avec la conversation.
+`run_sql` utilise une base **SQLite propre à la conversation**. Son état
+est conservé dans ce navigateur (IndexedDB) et n'est jamais envoyé au
+proxy. En navigation privée, la base reste uniquement en mémoire. La
+suppression de la conversation l'efface.
 
 `files` importe d'abord des fichiers en tables :
 
@@ -304,41 +312,41 @@ avec la conversation.
 
 ![Une question suivante interroge la table ventes_2026 importée plus tôt, sans relire le CSV ; la base est proposée en conversation.sqlite sous la réponse](navigateur-sql-base.png)
 
-Les tables restent d'un message à l'autre. `reset` vide la base.
-`download` met sous la réponse un fichier `conversation.sqlite`, avec la
-base telle qu'elle est au moment du clic.
+Les tables persistent entre les messages. `reset` vide la base.
+`download` joint sous la réponse un fichier `conversation.sqlite`, contenant
+la base telle qu'elle est au moment du clic.
 
 ### PostgreSQL — `run_postgres`
 
-`run_postgres` exécute du SQL **PostgreSQL 18** complet (PGlite) :
-PL/pgSQL, JSONB, CTE récursives, fonctions fenêtres, types, `RAISE
-NOTICE`. Tout se passe dans le navigateur, comme pour `run_sql`, et rien
-ne part au proxy.
+`run_postgres` exécute des requêtes **PostgreSQL 18** avec PGlite :
+PL/pgSQL, JSONB, CTE récursives, fonctions fenêtres, types et `RAISE
+NOTICE`. L'exécution a lieu dans le navigateur ; aucune donnée ne transite
+par le proxy.
 
-- La base est **propre à la conversation**, et distincte de celle de
-  `run_sql`. Son dossier de données est gardé compressé dans ce
-  navigateur (IndexedDB) : ≈ 4,5 Mo pour une petite base, car
-  PostgreSQL y range son catalogue. Tant que la base ne contient aucun
-  objet de l'utilisateur, rien n'est gardé. Elle est effacée avec la
-  conversation, et `reset` la vide.
-- `files` importe d'abord des fichiers. CSV, TSV, JSON et JSONL sont lus
-  comme pour `run_sql`, avec les mêmes noms de table et de colonnes et
-  les mêmes types déduits, ici en `bigint`, `double precision` ou
-  `text`. Un fichier `.sql` est exécuté tel quel (un schéma, un dump en
-  `INSERT`). Une base SQLite s'importe avec `run_sql`.
-- Le script part en une seule requête, donc en une **transaction
-  implicite** : une erreur l'annule en entier, sauf ce qu'un `COMMIT`
-  explicite a validé avant elle. L'erreur donne le message de
-  PostgreSQL, sa position, son détail et sa piste.
-- Chaque résultat rend 200 lignes au plus.
-- Un appel prend 0,5 à 1 s : la base est rechargée à chaque fois, et
-  le premier appel compile PostgreSQL.
+- La base est **propre à la conversation** et distincte de celle de
+  `run_sql`. Son dossier de données est conservé compressé dans ce
+  navigateur (IndexedDB) : ≈ 4,5 Mo pour une petite base, car PostgreSQL y
+  stocke son catalogue. Rien n'est conservé tant que la base ne contient
+  aucun objet de l'utilisateur. La suppression de la conversation et
+  `reset` effacent la base.
+- `files` importe d'abord les fichiers. CSV, TSV, JSON et JSONL sont traités
+  comme avec `run_sql`, avec les mêmes noms de table et de colonnes et les
+  mêmes types déduits, ici `bigint`, `double precision` ou `text`. Un fichier
+  `.sql` est exécuté tel quel (schéma ou dump `INSERT`). Une base SQLite
+  s'importe avec `run_sql`.
+- Le script est envoyé en une requête et s'exécute dans une **transaction
+  implicite**. Une erreur annule la transaction entière, sauf les opérations
+  validées par un `COMMIT` explicite préalable. L'erreur contient le message
+  de PostgreSQL, sa position, son détail et sa piste.
+- Chaque résultat contient au plus 200 lignes.
+- Un appel prend 0,5 à 1 s : la base est rechargée à chaque appel et
+  PostgreSQL est compilé lors du premier.
 
 ### JavaScript — `run_javascript`
 
-Le code est le corps d'une fonction `async` : `return` rend une valeur,
-et la sortie de `console.log` est rendue aussi. Le code dispose de :
-
+Le code constitue le corps d'une fonction `async` : `return` renvoie une
+valeur et les appels à `console.log` contribuent également à la sortie.
+Le code dispose des fonctions suivantes :
 | Fonction | Rôle |
 |---|---|
 | `readText(chemin)`, `readBytes(chemin)` | lire un fichier fourni par `files` |
@@ -346,97 +354,99 @@ et la sortie de `console.log` est rendue aussi. Le code dispose de :
 | `output(nom, données)` | produire un fichier : texte, objet (en JSON), `Uint8Array`, `Blob`, ou `OffscreenCanvas` (en PNG) |
 | `chart(config, {width, height, name})` | dessiner un graphique Chart.js 4 : **interactif dans la réponse**, et en PNG pour le modèle (ci-dessous) ; Chart.js n'est chargé que si le code appelle `chart(` |
 
-Le graphique de la section SQL ci-dessus est un appel à `chart()`.
+Le graphique SQL ci-dessus utilise `chart()`.
 
-**Un graphique `chart()` est interactif.** Il s'affiche dans le **corps de
-la réponse** comme une carte durable, avec le vrai graphique Chart.js
-rejoué depuis sa configuration : valeurs au survol, légende cliquable
-pour masquer une série, *Télécharger en PNG*, *Plein écran*. Il revient
-après un rechargement, puisque seule sa configuration est gardée avec la
+**Les graphiques `chart()` sont interactifs.** Ils s'affichent dans le
+**corps de la réponse** sous forme de carte durable, recréée à partir de la
+configuration Chart.js : valeurs au survol, légende cliquable pour masquer
+une série, *Télécharger en PNG* et *Plein écran*. Après un rechargement, le
+graphique est recréé à partir de la configuration conservée avec la
 conversation.
 
-- Par défaut, la carte va en tête de la réponse. Le modèle peut la
-  placer dans son texte en écrivant, sur une ligne seule,
-  `![titre](chart:<nom>)` ; le résultat de l'outil le lui indique, avec
-  le nombre de graphiques affichés.
-- Le modèle reçoit le PNG du graphique (le premier, s'il lit les
-  images), pour vérifier ce qu'il a dessiné.
-- Les fonctions de la configuration (un formateur d'étiquettes) ne se
-  gardent pas : la carte interactive s'en passe.
+- Par défaut, la carte apparaît en tête de la réponse. Le modèle peut la
+  placer dans son texte avec `![titre](chart:<nom>)` sur une ligne seule ;
+  le résultat de l'outil indique la syntaxe et le nombre de graphiques.
+- Le modèle reçoit le PNG du premier graphique s'il lit les images, afin de
+  vérifier le rendu.
+- Les fonctions de la configuration, comme un formateur d'étiquettes, ne
+  sont pas conservées ; la carte interactive n'en dépend pas.
 
 Avec `language: "typescript"`, le code est du **TypeScript** : sucrase
-en retire les types avant l'exécution, sans les vérifier (c'est le rôle
-de `check_typescript`, ci-dessous).
+retire les types avant l'exécution sans les vérifier. La vérification des
+types est effectuée par `check_typescript`.
 
 ### TypeScript — `check_typescript`
 
 ![check_typescript vérifie le sous-dossier src du dossier ouvert avec son tsconfig.json : deux erreurs dans src/panier.ts (une variable inutilisée, une chaîne au lieu d'un nombre), que le modèle explique](navigateur-typescript.png)
 
-Le compilateur TypeScript 6 vérifie les types de fichiers du dossier
-ouvert, sans rien exécuter.
+Le compilateur TypeScript 6 vérifie les types des fichiers du dossier ouvert
+sans exécuter le code.
 
-- `files` désigne ce qui est vérifié : des fichiers, ou des
-  sous-dossiers (tout ce qu'ils contiennent) ; `.` désigne tout le
-  dossier.
-- Les `.ts`, `.tsx`, `.mts` et `.cts` du dossier sont tous chargés, pour
-  résoudre les imports relatifs ; seuls ceux de `files` sont vérifiés.
+- `files` désigne les fichiers ou sous-dossiers à vérifier ; un sous-dossier
+  inclut tout son contenu et `.` désigne le dossier entier.
+- Tous les fichiers `.ts`, `.tsx`, `.mts` et `.cts` du dossier sont chargés
+  pour résoudre les imports relatifs, mais seuls ceux désignés par `files`
+  sont vérifiés.
 - Le `tsconfig.json` à la racine du dossier s'applique, commentaires
-  compris. Sans lui : `strict`, ES2022, modules ESNext.
-- Il n'y a pas de `node_modules` : un import de paquet vaut `any`.
-- `code` et `path` vérifient un texte **à la place** d'un fichier : le
-  modèle contrôle une modification avant de la proposer avec
+  compris. En son absence, les options sont `strict`, ES2022 et modules
+  ESNext.
+- Aucun `node_modules` n'est disponible ; les imports de paquets sont donc
+  typés `any`.
+- `code` et `path` fournissent un texte à vérifier **à la place** d'un
+  fichier. Le modèle peut valider une modification avant de la proposer avec
   `folder_write`.
-- Le résultat liste les erreurs au format
-  `fichier(ligne,colonne): error TSxxxx: message`, 100 au plus.
+- Le résultat liste au plus 100 erreurs au format
+  `fichier(ligne,colonne): error TSxxxx: message`.
 
-Le compilateur est le dernier écrit en JavaScript (TypeScript 6.0) : la
-version 7 est réécrite en Go et ne tourne pas dans le navigateur.
+TypeScript 6.0 est la dernière version du compilateur écrite en JavaScript.
+La version 7 est réécrite en Go et ne s'exécute pas dans le navigateur.
 
 ### PHP — `run_php`
 
 ![run_php charge lib/tva.php du dossier ouvert avec require, lit le CSV des ventes, affiche un tableau HT, TVA, TTC par produit et produit ttc-par-produit.csv sous la réponse](navigateur-php.png)
 
-Un script PHP 8.3 en ligne de commande, sans serveur web.
+`run_php` exécute un script PHP 8.3 en ligne de commande, sans serveur
+web.
 
-- Les fichiers de `files` sont copiés sous `/data`, qui est le dossier
-  courant, avec leurs chemins : `require "lib/tva.php"` fonctionne.
-- Ce que le script écrit sous `/out` est rendu sous la réponse. GD est
-  présent pour produire des images.
-- Le résultat donne la sortie (`echo`, `print_r`, `var_dump`), les
+- Les fichiers désignés par `files` sont copiés sous `/data`, le répertoire
+  courant, en conservant leurs chemins ; `require "lib/tva.php"` fonctionne.
+- Le contenu écrit sous `/out` est joint sous la réponse. GD est disponible
+  pour produire des images.
+- Le résultat contient la sortie (`echo`, `print_r`, `var_dump`), les
   erreurs et le code de sortie.
 
-Chaque appel repart de zéro.
+Chaque appel utilise un environnement neuf.
 
 ### Linux — `run_shell`
 
 ![Panneau Terminal ouvert : le modèle tape dans le terminal le décompte par adresse des erreurs 404 d'un journal nginx joint (awk, sort, uniq) et en résume le résultat dans un tableau ; l'utilisateur lance ensuite, dans le même terminal, la commande qu'il suggère](navigateur-linux.png)
 
-`run_shell` exécute un script bash dans une **VM Linux** (Alpine i386,
-émulée par v86) qui tourne dans l'onglet, sans réseau par défaut : bash, busybox,
-python3, jq, sqlite3. `/work` est gardé avec la conversation, `files` y
-copie des fichiers, et ce qui est écrit sous `/out` arrive sous la
-réponse.
+`run_shell` exécute un script bash dans une **VM Linux** (Alpine i386
+émulée par v86) dans l'onglet. Le réseau est désactivé par défaut. La VM
+inclut bash, busybox, python3, jq et sqlite3. `/work` est conservé par
+conversation, `files` y copie les fichiers et les fichiers écrits sous
+`/out` sont joints à la réponse.
 
-L'utilisateur ouvre la **même machine** dans le panneau **Terminal**
-(bouton de l'en-tête du chat, toujours là ; il s'ouvre dès que le modèle
-se sert de la VM). Pour modifier un fichier, le modèle a `shell_grep`,
-`shell_read`, `shell_edit` et `shell_write`, comme pour un artifact.
-Panneau ouvert, le modèle y
-**tape** ses commandes d'une ligne, sous ses yeux. Le réseau est coupé ;
-le panneau peut l'ouvrir pour la conversation (des requêtes web, par le
-navigateur).
+Le panneau **Terminal** donne accès à la **même machine** (bouton dans
+l'en-tête du chat, toujours disponible ; ouverture automatique lorsque le
+modèle utilise la VM). Les outils `shell_grep`, `shell_read`, `shell_edit`
+et `shell_write` permettent de modifier les fichiers comme pour un artifact.
+Lorsque le panneau est ouvert, les commandes d'une ligne du modèle sont
+**saisies dans le terminal** et visibles par l'utilisateur pendant leur
+exécution. Le réseau peut être activé pour la conversation depuis le panneau ;
+les requêtes web passent alors par le navigateur.
 
-Construction de la VM, protocole, paquets et limites :
-[La VM Linux du navigateur](linux.md).
+Voir [La VM Linux du navigateur](linux.md) pour les détails de construction,
+de protocole, de paquets et de limites.
 
 ### Programmes d'outils — `run_tools_program`
 
-La famille **Programmes d'outils**, décochée d'office, laisse le modèle
-écrire un court programme JavaScript qui appelle les
-[outils hébergés](outils-heberges.md) cochés dans la conversation et
-combine leurs résultats. Une recherche suivie de plusieurs lectures tient
-alors en un seul appel : le modèle ne lit que ce que le programme rend,
-pas chaque page.
+La famille **Programmes d'outils**, désactivée par défaut, permet au modèle
+d'écrire un court programme JavaScript qui appelle les [outils hébergés](outils-heberges.md)
+activés dans la conversation et combine leurs résultats. Une recherche
+suivie de plusieurs lectures peut ainsi être exécutée dans un seul appel ;
+le modèle reçoit uniquement le résultat du programme, et non le contenu de
+chaque page.
 
 ```js
 const found = await tools.web_search({query: "release notes llama.cpp"});
@@ -445,47 +455,48 @@ return Promise.all(urls.map((url) =>
   tools.web_grep({url, pattern: "breaking"}).catch((e) => e.code)));
 ```
 
-- Le programme tourne dans le [bac](#le-bac), sans réseau. `tools.<nom>`
-  prend les mêmes arguments que la fonction de l'outil et rend son texte ;
-  un échec lève une erreur dont `code` est le
-  [code d'erreur](outils.md#codes-derreur).
-- Chaque appel passe par la page, puis par `POST /ui/tools/<nom>` : la
+- Le programme s'exécute dans le [bac](#le-bac), sans réseau. `tools.<nom>`
+  accepte les mêmes arguments que l'outil et renvoie son texte. En cas
+  d'échec, il lève une erreur dont `code` est le [code d'erreur](outils.md#codes-derreur).
+- Chaque appel passe par la page, puis par `POST /ui/tools/<nom>`. La
   session, les droits du compte et
   [`[tools].direct_calls_per_minute`](configuration.md#tools) s'appliquent.
-  Seuls les outils hébergés cochés dans la conversation sont joignables
-  (pas `memory` en incognito).
-- Bornes : 20 appels par programme, 4 à la fois, 120 s ; au-delà de 100
-  appels refusés, le programme est arrêté. Un appel encore en cours quand
-  le programme finit est coupé. Comme pour `/v1/tools`, les plafonds par
-  réponse (`[tools].max_calls`, ceux d'`image_generation` ou de
-  `code_execution`) ne s'appliquent pas : seule la borne par minute vaut
-  d'un programme à l'autre.
+  Seuls les outils hébergés activés dans la conversation sont accessibles
+  (`memory` n'est pas accessible en navigation privée).
+- Limites : 20 appels par programme, 4 appels simultanés et 120 s. Au-delà
+  de 100 appels refusés, le programme est arrêté. Les appels encore en cours
+  sont interrompus lorsque le programme se termine. Comme pour `/v1/tools`,
+  les plafonds par réponse (`[tools].max_calls`, ceux d'`image_generation` ou
+  de `code_execution`) ne s'appliquent pas ; seule la limite par minute est
+  commune aux programmes.
 - La [provenance des URL](outils.md#la-provenance-des-url-toolsnetprovenance)
-  s'applique comme dans le reste du chat : le proxy donne à la page les
-  sites connus de la conversation en fin de réponse, et chaque appel du
-  programme les porte, avec ceux que ses appels précédents ont fait
-  connaître. Ce que le programme rend ne fait connaître aucun site.
+  s'applique comme dans le reste du chat. À la fin de la réponse, le proxy
+  transmet à la page les sites connus de la conversation. Chaque appel du
+  programme transmet ces sites et ceux connus par ses appels précédents.
+  Le résultat du programme ne fait connaître aucun site.
 
 ### Installer les runtimes
 
 L'image Docker construit les runtimes (PHP, SQLite, PostgreSQL, Chart.js,
-sucrase, TypeScript) dans l'étape `wasm` de `proxy/Dockerfile`. Hors Docker, il faut les construire une fois :
+sucrase, TypeScript) dans l'étape `wasm` de `proxy/Dockerfile`. Hors Docker,
+exécuter une fois :
 
 ```bash
 cd proxy/wasm && npm ci && npm run build   # → proxy/llm_proxy/ui/web/static/vendor/
 ```
 
-La VM Linux a son propre build (`proxy/linux/build.sh`, voir [La VM Linux](linux.md)).
+La VM Linux utilise un build distinct (`proxy/linux/build.sh` ; voir
+[La VM Linux](linux.md)).
 
-Sans eux, `run_php`, `run_sql`, `run_postgres` et `check_typescript` répondent que le
-runtime manque. `run_javascript` fonctionne toujours, mais sans
+Sans ces runtimes, `run_php`, `run_sql`, `run_postgres` et `check_typescript`
+indiquent qu'ils sont absents. `run_javascript` reste disponible, sans
 `chart()` ni TypeScript.
 
 ## Écrire un outil de la page
 
-Un outil de la page suit le contrat de **tous les outils** (voir
-[Écrire un outil](outils.md#écrire-un-outil)), avec `runs = browser` : sa
-**déclaration** est côté proxy, son **exécution** dans la page.
+Un outil de la page respecte le contrat commun à **tous les outils** (voir
+[Écrire un outil](outils.md#écrire-un-outil)) et déclare `runs = browser` :
+sa **déclaration** est dans le proxy et son **exécution** dans la page.
 
 | Où | Contenu |
 |---|---|
@@ -494,12 +505,11 @@ Un outil de la page suit le contrat de **tous les outils** (voir
 | `chat/tools/index.js` | le registre : l'inscription des modules, leur vérification, l'installation des déclarations (`install`), ce que le chat appelle |
 | `chat/tools/page/`, `device/`, `sandbox/` | l'exécution, un module par famille ; `media.js`, les flux caméra et écran ; `bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits ; `tables.js`, un CSV ou un JSON lu en table |
 
-La page reçoit les déclarations par `/ui/session` (`chat.page` : les
-familles, et la fonction de chaque outil avec ses `settings`). Le
-registre les attache à l'exécution du même nom : une déclaration sans
-exécution, ou l'inverse, est dite à la console et reste hors du menu. Le
-chat (`ChatPanel.js`) ne nomme aucun outil : il passe toujours par le
-registre.
+La page reçoit les déclarations via `/ui/session` (`chat.page`), qui contient
+les familles et la fonction de chaque outil avec ses `settings`. Le registre
+associe chaque déclaration à l'exécution de même nom. Une déclaration ou une
+exécution sans correspondance est signalée dans la console et exclue du menu.
+`ChatPanel.js` ne nomme aucun outil : il passe toujours par le registre.
 
 ### La déclaration (proxy)
 
@@ -517,10 +527,10 @@ LOCATION_FAMILY = Family(
 )
 ```
 
-Un texte que le prompt cite et que l'exécution applique (une borne, un
-délai) va dans `settings` : écrit une fois, côté proxy, il arrive à la
-page avec la déclaration (`this.settings` de l'outil). Les textes des
-outils de la page sont en français.
+Déclarer dans `settings` les valeurs citées dans le prompt et appliquées par
+l'exécution (par exemple une limite ou un délai). Définies une fois côté
+proxy, elles sont transmises à la page avec la déclaration (`this.settings`
+de l'outil). Les textes des outils de la page sont en français.
 
 | `Family` | Rôle |
 |---|---|
@@ -535,8 +545,8 @@ outils de la page sont en français.
 ### L'exécution : `PageTool`
 
 Un outil est une **classe** qui hérite de `PageTool`. Son constructeur
-passe son nom ; ses méthodes réécrivent celles de l'interface, chacune
-marquée `@override` :
+transmet son nom à la classe de base. Les méthodes de l'interface sont
+redéfinies et marquées `@override` :
 
 ```js
 class GetLocation extends PageTool {
@@ -553,77 +563,78 @@ class GetLocation extends PageTool {
 
 | Membre | Rôle | Défaut |
 |---|---|---|
-| `super({name})` | le nom de l'outil, celui de sa déclaration | — |
-| `placement`, `component` (dans `super`) | une carte dans le fil ou dans la feuille du bas ; un composant Vue à la place du gabarit commun | dans le fil, gabarit commun |
-| `settings` | les valeurs déclarées avec l'outil (`max_rows`, `timeout`…), posées à l'installation | `{}` |
-| `run(args, ctx)` | l'exécution, aussitôt : un texte, ou `{result, image?, artifact?, keep?}` | — |
-| `waits(args, ctx)` | attend-il l'utilisateur ? | non |
-| `prepare(args, ctx)` | l'état de la carte, ou `{error}` | `{}` |
-| `view(w)` | ce que la carte montre : titre, détail, boutons, aperçu, flux vidéo, citation | — |
-| `act(w, action, ctx, payload)` | un bouton : `{result, image?, keep?}` quand la carte est répondue, `null` si elle attend encore ; une erreur levée s'affiche | — |
-| `release(w)` | la carte est fermée : couper la caméra, l'écran | rien |
-| `abandoned(w)` | le résultat d'une carte laissée sans réponse | « L'utilisateur n'a pas répondu… » |
-| `notice(w)`, `pending(w)` | le texte de la notification ; la ligne qui rouvre la feuille | le titre de la carte |
-| `keptView(k)`, `keptAct(k, action, ctx)` | une carte **durable**, laissée sous la réponse par un `run` qui rend `{result, keep}` (`keep` : une carte, ou une liste) : ce qu'elle montre, et ses boutons, rejouables à volonté (rien ne part plus au modèle) | aucune |
-| `keptComponent` (dans `super`) | un composant Vue de carte durable, à la place de `keptView` ; avec un `slot`, la carte se place **dans le texte** de la réponse (`![titre](chart:<slot>)`), sinon en tête | gabarit commun, sous la réponse |
-| `summary(args)` | la ligne de la puce de l'appel dans le fil | vide |
-| `fileContent(ref)` | le contenu, relu au clic, d'un fichier produit avec `source: {tool, ref}` | aucun |
-| `forget(convId)` | la conversation est supprimée : effacer ce que l'outil garde pour elle | rien |
+| `super({name})` | nom de l'outil, identique à celui de sa déclaration | — |
+| `placement`, `component` (dans `super`) | emplacement de la carte (fil ou feuille du bas) et composant Vue optionnel à la place du gabarit commun | fil, gabarit commun |
+| `settings` | valeurs déclarées avec l'outil (`max_rows`, `timeout`…), définies à l'installation | `{}` |
+| `run(args, ctx)` | exécution immédiate ; renvoie un texte ou `{result, image?, artifact?, keep?}` | — |
+| `waits(args, ctx)` | indique si l'outil attend une action de l'utilisateur | non |
+| `prepare(args, ctx)` | renvoie l'état initial de la carte ou `{error}` | `{}` |
+| `view(w)` | renvoie le contenu de la carte : titre, détail, boutons, aperçu, flux vidéo ou citation | — |
+| `act(w, action, ctx, payload)` | traite une action de bouton ; renvoie `{result, image?, keep?}` quand la carte est répondue, `null` si elle reste en attente ; les erreurs levées sont affichées | — |
+| `release(w)` | libère les ressources à la fermeture de la carte, par exemple la caméra ou l'écran | rien |
+| `abandoned(w)` | résultat associé à une carte abandonnée sans réponse | « L'utilisateur n'a pas répondu… » |
+| `notice(w)`, `pending(w)` | texte de la notification et ligne qui rouvre la feuille | titre de la carte |
+| `keptView(k)`, `keptAct(k, action, ctx)` | rendu et actions d'une carte **durable**, créée par un `run` qui renvoie `{result, keep}` (`keep` peut contenir une carte ou une liste) ; les actions sont rejouables sans nouvel envoi au modèle | aucune |
+| `keptComponent` (dans `super`) | composant Vue d'une carte durable à la place de `keptView` ; avec un `slot`, place la carte **dans le texte** (`![titre](chart:<slot>)`), sinon en tête | gabarit commun, sous la réponse |
+| `summary(args)` | texte affiché dans la puce d'appel du fil | vide |
+| `fileContent(ref)` | contenu relu au clic d'un fichier produit avec `source: {tool, ref}` | aucun |
+| `forget(convId)` | efface les données conservées pour une conversation supprimée | rien |
 
-`ctx` donne au tour la conversation, le message, le dossier ouvert,
-`vision` (le modèle lit-il les images ?) et `download`.
+`ctx` fournit le contexte du tour : conversation, message, dossier ouvert,
+`vision` (capacité du modèle à lire les images) et `download`.
 
-Les API du navigateur passent par VueUse : `tools/device/vueuse.js` crée
-ses composables une fois, dans une portée qui vit autant que la page
-(`useClipboard`, `useShare`, `useEyeDropper`, `useWakeLock`,
-`useSpeechSynthesis`…) ; la caméra et l'écran ont la leur, par carte
-(`useUserMedia`, `useDisplayMedia`).
+Les API du navigateur utilisent VueUse. `tools/device/vueuse.js` initialise
+les composables une seule fois dans une portée liée à la durée de vie de la
+page (`useClipboard`, `useShare`, `useEyeDropper`, `useWakeLock`,
+`useSpeechSynthesis`…). Les composables de caméra et d'écran sont initialisés
+pour chaque carte (`useUserMedia`, `useDisplayMedia`).
 
-`defineFamily({...})` regroupe l'exécution des outils d'une famille, et
-ce qui dépend du navigateur ou du tour :
+`defineFamily({...})` associe l'exécution des outils d'une famille aux
+informations dépendant du navigateur ou du tour :
 
 | Clé | Rôle |
 |---|---|
-| `key` | la clé de sa déclaration, de la liste fermée `FAMILY` |
-| `tools` | ses outils (`new GetLocation()`…) |
-| `available()` | ce navigateur sait-il la faire ? |
-| `enabled(ctx)` | active pour ce tour ? Un choix de l'utilisateur (le dossier : s'il l'a ouvert), jamais l'état de la conversation |
-| `state(ctx)` | l'état du moment (les artifacts et leur version, le dossier ouvert, le réseau de la VM), joint au message de l'utilisateur du tour quand il a changé |
+| `key` | clé de la déclaration, choisie dans la liste fermée `FAMILY` |
+| `tools` | instances des outils (`new GetLocation()`…) |
+| `available()` | indique si le navigateur prend en charge la famille |
+| `enabled(ctx)` | indique si la famille est active pour le tour, selon le choix de l'utilisateur (par exemple, si le dossier est ouvert), et non selon l'état de la conversation |
+| `state(ctx)` | état courant (artifacts et version, dossier ouvert, réseau de la VM), joint au message de l'utilisateur du tour lorsqu'il change |
 
-Le module exporte `FAMILIES`, et s'inscrit **une fois** dans la liste
-`MODULES` de `tools/index.js`. Un outil de la page fourni par une
-extension suit la même interface : voir [Extensions](extensions.md#le-js).
+Le module exporte `FAMILIES` et s'inscrit **une fois** dans `MODULES` de
+`tools/index.js`. Les outils de page fournis par une extension suivent la
+même interface : voir [Extensions](extensions.md#le-js).
 
 ### L'historique, en ajout seul
 
-Une requête commence exactement comme la précédente : mêmes outils, même
-prompt système, messages passés tels qu'ils ont été envoyés ; elle ajoute
-à la fin. Les caches de préfixe des backends (llama.cpp, gufo, Anthropic)
-et la réflexion signée d'Anthropic ne servent que ce début identique.
+Chaque requête conserve le préfixe de la précédente — mêmes outils, même
+prompt système et mêmes messages passés tels qu'ils ont été envoyés — puis
+ajoute les nouveaux messages. Les caches de préfixe des backends (llama.cpp,
+gufo, Anthropic) et la réflexion signée d'Anthropic ne réutilisent que ce
+préfixe identique.
 
-- Le prompt système (le sien, un résumé, les `guidance`) ne change pas
-  d'un tour à l'autre.
-- Les outils ne changent qu'au gré de l'utilisateur (menu Outils, dossier
-  ouvert) : ceux du débogage des artifacts sont toujours déclarés, et
-  répondent quand ils n'ont rien à faire.
-- L'état des outils (`state`) est fixé sur le message de l'utilisateur au
-  moment où il l'envoie (`state` dans la conversation), et joint à ce
+- Le prompt système, le résumé et les `guidance` restent inchangés d'un tour
+  à l'autre.
+- Les outils changent uniquement selon les choix de l'utilisateur (menu
+  Outils, dossier ouvert). Les outils de débogage des artifacts restent
+  toujours déclarés et répondent même lorsqu'ils n'ont rien à faire.
+- L'état des outils (`state`) est fixé au moment où le message de
+  l'utilisateur est envoyé (`state` dans la conversation). Il est joint au
   message s'il diffère du précédent (« [État du moment, ajouté par la
-  page] ») : rejoué à l'identique ensuite.
-- Un appel passé est rejoué tel qu'il a été vu, même si son contenu est
-  périmé depuis (un artifact retouché, un fichier réécrit) : la consigne
-  dit que seule compte la version actuelle (`read_artifact`,
-  `shell_read`). Le résumé (compactage) reste le moyen de réduire.
+  page] »), puis rejoué à l'identique.
+- Un appel passé est rejoué tel qu'il a été enregistré, même si son contenu
+  est périmé (artifact retouché, fichier réécrit). La consigne précise que
+  seule la version actuelle compte (`read_artifact`, `shell_read`). Le
+  compactage du résumé reste le moyen de réduire l'historique.
 
-Mesuré sur une conversation avec un artifact (Claude Haiku 5.5, la page
-puis deux retouches) : la première requête de chaque nouveau tour lisait
-0 % de son prompt dans le cache (la liste des artifacts changeait le
-prompt système, l'historique raccourcissait les anciens contenus), elle
-en lit 98 %.
+Mesure sur une conversation avec artifact (Claude Haiku 5.5, la page puis
+deux retouches) : la première requête de chaque nouveau tour lisait 0 % de
+son prompt dans le cache, car la liste des artifacts modifiait le prompt
+système et l'historique raccourcissait les anciens contenus. Elle en lit
+maintenant 98 %.
 
 ### Les garde-fous
 
-Ces vérifications empêchent les dérives :
+Le contrat des outils est vérifié à plusieurs niveaux :
 
 - **Le proxy**, au démarrage, refuse une déclaration hors contrat (un
   `run` Python sur un outil du navigateur, un nom hors de `ToolName`, une
