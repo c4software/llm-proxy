@@ -1,18 +1,20 @@
 # Outils hébergés
 
-Un outil **hébergé** est un outil que le proxy exécute lui-même, à la place
-d'OpenAI ou d'Anthropic. Un client de l'API Responses déclare `{"type": "web_search"}`
-en comptant que le fournisseur fera la recherche : sans outil hébergé, l'outil
-est retiré et le modèle n'a pas de recherche web. Pour l'activer : une instance
-SearXNG et les tables `[tools.web_search]` et `[tools.web_fetch]` (voir
+Un outil **hébergé** est exécuté par le proxy à la place d'OpenAI ou
+d'Anthropic. Un client de l'API Responses qui déclare
+`{"type": "web_search"}` attend du fournisseur qu'il effectue la recherche.
+Sans outil hébergé, le proxy retire cette déclaration et le modèle ne dispose
+pas de recherche web. Pour activer la recherche, configurer une instance
+SearXNG ainsi que `[tools.web_search]` et `[tools.web_fetch]` (voir
 [Mise en route](#mise-en-route)). D'autres outils (OCR, transcription, code,
-mémoire, images) se présentent sur `/v1/chat/completions`,
+mémoire, images) sont disponibles sur `/v1/chat/completions`,
 [`/v1/tools`](#appel-direct--v1tools) et [`/mcp`](#serveur-mcp--mcp).
 
-Le contrat d'un outil côté code (prompt, codes d'erreur par surface, liaisons
-aux protocoles) et comment en ajouter un : [`docs/outils.md`](outils.md).
-Un outil propre à un déploiement s'ajoute sans toucher au code, en fichier
-Python : [Extensions](extensions.md).
+Le contrat des outils côté code (prompts, codes d'erreur par surface et
+liaisons aux protocoles), ainsi que les modalités d'ajout, sont décrits dans
+[`docs/outils.md`](outils.md). Les outils propres à un déploiement peuvent
+être ajoutés dans un fichier Python, sans modification du code :
+[Extensions](extensions.md).
 
 ## Mise en route
 
@@ -40,25 +42,27 @@ l'instance n'a pas de limiteur, seul le proxy la joint (`http://searxng:8080`).
 
 3. `docker compose up -d --build`
 
-À savoir :
+Configuration :
 
-- **`SEARXNG_SECRET` n'est pas bloquante.** SearXNG refuse sa clé par défaut
-  mais accepte une clé vide. Absente, `docker compose` avertit et tout démarre
-  (une variable exigée arrêterait tout le compose, et toute une pile à
-  `include`). L'instance n'étant joignable que du proxy, la clé ne signe rien
-  d'exposé.
-- **Image épinglée** sur un tag daté (`AAAA.M.J-<commit>`). Mise à jour :
-  changer le tag dans `docker-compose.yml`, puis `docker compose up -d searxng`.
-- **`services/searxng/settings.yml`** garde les défauts de SearXNG
-  (`use_default_settings: true`) et ajoute le format `json` (sans lui,
-  `format=json` répond 403). Moteurs, langue et délais s'y changent, puis
-  `docker compose restart searxng`.
-- **Pas de `depends_on`** : SearXNG arrêté, la recherche rend une erreur au
-  modèle et le reste sert.
-- **Hors compose** (`uvicorn`, Coolify) : `searxng_url` pointe une instance
-  joignable, avec `json` dans ses `search.formats`.
-- **La qualité dépend des moteurs** que l'adresse de la machine peut joindre
-  (Brave limite le débit, DuckDuckGo oppose un CAPTCHA).
+- `SEARXNG_SECRET` est facultative. SearXNG refuse sa clé par défaut, mais
+  accepte une clé vide. En son absence, `docker compose` affiche un
+  avertissement et démarre les services. Une variable obligatoire empêcherait
+  le démarrage de tout le compose, y compris les piles qui l'incluent. Comme
+  seul le proxy peut joindre l'instance, la clé ne protège pas de service
+  exposé.
+- L'image est épinglée sur un tag daté (`AAAA.M.J-<commit>`). Pour la mettre
+  à jour, modifier le tag dans `docker-compose.yml`, puis exécuter
+  `docker compose up -d searxng`.
+- `services/searxng/settings.yml` conserve les paramètres par défaut de
+  SearXNG (`use_default_settings: true`) et active le format `json` (sans lui,
+  `format=json` renvoie 403). Modifier les moteurs, la langue ou les délais
+  dans ce fichier, puis exécuter `docker compose restart searxng`.
+- Aucun `depends_on` n'est défini. Si SearXNG est arrêté, la recherche renvoie
+  une erreur au modèle ; les autres services restent disponibles.
+- Hors compose (`uvicorn`, Coolify), `searxng_url` doit désigner une instance
+  joignable dont `search.formats` inclut `json`.
+- La qualité des résultats dépend des moteurs accessibles depuis l'adresse de
+  la machine (Brave limite le débit ; DuckDuckGo peut présenter un CAPTCHA).
 
 Diagnostic (l'instance n'est pas joignable de l'hôte) :
 

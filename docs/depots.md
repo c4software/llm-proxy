@@ -5,10 +5,10 @@ Gitea, Forgejo, ou tout dépôt git en HTTPS) : son arborescence, un fichier,
 une recherche. **Rien du projet n'est exécuté**, et son contenu est lu
 **dans un bac de l'exécuteur de code**, pas dans le proxy.
 
-Cas typique : un [webhook entrant](webhooks.md) reçoit une alerte de
-sécurité sur une image. Le modèle cherche dans le projet concerné où la
-dépendance est épinglée (`requirements.txt`, `pyproject.toml`…), et répond
-avec le correctif exact.
+Exemple : un [webhook entrant](webhooks.md) reçoit une alerte de sécurité sur
+une image. Le modèle recherche dans le projet concerné où la dépendance est
+épinglée (`requirements.txt`, `pyproject.toml`…), puis fournit le correctif
+correspondant.
 
 ## Activer
 
@@ -49,8 +49,7 @@ modèle ──repository(command, project…)──▶ proxy
 modèle ◀────────────── le texte ────────────┘
 ```
 
-Le travail est partagé pour que **le contenu d'un dépôt ne soit jamais
-décodé dans le proxy** :
+Cette séparation garantit que **le contenu d'un dépôt n'est jamais décodé dans le proxy** :
 
 - **Le proxy** choisit la source, télécharge l'archive avec son jeton et la
   garde compressée en cache. Il ne l'ouvre pas.
@@ -74,8 +73,7 @@ liens, les chemins absolus et les `..` de l'archive sont ignorés.
 
 ## Les sources
 
-Une source, c'est une forge, son adresse, un jeton et, au choix, les
-projets permis.
+Une source comprend une forge, son adresse, un jeton et, facultativement, les projets autorisés.
 
 - **Par compte** : chacun ajoute les siennes dans *Configuration → Dépôts*,
   avec ses propres jetons. Le jeton n'est jamais réaffiché : à la
@@ -169,8 +167,7 @@ machine qui héberge la pile, un swap chiffré, ou pas de swap.
 
 ## Tailles
 
-Les bornes du proxy et celles de l'exécuteur s'enchaînent ; il faut les
-monter ensemble pour de gros dépôts :
+Les limites du proxy et de l'exécuteur s'appliquent successivement. Pour les dépôts volumineux, les augmenter conjointement :
 
 | Borne | Défaut | Porte sur |
 |---|---|---|
@@ -201,11 +198,10 @@ monter ensemble pour de gros dépôts :
 - **Les forges** passent par le téléchargement commun du proxy : adresse
   résolue puis épinglée, corps borné, listes de refus de `[tools.net]`
   (`blocked_urls`, `blocked_domains`) appliquées, aussi au fetch `git`.
-- **Aucune règle d'adresse** : une source peut viser une forge du réseau
-  interne, et tout compte peut en créer une. Le proxy peut donc servir à
-  joindre des machines internes en HTTP(S) GET, avec ce que le compte met
-  dans l'adresse. C'est un choix de déploiement : ne pas activer `[repos]`
-  là où les comptes ne sont pas de confiance.
+- **Aucune règle d'adresse n'est appliquée** : une source peut viser une forge
+  du réseau interne, et tout compte peut en créer une. Le proxy peut donc
+  joindre des machines internes en HTTP(S) GET avec l'adresse fournie par le
+  compte. Ne pas activer `[repos]` si les comptes ne sont pas de confiance.
 - **Le modèle** ne choisit qu'une source (par son nom), un projet et une
   référence, vérifiés : un chemin de projet (ni `.` ni `..`), des motifs
   `projects`, une référence sans `..` ni `-` en tête.

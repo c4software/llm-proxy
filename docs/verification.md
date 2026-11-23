@@ -1,9 +1,8 @@
 # Vérification
 
-Cette page rassemble les commandes pour vérifier qu'un proxy installé
-répond, route bien et compte l'usage. Elle donne aussi les commandes des
-tests automatiques. Les exemples supposent le proxy sur
-`localhost:8000`.
+Les commandes ci-dessous vérifient la disponibilité du proxy, le routage et le
+comptage de l'usage, puis exécutent les tests automatiques. Elles supposent que
+le proxy écoute sur `localhost:8000`.
 
 ## Santé et catalogue
 

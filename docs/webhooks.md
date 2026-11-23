@@ -1,16 +1,15 @@
 # Webhooks
 
-Chaque compte peut définir ses propres webhooks, dans *Configuration →
-Webhooks* de `/ui`. Il y a deux sortes de webhooks :
+Chaque compte peut définir ses webhooks dans *Configuration → Webhooks* de `/ui`. Il existe deux types de webhooks :
 
-- un webhook **entrant** est une adresse secrète. Un service tiers
-  (supervision, CI, formulaire, cron, Slack) y poste un message au format
-  d'un webhook entrant de Slack. Le message entre dans une conversation du
-  chat de la page, et le modèle y répond au nom du compte ;
+- un webhook **entrant** est une adresse secrète à laquelle un service tiers
+  (supervision, CI, formulaire, cron, Slack) envoie un message au format
+  d'un webhook entrant de Slack. Le message est ajouté à une conversation du
+  chat de la page, et le modèle répond au nom du compte ;
 - un webhook **sortant** est une URL [Apprise](https://github.com/caronc/apprise/wiki)
   (Slack, Mattermost, Discord, Teams, Telegram, ntfy, e-mail…). Le proxy y
-  envoie la réponse à un webhook entrant. Le modèle peut aussi y poster, par l'outil
-  hébergé `webhook`, quand l'utilisateur le lui demande.
+  envoie la réponse à un webhook entrant. À la demande de l'utilisateur, le modèle
+  peut également y poster avec l'outil hébergé `webhook`.
 
 ## Activer
 
@@ -23,7 +22,7 @@ enabled = true
 ```
 
 Sans ces deux réglages, `/hooks/*` répond `404`. L'onglet Webhooks et
-l'outil `webhook` n'apparaissent pas non plus. Les autres réglages
+l'outil `webhook` ne sont pas affichés. Les autres réglages
 (bornes, délai, adresses privées) sont décrits dans
 [Configuration](configuration.md#webhooks).
 

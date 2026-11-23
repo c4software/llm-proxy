@@ -1,10 +1,10 @@
 # Statistiques (Usage API)
 
-Le proxy enregistre une ligne par requête servie dans `data/stats.db`
-(SQLite). Les compteurs survivent au redémarrage et toute période se
-calcule après coup. Ils se lisent par l'**Usage API d'OpenAI**, que le
-SDK officiel comprend tel quel ; le [tableau de bord](tableau-de-bord.md)
-s'en sert aussi. Rien à activer.
+Chaque requête servie est enregistrée dans `data/stats.db` (SQLite). Les
+compteurs persistent après redémarrage et peuvent être agrégés sur toute
+période. L'Usage API d'OpenAI expose ces données ; le SDK officiel et le
+[tableau de bord](tableau-de-bord.md) les utilisent. Aucune activation n'est
+requise.
 
 | Réglage | Défaut | Effet |
 |---|---|---|

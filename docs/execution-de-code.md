@@ -1,11 +1,10 @@
 # Exécution de code
 
-L'outil hébergé `code_execution` fait tourner un programme écrit par le
-modèle. Il lui rend le code de sortie, la sortie et les fichiers produits.
-Le proxy n'exécute rien lui-même : un service à part, `executor`
-(`services/executor/`), non exposé, est le seul à avoir un moteur de
-conteneurs. L'outil est **désactivé par défaut**, et le proxy sert sans
-lui.
+L'outil hébergé `code_execution` exécute un programme fourni par le modèle et
+renvoie son code de sortie, sa sortie et les fichiers produits. Le proxy
+n'exécute pas le programme. Seul le service distinct `executor`
+(`services/executor/`), non exposé, dispose d'un moteur de conteneurs. L'outil
+est **désactivé par défaut** ; le proxy fonctionne sans lui.
 
 ```text
 client ─▶ proxy ──HTTP + jeton──▶ executor ──podman exec──▶ bac (sans réseau)
@@ -20,7 +19,7 @@ client ─▶ proxy ──HTTP + jeton──▶ executor ──podman exec──
    ([Le compose de base et son override](#le-compose-de-base-et-son-override)) :
    il n'est pas dans le `docker-compose.yml` du dépôt.
 3. Suivre la [procédure de validation](#valider-lexécuteur-sur-le-déploiement),
-   qui finit par poser `enabled = true` et `[files] public_url`.
+   qui configure `enabled = true` et `[files] public_url`.
 
 L'exécuteur sert aussi à l'outil [`repository`](depots.md) : les dépôts y
 sont décompressés et lus, dans un bac par compte (la session

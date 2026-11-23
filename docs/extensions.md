@@ -1,14 +1,14 @@
 # Extensions
 
-Une extension est un sous-dossier, déposé par l'admin, qui ajoute des
-outils au proxy, au contrat de tous les outils
-([Écrire un outil](outils.md#écrire-un-outil)) : des outils que le proxy
-exécute ([outils hébergés](outils-heberges.md)), écrits en Python, et des
-outils que le navigateur exécute pour le chat de la page, déclarés en
-Python et exécutés en JavaScript. Elle sert à un outil spécialisé, propre
-à un déploiement, qui n'a pas sa place dans le code du proxy. Une fois
-chargé, l'outil se comporte comme un outil natif, là où son `offered` le
-dit (voir [Le .py](#le-py)) :
+Une extension est un sous-dossier déposé par l'administrateur. Elle ajoute
+des outils au proxy selon le [contrat commun](outils.md#écrire-un-outil) :
+des outils hébergés, écrits en Python ([outils hébergés](outils-heberges.md)),
+et des outils exécutés par le navigateur dans le chat de la page, déclarés
+en Python et exécutés en JavaScript. Elle permet d'ajouter un outil spécialisé
+propre au déploiement sans le placer dans le code du proxy.
+
+Un outil chargé se comporte comme un outil natif, selon son réglage `offered`
+(voir [Le .py](#le-py)) :
 - il est présenté au modèle (`/v1/chat/completions`, et `/v1/responses`
   ou `/v1/messages` s'il a une liaison) ;
 - il s'appelle directement par [`/v1/tools`](outils.md#v1tools--lenveloppe) et `/mcp` ;
@@ -16,15 +16,14 @@ dit (voir [Le .py](#le-py)) :
 - il se permet ou se refuse par les droits d'une clé ;
 - un outil du navigateur entre au menu Outils du chat, dans sa famille.
 
-Les extensions sont chargées **au démarrage**. Pour en ajouter, en
-retirer ou en modifier une, il faut redémarrer le proxy. Une extension
-déposée paraît alors dans la page, **désactivée** : un admin l'active, et
-la désactive, à chaud. Voir [Activer et désactiver](#activer-et-désactiver).
+Les extensions sont chargées **au démarrage**. Après l'ajout, la suppression
+ou la modification d'une extension, redémarrer le proxy. Une extension déposée
+apparaît alors dans la page, **désactivée** ; un administrateur peut l'activer
+ou la désactiver à chaud. Voir [Activer et désactiver](#activer-et-désactiver).
 
 ## Activer
 
-Monter un dossier **en lecture seule**, et le nommer dans la
-configuration :
+Monter un dossier **en lecture seule** et le déclarer dans la configuration :
 
 ```yaml
 # docker-compose.override.yml

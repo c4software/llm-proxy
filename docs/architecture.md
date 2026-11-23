@@ -1,12 +1,12 @@
 # Architecture
 
-Cette page décrit l'organisation du dépôt et le rôle de chaque fichier.
-Elle explique aussi comment une requête est relayée vers un backend.
+Structure du dépôt, dépendances entre paquets et traitement d'une requête.
 
 ## Le dépôt
 
-La racine ne porte que l'orchestration. Chaque rôle a son dossier, avec
-son image et ses tests.
+La racine contient les fichiers d'orchestration et les dossiers des
+composants. Le proxy et ses services sont séparés par domaine, avec leurs
+images et leurs tests.
 
 ```text
 llm-proxy/
@@ -25,7 +25,7 @@ llm-proxy/
 └── bench/      les bancs de vrais clients, en conteneurs jetables
 ```
 
-Commandes :
+Commandes de développement :
 
 - `proxy/` : `pytest`, `uvicorn main:app` ;
 - `proxy/wasm/` : `npm ci && npm run build`, qui écrit les runtimes des
@@ -48,42 +48,39 @@ embarque `data/config.example.toml`.
 
 ## Le relais
 
-Une requête suit toujours le même chemin.
+Le relais traite les requêtes selon les étapes suivantes.
 
-1. **Un `Call` la porte.** Cet objet connaît le backend, le modèle
-   demandé, l'endpoint et le dialecte du client. Il écrit la ligne de
-   stats, une seule fois, quelle que soit l'issue. Il construit les
-   erreurs à la forme attendue : `{"error": {…}}`, ou
-   `{"type": "error", …}` pour un client Anthropic.
-2. **La porte (`gate`).** D'abord le partage équitable (`share_gate`) :
-   un client au-delà de sa part attend qu'elle se libère. Puis, pour un
-   backend `quotas = true`, le limiteur de sa `QuotaState` (`albert.py`),
-   qui range la place prise dans `Call.tickets` : quand la requête est
-   comptée, la fenêtre est recalée sur l'`usage` réel. Le flux à pings
-   de `/v1/messages` (`pinged_stream`) ne peut pas passer par `gate`, qui
-   rend une réponse HTTP : il appelle les deux mêmes attentes en émettant
-   des `event: ping`.
-3. **Le relais (`forward`)** envoie la requête au backend. Les octets de
-   la réponse traversent un « robinet », qui les lit ou les réécrit au
-   passage :
-   - `stats.UsageCollector` laisse passer la réponse et lit l'`usage` ;
-   - `chat_api.Translator` la réécrit quand un outil hébergé est
-     présenté sur `/v1/chat/completions` ;
-   - `anthropic_api.Translator` la réécrit pour un client Anthropic ;
-   - `responses_api.Translator` la réécrit pour un client Responses.
+1. **`Call`** porte le backend, le modèle demandé, l'endpoint et le dialecte
+   du client. Il écrit une seule ligne de statistiques, quelle que soit
+   l'issue, et construit les erreurs au format attendu : `{"error": {…}}` ou
+   `{"type": "error", …}` pour Anthropic.
+2. **Porte (`gate`).** `share_gate` applique d'abord le partage équitable :
+   un client qui dépasse sa part attend qu'elle se libère. Pour un backend
+   `quotas = true`, `QuotaState` (`albert.py`) réserve ensuite une place et la
+   range dans `Call.tickets`. Après la réponse, la fenêtre est recalée sur
+   l'`usage` réel. Le flux de `/v1/messages` (`pinged_stream`) ne renvoie pas
+   une réponse HTTP par `gate` ; il applique les mêmes attentes et envoie des
+   événements `event: ping`.
+3. **Relais (`forward`).** Le proxy transmet la requête au backend. Le flux
+   de réponse est traité par des composants qui l'observent ou le
+   transforment :
+   - `stats.UsageCollector` laisse passer le flux et lit l'`usage` ;
+   - `chat_api.Translator` traduit les outils hébergés pour `/v1/chat/completions` ;
+   - `anthropic_api.Translator` convertit le flux pour un client Anthropic ;
+   - `responses_api.Translator` convertit le flux pour un client Responses.
 
-   Les trois traducteurs héritent de `surfaces/robinet.py` : découpe du
-   flux SSE, usage du dernier tour et somme des tours, tokens comptés.
-   Une coupure de l'upstream en plein flux passe par leur `fail` (ou un
-   chunk d'erreur en relais direct) et compte `502` ; un client qui
-   raccroche en cours de réponse compte `499`, avec ce qui a été généré.
-4. **Les outils hébergés.** Les traducteurs portent aussi les outils
-   hébergés, par un contrat commun (`pending`, `resolve`, `next_turn`,
-   `finalize`, `fail`). Une seule boucle, `hosted_loop`, exécute les
-   appels et relance le backend, pour toutes les surfaces ; un seul
-   départ, `endpoints.start_hosted`, ouvre le premier tour et choisit
-   entre relais d'erreur, flux et JSON mené à son terme
-   (`relaying.drain`, qui arrête la boucle si le client raccroche).
+   Les trois traducteurs héritent de `surfaces/robinet.py`, qui gère le
+   découpage SSE, l'usage du dernier tour et l'agrégation des tours. Si
+   l'upstream interrompt le flux, leur méthode `fail` (ou un chunk d'erreur
+   en relais direct) renvoie une erreur et compte `502`. Si le client ferme
+   la connexion pendant la réponse, le code `499` est compté avec les tokens
+   déjà générés.
+4. **Outils hébergés.** Les traducteurs partagent le contrat `pending`,
+   `resolve`, `next_turn`, `finalize`, `fail`. `hosted_loop` exécute les
+   outils et relance le backend pour les trois surfaces.
+   `endpoints.start_hosted` ouvre le premier tour et sélectionne le relais
+   d'erreur, le flux ou la réponse JSON complète (`relaying.drain` arrête la
+   boucle si le client se déconnecte).
 
 `gate` et `forward` servent toutes les routes ; seul `pinged_stream` a
 son propre chemin, sur les mêmes attentes.
@@ -100,16 +97,16 @@ de la page refusés par la configuration).
 
 ### Un seul processus
 
-Les fenêtres du partage équitable et des limiteurs, la mémoire des
-résultats, les fichiers rendus et les caches vivent en mémoire du
-processus. Le proxy tourne donc en UN processus par dossier de données :
-`startup.single_process` prend un verrou exclusif sur `stats.db.lock` et
-un second processus (`--workers`, `WEB_CONCURRENCY`) s'arrête au
-démarrage. La configuration est lue à l'import, en constantes de module ;
-`core/reload.py` en recharge une liste blanche à chaud (SIGHUP,
-`POST /ui/config/reload`) en réévaluant leurs expressions d'origine, trouvées
-dans le source des modules, et en suivant leurs copies (`from … import`).
-Le reste demande un redémarrage.
+Les fenêtres du partage équitable et des limiteurs, les mémoires de résultats,
+les fichiers rendus et les caches résident dans la mémoire du processus. Un
+répertoire de données ne peut donc être utilisé que par un processus.
+`startup.single_process` prend un verrou exclusif sur `stats.db.lock` ; un
+second processus (`--workers`, `WEB_CONCURRENCY`) s'arrête au démarrage. La
+configuration est lue à l'import et stockée dans des constantes de module.
+`core/reload.py` recharge à chaud une liste blanche (`SAFE`) par signal SIGHUP
+ou `POST /ui/config/reload`. Le rechargement réévalue les expressions
+d'origine dans le code source et met à jour leurs copies (`from … import`).
+Les autres réglages nécessitent un redémarrage.
 
 ## Fichiers
 
@@ -138,15 +135,15 @@ Le reste demande un redémarrage.
 | `app.py` | L'application FastAPI : routes et middlewares, catch-all en dernier |
 | `startup.py` | Démarrage et arrêt : stats, clients upstream, partage équitable, serveurs MCP, journal, limites des backends à quotas |
 
-Le code est dans `proxy/llm_proxy/`, rangé en paquets par domaine. Chacun
-a un `__init__.py` qui dit ce qu'il contient ; les chemins ci-dessous sont
-sous `proxy/llm_proxy/`.
+Le code applicatif se trouve dans `proxy/llm_proxy/`, réparti en paquets par
+domaine. Chaque paquet possède un `__init__.py` qui décrit son rôle. Les
+chemins ci-dessous sont relatifs à `proxy/llm_proxy/`.
 
-Les plus gros modules sont eux-mêmes des paquets, découpés en parties. Leur
-`__init__.py` réexporte ce que le reste du proxy en utilise : on écrit
-toujours `responses_api.to_chat`. Un test qui remplace un réglage d'un tel
-paquet passe par `fakes.everywhere()`, qui le remplace aussi dans chaque
-partie qui l'a importé.
+Les modules les plus volumineux sont divisés en sous-modules. Leur
+`__init__.py` réexporte les symboles utilisés par le reste du proxy ; les
+appels passent par le paquet, par exemple `responses_api.to_chat`. Les tests
+qui remplacent un réglage de paquet utilisent `fakes.everywhere()` pour
+remplacer aussi les copies importées dans ses sous-modules.
 
 ### `core/` : le noyau
 

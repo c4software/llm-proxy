@@ -1,34 +1,35 @@
 # Configuration
 
-Cette page est la référence de `data/config.toml`, table par table :
-chaque clé, sa valeur par défaut et son effet. Les explications longues
-sont dans les pages thématiques, en lien. La version commentée ligne à
-ligne est `data/config.example.toml`.
+Référence de `data/config.toml` : clés, valeurs par défaut et effets.
+La version commentée ligne par ligne est `data/config.example.toml`.
 
 ## Le fichier et les secrets
 
-Toute la configuration vit dans `data/config.toml`. Au premier démarrage,
-sans ce fichier, le proxy démarre sans configuration : l'API répond 503
-(`setup_required`) et `/ui` affiche la page d'installation, qui génère
-`data/config.toml`, le `.env` et le `docker-compose.override.yml`. Le
-fichier posé, un redémarrage quitte ce mode. Rien n'est écrit par le
-proxy ; `data/config.example.toml` décrit chaque réglage.
+Toute la configuration est définie dans `data/config.toml`. Au premier
+démarrage, en l'absence de ce fichier, le proxy démarre sans configuration :
+l'API répond 503 (`setup_required`) et `/ui` affiche la page d'installation.
+Celle-ci génère `data/config.toml`, `.env` et
+`docker-compose.override.yml`. Après création du fichier, un redémarrage
+quitte ce mode. Le proxy n'écrit rien dans la configuration ;
+`data/config.example.toml` décrit chaque réglage.
 
-L'environnement ne sert qu'à deux choses :
+Les variables d'environnement servent uniquement à :
 
 - **`CONFIG_PATH`** : l'emplacement du TOML.
   - Hors conteneur : `data/config.toml` à la racine du dépôt, d'où qu'on lance le proxy.
   - Dans l'image : `/app/data/config.toml`.
 - **Les secrets** : toute chaîne du TOML peut contenir `${VAR}`. Elle est
   remplacée au chargement par la variable d'environnement. Les clés
-  d'API restent ainsi hors du fichier et hors du dépôt. Une variable
-  absente ou vide devient `""` : le démarrage la nomme dans un
-  avertissement. Sous Docker, une clé ajoutée au `.env` doit aussi être
-  transmise au conteneur (`environment:` du service, dans
-  `docker-compose.yml` ou l'override) ; sinon le backend part sans clé.
-- **Un 401 du backend** (sa clé manque ou est refusée) est rendu au
-  client en **502** `upstream_auth_error`, jamais tel quel : le client
-  le prendrait pour le refus de SA clé (la page web se déconnectait).
+  d'API restent ainsi hors du fichier et du dépôt. Une variable absente
+  ou vide devient `""` ; le démarrage la signale dans un avertissement.
+  Sous Docker, une clé ajoutée au `.env` doit aussi être transmise au
+  conteneur (`environment:` du service, dans `docker-compose.yml` ou
+  l'override) ; sinon le backend démarre sans clé.
+
+Un 401 du backend (clé manquante ou refusée) est renvoyé au client en
+502 `upstream_auth_error`. Le 401 n'est jamais transmis tel quel : le
+client pourrait l'interpréter comme un refus de sa propre clé, ce qui
+déconnectait la page web.
 
 `data/config.toml` et `data/stats.db` sont dans `.gitignore`. Le dépôt
 ne garde que l'exemple.
@@ -56,13 +57,13 @@ Seuls ces réglages s'appliquent à chaud ; ils sont lus à chaque usage :
 | `[mcp_server]` | `allowed_origins` |
 | `[ui]` | `page_tools_disabled`, `linux_relay_max_bytes`, `linux_relay_idle_seconds` |
 
-Tout autre changement (backends, outils activés, chemins, OIDC…) reste
-sans effet jusqu'au redémarrage : le journal et la page les nomment
-(« attend un redémarrage »), et la configuration affichée reste celle en
+Tout autre changement (backends, outils activés, chemins, OIDC…) n'est
+pris en compte qu'après redémarrage. Le journal et la page indiquent
+« attend un redémarrage » ; la configuration affichée reste celle en
 vigueur. Un fichier invalide (TOML illisible, valeur du mauvais type) est
 refusé en entier : rien ne change. Les variables `${VAR}` sont relues dans
 l'environnement du processus, qui ne change pas : un secret modifié dans
-le `.env` demande de recréer le conteneur.
+le `.env` nécessite de recréer le conteneur.
 
 ## `[backends.<nom>]`
 
@@ -84,18 +85,18 @@ url = "http://bigchuck:8009"
 |---|---|---|
 | `url` | *(requis)* | Base du backend |
 | `api` | `"openai"` | Protocole du backend : `"openai"` (`/v1/chat/completions`) ou `"anthropic"` (`/v1/messages`). Voir [Backend Anthropic](#backend-anthropic) |
-| `api_key` | *(aucune)* | La clé du backend, et le seul endroit où elle vit (clé Albert, `--api-key` de llama-server). Si définie, elle remplace l'`Authorization` du client |
+| `api_key` | *(aucune)* | Champ de configuration de la clé du backend (clé Albert, `--api-key` de llama-server). Si définie, elle remplace l'`Authorization` du client |
 | `quotas` | `false` | Active le limiteur Albert (fenêtres minute et jour, `/v1/me/info`). Voir [`[quotas]`](#quotas) |
-| `timeout` | `proxy.upstream_timeout` | Secondes, pour la génération |
-| `meta_timeout` | `proxy.meta_timeout` | Secondes, pour `/v1/models`, `/v1/me/info`, `tokenize_path` |
-| `connect_timeout` | `1` sans quota, `15` avec quotas ou `api = "anthropic"` | Poignée de main TCP seule. Un backend local éteint échoue en 1 s ; un hôte vivant répond bien avant, même occupé |
+| `timeout` | `proxy.upstream_timeout` | Secondes pour la génération |
+| `meta_timeout` | `proxy.meta_timeout` | Secondes pour `/v1/models`, `/v1/me/info`, `tokenize_path` |
+| `connect_timeout` | `1` sans quota, `15` avec quotas ou `api = "anthropic"` | Délai limité à l'établissement de la connexion TCP. Un backend local arrêté échoue en 1 s ; un hôte joignable répond rapidement, même s'il est occupé |
 | `verify_ssl` | `true` | `false` pour un certificat auto-signé |
-| `force_tool_choice` | *(aucune injection)* | Injecte `tool_choice` quand `tools` est présent sans lui. `true` → `proxy.tool_choice` ; `"auto"`, `"required"`… → cette valeur. Exception : sans aucune table `[backends]`, Albert par défaut avec `"auto"` |
+| `force_tool_choice` | *(aucune injection)* | Injecte `tool_choice` quand `tools` est présent sans lui. `true` → `proxy.tool_choice` ; `"auto"`, `"required"`… → cette valeur. Exception : sans aucune table `[backends]`, Albert est utilisé par défaut avec `"auto"` |
 | `max_tokens` | `0` (aucun) | Plafond : le `max_tokens` / `max_completion_tokens` du client y est ramené. Jamais augmenté ni ajouté |
 | `images` | `false` (`true` avec `api = "anthropic"`) | Les modèles multimodaux du backend reçoivent les `image_url` d'un client Anthropic. Sinon, texte de remplacement |
 | `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact. llama.cpp : `"/tokenize"` |
 | `fair_share` | `true` | Le backend relève du [partage équitable](tableau-de-bord.md#partage-équitable). `false` : ses requêtes ne comptent dans la part de personne et n'attendent jamais |
-| `model_types` | `{}` | Type imposé à des modèles, par motif (`"*-vision-*" = "image-text-to-text"`). Sinon : le catalogue du backend, ou à défaut (llama-swap) le nom du modèle (`image`, `tts`, `asr`, `embed`…). Décide de ce qui est proposé à un client de chat et de qui reçoit les images |
+| `model_types` | `{}` | Type imposé à des modèles, par motif (`"*-vision-*" = "image-text-to-text"`). Sinon : le catalogue du backend ou, à défaut (llama-swap), le nom du modèle (`image`, `tts`, `asr`, `embed`…). Détermine les modèles proposés à un client de chat et ceux qui reçoivent les images |
 
 ### Backend Anthropic
 
@@ -106,40 +107,42 @@ api_key = "${ANTHROPIC_API_KEY}"
 api = "anthropic"
 ```
 
-Les modèles se nomment `claude/claude-opus-5-5`. Le reste du proxy parle
-toujours chat/completions : la requête est traduite en Messages au départ,
-la réponse (JSON ou flux) retraduite à l'arrivée. Toutes les surfaces
-passent par là, la surface Anthropic comprise (Claude Code : Messages →
-chat/completions → Messages, outils hébergés du proxy actifs).
+Les modèles se nomment `claude/claude-opus-5-5`. La communication du
+proxy utilise le format chat/completions : les requêtes sont traduites en
+Messages avant envoi et les réponses (JSON ou flux) retraduites à
+réception. Toutes les surfaces utilisent cette conversion, y compris la
+surface Anthropic (Claude Code : Messages → chat/completions → Messages ;
+outils hébergés du proxy actifs).
 
-- **Clé** en `x-api-key`, avec `anthropic-version`.
+- **Clé** transmise dans `x-api-key`, avec `anthropic-version`.
 - **Catalogue** lu sur `/v1/models` d'Anthropic : contexte
-  (`max_input_tokens`), images, sortie maximale (le `max_tokens` par défaut,
-  borné à 32 000).
+  (`max_input_tokens`), images et sortie maximale (`max_tokens` par
+  défaut, plafonné à 32 000).
 - **Cache de prompt** demandé à chaque requête (`cache_control`
   automatique) : un agent relit son historique au tarif du cache. Les
   tokens lus du cache sont comptés (`cached_tokens`).
-- **Réflexion** : sur les modèles à réflexion adaptative, demandée en
-  résumé et rendue en `reasoning_content`. Un tour qui appelle des outils
-  est gardé en mémoire tel qu'Anthropic l'a rendu (4 096 tours, perdus au
-  redémarrage) : quand le client le renvoie inchangé, il est rejoué tel
-  quel, réflexion signée comprise et dans son ordre (une réflexion
-  déplacée serait écartée). Un bloc est lié à
-  la conversation qui l'a produit : si le système ou les outils ont changé
-  depuis, Anthropic l'écarte (`drop_block`, bêta
+- **Réflexion** : sur les modèles à réflexion adaptative, elle est
+  demandée en résumé et renvoyée dans `reasoning_content`. Les tours avec
+  appel d'outil sont conservés en mémoire tels qu'Anthropic les a rendus
+  (4 096 tours, perdus au redémarrage). Si le client les renvoie sans
+  modification, ils sont rejoués tels quels, y compris la réflexion signée
+  et son ordre ; un bloc de réflexion déplacé est écarté. Chaque bloc est
+  lié à la conversation qui l'a produit. Si le système ou les outils ont
+  changé depuis, Anthropic écarte le bloc (`drop_block`, bêta
   `thinking-binding-controls-2026-08-01`) au lieu de refuser la requête.
-- **`reasoning_effort`** → `output_config.effort`, si le modèle prend ce
-  niveau (`minimal` et `none` → `low`) ; à défaut, celui de
-  `chat_template_kwargs` (pi, omp), et `enable_thinking: false` → `low`
-  (la réflexion ne se coupe pas sur les modèles récents).
-- **Retirés** : `temperature`, `top_p`, `top_k` (refusés par les modèles
-  récents), `logprobs`, `seed`, `n`… Les messages système et développeur
-  sont remontés en tête.
-- **Outils** : un `tool_choice` qui force l'appel (`"required"`, une
-  fonction nommée) devient `auto`, l'appel restant au choix du modèle :
-  Opus 5.5, Sonnet 5.5 et Fable 5.1+ refusent de le forcer (400).
-- **Seul `/v1/chat/completions`** : embeddings, voix, images → 404. L'OCR
-  et la transcription visent un modèle d'un autre backend.
+- **`reasoning_effort`** devient `output_config.effort` si le modèle
+  accepte ce niveau (`minimal` et `none` deviennent `low`). À défaut, le
+  niveau vient de `chat_template_kwargs` (pi, omp) ; `enable_thinking:
+  false` donne `low` (la réflexion ne se désactive pas sur les modèles
+  récents).
+- **Paramètres supprimés** : `temperature`, `top_p`, `top_k` (refusés par
+  les modèles récents), `logprobs`, `seed`, `n`… Les messages système et
+  développeur sont remontés en tête.
+- **Outils** : un `tool_choice` qui force l'appel (`"required"`, fonction
+  nommée) devient `auto`, laissant l'appel au choix du modèle. Opus 5.5,
+  Sonnet 5.5 et Fable 5.1+ refusent le forçage (400).
+- **Seul `/v1/chat/completions`** : embeddings, voix et images → 404. L'OCR
+  et la transcription utilisent un modèle d'un autre backend.
 
 **Tout modèle doit être préfixé.** Un préfixe inconnu donne `400
 unknown_backend_prefix`. Seules les requêtes sans champ `model` (endpoints
@@ -151,12 +154,12 @@ de compte, corps non JSON) partent vers le backend à quotas.
 |---|---|---|
 | `api_keys` | `[]` | Clés exigées des clients : `Authorization: Bearer <clé>` (OpenAI) ou `x-api-key: <clé>` (Anthropic). Liste vide = proxy ouvert. Sinon 401, sauf `/healthz` (réduit à `{"status": "ok"}`). `/ui` demande la clé à l'entrée. Voir [Sécurité](securite.md) |
 | `upstream_timeout` | `600` | Secondes. Large pour les longues générations |
-| `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info`. Court : un backend lent ne doit pas bloquer le catalogue |
-| `catalog_ttl` | `30` | Secondes de garde du catalogue d'un backend (réponse ou silence). Passé ce délai, il est relu en arrière-plan et l'ancien reste servi. Seule la première lecture attend un backend éteint. Les lectures simultanées n'en font qu'une |
-| `tool_choice` | `"auto"` | Valeur injectée pour les backends à `force_tool_choice = true`. L'injection est désactivée par défaut |
-| `forward_post_paths` | `["/v1/completions", "/v1/embeddings", "/v1/rerank", "/v1/audio/transcriptions", "/v1/audio/speech", "/v1/images/generations", "/v1/images/edits", "/v1/ocr"]` | Routes POST relayées en plus des handlers dédiés. Les autres → 404. Synthèse et clonage de voix : [Voix](voix.md) |
-| `exempt_paths` | `["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]` | Suffixes de routes exclus du limiteur |
-| `log_level` | `"INFO"` | `INFO` logue chaque injection et chaque mise en attente |
+| `meta_timeout` | `5` | Secondes pour `/v1/models`, `/v1/me/info` et `tokenize_path`. Délai court pour ne pas bloquer le catalogue sur un backend lent |
+| `catalog_ttl` | `30` | Durée de mise en cache du catalogue d'un backend, réponse ou silence. À expiration, le proxy le relit en arrière-plan et continue de servir l'ancien |
+| `tool_choice` | `"auto"` | Valeur injectée lorsque `force_tool_choice = true` pour un backend |
+| `forward_post_paths` | `["/v1/completions", "/v1/embeddings", "/v1/rerank", "/v1/audio/transcriptions", "/v1/audio/speech", "/v1/images/generations", "/v1/images/edits", "/v1/ocr"]` | Routes POST relayées telles quelles, en plus des handlers dédiés. Toute autre route sans handler répond 404 |
+| `exempt_paths` | `["/embeddings", "/rerank", "/audio/transcriptions", "/ocr"]` | Suffixes exclus du limiteur de quotas et du partage équitable |
+| `log_level` | `"INFO"` | `INFO` enregistre chaque injection et chaque mise en attente |
 
 ## `[stats]`
 
@@ -167,7 +170,8 @@ de compte, corps non JSON) partent vers le backend à quotas.
 
 ## `[anthropic]`
 
-Table absente = surface inactive, signalé au démarrage et dans `/healthz`.
+Sans cette table, la surface est inactive ; l'état est signalé au
+démarrage et dans `/healthz`.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
@@ -175,11 +179,12 @@ Table absente = surface inactive, signalé au démarrage et dans `/healthz`.
 | `model_map` | `{}` | Noms Anthropic → noms préfixés. `default` attrape les inconnus. Voir [API Anthropic Messages](api-anthropic.md#noms-de-modèles--anthropicmodel_map) |
 | `ping_interval` | `10` | Secondes entre deux pings pendant une attente en flux (limiteur, partage équitable, outil hébergé), sur les trois surfaces : `event: ping` pour `/v1/messages`, commentaire SSE ailleurs. `0` = attendre avant de répondre |
 | `reasoning_as_thinking` | `true` | `reasoning_content` du backend → bloc `thinking` |
-| `trace` | `false` | Une ligne de log par réponse (toutes surfaces) : `stop_reason`, outils appelés (nom, extrait des arguments), tokens. Pour voir ce qu'un agent fait ou répète |
+| `trace` | `false` | Une ligne de log par réponse (toutes surfaces) : `stop_reason`, outils appelés (nom, extrait des arguments), tokens. Sert à diagnostiquer les actions ou répétitions d'un agent |
 
 ## `[responses]`
 
-Table absente = surface inactive, signalé au démarrage et dans `/healthz`.
+Sans cette table, la surface est inactive ; l'état est signalé au
+démarrage et dans `/healthz`.
 Voir [API OpenAI Responses](api-responses.md).
 
 | Clé | Défaut | Rôle |
@@ -189,7 +194,7 @@ Voir [API OpenAI Responses](api-responses.md).
 
 ## `[chat]`
 
-Les outils hébergés sur `/v1/chat/completions`. Voir
+Configuration des outils hébergés utilisés sur `/v1/chat/completions` :
 [Outils hébergés](outils-heberges.md).
 
 | Clé | Défaut | Rôle |
@@ -230,7 +235,7 @@ Réglages communs aux [outils hébergés](outils-heberges.md).
 
 ## `[tools.web_fetch]`
 
-Ce que l'outil peut joindre : [`[tools.net]`](#toolsnet).
+Adresses auxquelles l'outil peut se connecter : [`[tools.net]`](#toolsnet).
 
 | Clé | Défaut | Rôle |
 |---|---|---|
@@ -251,7 +256,7 @@ Ce que l'outil peut joindre : [`[tools.net]`](#toolsnet).
 
 ## `[tools.ocr]`
 
-Ce que l'outil peut joindre : [`[tools.net]`](#toolsnet).
+Adresses auxquelles l'outil peut se connecter : [`[tools.net]`](#toolsnet).
 
 | Clé | Défaut | Rôle |
 |---|---|---|
@@ -267,7 +272,7 @@ Ce que l'outil peut joindre : [`[tools.net]`](#toolsnet).
 
 ## `[tools.transcribe]`
 
-Ce que l'outil peut joindre : [`[tools.net]`](#toolsnet).
+Adresses auxquelles l'outil peut se connecter : [`[tools.net]`](#toolsnet).
 
 | Clé | Défaut | Rôle |
 |---|---|---|
@@ -298,8 +303,8 @@ bornés. Mais il n'est **pas isolé** du proxy.
 
 ## `[tools.image_generation]`
 
-Ce que l'outil peut joindre (l'image à retoucher, une `url` hors de
-l'origine du backend) : [`[tools.net]`](#toolsnet).
+Adresses auxquelles l'outil peut se connecter (image à retoucher ou
+`url` hors de l'origine du backend) : [`[tools.net]`](#toolsnet).
 
 | Clé | Défaut | Rôle |
 |---|---|---|
@@ -403,13 +408,13 @@ aussi).
 | `ttl` | `14400` | Durée de vie d'un fichier, en secondes |
 | `incognito_ttl` | `900` | Durée de vie d'un fichier rendu à une conversation incognito du chat (au plus `ttl`). Voir [Le chat](chat.md) |
 | `max_bytes` | `128000000` | Octets gardés en mémoire vive, tous fichiers confondus. Les plus anciens sortent |
-| `max_file_bytes` | `10000000` | Taille maximale d'un fichier. Au-delà, il n'est pas gardé et le modèle le sait |
+| `max_file_bytes` | `10000000` | Taille maximale d'un fichier. Au-delà, il n'est pas gardé et le modèle en est informé |
 
 ## `[ui]`
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `chat` | `false` | Ouvre l'onglet *Chat* du tableau de bord (`POST /ui/chat/completions`). Le cookie de `/ui` y dépense des tokens, comptés à la clé connectée. Voir [Le chat](chat.md) |
+| `chat` | `false` | Ouvre l'onglet *Chat* du tableau de bord (`POST /ui/chat/completions`). Le cookie de `/ui` y dépense des tokens, comptés pour la clé connectée. Voir [Le chat](chat.md) |
 | `chat_model` | `""` | Modèle présélectionné (`<backend>/<modèle>`) pour chaque nouvelle conversation, s'il est au catalogue. Vide : le dernier choisi dans le navigateur, sinon le premier du catalogue |
 | `conversations_database` | `"conversations.db"` | Base SQLite de l'historique du chat (conversations et images, par compte). Relatif = à côté de `config.toml` |
 | `conversation_max_bytes` | `20000000` | Taille maximale d'une conversation (texte, artifacts, fichiers produits) |

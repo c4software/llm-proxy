@@ -1,40 +1,39 @@
 # API OpenAI Responses
 
-Le proxy peut parler l'API Responses d'OpenAI, celle de Codex CLI et de l'application Codex
-([réglages du client](tableau-de-bord.md#longlet-configuration)).
-Activez `[responses].enabled = true` dans `config.toml`.
-`POST /v1/responses` est traduit vers `/v1/chat/completions` : aucun
-backend n'a besoin de servir `/v1/responses`.
+Le proxy expose l'API OpenAI Responses utilisée par Codex CLI et l'application
+Codex ([réglages du client](tableau-de-bord.md#longlet-configuration)). Activez
+`[responses].enabled = true` dans `config.toml`. Le proxy traduit
+`POST /v1/responses` en `POST /v1/chat/completions` ; le backend n'a pas besoin
+d'implémenter l'API Responses.
 
-Le modèle porte le préfixe du backend, sans table de correspondance. La
-réponse revient en objet `response` ou en flux d'événements `response.*`.
-Les stats comptent ces requêtes sous `/v1/responses`, avec l'`usage`
-exact du backend.
+Le nom du modèle doit inclure le préfixe du backend. Le proxy renvoie un objet
+`response` ou un flux d'événements `response.*`. Les statistiques identifient
+les requêtes par `/v1/responses` et utilisent l'`usage` du backend.
 
 Réglages (`enabled`, `reasoning_as_summary`) : voir
 [Configuration](configuration.md#responses).
 
 ## Traitement de la requête
 
-- **Outils hébergés.** Si `[tools.web_search]` et `[tools.web_fetch]`
-  sont actifs, le proxy remplace `web_search` par ses propres fonctions et
-  les exécute ([Outils hébergés](outils-heberges.md)). Sinon `web_search`
-  est retiré, comme `file_search`, `code_interpreter`, `mcp`,
-  `image_generation`…, que seul OpenAI exécute. Une ligne de log les
-  nomme (`responses : file_search sans équivalent chat, ignoré(s)`). Les
-  outils `function` restent.
-- **`namespace` aplatis.** Les fonctions d'un `namespace` (les
-  `multi_agent_v1` de Codex) rejoignent la liste sous leur nom simple. Le
-  `namespace` est reposé sur l'appel rendu au client. Un nom en double :
-  `400`. Un `namespace` peut contenir un `custom` (modèles en mode
-  « responses lite »).
-- **Un seul `system`.** `instructions` et les messages `developer` du
-  début sont réunis dans le message system de tête, car beaucoup de
-  gabarits n'en acceptent qu'un. Le préfixe reste stable : le cache du
-  backend en profite (colonne *Cache*).
-- **`reasoning`.** Les éléments rejoués sont jetés. Le
-  `reasoning_content` du backend devient un élément `reasoning` (résumé)
-  dans le client (`reasoning_as_summary`). `reasoning.effort` part en
+- **Outils hébergés.** Lorsque `[tools.web_search]` et `[tools.web_fetch]` sont
+  actifs, le proxy remplace `web_search` par ses fonctions et les exécute
+  ([Outils hébergés](outils-heberges.md)). Sinon, il retire `web_search` et les
+  outils pris en charge uniquement par OpenAI (`file_search`, `code_interpreter`,
+  `mcp`, `image_generation`…). Il consigne les outils retirés (`responses :
+  file_search sans équivalent chat, ignoré(s)`). Les outils `function` sont
+  conservés.
+- **`namespace` aplatis.** Les fonctions des espaces de noms (notamment
+  `multi_agent_v1` dans Codex) sont ajoutées à la liste sous leur nom simple.
+  Le proxy rétablit le `namespace` dans l'appel renvoyé au client. Les noms en
+  double produisent une erreur `400`. Un espace de noms peut contenir un outil
+  `custom` utilisé par les modèles en mode « responses lite ».
+- **Message `system` unique.** Le proxy regroupe `instructions` et les messages
+  `developer` initiaux dans le message `system` placé en tête. Cette forme est
+  requise par les gabarits qui n'acceptent qu'un seul message `system` et
+  stabilise le préfixe pour le cache du backend.
+- **`reasoning`.** Les éléments `reasoning` rejoués sont supprimés. Le proxy
+  convertit le `reasoning_content` du backend en élément `reasoning` (résumé)
+  lorsque `reasoning_as_summary` est actif. `reasoning.effort` devient
   `reasoning_effort`.
 - **Champs sans effet tolérés** : `include`, `reasoning.summary`,
   `text.verbosity`, `prompt_cache_key`, `client_metadata`, `store`… Le
@@ -46,8 +45,9 @@ Réglages (`enabled`, `reasoning_as_summary`) : voir
 
 ## Outils `custom` et `local_shell`
 
-Ces outils sont exécutés par le client, sous une forme que
-chat/completions n'a pas. Le proxy les présente au modèle en fonctions.
+Responses définit `custom` et `local_shell` comme des outils exécutés par le
+client ; chat/completions ne propose pas ces types. Le proxy les déclare au
+modèle sous forme de fonctions.
 
 | | `custom` (« freeform ») | `local_shell` |
 |---|---|---|

@@ -1,7 +1,7 @@
 # Fonctionnalités
 
-Un aperçu de ce que fait le proxy. Chaque entrée renvoie à la page qui
-détaille.
+Inventaire des fonctionnalités du proxy. Les pages liées documentent chaque API,
+réglage et outil.
 
 ## Relais
 

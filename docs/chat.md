@@ -1,94 +1,81 @@
 # Le chat
 
-Le chat est une interface de conversation sur les backends du proxy,
-dans la page `/ui` (<kbd>#chat</kbd>). Il est **fermé par défaut** :
-`[ui] chat = true` dans `config.toml` l'ouvre. Fermé, l'onglet le dit et
-`POST /ui/chat/completions` répond `404`. Ses requêtes sont comptées à la
-clé connectée, comme toute requête de l'API.
+La page `/ui` (onglet `#chat`) fournit une interface de conversation avec les
+backends du proxy. Le chat est désactivé par défaut : `[ui] chat = true` dans
+`config.toml` l'active. Lorsqu'il est désactivé, l'onglet l'indique et
+`POST /ui/chat/completions` répond `404`. Les requêtes sont imputées à la clé
+connectée, comme les autres requêtes de l'API.
 
 ## Conversations
 
-Les conversations sont gardées par le proxy (`data/conversations.db`)
-et liées au **compte** : on les retrouve sur tout navigateur et tout
-appareil. Chacune garde son modèle, son prompt système, sa température,
-ses outils, ses artifacts et ses fichiers produits.
+Le proxy stocke les conversations dans `data/conversations.db` et les associe au **compte** : elles sont accessibles depuis tout navigateur et appareil. Chaque conversation conserve son modèle, son prompt système, sa température, ses outils, ses artifacts et les fichiers produits.
 
-Un [webhook entrant](webhooks.md) écrit aussi dans l'historique : ses
-messages y sont marqués « reçu par le webhook … », et la page les montre
-sans rechargement. Pendant qu'il répond, la conversation affiche une
-réponse en cours, menée par le proxy, et la page n'y écrit pas avant la
-réponse. Une nouvelle conversation reprend les réglages de celle
-affichée (modèle, prompt système, outils…), sauf depuis une conversation
-créée par un webhook : elle part alors des réglages par défaut.
+Un [webhook entrant](webhooks.md) ajoute également des messages à l'historique,
+marqués « reçu par le webhook … ». La page les affiche sans rechargement.
+Pendant la réponse déclenchée par le webhook, la conversation affiche une
+réponse en cours, pilotée par le proxy ; la page n'écrit pas dans la
+conversation avant la fin de cette réponse. Une nouvelle conversation reprend
+les réglages de la conversation affichée (modèle, prompt système, outils…),
+sauf si celle-ci a été créée par un webhook ; dans ce cas, elle utilise les
+réglages par défaut.
 
-- Dans le menu latéral : renommer, supprimer, **rechercher** (chaque
-  mot, sans casse ni accents, dans le titre ou les messages ; le proxy
-  cherche aussi dans celles que le menu n'a pas encore lues).
-- **Chargement à la demande** : le menu ne lit que des résumés (titre,
-  date, nombre de messages), 40 à la fois, la suite en arrivant au bout
-  de la liste ; une conversation n'arrive entière qu'ouverte. L'adresse
-  nomme la conversation affichée (`/ui#chat/<id>`) : un rechargement la
-  rouvre, lue en même temps que la première page du menu.
-- Dans le fil : modifier une question (la suite repart d'elle),
-  régénérer la dernière réponse, arrêter un flux. *Arrêter* coupe aussi
-  l'outil de la page en cours (un bac JavaScript, PHP ou SQL est supprimé
-  aussitôt) ; ses appels restants reçoivent un résultat d'erreur.
-- **Réponse coupée** : une réponse arrêtée par la limite de tokens du
-  modèle (`finish_reason: length`), ou dont le flux s'est fermé sans
-  `[DONE]`, le dit sous elle, avec *Continuer* (un message qui demande la
-  suite). Une page rechargée pendant une réponse la retrouve marquée
-  « interrompue », ses outils en cours en erreur : *Reprendre* relance le
-  modèle sur le même message.
-- **Enregistrement** : au plus une fois par seconde, toutes les 5 s
-  pendant un flux, et tout de suite quand l'onglet est caché (requête
-  `keepalive`, qui survit à sa fermeture). Chaque conversation a une
-  **révision** tenue par le proxy : un onglet qui enregistre par-dessus
-  une version plus récente (autre onglet, autre appareil) reçoit 409 au
-  lieu d'écraser. Un bandeau propose alors *Reprendre l'autre version*
-  ou *Garder celle-ci* ; rien n'est enregistré avant ce choix.
-- **Export** Markdown (⤓ dans le menu, ou *Réglages*) : titre, date,
-  modèle, prompt système, messages, fichiers texte joints, sources, et
-  images en data URL. Le raisonnement n'y est pas.
-- **Images** (jointes, générées, retouchées) : gardées à part sous
+- Le menu latéral permet de renommer, supprimer et **rechercher** des conversations. La recherche porte sur chaque mot, sans distinction de casse ni d'accents, dans le titre et les messages ; elle inclut les conversations que le menu n'a pas encore chargées.
+- **Chargement à la demande** : le menu charge uniquement des résumés (titre, date, nombre de messages), par lots de 40. Il charge le lot suivant à l'arrivée en bas de la liste. Une conversation complète est chargée à son ouverture. L'adresse indique la conversation affichée (`/ui#chat/<id>`) ; un rechargement la rouvre et charge en parallèle la première page du menu.
+- Dans le fil, il est possible de modifier une question (la génération reprend à partir de celle-ci), de régénérer la dernière réponse ou d'arrêter un flux. *Arrêter* interrompt également l'outil de la page en cours (un bac JavaScript, PHP ou SQL est supprimé immédiatement) ; les appels restants reçoivent un résultat d'erreur.
+- **Réponse coupée** : si la limite de tokens du modèle interrompt une réponse (`finish_reason: length`) ou si le flux se ferme sans `[DONE]`, un message l'indique sous la réponse et propose *Continuer* (un message demandant la suite). Si la page est rechargée pendant une réponse, celle-ci est marquée « interrompue » et ses outils en cours sont mis en erreur ; *Reprendre* relance le modèle sur le même message.
+- **Enregistrement** : au plus une fois par seconde, puis toutes les 5 s
+  pendant un flux, et immédiatement lorsque l'onglet est masqué (requête
+  `keepalive`, qui se poursuit même après sa fermeture). Le proxy associe une
+  **révision** à chaque conversation. Si un onglet enregistre une version
+  antérieure à celle déjà présente (modifiée dans un autre onglet ou appareil),
+  le proxy répond `409` au lieu de l'écraser. Un bandeau propose alors
+  *Reprendre l'autre version* ou *Garder celle-ci* ; aucun enregistrement
+  n'a lieu avant ce choix.
+- **Export Markdown** (⤓ dans le menu ou *Réglages*) : titre, date,
+  modèle, prompt système, messages, fichiers texte joints, sources et
+  images en data URL. Le raisonnement n'est pas inclus.
+- **Images** (jointes, générées, retouchées) : stockées séparément dans
   `/ui/assets/<id>` (PNG, JPEG, GIF, WebP, reconnus à leurs octets). Une
-  image que plus rien ne cite est effacée après dix minutes.
+  image qui n'est plus référencée est supprimée après dix minutes.
 - **Bornes** (`[ui]`) : `conversation_max_bytes`, `asset_max_bytes`,
   `history_max_bytes`.
-- **File d'attente** : pendant une réponse, Entrée met le message en
-  file. Il part à la fin d'une réponse réussie, dans l'ordre. Une réponse
-  arrêtée ou en erreur met la file en pause (*Envoyer la suite* la
-  relance). Un message en file se modifie ou se retire.
-- **Notifications** (*Réglages*) : une réponse finie ou une question qui
-  attend, onglet en arrière-plan, marque le titre (« ● ») et envoie une
-  notification si elle est permise.
+- **File d'attente** : pendant une réponse, Entrée ajoute le message à
+  la file. Les messages sont envoyés dans l'ordre à la fin d'une réponse
+  réussie. Une réponse arrêtée ou en erreur met la file en pause ;
+  *Envoyer la suite* la relance. Un message en file peut être modifié ou
+  supprimé.
+- **Notifications** (*Réglages*) : lorsqu'une réponse se termine ou
+  qu'une question attend une réponse alors que l'onglet est en arrière-plan,
+  le titre est marqué (« ● ») et une notification est envoyée si elle est permise.
 
 ### Incognito
 
-Le bouton de l'en-tête ouvre une conversation **jamais envoyée** à
-l'historique. Elle disparaît dès qu'on la quitte ou qu'on recharge. Sur
-une conversation vide, le bouton la bascule ; sur une conversation
-commencée, il en ouvre une neuve.
+Le bouton de l'en-tête ouvre une conversation **qui n'est pas enregistrée**
+dans l'historique. Elle disparaît dès qu'on la quitte ou recharge la page.
+Sur une conversation vide, le bouton active ou désactive ce mode ; sur
+une conversation commencée, il ouvre une nouvelle conversation.
 
-Ses requêtes portent `X-Incognito: 1` (jamais relayé au backend). Le
-proxy n'en garde **rien** au-delà de la réponse :
+Les requêtes de cette conversation portent `X-Incognito: 1` (jamais relayé
+au backend). En mode incognito, le proxy applique les règles suivantes :
 
-- ni [mémoire des résultats](outils-heberges.md#mémoire-des-résultats),
-  ni cache web (recherches, pages, OCR, transcriptions) ;
-- l'outil `memory` est retiré, même déclaré ;
-- un fichier rendu par un outil n'est gardé que le temps de s'afficher :
-  `[files].incognito_ttl`, 900 s par défaut (au plus `[files].ttl`) ;
-- les logs d'un appel d'outil hébergé n'ont ni ses arguments (recherche,
-  URL, code) ni son texte : le nom, la taille, la durée, le code d'erreur.
+- La [mémoire des résultats](outils-heberges.md#mémoire-des-résultats) et le
+  cache web (recherches, pages, OCR, transcriptions) sont désactivés ;
+- l'outil `memory` est retiré, même s'il est déclaré ;
+- un fichier produit par un outil est conservé uniquement le temps de son
+  affichage : `[files].incognito_ttl`, 900 s par défaut (au plus `[files].ttl`) ;
+- les journaux d'un appel d'outil hébergé ne contiennent ni ses arguments
+  (recherche, URL, code) ni son texte, mais son nom, sa taille, sa durée
+  et son code d'erreur.
 
-Restent les statistiques (des comptes, sans contenu) et le bac
-d'exécution de code du tour, qui expire normalement.
+Les statistiques (sans contenu) et le bac d'exécution de code du tour
+restent disponibles ; ce dernier expire normalement.
 
 ## Modèles
 
-La liste est groupée par backend, avec le nom court du modèle
-(l'identifiant complet au survol). Le catalogue est gardé dans le
-navigateur et relu en arrière-plan ; ↻ le relit à la demande. Côté
-proxy, chaque catalogue est gardé `[proxy].catalog_ttl`.
+La liste est groupée par backend et affiche le nom court du modèle
+(l'identifiant complet apparaît au survol). Le navigateur conserve le
+catalogue et le relit en arrière-plan ; ↻ déclenche sa relecture. Le proxy
+conserve chaque catalogue pendant `[proxy].catalog_ttl`.
 
 **Niveau de réflexion**, par conversation, dans la zone de saisie :
 
@@ -102,302 +89,320 @@ Sur llama.cpp, `reasoning_effort` active la réflexion d'un Qwen3. Sur
 vLLM (Albert), il règle celle de gpt-oss.
 
 **Gemini Nano** (Chrome, API Prompt) apparaît sous *Dans le navigateur*
-quand Chrome le propose. Il répond **sur l'appareil**, sans le proxy.
+lorsque Chrome le propose. Il génère les réponses **sur l'appareil**, sans
+passer par le proxy.
 
-- Le premier usage télécharge le modèle (plusieurs Go). La première
-  réponse prend ensuite une vingtaine de secondes.
-- Il sait répondre à `ask_user`, mais n'a ni outils, ni niveau de
-  réflexion, ni dossier : ces contrôles sont masqués.
+- À la première utilisation, le navigateur télécharge le modèle (plusieurs
+  Go). La première réponse prend ensuite une vingtaine de secondes.
+- Le modèle peut répondre à `ask_user`, mais ne prend en charge ni outils,
+  ni niveau de réflexion, ni dossier ; ces contrôles sont masqués.
 
 **Modèles d'images** (*Images · backend* dans le sélecteur) :
 
-- Le modèle reçoit le dernier message **avec son contexte** : les
-  demandes précédentes de la même suite d'images. « plus sombre » suit
-  « un phare au coucher du soleil ». Le prompt envoyé se relit sous
-  l'image. Le réglage *Contexte → message seul* (par conversation)
-  n'envoie que le dernier message.
-- Une image jointe, ou reprise par *Retoucher*, est retouchée
-  (`/ui/images/edits`) : seule la consigne part. Le backend doit servir
-  `/v1/images/edits`.
-- 1 à 4 images par demande, une requête chacune. Tailles :
-  `[tools.image_generation].sizes`, `size` par défaut.
-- Passes de débruitage (moins, plus rapide et moins fin) : proposées pour
-  les seuls modèles que déclare `[tools.image_generation].steps`, *auto*
-  par défaut (celles du modèle). Un modèle à passes fixes, comme
-  Qwen-Image-2.1-Turbo, n'a pas le sélecteur.
-- LoRA (adaptateur de style ou de contenu, force 1) : proposés pour les
-  seuls modèles que déclare `[tools.image_generation].loras`, *sans LoRA*
-  par défaut. Appliqué aux générations comme aux retouches, jamais à
-  *Agrandir* (son modèle à part).
-- *Agrandir* (×1,5, ×2…, sous une image ou dans l'image agrandie) : si
-  `[tools.image_generation].upscale_model` est posé, l'image est
-  retouchée par ce modèle à une plus grande taille, avec une consigne
-  fixe. Le modèle la **redessine** : la résolution est réelle, les
-  détails changent un peu. Le résultat arrive dans une nouvelle réponse.
-  Mesuré le 08/11/2026 avec Qwen-Image-2.1-Turbo sur gufo : 1024² vers
-  2048² en 182 s, bascule du modèle de texte comprise ; texte de l'image
-  intact, composition gardée. À côté du facteur, la force (`upscale_strengths`,
-  « Détaillé (1) » par défaut, « Équilibré (0,6) », « Fidèle (0,4) ») :
-  plus basse, l'image est mieux gardée mais reçoit moins de détail.
-- *Générer encore* (sous la réponse, avec un nombre de 1 à 4) : d'autres
-  images avec le **même prompt**, tel qu'envoyé — rien du fil depuis —,
-  jointes à la même réponse (et la même image retouchée, si c'en était une).
-- Un clic agrandit l'image (Échap ferme ; ← → passent aux autres images
-  de la conversation), pour la télécharger ou la retoucher. Elle est
-  gardée avec la conversation.
+- Le modèle reçoit le dernier message **avec son contexte**, c'est-à-dire
+  les demandes précédentes de la même suite d'images. « plus sombre » fait
+  ainsi suite à « un phare au coucher du soleil ». Le prompt envoyé est
+  affiché sous l'image. Le réglage *Contexte → message seul* (par
+  conversation) limite l'envoi au dernier message.
+- Une image jointe ou reprise avec *Retoucher* est traitée par
+  `/ui/images/edits` ; seule la consigne est envoyée. Le backend doit
+  servir `/v1/images/edits`.
+- Chaque demande génère de 1 à 4 images, avec une requête par image. Les
+  tailles sont définies par `[tools.image_generation].sizes` ; `size` est
+  la taille par défaut.
+- Les passes de débruitage (un nombre inférieur accélère le traitement
+  mais réduit le niveau de détail) sont proposées uniquement pour les
+  modèles déclarés dans `[tools.image_generation].steps`. La valeur par
+  défaut est *auto* (valeur du modèle). Les modèles à passes fixes, comme
+  Qwen-Image-2.1-Turbo, n'ont pas de sélecteur.
+- Les LoRA (adaptateurs de style ou de contenu, force 1) sont proposés
+  uniquement pour les modèles déclarés dans `[tools.image_generation].loras`.
+  La valeur par défaut est *sans LoRA*. Ils s'appliquent aux générations
+  et aux retouches, mais pas à *Agrandir*, qui utilise un autre modèle.
+- *Agrandir* (×1,5, ×2…, sous une image ou dans l'image agrandie) est
+  disponible si `[tools.image_generation].upscale_model` est défini. Ce
+  modèle retouche l'image à une taille supérieure avec une consigne fixe.
+  Il **redessine** l'image : la résolution augmente réellement, mais les
+  détails peuvent changer. Le résultat apparaît dans une nouvelle
+  réponse. Mesure du 08/11/2026 avec Qwen-Image-2.1-Turbo sur gufo :
+  passage de 1024² à 2048² en 182 s, bascule du modèle de texte comprise ;
+  le texte de l'image est resté intact et la composition a été conservée.
+  À côté du facteur, la force est réglée par `upscale_strengths` (« Détaillé
+  (1) » par défaut, « Équilibré (0,6) », « Fidèle (0,4) ») : une force
+  plus faible préserve davantage l'image, mais ajoute moins de détails.
+- *Générer encore* (sous la réponse, nombre de 1 à 4) génère d'autres
+  images avec le **même prompt** que celui envoyé (sans le reste du fil).
+  Elles sont jointes à la même réponse, avec la même image retouchée le
+  cas échéant.
+- Un clic ouvre l'image en grand (Échap la ferme ; ← → passent aux autres
+  images de la conversation), pour la télécharger ou la retoucher. L'image
+  est conservée avec la conversation.
 
-**Modèles de voix** (*Voix · backend* dans le sélecteur, les modèles
-`text-to-speech` : [Voix](voix.md)) : le message envoyé est **lu**, et
-la réponse est son audio — un lecteur dans le fil, qui part tout seul
-(un seul audio joue à la fois), *Télécharger* en WAV. Il est gardé avec
-la conversation (`/ui/assets`), comme une image. Selon le modèle :
+**Modèles de voix** (*Voix · backend* dans le sélecteur, modèles
+`text-to-speech` ; voir [Voix](voix.md)) : le texte du message est
+synthétisé en audio. La réponse est lue dans un lecteur intégré au fil,
+qui démarre automatiquement ; un seul audio est lu à la fois. *Télécharger*
+enregistre l'audio en WAV. Il est conservé avec la conversation
+(`/ui/assets`), comme une image. Le comportement dépend du modèle :
 
 - *voix toutes faites* (`…-customvoice`) : la voix se choisit dans la
-  barre de saisie ; le prompt système (*Réglages*) donne le ton.
-- *voix clonée* (`…-base`) : une voix clonée du compte, choisie
-  dans la barre ; *＋ nouvelle voix…* ouvre le studio en fenêtre sur la
-  conversation (voir *Voix clonées* plus bas), et la voix gardée devient
-  celle de la conversation.
+  barre de saisie ; le prompt système (*Réglages*) définit le ton.
+- *voix clonée* (`…-base`) : la barre permet de choisir une voix clonée
+  du compte. *＋ nouvelle voix…* ouvre le studio dans une fenêtre au-dessus
+  de la conversation (voir *Voix clonées* plus bas) ; la voix conservée
+  devient celle de la conversation.
 - *voix décrite* (`…-voice-design`) : le prompt système **décrit** la
-  voix (genre, âge, timbre, accent, style) ; une voix nouvelle à chaque
-  message.
+  voix (genre, âge, timbre, accent, style) ; une nouvelle voix est créée
+  pour chaque message.
 
-Un long texte (6 000 caractères au plus) part par passages, mis bout à
-bout en un seul audio ; la langue est celle des réglages de la voix,
-sinon celle du navigateur. Pas d'outils ni de pièces jointes.
+Un texte de 6 000 caractères au plus est découpé en passages, puis réuni
+en un seul audio. La langue provient des réglages de la voix, ou, à défaut,
+de ceux du navigateur. Les outils et pièces jointes ne sont pas pris en
+charge.
 
 **Modèles de transcription** (*Transcription · backend* dans le
-sélecteur, les modèles `automatic-speech-recognition`, Qwen3-ASR ou
-Whisper par exemple) : l'audio du message est **écouté**, et la réponse
-est son texte — à copier, écouter, ou reprendre en passant à un modèle de
-conversation dans la même conversation.
+sélecteur, modèles `automatic-speech-recognition` comme Qwen3-ASR ou
+Whisper) : le modèle transcrit l'audio du message. La réponse textuelle
+peut être copiée, écoutée ou reprise dans la même conversation en
+sélectionnant un modèle de conversation.
 
-- L'audio se **joint** (*Joindre → Fichiers…*, glisser-déposer, coller :
-  WAV, MP3, M4A, Ogg, FLAC, WebM, 20 Mo au plus) ou s'**enregistre** au
-  bouton *Micro* de la barre (10 minutes au plus ; *Arrêter* le joint au
-  message). Plusieurs audios : un paragraphe chacun.
-- Le texte du message, facultatif, **guide** le modèle (`prompt` : noms
-  propres, vocabulaire).
-- Tout se prépare dans la page : l'audio décodé, mono 16 kHz, en WAV
-  (Qwen3-ASR ne lit que lui) ; un long audio part par passages d'une
-  minute au plus, coupés dans le moment le plus calme, puis mis bout à
-  bout. 30 minutes au plus.
-- La langue est celle des réglages de la voix si elle y est choisie ;
-  sinon le modèle la reconnaît.
-- L'audio est gardé avec la conversation (`/ui/assets`) : *Régénérer* le
-  relit. Joint à un modèle de conversation, il n'est pas envoyé (la page
-  le dit).
+- Joindre un audio avec *Joindre → Fichiers…*, glisser-déposer ou coller
+  (WAV, MP3, M4A, Ogg, FLAC, WebM, 20 Mo au plus), ou l'enregistrer avec
+  le bouton *Micro* de la barre (10 minutes au plus ; *Arrêter* le joint
+  au message). Chaque audio est transcrit dans un paragraphe distinct.
+- Le texte du message est facultatif et sert de guide au modèle (`prompt` :
+  noms propres, vocabulaire).
+- Le traitement s'effectue dans la page : l'audio est décodé, converti
+  en WAV mono à 16 kHz (Qwen3-ASR ne lit que ce format). Un audio long est
+  découpé en passages d'une minute au plus, aux moments les plus calmes,
+  puis réuni. Durée totale maximale : 30 minutes.
+- La langue est celle des réglages de la voix si elle est définie ; sinon,
+  le modèle la reconnaît.
+- L'audio est conservé avec la conversation (`/ui/assets`) ; *Régénérer*
+  le retransmet. S'il est joint à une requête vers un modèle de
+  conversation, il n'est pas envoyé ; la page l'indique.
 
-**Panneau Images** (bouton *Images (n)* de l'en-tête, dès qu'il y en a
-une) : toutes les images générées de la conversation — modèle d'images,
-outil *Images*, graphiques d'un script, captures —, pas celles jointes
-aux questions. Une en grand, *Précédent* / *Suivant* (ou ← →), la
-planche des vignettes ; ou la **grille** de toutes (bouton de l'en-tête),
-à cases réglables par le curseur (72 à 480 px, double-clic : 160), un
-clic ouvrant l'image en grand — vue et taille gardées dans ce
-navigateur. Chacune se télécharge, se retouche ou se retrouve dans le
-fil.
+**Panneau Images** (bouton *Images (n)* de l'en-tête, lorsqu'au moins
+une image existe) : affiche toutes les images générées dans la
+conversation — par un modèle d'images, l'outil *Images*, un graphique de
+script ou une capture —, mais pas celles jointes aux questions. Le panneau
+affiche une image en grand, avec *Précédent* / *Suivant* (ou ← →) et la
+planche des vignettes, ou la **grille** de toutes les images (bouton de
+l'en-tête). Le curseur règle la taille des cases de 72 à 480 px ; le
+double-clic la règle à 160 px. Un clic ouvre l'image en grand. La vue et
+la taille sont conservées dans ce navigateur. Chaque image peut être
+téléchargée, retouchée ou retrouvée dans le fil.
 - Les fichiers texte et une seconde image ne sont pas envoyés ; la page
-  le dit.
+  l'indique.
 
-Pour qu'un modèle de conversation génère une image au fil d'une réponse,
-cochez l'outil *Images* ([génération d'images](outils-heberges.md#génération-dimages)).
+Pour qu'un modèle de conversation génère une image dans une réponse,
+cocher l'outil *Images* ([génération d'images](outils-heberges.md#génération-dimages)).
 
 ## Saisie et affichage
 
 **Pièces jointes** (bouton *Joindre → Fichiers…*, glisser-déposer ou
 coller) :
 
-- images en `image_url`, 8 Mo au plus. La page prévient si le catalogue
-  ne dit pas le modèle capable de les lire ;
-- fichiers texte, 256 Ko au plus, joints entre balises `<file name="…">` ;
-- le reste est refusé.
+- Les images sont jointes en `image_url` (8 Mo au plus). La page signale
+  si le catalogue n'indique pas que le modèle peut les lire.
+- Les fichiers texte (256 Ko au plus) sont joints entre balises
+  `<file name="…">`.
+- Les autres types de fichiers sont refusés.
 
 *Joindre → Dossier…* ouvre un [dossier](#dossier-ouvert).
 
 **Le clavier** :
 
-- **Le focus** revient au champ de saisie quand l'onglet du navigateur le
-  reprend, ou quand on revient sur la vue Chat. Il n'est jamais volé à un
-  autre champ, un menu, la feuille de questions, un artifact ou une
-  sélection de texte, et jamais sur un écran étroit, où il ouvrirait le
-  clavier.
-- **Échap arrête la génération en cours.** La touche garde d'abord ses
-  autres rôles : fermer l'image agrandie, annuler la modification d'un
-  message, replier la feuille de questions.
+- **Le focus** revient au champ de saisie lorsque l'onglet du navigateur
+  reprend le focus ou lorsque la vue Chat est réaffichée. Il ne lui est
+  pas attribué si le focus est sur un autre champ, un menu, la feuille de
+  questions, un artifact ou une sélection de texte. Il ne revient pas non
+  plus sur un écran étroit, afin de ne pas ouvrir le clavier.
+- **Échap arrête la génération en cours.** La touche conserve ses autres
+  fonctions prioritaires : fermer l'image agrandie, annuler la modification
+  d'un message ou replier la feuille de questions.
 
-**Modifier un message** : la flèche du haut, dans un champ vide, remet le
-dernier message dans la zone de saisie ; *Modifier*, sous un message, fait
-de même pour n'importe lequel. Un bandeau le signale, et rien n'est retiré
-de la conversation tant qu'on n'a pas envoyé. L'envoi reprend la
-conversation de ce message : ce qui le suivait disparaît. **Échap**, ou
-vider le champ, annule la modification.
+**Modifier un message** : dans un champ vide, la flèche vers le haut
+replace le dernier message dans la zone de saisie. *Modifier*, sous un
+message, permet de faire de même avec n'importe quel message. Un bandeau
+indique le mode de modification ; le message n'est retiré de la
+conversation qu'après l'envoi. L'envoi reprend la conversation à partir
+de ce message et supprime les suivants. **Échap** ou l'effacement du
+champ annule la modification.
 
 **Rendu Markdown** : titres, listes, tableaux, citations, code avec
-*Copier*, liens et images. Tout le texte est échappé : aucun HTML du
-modèle ne passe. Seuls `http(s)`, `mailto` et les chemins du proxy
-(`/v1/files/…`) font un lien. Une image du proxy s'affiche ; une image
-d'un **autre site** devient un bouton *Afficher l'image (hôte)* : la
-charger d'office suffirait à envoyer à ce site ce qu'une injection de
-prompt aurait glissé dans son adresse (`![](https://site/?q=…)`).
+*Copier*, liens et images. Le rendu échappe l'ensemble du texte et
+n'interprète aucun HTML fourni par le modèle. Seuls `http(s)`, `mailto`
+et les chemins du proxy (`/v1/files/…`) sont des liens. Les images du
+proxy sont affichées. Les images hébergées sur un **autre site** sont
+remplacées par un bouton *Afficher l'image (hôte)* : un chargement
+automatique transmettrait à ce site les données qu'une injection de
+prompt pourrait inclure dans l'adresse (`![](https://site/?q=…)`).
 
-**Raisonnement** : plié par défaut au-dessus de la réponse. Plié, il
-montre une seule phrase complète, renouvelée au plus toutes les 1,8 s
-pendant le flux. Tokens et durée s'affichent sous la réponse.
+**Raisonnement** : replié par défaut au-dessus de la réponse. Lorsqu'il
+est replié, une phrase complète est affichée et actualisée au plus toutes
+les 1,8 s pendant le flux. Le nombre de tokens et la durée sont affichés
+sous la réponse.
 
-**Voix** : *Écouter*, sous une réponse, la lit (sans code ni Markdown,
-20 000 caractères au plus) ; *Arrêter la lecture* l'interrompt. Le
-*moteur* se choisit dans *Réglages*, l'outil `speak` reprend le choix :
+**Voix** : *Écouter*, sous une réponse, la lit sans code ni Markdown
+(20 000 caractères au plus) ; *Arrêter la lecture* interrompt la
+lecture. Le *moteur* est sélectionné dans *Réglages* ; l'outil `speak`
+utilise le même choix :
 
-- **navigateur** (défaut) : sa synthèse vocale, tout de suite, sans
-  modèle. Lu phrase par phrase, ce qui évite les coupures de certaines
-  voix en ligne. La voix (la langue de la page d'abord) et le débit.
-- **modèle du proxy**, si le catalogue a un modèle de synthèse
-  (`text-to-speech`, Qwen3-TTS : [Voix](voix.md)) : ses **voix toutes
-  faites** (`/ui/audio/voices`, avec un *ton* facultatif) ou une **voix
-  clonée**. La langue (par défaut celle du navigateur) et le débit. Le
-  texte part par passages, le premier court ; le suivant se synthétise
-  pendant que l'autre est joué (*Synthèse…* le temps du premier). Un
-  backend qui charge le modèle (`backend_offline`) est réessayé quelques
-  secondes.
+- **navigateur** (défaut) : synthèse vocale du navigateur, immédiate et
+  sans modèle. Le texte est lu phrase par phrase, ce qui évite les
+  coupures de certaines voix en ligne. La voix et le débit sont
+  configurables ; la langue de la page est utilisée en priorité.
+- **modèle du proxy**, si le catalogue contient un modèle de synthèse
+  (`text-to-speech`, Qwen3-TTS : [Voix](voix.md)) : voix **toutes faites**
+  (`/ui/audio/voices`, avec un *ton* facultatif) ou voix **clonée**.
+  La langue et le débit sont configurables ; la langue du navigateur est
+  utilisée par défaut. Le texte est envoyé par passages, le premier étant
+  court. Chaque passage suivant est synthétisé pendant la lecture du
+  précédent ; *Synthèse…* s'affiche pendant la synthèse du premier. Si le
+  backend charge le modèle (`backend_offline`), la requête est réessayée
+  pendant quelques secondes.
 
-**Voix clonées** (un modèle de clonage, `…-base`, au catalogue) :
-*Nouvelle voix clonée…* (dans *Réglages*, ou *＋ nouvelle voix…* dans la
-barre d'un modèle de clonage) ouvre le studio. La référence vient du **micro**
-(lire le texte proposé, une quinzaine de secondes, 30 s au plus), d'un
-**fichier** audio (avec sa transcription exacte) ou d'une
-**description** (un modèle `…-voice-design` invente la voix, qui lit le
-texte ; *Relancer* jusqu'à ce qu'elle plaise). Elle est **normalisée
-dans la page**, sans ffmpeg ni serveur : mono 24 kHz, silences de début
-et de fin coupés (0,15 s gardée), -20 LUFS, crêtes à -1 dB au plus.
-*Essayer* la fait lire une autre phrase par le modèle de clonage ;
-*Télécharger* donne la voix en un **fichier réutilisable** : le WAV
-normalisé, avec son nom et sa transcription dans ses métadonnées (bloc
-LIST/INFO). *Garder cette voix* la range **avec le compte**, sur le
-proxy (`data/conversations.db`, table `voices` ; `/ui/voices`), avec sa
-transcription : le même compte la retrouve sur tout navigateur, et la
-référence repart de la page avec chaque passage lu. Chaque voix gardée s'écoute
-(*Référence*), se télécharge de même, donne sa transcription
-(*Copier la transcription* : le texte à reprendre avec le WAV, dans une
-autre application) ou se supprime. *Importer une
-voix…* (*Réglages*) reprend un fichier téléchargé, d'un autre compte
-par exemple, sans ressaisir la transcription ; ouvert depuis
-*Fichier* dans le studio, il remplit aussi le nom et la transcription.
+**Voix clonées** (un modèle de clonage `…-base` est présent dans le
+catalogue) : *Nouvelle voix clonée…* (dans *Réglages* ou *＋ nouvelle
+voix…* dans la barre d'un modèle de clonage) ouvre le studio. La référence
+provient du **micro** (lecture du texte proposé, une quinzaine de secondes,
+30 s au plus), d'un **fichier** audio accompagné de sa transcription
+exacte, ou d'une **description** (un modèle `…-voice-design` génère la
+voix, qui lit le texte ; *Relancer* permet de demander une autre voix).
+La voix est **normalisée dans la page**, sans ffmpeg ni serveur : mono
+24 kHz, silences de début et de fin coupés (0,15 s gardée), -20 LUFS,
+crêtes à -1 dB au plus. *Essayer* fait lire une autre phrase par le
+modèle de clonage. *Télécharger* fournit un **fichier réutilisable** :
+le WAV normalisé, avec le nom et la transcription dans ses métadonnées
+(bloc LIST/INFO). *Garder cette voix* stocke la voix **avec le compte**,
+sur le proxy (`data/conversations.db`, table `voices` ; `/ui/voices`),
+avec sa transcription. Le compte y a accès depuis tout navigateur ; la
+référence est envoyée depuis la page avec chaque passage lu. Chaque voix
+enregistrée peut être écoutée (*Référence*), téléchargée, supprimée ou
+utilisée pour copier sa transcription (*Copier la transcription* : texte
+à réutiliser avec le WAV dans une autre application). *Importer une
+voix…* (*Réglages*) charge un fichier téléchargé, y compris depuis un
+autre compte, sans ressaisie de la transcription. Ouvert depuis *Fichier*
+dans le studio, le fichier renseigne aussi le nom et la transcription.
 Le fichier reste un WAV ordinaire, utilisable tel quel avec curl
 ([Voix](voix.md)).
 
 **Mémoire** (si `[tools.memory]` est actif) : le bouton *Mémoire* de
-l'en-tête ouvre le panneau des fichiers mémoire de la clé, à lire,
-corriger ou effacer. Il se relit après chaque appel à l'outil `memory`,
-affiché lisiblement (« `create /memories/…` »).
+l'en-tête ouvre le panneau des fichiers mémoire associés à la clé, qui
+permet de les lire, modifier ou supprimer. Le panneau est actualisé après
+chaque appel à l'outil `memory`, affiché sous forme lisible (par exemple
+« `create /memories/…` »).
 
 ## Contexte et résumé
 
-La barre de saisie montre une **jauge** du contexte. Elle compare ce que
-la conversation occupe chez le modèle à la fenêtre de contexte annoncée
-par le catalogue.
+La barre de saisie affiche une **jauge** qui compare le contexte utilisé
+par la conversation à la fenêtre de contexte annoncée dans le catalogue.
 
-- Elle part de la dernière mesure du modèle : `prompt_tokens` et
+- La jauge part des dernières mesures du modèle : `prompt_tokens` et
   `completion_tokens` de son dernier tour.
-- Ce qui a suivi cette mesure est estimé (préfixe « ≈ »).
-- Elle vire à l'orange à 60 %, puis à la couleur d'accent au seuil du
-  résumé automatique.
-- Son menu montre la **répartition** du contexte, en barre et en légende :
-  prompt système, résumé, consignes et définitions des outils, messages,
-  appels d'outils et leurs résultats, outils hébergés, images, et ce qui
-  reste libre. Les parts sont estimées (≈ 3,5 caractères par token) ;
-  l'écart avec la mesure du modèle est « non attribué » (son gabarit,
-  l'erreur de l'estimation).
+- Les tokens ajoutés depuis cette mesure sont estimés (préfixe « ≈ »).
+- La jauge passe à l'orange à 60 %, puis à la couleur d'accent au seuil
+  du résumé automatique.
+- Le menu de la jauge affiche la **répartition** du contexte en barre
+  et en légende : prompt système, résumé, consignes et définitions des
+  outils, messages, appels d'outils et leurs résultats, outils hébergés,
+  images et espace libre. Les parts sont estimées (≈ 3,5 caractères par
+  token). L'écart avec la mesure du modèle est indiqué comme « non
+  attribué » (gabarit du modèle ou erreur d'estimation).
 - Les **outils hébergés** (recherche web, lecture de pages, MCP…)
-  tournent dans le proxy : leurs résultats n'arrivent jamais dans la
-  page, et le proxy les réinsère lui-même à la requête suivante
-  ([chat].memory). Il en donne la taille à la page à la fin de chaque
-  réponse (`x_hidden`, en caractères), qui en fait une part à elle.
+  s'exécutent dans le proxy : leurs résultats ne sont pas transmis à la
+  page. Le proxy les réinsère lui-même dans la requête suivante
+  (`[chat].memory`). À la fin de chaque réponse, il transmet leur taille
+  à la page (`x_hidden`, en caractères), qui l'affiche comme une part
+  distincte.
 
-**`/compact [consigne]`** résume la conversation. On peut aussi passer par
-*Résumer maintenant* dans le menu de la jauge. Taper `/` propose la
-commande, et Tab la complète.
+**`/compact [consigne]`** résume la conversation. La commande est
+également accessible par *Résumer maintenant* dans le menu de la jauge.
+La saisie de `/` propose la commande ; Tab la complète.
 
-- Le modèle de la conversation écrit le résumé, sans outils ni réflexion.
-- Le résumé devient un message du fil, plié.
-- Les messages qui le précèdent restent affichés, mais estompés : ils ne
-  partent plus au modèle. Le résumé part à leur place, à la suite du
-  prompt système.
-- *Annuler le résumé* rend tout l'historique au modèle.
-- Le résumé est gardé avec la conversation.
+- Le modèle de la conversation produit le résumé, sans outils ni réflexion.
+- Le résumé apparaît comme un message replié dans le fil.
+- Les messages précédents restent affichés, mais en estompé et exclus
+  des requêtes au modèle. Le résumé les remplace après le prompt système.
+- *Annuler le résumé* réintègre tout l'historique aux requêtes du modèle.
+- Le résumé est conservé avec la conversation.
 
-Les **outils cochés coûtent aussi du contexte**, à chaque requête : leurs
-fonctions (nom, description, paramètres) et la consigne de leur famille
-au prompt système.
+À chaque requête, les outils cochés consomment également du contexte :
+leurs fonctions (nom, description, paramètres) et la consigne de leur
+famille sont ajoutées au prompt système.
 
-- Le menu Outils donne, sous chaque choix, son coût estimé (≈ tokens), et
-  en bas le total des outils cochés.
-- *Voir le prompt invisible* (en bas du menu, ou dans Réglages) montre ce
-  que le prochain message enverra en plus du fil : le prompt système
-  composé (le sien, un résumé, les consignes des outils) et chaque
-  fonction déclarée, celles de la page comme celles que le proxy ajoute
-  pour les outils hébergés (`/ui/session` les décrit).
+- Le menu Outils affiche le coût estimé (≈ tokens) sous chaque outil et
+  le total des outils cochés en bas du menu.
+- *Voir le prompt invisible* (en bas du menu ou dans Réglages) affiche
+  les données ajoutées au fil dans la prochaine requête : le prompt
+  système composé (prompt système, résumé, consignes des outils) et
+  chaque fonction déclarée, par la page ou par le proxy pour les outils
+  hébergés (`/ui/session` les décrit).
 
-Le **résumé automatique** est actif par défaut, et le menu de la jauge le
-coupe ; ce choix est gardé par navigateur.
+Le **résumé automatique** est actif par défaut. Le menu de la jauge permet
+de le désactiver ; ce choix est conservé par navigateur.
 
-- Il se déclenche avant l'envoi d'un message, quand le contexte dépasse
+- Il se déclenche avant l'envoi d'un message lorsque le contexte dépasse
   80 % de la fenêtre.
-- Il résume ce qui précède ce message, puis envoie le message.
-- Il ne se déclenche jamais pour un modèle dont la fenêtre est inconnue.
+- Il résume l'historique précédant ce message, puis envoie le message.
+- Il ne se déclenche pas si la fenêtre de contexte du modèle est inconnue.
 
-Une réponse refusée par le backend pour un contexte trop long propose
-*Résumer la conversation et réessayer*. Si même la demande de résumé
-déborde, elle est refaite sur un historique **allégé** : chaque message
-est coupé en son milieu et les images sont retirées. Le résumé l'indique.
+Si le backend refuse une réponse en raison d'un contexte trop long, la
+page propose *Résumer la conversation et réessayer*. Si la demande de
+résumé dépasse elle aussi la limite, elle est réessayée avec un historique
+**allégé** : chaque message est coupé en son milieu et les images sont
+retirées. Le résumé le signale.
 
 ## Outils
 
-Le menu **Outils** de la zone de saisie a une case par outil, cochée par
-conversation : ceux **du proxy**, puis ceux **du navigateur**. Le bouton
-dit combien sont actifs. Un modèle qui ne sait pas appeler d'outils
-(Gemini Nano, un modèle d'images) n'a pas ces cases.
+Le menu **Outils** de la zone de saisie affiche une case par outil, dont
+l'état est conservé par conversation. Les outils **du proxy** précèdent
+ceux **du navigateur**. Le bouton indique le nombre d'outils actifs. Les
+modèles qui ne prennent pas en charge les appels d'outils (Gemini Nano et
+les modèles d'images) n'affichent pas ces cases.
 
 ### Outils du proxy
 
-Avec `[chat] hosted_tools = true`, la section *Proxy* propose les
+Lorsque `[chat] hosted_tools = true`, la section *Proxy* affiche les
 [outils hébergés](outils-heberges.md) :
 
-- *Web* : `{"type": "web_search"}`, soit `web_search`, `web_fetch`,
+- *Web* : `{"type": "web_search"}`, soit `web_search`, `web_fetch` et
   `web_grep` ;
-- *Code*, *Images*, *Mémoire* (l'outil `memory`) ;
-- *Webhooks* (l'outil `webhook`) : poster sur un webhook sortant du
-  compte, à la demande. Voir [Webhooks](webhooks.md) ;
-- *Dépôts* (l'outil `repository`) : lire un projet d'une forge (arborescence,
-  fichier, recherche). Voir [Dépôts](depots.md) ;
-- un par serveur MCP configuré : `{"type": "mcp:<serveur>"}`.
+- *Code*, *Images* et *Mémoire* (outil `memory`) ;
+- *Webhooks* (outil `webhook`) : envoi à la demande d'un message vers un
+  webhook sortant du compte. Voir [Webhooks](webhooks.md) ;
+- *Dépôts* (outil `repository`) : lecture d'un projet hébergé sur une
+  forge (arborescence, fichier, recherche). Voir [Dépôts](depots.md) ;
+- un outil par serveur MCP configuré : `{"type": "mcp:<serveur>"}`.
 
-Les cases **font foi** : `[chat].always` ne s'ajoute pas aux requêtes du
-chat.
+Les cases définissent les outils envoyés par le chat ; `[chat].always`
+n'est pas ajouté à ses requêtes.
 
-Chaque appel s'affiche pendant qu'il tourne, puis replié avec le début
-de son résultat. Un refus par limite d'appels s'affiche comme tel
-(`status: "limit"`). Les sources citées s'affichent en pastilles sous la
-réponse. Le proxy annonce ces appels par un champ hors schéma,
-`delta.x_hosted_tool`, envoyé au seul chat de la page.
-L'échange caché (appels et résultats) n'est pas dans l'historique de la
-page : la [mémoire des résultats](outils-heberges.md#mémoire-des-résultats)
-du proxy le réinsère au tour suivant.
+Chaque appel est affiché pendant son exécution, puis replié avec le début
+du résultat. Les refus dus à la limite d'appels sont signalés
+(`status: "limit"`). Les sources citées apparaissent sous forme de
+pastilles sous la réponse. Le proxy signale les appels dans un champ
+hors schéma, `delta.x_hosted_tool`, envoyé uniquement au chat de la page.
+L'échange caché (appels et résultats) n'apparaît pas dans l'historique de
+la page : le proxy le réinsère au tour suivant via la [mémoire des
+résultats](outils-heberges.md#mémoire-des-résultats).
 
 ### Outils de la page
 
 ![Le menu Joindre ouvert au-dessus de la saisie : Fichiers… (joints au message) ou Dossier… (parcouru par le modèle, qui peut proposer des écritures) ; dessous, Joindre, le menu Outils et le choix du raisonnement](chat-joindre.png)
 
-La page déclare aussi des outils qu'**elle exécute elle-même**. Le
-proxy les lui rend en `tool_calls` ; la page les exécute et relance le
-modèle, 25 tours au plus par réponse. Les appels restent dans
-l'historique : au message suivant, le modèle retrouve ce qu'il a lu ou
-produit. Il faut un modèle qui sait appeler des outils.
+La page déclare également des outils qu'**elle exécute elle-même**. Le
+proxy lui transmet ces appels en `tool_calls` ; la page les exécute et
+relance le modèle, jusqu'à 25 tours par réponse. Les appels restent dans
+l'historique : le modèle retrouve au message suivant les données lues ou
+produites. Ces outils nécessitent un modèle qui prend en charge les
+appels d'outils.
 
-Certains **attendent l'utilisateur** : une feuille en bas du chat pour
-une question, une carte dans le fil pour une écriture. L'attente survit
-à un rechargement. Écrire un nouveau message à la place la clôt sans
-réponse.
+Certains outils **attendent l'utilisateur** : une feuille en bas du chat
+pour une question, ou une carte dans le fil pour une écriture. L'attente
+est conservée après un rechargement. L'envoi d'un nouveau message clôt
+l'attente sans réponse.
 
 | Outil | Ce qu'il fait | Attend l'utilisateur |
 |---|---|---|
@@ -420,125 +425,133 @@ Tous ces outils suivent la même interface de code (`chat/tools/`) : voir
 
 ![La feuille ask_user en bas du chat : un onglet par question (Budget, Hébergement, Activités), des cases à cocher avec leur description, Envoyer les réponses (3/3) ou Passer](chat-question.png)
 
-`ask_user` sert quand une décision revient à l'utilisateur. La feuille
-couvre la zone de saisie : un onglet par question, les options avec leur
-description, *Autre* en dernier.
+`ask_user` recueille les décisions de l'utilisateur. La feuille recouvre
+la zone de saisie et affiche un onglet par question, les options avec
+leur description et *Autre* en dernier.
 
-- Plusieurs questions : le bouton principal fait **Suivant** dès que la
-  question a sa réponse (un choix unique passe tout seul à la suivante).
-  Un dernier onglet, **Récapitulatif**, montre chaque question et sa
-  réponse sur une ligne ; un clic sur une ligne y revient pour la changer,
-  une question sans réponse y est signalée. On envoie de là (*Envoyer les
-  réponses*).
-- Une question seule : *Envoyer la réponse*, sans récapitulatif.
-- *Passer* répond sans rien choisir.
+- Pour plusieurs questions, le bouton principal affiche **Suivant** dès
+  que la question en cours a une réponse ; un choix unique sélectionné
+  passe automatiquement à la suivante. Le dernier onglet, **Récapitulatif**,
+  affiche chaque question et sa réponse sur une ligne. Un clic sur une
+  ligne permet de modifier la réponse ; les questions sans réponse y sont
+  signalées. L'envoi s'effectue depuis cet onglet (*Envoyer les réponses*).
+- Pour une seule question, le bouton affiche *Envoyer la réponse* ; aucun
+  récapitulatif n'est présenté.
+- *Passer* envoie une réponse sans sélection.
 
 | Touche | Action |
 |---|---|
-| `1`…`9` | choisir (un choix unique passe à la question suivante) |
+| `1`…`9` | sélectionner une option (un choix unique passe à la question suivante) |
 | `←` / `→` | changer d'onglet |
-| Entrée | le bouton principal : *Suivant*, ou envoyer depuis le récapitulatif |
-| Échap | replier la feuille, pour relire le fil ou écrire autre chose |
+| Entrée | activer le bouton principal : *Suivant* ou envoyer depuis le récapitulatif |
+| Échap | replier la feuille pour afficher le fil ou écrire un autre message |
 
 #### Dossier ouvert
 
-*Joindre → Dossier…* donne au modèle un dossier local. Le dossier reste
-**dans le navigateur** : le modèle ne lit que ce qu'il ouvre.
+*Joindre → Dossier…* associe un dossier local au modèle. Le dossier
+reste **dans le navigateur** ; le modèle ne lit que les fichiers qu'il
+ouvre.
 
-- Ignorés : `.git`, `node_modules`, environnements Python, caches. Un
-  fichier binaire est refusé.
-- Après un rechargement, il faut **rouvrir** le dossier : le navigateur
-  ne rend pas l'accès tout seul.
-- Chaque écriture proposée s'affiche en **diff** (3 lignes de contexte),
-  avec un commentaire facultatif. **Rien n'est écrit sans *Appliquer*.**
-- Sous Chrome et Edge, le fichier est écrit sur le disque (accès demandé
-  à la première écriture). Ailleurs, il est téléchargé. Le modèle relit
-  ensuite la nouvelle version.
+- `.git`, `node_modules`, les environnements Python et les caches sont
+  ignorés. Les fichiers binaires sont refusés.
+- Après un rechargement, rouvrir le dossier : le navigateur ne restaure
+  pas automatiquement l'accès.
+- Chaque écriture proposée est affichée en **diff** avec 3 lignes de
+  contexte et un commentaire facultatif. L'écriture n'est appliquée
+  qu'après sélection de *Appliquer*.
+- Sous Chrome et Edge, le fichier est écrit sur le disque ; l'autorisation
+  est demandée lors de la première écriture. Dans les autres navigateurs,
+  il est téléchargé. Le modèle relit ensuite la nouvelle version.
 
 ![Une écriture proposée : folder_list, folder_read puis folder_edit sur README.md, le diff (une ligne retirée, une ajoutée), un commentaire facultatif, Appliquer ou Refuser](chat-ecriture.png)
 
 #### Artifacts
 
-Le bouton *Artifacts* de l'en-tête ouvre le panneau, à droite du fil :
-un artifact à la fois, ses versions, *Source*, *Copier*, *Télécharger*,
-*Réseau*, *Débogage*, *Large*, *Plein écran* (Échap pour en sortir). La
-poignée du bord gauche redimensionne le panneau (double-clic : largeur
-par défaut ; aussi au clavier, flèches) ; la largeur reste dans ce
-navigateur. Les artifacts sont gardés avec la conversation.
+Le bouton *Artifacts* de l'en-tête ouvre le panneau à droite du fil. Le
+panneau affiche un artifact à la fois et ses versions, avec *Source*,
+*Copier*, *Télécharger*, *Réseau*, *Débogage*, *Large* et *Plein écran*
+(Échap ferme le plein écran). La poignée du bord gauche redimensionne le
+panneau ; le double-clic rétablit sa largeur par défaut et les flèches du
+clavier permettent aussi de la régler. La largeur est conservée dans ce
+navigateur. Les artifacts sont conservés avec la conversation.
 
-**Déboguer un artifact.** Quand un artifact ne marche pas, le modèle peut
-le tester tel qu'il tourne dans le panneau, sous vos yeux : lire sa
-console et ses erreurs, exécuter du code dans la page (cliquer, saisir,
-lire un état), la capturer en image. C'est **actif par défaut** :
+**Déboguer un artifact.** Le modèle peut tester un artifact dans le
+panneau, lire sa console et ses erreurs, exécuter du code dans la page
+(cliquer, saisir, lire un état) et en capturer une image. Le débogage est
+**actif par défaut** :
 
-- le bouton *Débogage* du panneau le coupe, ou le rétablit, pour cet
-  artifact ; basculer recharge l'artifact (le script de débogage s'y
-  ajoute ou s'en retire) ;
-- coupé, quand vous signalez un problème, le modèle propose de le
-  rétablir sur une carte (*Activer le débogage*, *Non merci*) ;
-- un bandeau signale quand le modèle est en train de tester ;
-- l'artifact reste isolé : le modèle n'atteint que sa page, ni la vôtre,
-  ni votre session.
+- le bouton *Débogage* du panneau désactive ou réactive le débogage pour
+  cet artifact ; chaque changement recharge l'artifact et ajoute ou retire
+  le script de débogage ;
+- lorsque le débogage est désactivé et qu'un problème est signalé, le
+  modèle propose de le réactiver sur une carte (*Activer le débogage*,
+  *Non merci*) ;
+- un bandeau indique quand le modèle effectue un test ;
+- l'artifact reste isolé : le modèle n'accède qu'à sa page, pas à la page
+  de l'utilisateur ni à sa session.
 
-**L'historique ne rejoue pas les anciens contenus.** Au message suivant,
-le modèle ne reçoit plus le texte complet d'un `show_artifact` ou d'un
-`read_artifact` passé, mais une mention (« N caractères, non rejoué ») :
-il travaille sur la version actuelle : il y retrouve le passage avec
-`grep_artifact`, en lit les lignes avec `read_artifact` (`start_line`,
-`end_line`), puis le retouche avec `edit_artifact` — sans relire tout
-l'artifact. Une consigne lui donne les
-artifacts de la conversation, leur version et leur taille. L'historique
-d'une conversation à gros artifacts s'en trouve divisé par deux, et le
-modèle ne réécrit plus tout faute de savoir quelle version est la bonne.
+**Les anciens contenus ne sont pas rejoués dans l'historique.** Au
+message suivant, le modèle reçoit, à la place du texte complet d'un ancien
+`show_artifact` ou `read_artifact`, une mention (« N caractères, non
+rejoué »). Il travaille sur la version actuelle : `grep_artifact` permet
+de retrouver un passage, `read_artifact` d'en lire les lignes
+(`start_line`, `end_line`), puis `edit_artifact` de le modifier sans
+relire l'artifact entier. Une consigne fournit au modèle la liste des
+artifacts de la conversation, leur version et leur taille. Cette méthode
+divise par deux l'historique d'une conversation avec de gros artifacts
+et évite de réécrire l'ensemble faute de savoir quelle version est à jour.
 
-Le modèle inspecte (`inspect_artifact` : console depuis le chargement,
-erreurs, page en texte, capture à la demande), reproduit
+Le modèle peut inspecter l'artifact (`inspect_artifact` : console depuis
+le chargement, erreurs, page en texte, capture à la demande), le tester
 (`run_in_artifact`, avec `click`, `type`, `key`, `wait`, `text`, `all`),
-corrige (`edit_artifact`) puis revérifie. La capture passe par
-html-to-image, servi par le proxy : rien n'est chargé d'ailleurs.
+le modifier (`edit_artifact`) puis le vérifier de nouveau. La capture
+utilise html-to-image, servi par le proxy ; aucun contenu externe n'est
+chargé.
 
-Un artifact est **isolé** : cadre `sandbox` sans `allow-same-origin`,
-sans accès à la page, à sa session ni à ses clés. Sa politique de
-contenu, posée en tête de son document avant le moindre octet de
-l'artifact (chat/artifacts.js), autorise les scripts et styles en ligne et les bibliothèques de
-cdnjs, jsdelivr ou unpkg. **Aucune autre requête réseau** : ni `fetch`,
+Un artifact est **isolé** dans un cadre `sandbox` sans
+`allow-same-origin` ; il n'accède ni à la page, ni à sa session, ni à ses
+clés. La politique de contenu de son document est définie avant l'ajout
+du moindre octet de l'artifact (`chat/artifacts.js`). Elle autorise les
+scripts et styles en ligne ainsi que les bibliothèques de cdnjs, jsdelivr
+ou unpkg. **Aucune autre requête réseau n'est autorisée** : ni `fetch`,
 ni image distante, ni formulaire.
 
-Le bouton **Réseau** (le globe) ouvre internet à cet artifact seulement
-(cartes, tuiles, API publiques).
+Le bouton **Réseau** (globe) autorise les requêtes Internet pour cet
+artifact seulement (cartes, tuiles, API publiques).
 
-> **Attention** : écrit par le modèle, l'artifact peut alors envoyer son
+> **Attention** : un artifact écrit par le modèle peut alors envoyer son
 > contenu à n'importe quel site. Il reste isolé de la page et les
 > formulaires restent bloqués.
 
-Le choix est gardé avec l'artifact (globe en couleur) et se coupe d'un
-clic.
+Le choix est conservé avec l'artifact (globe en couleur) et peut être
+désactivé d'un clic.
 
 ![Le panneau des artifacts : en-tête sur une ligne (titre, actions en icônes : Source, Copier, Télécharger, Réseau, Large, Fermer), une page HTML produite par le modèle avec un graphique Chart.js](chat-artifact.png)
 
 ### Outils du navigateur
 
-Le modèle peut aussi solliciter l'**appareil** : heure et état de
-l'appareil, position, notifications, presse-papiers, agenda, liens,
-partage, capture d'écran, caméra, codes, pipette, écran allumé, lecture
-à voix haute. Il peut aussi faire tourner du **JavaScript**, du
+Les outils du navigateur donnent accès à l'**appareil** : heure et état
+de l'appareil, position, notifications, presse-papiers, agenda, liens,
+partage, capture d'écran, caméra, codes, pipette, écran allumé et lecture
+à voix haute. Ils peuvent aussi exécuter du **JavaScript**, du
 **TypeScript**, du **PHP** ou du **SQL** dans un bac isolé, sur les
-fichiers du dossier ouvert. Ces outils se cochent par famille, dans la
+fichiers du dossier ouvert. Ces outils sont activés par famille dans la
 section *Navigateur* du menu **Outils**.
 
-Ce qui touche à l'appareil passe toujours par une carte que
-l'utilisateur accepte ou refuse. Ce qui reste utile après la réponse
-(un lien, un texte à partager ou à recopier, un rappel) laisse une
-**carte durable** sous la réponse, rejouable à volonté.
+Les actions qui utilisent l'appareil nécessitent toujours l'acceptation
+ou le refus de l'utilisateur dans une carte. Les résultats utiles après
+la réponse (lien, texte à partager ou recopier, rappel) restent dans une
+**carte durable** sous la réponse et peuvent être rejoués.
 
-Chaque outil, avec un exemple et sa capture :
-[Les outils du navigateur](navigateur.md).
+La page [Les outils du navigateur](navigateur.md) décrit chaque outil
+avec un exemple et une capture.
 
 ## Routes
 
-Toutes valent pour le compte connecté, sous le cookie de la page. Les
-corps JSON sont exigés (`415` sinon) : une page tierce ne peut pas en
-envoyer sans requête CORS préliminaire, que le proxy ne sert pas.
+Toutes ces routes utilisent le compte authentifié par le cookie de la
+page. Les requêtes avec corps doivent fournir du JSON (`415` sinon). Une
+page tierce ne peut pas les envoyer sans requête préliminaire CORS, que
+le proxy ne sert pas.
 
 | Route | Rôle |
 |---|---|

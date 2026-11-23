@@ -1,8 +1,9 @@
 # Sécurité
 
-Cette page dit comment protéger le proxy et ce qui reste accessible sans
-clé. Point de départ : avec une `api_key` sur un backend, **le proxy
-devient une clé Albert ouverte pour quiconque peut l'atteindre**.
+Une `api_key` configurée sur un backend rend ses droits accessibles à
+tout client pouvant atteindre le proxy si celui-ci n'est pas protégé.
+Certaines routes restent accessibles sans clé, même lorsque
+l'authentification est active.
 
 ## Les trois parades
 
@@ -21,8 +22,8 @@ Elles se cumulent.
 
 ## Clé du proxy
 
-Le client envoie la clé à la OpenAI (`Authorization: Bearer <clé>`) ou à
-l'Anthropic (`x-api-key`).
+Le client transmet la clé selon la surface utilisée : `Authorization: Bearer <clé>`
+sur la surface OpenAI ou `x-api-key` sur Anthropic.
 
 Quand l'auth est active :
 
@@ -32,11 +33,11 @@ Quand l'auth est active :
 Le tableau de bord `/ui` exige la même clé :
 
 - La page la demande dans un formulaire, jamais dans l'URL.
-- Elle ouvre ensuite une session signée qui ne porte que le condensé de la clé.
-- Le cookie est `HttpOnly`, `SameSite=Lax`, et `Secure` en HTTPS. Le
+- Elle ouvre ensuite une session signée qui ne contient que le condensé de la clé.
+- Le cookie est `HttpOnly`, `SameSite=Lax` et `Secure` en HTTPS. Le
   HTTPS est reconnu en direct ou derrière un reverse proxy qui envoie
   `X-Forwarded-Proto: https` (comme Nginx Proxy Manager).
-- Ce cookie ne vaut que sous `/ui`. Il ne dépense des tokens que par le
+- Le cookie est limité à `/ui`. Il ne dépense des tokens que via le
   chat, et seulement si `[ui] chat = true`.
 - Les routes `/ui` qui écrivent ou dépensent exigent un corps JSON.
 
@@ -52,7 +53,7 @@ Même avec l'auth active :
 - `GET /healthz`, réduit à `{"status": "ok"}`. Le détail (backends et
   leurs URL, outils, caches) exige une clé, ou la session de la page par
   `GET /ui/health`.
-- Ce qu'il faut pour entrer dans la page :
+- Routes nécessaires à l'accès à la page :
   - `/` (redirige vers `/ui`), `/ui` ;
   - ses fichiers : `/ui/static/*`, `/ui/sw.js` ;
   - `GET /ui/auth`, `GET /ui/auth/login` et le retour OIDC ;
@@ -60,101 +61,105 @@ Même avec l'auth active :
 
 ## Dépôts
 
-L'outil `repository` ([Dépôts](depots.md)) fait télécharger au proxy
-une adresse fournie par un compte (sa source), sans règle d'adresse : une
-forge du réseau interne est joignable, et tout compte peut définir une
-source. À n'activer (`[repos].enabled`) que là où les comptes sont de
-confiance. Le jeton d'une source n'est rendu ni à la page, ni au modèle,
-ni au bac, ni dans une URL, et ne suit pas une redirection vers un autre
-hôte.
+L'outil `repository` ([Dépôts](depots.md)) télécharge une adresse fournie
+par un compte, sans filtrage d'adresse. Une forge du réseau interne est
+donc accessible, et tout compte peut définir une source. N'activer
+`[repos].enabled` que si les comptes sont de confiance. Le jeton d'une
+source n'est transmis ni à la page, ni au modèle, ni au bac, et n'est pas
+ajouté aux URL ni transmis lors d'une redirection vers un autre hôte.
 
-Le contenu d'un dépôt n'est pas décodé dans le proxy : l'archive est
-décompressée et lue dans un bac de l'exécuteur, sans réseau (voir
+Le proxy ne décode pas le contenu d'un dépôt : l'archive est décompressée
+et lue dans un bac de l'exécuteur, sans réseau (voir
 [Comment un dépôt est lu](depots.md#comment-un-dépôt-est-lu)). Seule la
-forge `git` fait lire un pack par git dans le proxy, borné et sans rien
-exécuter du dépôt. Durées et emplacements :
-[Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps).
+forge `git` fait lire un pack par git dans le proxy, avec des limites et
+sans exécuter le contenu du dépôt. Les durées et emplacements sont décrits
+dans [Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps).
 
 ## Extensions
 
-Une [extension](extensions.md) est du code Python qui tourne dans le
-processus du proxy. Elle voit tout ce qu'il voit : la configuration et ses
-secrets, les jetons des comptes, les bases de `data/`. Son `.js` tourne
-dans la page de chaque utilisateur, avec sa session : il lit ce que la
-page lit (conversations, clés affichées) et appelle ce qu'elle appelle. Seul l'admin en
-dépose, dans un dossier monté en lecture seule. Hors d'un tel montage, le
-proxy refuse un dossier ou un fichier qu'il pourrait écrire ou dont il est
-propriétaire (il pourrait en changer les droits). Une extension n'est pas
-un bac à sable : pour un outil qui n'a pas besoin du proxy, un
-[serveur MCP](outils.md#serveurs-mcp), qui tourne à part, est plus sûr.
+Une [extension](extensions.md) exécute du code Python dans le processus
+du proxy et accède à ses données : configuration et secrets, jetons des
+comptes et bases de `data/`. Son code `.js` s'exécute dans la page de
+chaque utilisateur avec sa session. Il peut lire les données accessibles
+à la page (conversations, clés affichées) et appeler ses routes. Seul un
+administrateur peut déposer une extension dans un dossier monté en lecture
+seule. En dehors d'un tel montage, le proxy refuse les dossiers et
+fichiers qu'il peut écrire ou dont il est propriétaire, car il pourrait
+en modifier les droits. Une extension n'est pas isolée. Pour un outil qui
+n'a pas besoin du proxy, un [serveur MCP](outils.md#serveurs-mcp) séparé
+est plus sûr.
 
-L'interrupteur de Configuration → Extensions est réservé aux admins ;
-sans comptes OIDC, il est ouvert à qui ouvre la page, comme la
-configuration. Il ne fait que choisir parmi les fichiers montés.
-`[extensions.<nom>].enabled = false` reste l'arrêt que la page ne lève
-pas.
+Le réglage Configuration → Extensions est réservé aux administrateurs.
+Sans comptes OIDC, il est accessible à toute personne qui ouvre la page,
+comme la configuration. Il permet uniquement de sélectionner les fichiers
+`[extensions.<nom>].enabled = false` désactive l'extension. La page ne peut
+pas réactiver une extension ainsi désactivée.
 
-`offered` (où un outil est offert, `api` ou `web`) règle la
-**présentation**, pas l'autorisation. La page et les webhooks n'ont pas de
-droits de clé : un outil offert au `web` sert à tout compte qui a la page
-et à tout webhook entrant. Sans comptes OIDC, une clé du TOML ouvre aussi
-les routes de la page (`/ui/tools`).
+`offered` (où un outil est offert, `api` ou `web`) détermine sa
+**présentation**, pas son autorisation. La page et les webhooks ne
+disposent pas de droits par clé : un outil offert au `web` est accessible
+à tout compte utilisant la page et à tout webhook entrant. Sans comptes
+OIDC, une clé du TOML donne aussi accès aux routes de la page
+(`/ui/tools`).
 
-L'extension d'exemple `pull_request` écrit sur une forge au jeton d'un
-compte de service, y compris pour le texte qu'un webhook reçoit : voir
+L'extension d'exemple `pull_request` écrit sur une forge avec le jeton
+d'un compte de service, y compris pour le texte reçu par un webhook : voir
 [Sa sûreté](extensions.md#pull_request--proposer-une-modification).
 
 ## Webhooks sortants
 
-Une URL Apprise de webhook sortant n'a pas de règle d'adresse : un compte
-peut faire envoyer un message vers toute adresse que le proxy joint,
-réseau interne compris. Seules les URL hors Apprise suivent `[tools.net]`.
-Voir [Webhook sortant](webhooks.md#webhook-sortant).
+Une URL Apprise de webhook sortant n'est pas soumise à un filtrage
+d'adresse : un compte peut faire envoyer un message vers toute adresse
+accessible au proxy, y compris sur le réseau interne. Seules les URL hors
+Apprise sont soumises à `[tools.net]`. Voir
+[Webhook sortant](webhooks.md#webhook-sortant).
 
 ## Secrets gardés en clair
 
-`data/conversations.db` garde en clair les jetons des webhooks entrants,
-les URL des webhooks sortants et les jetons des sources de dépôts : la
-page doit pouvoir réafficher une adresse, et le proxy présenter un jeton
-à la forge. Une copie de la base, ou de la sauvegarde de `data/`, donne
-des adresses et des jetons utilisables. Ce que le proxy garde en mémoire
-(dépôts, fichiers produits) peut finir dans le swap de l'hôte : un swap
-chiffré, ou pas de swap.
+`data/conversations.db` conserve en clair les jetons des webhooks
+entrants, les URL des webhooks sortants et les jetons des sources de
+dépôts. La page doit pouvoir réafficher ces URL et le proxy doit présenter
+les jetons aux forges. Une copie de la base ou de la sauvegarde de `data/`
+contient donc des URL et des jetons utilisables. Les données conservées en
+mémoire par le proxy (dépôts, fichiers produits) peuvent finir dans le
+swap de l'hôte : utilisez un swap chiffré ou désactivez-le.
 
 ## Le conteneur du proxy
 
-Le service `albert-proxy` tourne durci (voir
+Le service `albert-proxy` est exécuté avec des restrictions (voir
 [Déploiement](deploiement.md#durcissement-du-conteneur)) : image en
-lecture seule, seuls `./data` et un `/tmp` en mémoire s'écrivent, aucune
-capacité Linux, pas d'élévation de privilèges, utilisateur non root. Une
-faille dans ce que le proxy décode d'un tiers (pages, PDF, audio, packs
-git) ne pourrait ni modifier l'image, ni gagner de droits.
+lecture seule, écriture limitée à `./data` et à `/tmp` en mémoire,
+capacités Linux supprimées, élévation de privilèges désactivée et
+utilisateur non root. Une faille dans le décodage de données tierces
+(pages, PDF, audio, packs git) ne peut donc pas modifier l'image ni
+obtenir de privilèges supplémentaires.
 
 ## La page
 
 - **En-têtes** de `/ui` : `X-Frame-Options: SAMEORIGIN` (pas de cadrage
-  par un autre site), `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: same-origin`. **Pas de `Content-Security-Policy`** :
-  Vue, en build global, compile ses gabarits à la volée, et surtout les
-  cadres `srcdoc` (artifacts, bacs, VM Linux) héritent de la politique de
-  la page — une `script-src` stricte casserait leur code, en ligne par
-  construction. Chacun pose la sienne en tête de son document.
-- **Markdown** : tout le texte est échappé avant l'analyse ; le caractère
+  par un autre site), `X-Content-Type-Options: nosniff` et
+  `Referrer-Policy: same-origin`. Il n'y a pas de
+  `Content-Security-Policy` : Vue, en build global, compile ses gabarits
+  à la volée. De plus, les cadres `srcdoc` (artifacts, bacs, VM Linux)
+  héritent de la politique de la page. Une directive `script-src` stricte
+  bloquerait leur code en ligne. Chaque cadre définit sa propre politique
+  au début de son document.
+- **Markdown** : tout le texte est échappé avant l'analyse. Le caractère
   NUL, jeton interne du rendu, est retiré à l'entrée et refusé dans une
-  URL. Les images d'un autre site ne se chargent qu'au clic
+  URL. Les images d'un autre site ne sont chargées qu'au clic
   ([chat](chat.md)).
-- **Artifacts** : la politique de contenu passe avant le contenu, quel
-  qu'il soit ; la capture rendue par un artifact n'est gardée que si
-  c'est une image JPEG ou PNG en base64, bornée.
+- **Artifacts** : la politique de contenu est appliquée avant le contenu.
+  La capture rendue par un artifact n'est conservée que si elle est en
+  base64, au format JPEG ou PNG et dans les limites définies.
 
 ## Outils hébergés et exécution de code
 
-- Avec les [outils hébergés](outils-heberges.md), le proxy **émet des
-  requêtes vers des adresses choisies par le modèle**, limitées aux
-  adresses publiques. Il fait aussi entrer du texte du web dans le
-  contexte d'un agent. Lisez
+- Avec les [outils hébergés](outils-heberges.md), le proxy envoie des
+  requêtes vers des adresses choisies par le modèle, limitées aux
+  adresses publiques. Le texte provenant du web entre aussi dans le
+  contexte de l'agent. Lire
   [Ce qu'aucun garde-fou n'empêche](outils-heberges.md#ce-quaucun-garde-fou-nempêche)
-  avant de les activer.
-- Avec `code_execution`, du code écrit par un modèle tourne sur la
-  machine. Lisez
+  avant d'activer ces outils.
+- Avec `code_execution`, du code écrit par un modèle s'exécute sur la
+  machine. Lire
   [Ce que le bac à sable vaut](execution-de-code.md#ce-que-le-bac-à-sable-vaut).

@@ -1,19 +1,20 @@
 # llm-proxy
 
-Passerelle LLM qui met **plusieurs backends derrière un seul endpoint** et
-laisse **chaque client parler sa propre API**. Les backends sont des
-serveurs compatibles OpenAI : machines locales (llama.cpp, gufo, vLLM),
-API hébergée, éventuellement à quotas, ou tout autre. Le client vise une
-seule URL et choisit le backend par le **préfixe du nom de modèle**
-(`bigchuck/qwen3.8-flash-next`, `silentchuck/qwen3-tts-12hz-1.7b-base`).
+`llm-proxy` agrège plusieurs backends compatibles OpenAI derrière une URL. Il
+accepte les serveurs locaux (llama.cpp, gufo, vLLM), les API hébergées et les
+backends à quotas. Le préfixe du nom de modèle sélectionne le backend, par
+exemple `bigchuck/qwen3.8-flash-next` ou
+`silentchuck/qwen3-tts-12hz-1.7b-base`.
 
-Trois API côté client, une seule côté backend (`/v1/chat/completions`) :
+API exposées aux clients ; le backend reçoit des requêtes
+`/v1/chat/completions` :
 
-- **OpenAI** (`/v1/chat/completions`) : relayée telle quelle.
-- **Anthropic Messages** (`/v1/messages`) : traduite.
-- **OpenAI Responses** (`/v1/responses`) : traduite.
+- **OpenAI Chat Completions** (`/v1/chat/completions`) : relayée sans
+  traduction.
+- **Anthropic Messages** (`/v1/messages`) : traduite en Chat Completions.
+- **OpenAI Responses** (`/v1/responses`) : traduite en Chat Completions.
 
-Autour du relais :
+Fonctions disponibles autour du relais :
 
 - un catalogue `/v1/models` unifié ;
 - des **outils hébergés** que le proxy exécute pour le modèle : recherche
@@ -33,54 +34,51 @@ Autour du relais :
   webhooks, dépôts, bacs de l'exécuteur et caches) ;
 - un conteneur durci (lecture seule, sans capacités Linux).
 
-Le tableau de bord a son **chat**, une interface de conversation
-complète sur les backends du proxy ([Le chat](docs/chat.md)) :
+Le tableau de bord `/ui` inclut un chat connecté aux backends du proxy
+([Chat](docs/chat.md)). Ses fonctions comprennent :
 
-- **Conversations** gardées par le proxy et liées au compte (recherche,
-  export Markdown, mode incognito, file d'attente des messages), jauge
-  du contexte avec sa répartition, `/compact` et résumé automatique.
-- **Images** : les modèles d'images du catalogue dans la conversation
-  (génération avec le contexte des demandes précédentes, retouche d'une
-  image jointe, *Générer encore*), ou l'outil *Images* au fil d'une
-  réponse ; le panneau *Images* les rassemble en planche ou en grille.
-- **Voix** : réponses lues par le navigateur ou par un modèle du proxy
-  (Qwen3-TTS, voix toutes faites ou **clonées**) ; studio de clonage
-  depuis le micro, un fichier ou une description, normalisé dans la
-  page, voix gardées avec le compte, téléchargeables et importables
-  ([Voix](docs/voix.md)) ; modèles de voix et de **transcription**
-  directement dans le fil (audio joint ou enregistré au micro).
-- **Outils du proxy** : recherche et lecture web sourcées, exécution de
-  code, images, mémoire, dépôts, webhooks, serveurs MCP.
-- **Outils de la page** : questions à choix (`ask_user`), **artifacts**
-  (HTML, Markdown, SVG, Mermaid) versionnés, retouchés par passages et
-  débogués par le modèle dans leur cadre isolé, **dossier local** ouvert
-  dont chaque écriture passe par un diff à accepter.
-- **Outils du navigateur**, toujours avec l'accord de l'utilisateur :
-  position, presse-papiers, caméra, capture d'écran, agenda, QR codes,
-  lecture à voix haute…
-- **Bacs WASM dans l'onglet**, sans réseau, sur les fichiers du dossier
-  ouvert qui ne quittent pas l'appareil : **JavaScript**,
-  **TypeScript** (exécution et vérification de types), **PHP 8.3**,
-  **SQLite** et **PostgreSQL** (PGlite), et une **VM Linux** (v86 +
-  Alpine : bash, python3, git, sqlite…) partagée avec un **terminal**,
-  que le proxy peut ouvrir à Internet par un relais Wisp
-  ([La VM Linux](docs/linux.md)). Seul le résultat revient au modèle.
-- **Programmes d'outils** : un programme JavaScript du bac enchaîne les
-  outils hébergés cochés (chercher, lire, filtrer) en un seul appel
+- **Conversations** persistées par compte : recherche, export Markdown,
+  mode incognito, file d'attente des messages, jauge de contexte et sa
+  répartition, `/compact` et résumé automatique.
+- **Images** : génération avec le contexte des demandes précédentes, retouche
+  d'images jointes, génération répétée et panneau en planche ou en grille.
+- **Voix et transcription** : lecture par le navigateur ou par Qwen3-TTS,
+  voix prédéfinies ou clonées ; studio de clonage depuis le micro, un fichier
+  ou une description ; voix normalisées, persistées par compte, exportables
+  et importables. Les modèles de voix et de transcription acceptent aussi
+  les fichiers audio joints ou enregistrés dans le fil
+  ([Voix](docs/voix.md)).
+- **Outils du proxy** : recherche et lecture web avec sources, exécution de
+  code, images, mémoire, dépôts, webhooks et serveurs MCP.
+- **Outils de la page** : questions à choix (`ask_user`), artifacts HTML,
+  Markdown, SVG ou Mermaid versionnés, modifiés par passages et débogués par
+  le modèle dans un cadre isolé ; dossier local dont chaque écriture exige
+  l'acceptation d'un diff.
+- **Outils du navigateur** : accès à la position, au presse-papiers, à la
+  caméra, aux captures d'écran, à l'agenda et aux QR codes après accord de
+  l'utilisateur ; lecture à voix haute.
+- **Runtimes dans l'onglet** : JavaScript, TypeScript (exécution et
+  vérification de types), PHP 8.3, SQLite et PostgreSQL (PGlite). Ils
+  travaillent sans réseau sur les fichiers du dossier ouvert, qui restent
+  sur l'appareil. La VM Linux (v86, Alpine : bash, python3, git, sqlite) est
+  partagée avec un terminal ; le proxy peut lui ouvrir l'accès réseau par un
+  relais Wisp ([VM Linux](docs/linux.md)). Seuls les résultats sont transmis
+  au modèle.
+- **Programmes d'outils** : un programme JavaScript du bac enchaîne les outils
+  hébergés sélectionnés (recherche, lecture, filtrage) dans un seul appel
   ([Programmes d'outils](docs/navigateur.md#programmes-doutils--run_tools_program)).
-- **Gemini Nano** (Chrome) en modèle local, qui répond sur l'appareil.
+- **Gemini Nano** dans Chrome : modèle local exécuté sur l'appareil.
 
-**En vidéo** (1 min 20, sans son) : synthèse, recherche web sourcée,
-questions, artifact interactif retouché, graphique, SQL sur un dossier,
-agenda et rappels, `/compact`. Les réponses y sont celles d'un modèle de
-démonstration scénarisé ; l'interface, les outils et les calculs sont réels.
+Vidéo de démonstration (1 min 20, sans son) : synthèse, recherche web,
+questions, modification d'un artifact, graphique, requête SQL sur un dossier,
+agenda et `/compact`. Le modèle utilisé suit un scénario préparé. L'interface,
+les outils et les calculs présentés sont ceux du projet.
 
-[![Présentation du chat : un tableau de bord de budget construit par le modèle, ses curseurs déplacés, les barres recalculées — cliquer pour lire la vidéo](docs/presentation.jpg)](docs/presentation.mp4)
+[![Capture du chat : tableau de bord de budget généré avec curseurs et graphique](docs/presentation.jpg)](docs/presentation.mp4)
 
 ![Dans le chat, un dossier ouvert : run_sql importe un CSV de 2 400 ventes et l'agrège par région, run_javascript en dessine le graphique, le modèle résume](docs/navigateur-sql-graphique.png)
 
-Voir [Les outils du navigateur](docs/navigateur.md), chaque outil avec sa
-capture.
+Captures détaillées des [outils du navigateur](docs/navigateur.md).
 
 ![Tableau de bord /ui, vue Statistiques sur la semaine : menu latéral (chat et conversations, statistiques, configuration, thème), cartes de synthèse (requêtes, tokens, modèles actifs, erreurs), trafic par jour empilé par modèle, répartition des tokens, détail par modèle et par outil hébergé](docs/preview.jpg)
 
@@ -90,24 +88,24 @@ capture.
     docker compose up -d --build
     curl -s http://localhost:8000/v1/models | jq '.data[].id'
 
-La configuration vit dans un seul fichier, `data/config.toml`. Au
-premier démarrage, sans lui, `http://localhost:8000/ui` affiche la page
-d'**installation** : cocher ses fournisseurs (NVIDIA, AMD, Groq,
-Mistral, OpenRouter, OpenCode Go, Anthropic, Albert) et ses options, et elle donne
-le `.env`, `data/config.toml` et le `docker-compose.override.yml` à
-poser avant de redémarrer. En attendant, l'API répond 503. Chaque
-réglage est décrit dans `data/config.example.toml` ; l'environnement ne
-sert qu'aux secrets, injectés par `${VAR}`.
+La configuration est centralisée dans `data/config.toml`. Sans ce fichier,
+`http://localhost:8000/ui` affiche la page d'installation. Elle génère le
+`.env`, `data/config.toml` et `docker-compose.override.yml` à partir des
+fournisseurs sélectionnés (NVIDIA, AMD, Groq, Mistral, OpenRouter, OpenCode
+Go, Anthropic, Albert) et des options choisies. Placez les fichiers générés
+dans la racine du déploiement, puis relancez Compose. En mode installation,
+l'API répond 503. Chaque réglage est décrit dans `data/config.example.toml` ;
+les variables d'environnement servent uniquement à fournir des secrets via
+`${VAR}`.
 
-L'image est aussi publiée à chaque version sur
-`ghcr.io/c4software/llm-proxy` (publique) : `image:` dans l'override,
-puis `docker compose pull && docker compose up -d`, sans construction
+L'image est publiée à chaque version sur `ghcr.io/c4software/llm-proxy`.
+Pour l'utiliser, configurez `image:` dans l'override, puis exécutez
+`docker compose pull && docker compose up -d` sans construire l'image
 ([Déploiement](docs/deploiement.md#limage-publiée)).
 
-Pas à pas, avec NVIDIA, AMD et d'autres fournisseurs gratuits branchés
-derrière le proxy, puis OpenCode relié dessus : le TP
-[Monter son propre proxy](https://cours.brosseau.ovh/tp/agentic/proxy.html)
-du cours sur le développement agentique.
+Le guide [Monter son propre proxy](https://cours.brosseau.ovh/tp/agentic/proxy.html)
+décrit le déploiement avec NVIDIA, AMD et d'autres fournisseurs, puis la
+configuration d'OpenCode comme client.
 
 ## Documentation
 
@@ -125,14 +123,14 @@ du cours sur le développement agentique.
 | L'Usage API d'OpenAI servie par le proxy | [Statistiques](docs/statistiques.md) |
 | `/v1/messages` : traduction, `model_map`, `[anthropic]` | [API Anthropic Messages](docs/api-anthropic.md) |
 | `/v1/responses` : traduction, outils, `[responses]` | [API OpenAI Responses](docs/api-responses.md) |
-| Recherche et lecture web, OCR, transcription, images, mémoire, MCP | [Outils hébergés](docs/outils-heberges.md) |
-| Synthèse vocale, conception et clonage de voix (Qwen3-TTS), avec curl et dans le chat | [Voix](docs/voix.md) |
-| Le bac à sable de `code_execution` (aussi celui où les dépôts sont lus) | [Exécution de code](docs/execution-de-code.md) |
-| Webhooks entrants et sortants, au format Slack, par compte | [Webhooks](docs/webhooks.md) |
-| Lire un dépôt GitLab, GitHub, Gitea ou git (arborescence, fichiers, recherche), dans un bac de l'exécuteur | [Dépôts](docs/depots.md) |
-| Écrire un outil hébergé : le contrat | [docs/outils.md](docs/outils.md) |
-| Ajouter des outils, du proxy (Python) ou du navigateur (JavaScript), chargés au démarrage | [Extensions](docs/extensions.md) |
+| Recherche web, OCR, transcription, images, mémoire et MCP | [Outils hébergés](docs/outils-heberges.md) |
+| Synthèse vocale, création et clonage de voix (Qwen3-TTS) | [Voix](docs/voix.md) |
+| Bac à sable de `code_execution` et lecture des dépôts | [Exécution de code](docs/execution-de-code.md) |
+| Webhooks entrants et sortants par compte | [Webhooks](docs/webhooks.md) |
+| Sources GitLab, GitHub, Gitea ou Git et outils de lecture | [Dépôts](docs/depots.md) |
+| Contrat pour écrire un outil hébergé | [Outils hébergés : le contrat](docs/outils.md) |
+| Extensions Python du proxy et JavaScript du navigateur | [Extensions](docs/extensions.md) |
 | Vérifier un déploiement | [Vérification](docs/verification.md) |
-| Ce qui ne marche pas, ou pas encore | [Limites connues](docs/limites.md) |
-| Les bancs de vrais clients | [bench/README.md](bench/README.md) |
-| Règles pour modifier le dépôt : code, documentation, tests | [AGENTS.md](AGENTS.md) |
+| Limites connues | [Limites connues](docs/limites.md) |
+| Bancs de validation avec clients réels | [bench/README.md](bench/README.md) |
+| Consignes de contribution : code, documentation, tests | [AGENTS.md](AGENTS.md) |

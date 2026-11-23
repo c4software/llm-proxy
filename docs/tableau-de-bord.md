@@ -1,32 +1,35 @@
 # Tableau de bord
 
-La page web du proxy s'ouvre sur `GET /ui` (ou `/`). Elle réunit trois
-vues : *Statistiques*, [*Chat*](chat.md) et *Configuration*. Son accès
-dépend de la configuration : ouverte sans `proxy.api_keys`, protégée par
-une [clé](#connexion-par-clé) sinon, ou par des
-[comptes OIDC](#comptes-oidc) avec `[oidc]`. Aucun CDN ni compilation :
-Vue 3 est embarqué.
+La page web du proxy est accessible par `GET /ui` (ou `/`). Elle fournit
+trois vues : *Statistiques*, [*Chat*](chat.md) et *Configuration*. Le mode
+d'accès dépend de la configuration : accès sans clé si `proxy.api_keys`
+n'est pas défini, accès par une [clé](#connexion-par-clé) sinon, ou accès
+par des [comptes OIDC](#comptes-oidc) si `[oidc]` est configuré. La page
+n'utilise aucun CDN et ne nécessite pas de compilation : la bibliothèque
+Vue 3 est embarquée.
 
 ## Navigation
 
-Un **menu latéral** (tiroir ☰ sous 760 px de large) donne en haut *Chat*
-et la liste des conversations, en bas *Statistiques*, *Configuration*,
-la clé connectée, *Se déconnecter*, le thème (auto, clair, sombre) et,
-en petit, la **version** de l'image (le tag, sinon `sha-xxxxxxx` ;
-`dev` hors image), passée par la CI au build (`LLM_PROXY_VERSION`).
-Une réponse du chat continue pendant qu'on regarde les statistiques.
-Le bouton à côté du logo le passe en **mode compact** : un rail d'icônes
-(libellés en bulles), sans la liste des conversations ni le pied, à
-déplier pour y revenir. Le choix reste dans ce navigateur ; sur mobile,
-le menu reste un tiroir.
+Le **menu latéral** devient un tiroir ☰ sous 760 px de large. Il affiche
+en haut *Chat* et la liste des conversations, puis *Statistiques*,
+*Configuration*, la clé connectée, *Se déconnecter*, le thème (auto,
+clair, sombre) et la **version** de l'image. Cette version est le tag ou,
+à défaut, `sha-xxxxxxx` ; hors image, elle vaut `dev`. La CI la fournit
+au build via `LLM_PROXY_VERSION`. La génération du chat continue pendant
+la consultation des statistiques.
 
-La page est **installable** comme une application (manifeste
-`/ui/static/manifest.webmanifest`, service worker `/ui/sw.js`, servis
-sans clé). Le service worker ne garde rien ; proxy injoignable, il
-affiche une page « hors ligne ». L'installation exige **HTTPS** (ou
-`localhost`) : certificat sur l'hôte derrière Nginx Proxy Manager,
-`tailscale serve` ou `tailscale cert` sur un tailnet. En HTTP, « Ajouter
-à l'écran d'accueil » ouvre un simple onglet.
+Le bouton à côté du logo active le **mode compact** : le menu devient un
+rail d'icônes avec libellés en bulles, sans liste des conversations ni
+pied de page. Le bouton permet de revenir au menu complet. Le choix est
+conservé dans ce navigateur ; sur mobile, le menu reste un tiroir.
+
+La page est **installable** comme une application. Le manifeste
+`/ui/static/manifest.webmanifest` et le service worker `/ui/sw.js` sont
+servis sans clé. Le service worker ne stocke aucune donnée ; si le proxy
+est injoignable, il affiche une page « hors ligne ». L'installation
+nécessite **HTTPS** (ou `localhost`) : certificat sur l'hôte derrière
+Nginx Proxy Manager, `tailscale serve` ou `tailscale cert` sur un tailnet.
+En HTTP, « Ajouter à l'écran d'accueil » ouvre un onglet ordinaire.
 
 ## La vue Statistiques
 
@@ -36,90 +39,95 @@ affiche une page « hors ligne ». L'installation exige **HTTPS** (ou
 | Semaine | 7 derniers jours | 1 jour | <kbd>W</kbd> |
 | Tout | depuis le plus ancien enregistrement | 1 heure ou 1 jour | <kbd>A</kbd> |
 
-Un second sélecteur choisit la mesure de la courbe **Trafic** :
-*Requêtes* (<kbd>R</kbd>) ou *Tokens* (<kbd>T</kbd>). Les deux choix sont
-mémorisés dans le navigateur.
+Un second sélecteur choisit la mesure affichée dans la courbe **Trafic** :
+*Requêtes* (<kbd>R</kbd>) ou *Tokens* (<kbd>T</kbd>). Ces deux choix sont
+conservés dans le navigateur.
 
-- **Trafic** : un seul axe, barres empilées par modèle. L'infobulle
-  donne l'autre mesure et le détail. Les seaux vides sont dessinés.
+- **Trafic** : axe unique et barres empilées par modèle. L'infobulle
+  indique l'autre mesure et le détail. Les intervalles sans données sont
+  également représentés.
 - **Tableau des modèles**, sur la période exacte de la courbe :
   - *Comptage* : *exact* (bloc `usage` du backend) ou *estimé*
     (streaming sans `stream_options.include_usage`) ;
   - *Cache* : part de l'entrée servie par le cache de préfixe du backend
-    (llama.cpp, vLLM), `—` s'il ne la remonte pas (Albert) ;
-  - les requêtes arrivées par `/v1/messages` sont comptées.
-- **Outils** : les [outils hébergés](outils-heberges.md) de la période.
-  Par outil : appels, erreurs, refus par limite, durée moyenne et
-  maximale, caractères rendus au modèle, dernier appel, répartition par
-  route. Absente si aucun outil n'a servi. En vue *Tout*, elle part du
-  début de la base.
+    (llama.cpp, vLLM), `—` si le backend ne la fournit pas (Albert) ;
+  - les requêtes reçues par `/v1/messages` sont également comptées.
+- **Outils** : activité des [outils hébergés](outils-heberges.md) pour la
+  période. Pour chaque outil : appels, erreurs, refus par limite, durées
+  moyenne et maximale, caractères transmis au modèle, dernier appel et
+  répartition par route. Cette section n'apparaît que si un outil a été
+  utilisé. En vue *Tout*, elle couvre la période depuis le début de la base.
 
-La vue se rafraîchit toutes les 5 s, sans clignoter, et jamais quand
-l'onglet est masqué ou que le chat est affiché.
+La vue est actualisée toutes les 5 s, sans clignotement, uniquement lorsque
+l'onglet est visible et que le chat n'est pas affiché.
 
-Les chiffres viennent de `/ui/usage` et `/ui/usage/tools`, identiques à
-`/v1/organization/usage/completions` et `/v1/organization/usage/tools`
-(voir [Statistiques](statistiques.md)) mais authentifiés par le cookie
-de la page. La page ne dépense des tokens que si le chat est ouvert
+Les données proviennent de `/ui/usage` et `/ui/usage/tools`, équivalents
+à `/v1/organization/usage/completions` et `/v1/organization/usage/tools`
+(voir [Statistiques](statistiques.md)), mais authentifiés par le cookie
+de la page. La page ne consomme des tokens que lorsque le chat est ouvert
 (`[ui] chat = true`).
 
 ## Connexion par clé
 
-Si `proxy.api_keys` est renseigné, la page demande une clé (une clé, une
-personne).
+Lorsque `proxy.api_keys` est renseigné, la page demande une clé. Chaque
+clé correspond à une personne.
 
-- `POST /ui/login` la vérifie et ouvre une **session signée** : cookie
-  `proxy_session`, `HttpOnly`, `SameSite=Lax`, 30 jours, `Secure` en
-  HTTPS (y compris derrière un reverse proxy qui pose
+- `POST /ui/login` vérifie la clé et ouvre une **session signée** dans le
+  cookie `proxy_session` : `HttpOnly`, `SameSite=Lax`, durée de 30 jours,
+  `Secure` en HTTPS (y compris derrière un reverse proxy qui définit
   `X-Forwarded-Proto`).
-- La session ne porte que le condensé de la clé, et cesse si la clé
-  quitte `proxy.api_keys`. `POST /ui/logout` la ferme.
-- La clé ne passe jamais par l'URL : `?key=` n'est pas lu.
-  `Authorization: Bearer` ouvre aussi les routes `/ui`.
-- On ne voit que **les requêtes et outils de sa clé** : `/ui/usage` et
-  `/ui/usage/tools` filtrent d'office.
-- `GET /ui/session` dit qui est connecté (fragment du condensé) et ce
-  que le chat peut faire, ou répond `401`.
+- La session ne contient que le condensé de la clé et devient invalide si
+  la clé est retirée de `proxy.api_keys`. `POST /ui/logout` ferme la session.
+- La clé n'est jamais transmise dans l'URL ; `?key=` n'est pas lu.
+  `Authorization: Bearer` permet également d'accéder aux routes `/ui`.
+- La page n'affiche que **les requêtes et outils associés à la clé** :
+  `/ui/usage` et `/ui/usage/tools` appliquent ce filtre automatiquement.
+- `GET /ui/session` indique l'identité connectée (fragment du condensé)
+  et les fonctions disponibles dans le chat, ou répond `401`.
 
 ## Partage équitable
 
-Le partage équitable empêche un client (un agent qui boucle) de saturer
-les backends. Ce n'est pas un quota : **rien n'est refusé**, aucun
-`429`. Chaque client a une **part** de tokens (entrée + sortie) sur une
-**heure glissante**. Au-delà, sa requête **attend** de repasser sous la
-part. Un client qui raccroche pendant l'attente est abandonné (`499`).
+Le partage équitable limite la consommation de tokens par client afin
+d'éviter la saturation des backends. Il ne constitue pas un quota :
+aucune requête n'est refusée et aucun `429` n'est renvoyé. Chaque client
+dispose d'une **part** de tokens (entrée et sortie) sur une **heure
+glissante**. Une requête qui dépasse cette part attend que la consommation
+repasse sous le seuil. Si le client se déconnecte pendant l'attente, la
+requête est abandonnée (`499`).
 
-- **Le client** : le compte (clé gérée, clé du TOML rattachée, page
-  connectée), sinon la clé du TOML. Proxy ouvert : personne.
+- **Le client** : le compte, si la requête utilise une clé gérée, une clé
+  du TOML rattachée ou la page connectée ; sinon, la clé du TOML. Un proxy
+  ouvert n'a pas de client identifié.
 - **La part** : `[fair_share].tokens_per_hour` (`0` = aucune limite).
-  Un admin la règle par compte (*Configuration → Comptes*, colonne
-  *Part / h*, ou `PATCH /ui/users/<id>` `{"share": null | 0 | n}` :
-  défaut, illimitée, ou un nombre). La relever libère aussitôt qui
-  attend.
-- **Ce qui compte** : chaque requête relayée, une fois terminée. Sauf
-  les routes de `[proxy].exempt_paths` (embeddings, transcription, OCR),
-  un backend `fair_share = false`, et les appels d'un outil hébergé à un
-  backend.
-- Des requêtes parallèles sous la part partent toutes : la part borne la
-  moyenne, pas la pointe.
-- **Où le voir** : en tête de *Configuration → Clés* (`fair_share` de
-  `/ui/session`) ; `/healthz` détaillé (part par défaut, clients suivis,
-  en attente) ; le journal (`[partage] … relâché après …s`).
-- Au démarrage, la dernière heure est relue : un redémarrage ne remet
-  personne à zéro.
+  Un admin la règle par compte dans *Configuration → Comptes*, colonne
+  *Part / h*, ou avec `PATCH /ui/users/<id>` `{"share": null | 0 | n}`
+  (valeur par défaut, illimitée ou nombre de tokens). Augmenter la part
+  libère immédiatement les requêtes en attente qui repassent sous le seuil.
+- **Ce qui compte** : chaque requête relayée, après son achèvement. Sont
+  exclues les routes de `[proxy].exempt_paths` (embeddings, transcription,
+  OCR), les requêtes vers un backend `fair_share = false` et les requêtes
+  d'un outil hébergé vers un backend.
+- Les requêtes parallèles sont toutes envoyées tant que la consommation
+  reste sous la part : celle-ci borne la moyenne, pas le pic.
+- **Où le voir** : en tête de *Configuration → Clés* (`fair_share` dans
+  `/ui/session`), dans `/healthz` détaillé (part par défaut, clients suivis,
+  requêtes en attente) et dans le journal (`[partage] … relâché après …s`).
+- Au démarrage, le proxy relit la dernière heure ; un redémarrage ne remet
+  pas les compteurs à zéro.
 
 ## Comptes OIDC
 
-Avec `[oidc]`, la page s'ouvre par un fournisseur OIDC (Keycloak,
-Authentik, Google…) au lieu d'une clé. Chacun a un compte, un rôle et
-ses propres clés.
+Avec `[oidc]`, la page utilise un fournisseur OIDC (Keycloak, Authentik,
+Google…) au lieu d'une clé. Chaque utilisateur dispose d'un compte, d'un
+rôle et de ses propres clés.
 
 **Mettre en route :**
 
-1. Chez le fournisseur : un client confidentiel, flux *authorization
-   code*, retour `https://<adresse publique>/ui/auth/callback`.
-2. Dans `config.toml`, les valeurs dans `.env` (transmis au conteneur
-   par `docker-compose.yml`) :
+1. Chez le fournisseur, créer un client confidentiel avec le flux
+   *authorization code* et l'URL de retour
+   `https://<adresse publique>/ui/auth/callback`.
+2. Dans `config.toml`, définir les valeurs stockées dans `.env` (transmis
+   au conteneur par `docker-compose.yml`) :
 
    ```toml
    [oidc]
@@ -128,18 +136,19 @@ ses propres clés.
    client_secret = "${OIDC_CLIENT_SECRET}"
    ```
 
-3. Derrière un reverse proxy, poser `[oidc].redirect_uri` ou
-   `[files].public_url`. Sinon l'adresse de retour est en `http://` et le
-   fournisseur la refuse.
-4. Redémarrer et se connecter **le premier** : ce compte est admin.
+3. Derrière un reverse proxy, définir `[oidc].redirect_uri` ou
+   `[files].public_url`. Sans ce réglage, l'URL de retour est en `http://`
+   et le fournisseur la refuse.
+4. Redémarrer le proxy, puis se connecter en premier pour créer le compte
+   admin.
 
 **Connexion** : *Se connecter* → `GET /ui/auth/login` → fournisseur →
-`GET /ui/auth/callback` → `/ui`. Client [Authlib](https://docs.authlib.org/) :
-découverte, PKCE (S256), `state`, `nonce`, id_token vérifié (JWKS,
-`iss`, `aud`, `exp`, `nonce`). La session est le même cookie qu'en mode
-clé, signé d'après `data/client.secret`. Une clé du proxy n'ouvre plus
-la page (`/ui/login` → `404`). Un échec renvoie sur
-`/ui?auth_error=…`.
+`GET /ui/auth/callback` → `/ui`. Le client [Authlib](https://docs.authlib.org/)
+effectue la découverte OIDC et PKCE (S256), gère `state` et `nonce`, et
+vérifie l'id_token (JWKS, `iss`, `aud`, `exp`, `nonce`). La session utilise
+le même cookie qu'en mode clé, signé avec `data/client.secret`. Une clé
+du proxy ne permet plus d'ouvrir la page (`/ui/login` → `404`). En cas
+d'échec, la page revient à `/ui?auth_error=…`.
 
 **Comptes** (`accounts.db`, un par identité `iss` + `sub`) :
 
@@ -150,230 +159,247 @@ la page (`/ui/login` → `404`). Un échec renvoie sur
 | `pending` | ne voit que son état jusqu'à acceptation |
 | `blocked` | perd la page ; ses clés cessent de valoir |
 
-Le premier compte est admin. Les suivants prennent
-`[oidc].new_accounts` : `"pending"` (défaut) ou `"user"` pour un
-fournisseur déjà réservé à votre équipe. Le dernier admin ne peut pas
-perdre son rôle. L'admin gère les rôles dans *Configuration → Comptes*
-(`GET /ui/users`, `PATCH /ui/users/<id>` `{"role": …}`).
+Le premier compte est admin. Les comptes suivants reçoivent le rôle défini
+par `[oidc].new_accounts` : `"pending"` (défaut) ou `"user"` pour un
+fournisseur réservé à l'équipe. Le dernier admin ne peut pas perdre son
+rôle. L'admin gère les rôles dans *Configuration → Comptes* (`GET
+/ui/users`, `PATCH /ui/users/<id>` `{"role": …}`).
 
-**Clés** : chacun crée les siennes dans *Configuration → Clés*
-(`POST /ui/keys`), une par client, avec un libellé.
+**Clés** : chaque utilisateur peut créer une clé par client dans
+*Configuration → Clés* (`POST /ui/keys`) et lui attribuer un libellé.
 
-- Ce sont des uuid4, montrés **une seule fois**, avec la commande qui la
-  pose dans `~/.config/llm-proxy.key`. Le proxy n'en garde que le
-  condensé et les 8 premiers caractères.
-- Révoquée (`DELETE /ui/keys/<id>`), une clé reste listée avec ses
+- Les clés sont des uuid4, affichées **une seule fois** avec la commande
+  permettant de les enregistrer dans `~/.config/llm-proxy.key`. Le proxy
+  ne conserve que leur condensé et leurs 8 premiers caractères.
+- Une clé révoquée (`DELETE /ui/keys/<id>`) reste listée avec ses
   statistiques.
-- Elles valent partout (`/v1/*`, `/mcp`, `Authorization: Bearer` ou
-  `x-api-key`), à côté de celles de `proxy.api_keys`. L'admin voit
-  celles-ci (condensé seul) sans pouvoir les retirer, et les clés de
-  tous (`GET /ui/keys?all=1`).
+- Les clés sont utilisables sur `/v1/*` et `/mcp`, avec
+  `Authorization: Bearer` ou `x-api-key`, comme les clés de `proxy.api_keys`.
+  L'admin voit ces dernières (condensé seul), sans pouvoir les retirer,
+  ainsi que toutes les clés des comptes (`GET /ui/keys?all=1`).
 
-**Droits d'une clé sur les outils** : à la création, on choisit les
-outils hébergés qu'elle peut employer : *tous* (le défaut) ou *seulement
-ceux-ci*, cochés un à un. Un serveur MCP se coche entier (`mcp:<serveur>`,
-ses outils futurs compris ; `mcp` pour tous les serveurs) ou outil par
-outil. Le bouton *Droits* d'une clé les change ensuite.
+**Droits d'une clé sur les outils** : lors de sa création, les outils
+hébergés autorisés sont définis sur *tous* (défaut) ou *seulement ceux-ci*,
+sélectionnés un par un. Un serveur MCP peut être sélectionné en entier
+(`mcp:<serveur>`, y compris ses futurs outils ; `mcp` pour tous les
+serveurs) ou outil par outil. Le bouton *Droits* permet de modifier cette
+sélection.
 
 - API : `POST /ui/keys` `{"label": …, "tools": null | ["web_search", "mcp:docs", …]}`,
-  puis `PATCH /ui/keys/<id>` `{"tools": …}` et/ou `{"label": …}` (le
-  compte de la clé, ou un admin) ; `GET /ui/keys/tools` liste ce qu'on
-  peut permettre. `[]` = aucun outil : la clé ne sert qu'au modèle.
-- Un outil refusé est, pour cette clé, un outil inactif : ni présenté au
-  modèle (les trois surfaces, `[chat].always`), ni listé par `/v1/tools`
-  et `/mcp`. Appelé directement, `POST /v1/tools/<nom>` répond `403`
-  `tool_not_permitted`.
-- Un changement vaut à la requête suivante (jusqu'à 10 s pour un autre
-  processus). Une clé révoquée ne change plus (`409`).
-- Les droits suivent la **clé**, pas le compte : le chat de la page et
-  les webhooks gardent tous les outils actifs. Les clés du TOML n'en ont
-  pas. Un outil offert à la page seule (`offered`, voir
-  [Écrire un outil](outils.md#loutil--tool)) n'est pas proposé aux droits
-  d'une clé : ils ne s'y appliquent pas.
+  puis `PATCH /ui/keys/<id>` `{"tools": …}` et/ou `{"label": …}` (par le
+  compte propriétaire de la clé ou un admin). `GET /ui/keys/tools` liste
+  les outils sélectionnables. `[]` = aucun outil : la clé ne sert qu'au modèle.
+- Pour cette clé, un outil refusé est inactif : il n'est pas présenté au
+  modèle sur les trois surfaces (y compris `[chat].always`) ni listé dans
+  `/v1/tools` et `/mcp`. Un appel direct à `POST /v1/tools/<nom>` répond
+  `403` `tool_not_permitted`.
+- Une modification s'applique à la requête suivante, avec un délai de
+  propagation pouvant atteindre 10 s dans un autre processus. Une clé
+  révoquée ne peut plus être modifiée (`409`).
+- Les droits sont associés à la **clé**, pas au compte. Le chat de la page
+  et les webhooks conservent tous les outils actifs. Les clés du TOML ne
+  sont pas soumises à ces droits. Un outil offert à la page seule
+  (`offered`, voir [Écrire un outil](outils.md#loutil--tool)) n'est pas
+  proposé dans les droits d'une clé ; ces droits ne s'y appliquent pas.
 
-**Rattacher une clé du TOML** : l'admin peut lier une clé de
-`proxy.api_keys` à un compte (*Clés → tous les comptes*, ou
-`PUT /ui/keys/toml/<condensé>` `{"user_id": <id> | null}`). Le lien vit
-dans `accounts.db`, le TOML ne change pas. La clé écrit alors dans la
-mémoire du compte, ses statistiques s'y ajoutent, et elle suit l'état
-du compte (en attente ou bloqué = `401`). Ce qu'elle avait rangé avant
-reste sous son condensé, hors de vue du compte.
+**Rattacher une clé du TOML** : l'admin peut associer une clé de
+`proxy.api_keys` à un compte dans *Clés → tous les comptes* ou avec
+`PUT /ui/keys/toml/<condensé>` `{"user_id": <id> | null}`. L'association
+est stockée dans `accounts.db` ; le TOML reste inchangé. La clé utilise
+alors la mémoire du compte et ses statistiques sont ajoutées à celles du
+compte. Elle suit également son état : un compte en attente ou bloqué
+entraîne une réponse `401`. Les données enregistrées avant l'association
+restent sous le condensé de la clé et ne sont pas visibles du compte.
 
 ![Configuration → Clés, vue admin : une clé tout juste créée (montrée une fois, avec la commande qui l'enregistre et la ligne du profil du shell), puis les clés de tous les comptes et une clé du TOML rattachée à un compte](keys.jpg)
 
-**Partagé par un compte** : toutes ses clés et son chat ont **la même
-mémoire** (outil `memory`, échanges d'outils). Les statistiques restent
-**par clé** (`api_key_id`) ; la page d'un compte les réunit, celle d'un
-admin montre tout le monde.
+**Partagé par un compte** : toutes les clés du compte et son chat partagent
+la **même mémoire** (outil `memory`, échanges d'outils). Les statistiques
+restent **par clé** (`api_key_id`) ; la page d'un compte les agrège et la
+page d'un admin affiche celles de tous les comptes.
 
-**État** : `GET /ui/auth` (sans session) répond
-`{"mode": "oidc" | "key" | null, "label": …}`, répété par `/healthz`
-détaillé (`ui_login`). `GET /ui/session` ajoute `account` (identifiant,
-e-mail, nom, rôle). Le journal note l'activation des comptes et chaque
-connexion.
+**État** : sans session, `GET /ui/auth` répond
+`{"mode": "oidc" | "key" | null, "label": …}` ; le même état apparaît
+dans `/healthz` détaillé (`ui_login`). `GET /ui/session` ajoute `account`
+(identifiant, e-mail, nom, rôle). Le journal indique l'activation des
+comptes et chaque connexion.
 
 ## L'installation
 
-Au premier démarrage, sans `data/config.toml`, la page n'affiche que
-l'**installation** (`/ui/session` → `setup`), et l'API répond 503
-`setup_required`. On y coche ses fournisseurs (les mêmes que dans
-*Ajouter un fournisseur connu*, plus bas) et ses options : une deuxième
-clé, le chat, Claude Code et Codex, le partage équitable, le modèle par
-défaut. Elle donne trois fichiers, avec *Copier* et *Télécharger* :
+Au premier démarrage, si `data/config.toml` est absent, la page affiche
+uniquement l'**installation** (`/ui/session` → `setup`) et l'API répond
+503 `setup_required`. L'interface permet de sélectionner des fournisseurs
+(ceux de *Ajouter un fournisseur connu*, plus bas) et des options : une
+deuxième clé, le chat, Claude Code et Codex, le partage équitable et le
+modèle par défaut. Elle génère trois fichiers, disponibles avec *Copier*
+et *Télécharger* :
 
-- **`.env`** : la clé du proxy tirée au hasard dans le navigateur, les
+- **`.env`** : clé du proxy générée aléatoirement dans le navigateur,
   variables des fournisseurs à compléter, `SEARXNG_SECRET`, `PUID` et
   `PGID` ;
 - **`data/config.toml`** ;
-- **`docker-compose.override.yml`** : l'image publiée et les variables
-  à transmettre au conteneur.
+- **`docker-compose.override.yml`** : image publiée et variables à
+  transmettre au conteneur.
 
-Rien n'est écrit sur le proxy. Les fichiers posés, `docker compose up
--d` le redémarre, et la page demande alors la clé du `.env`.
+La page n'écrit rien sur le proxy. Après avoir placé les fichiers,
+exécuter `docker compose up -d` pour redémarrer le service. La page
+demande alors la clé définie dans `.env`.
 
 ## L'onglet Configuration
 
-L'onglet <kbd>#config</kbd> regroupe des **générateurs** qui tournent
-dans le navigateur : rien n'est écrit sur le proxy.
+L'onglet <kbd>#config</kbd> regroupe des **générateurs** exécutés dans
+le navigateur ; ils n'écrivent rien sur le proxy.
 
-**Clients** : choisir un client et un modèle (`GET /ui/models`, servi
-même chat fermé) ; la page produit ses fichiers de configuration, outils
-du proxy par le [serveur MCP](outils-heberges.md#serveur-mcp--mcp)
-compris, avec *Copier*, *Télécharger* et les étapes, et prévient si la
-surface visée est désactivée. La clé n'est jamais écrite dans ces
-fichiers ; le bloc *Vérifier* teste `GET /v1/models` avec elle, puis
-`tools/list` si le client prend les outils par MCP.
+**Clients** : sélectionner un client et un modèle (`GET /ui/models`,
+disponible même lorsque le chat est désactivé). La page génère les fichiers
+de configuration, y compris les outils du proxy via le [serveur MCP](outils-heberges.md#serveur-mcp--mcp),
+et fournit les commandes *Copier*, *Télécharger* et les étapes à suivre.
+Elle signale si la surface cible est désactivée. Les fichiers ne contiennent
+jamais la clé. Le bloc *Vérifier* teste `GET /v1/models` avec la clé, puis
+`tools/list` si le client utilise MCP pour les outils.
 
-*Codex CLI* donne aussi la clé sous Windows, en variable d'utilisateur
-posée par PowerShell, et renvoie à `codex doctor` pour vérifier que
-`config.toml` est lu : un modèle OpenAI affiché à la place signale un
-fichier ignoré (nommé `config.toml.txt`, ou pas en UTF-8), ou des lignes
-collées sous une section existante (`[windows]`, que Codex pour Windows
-ajoute) : `codex doctor` les dit alors ignorées (`windows.model`).
+*Codex CLI* configure aussi la clé sous Windows en définissant une variable
+d'utilisateur avec PowerShell. Le générateur indique d'utiliser
+`codex doctor` pour vérifier la lecture de `config.toml`. Si Codex affiche
+un modèle OpenAI à la place, le fichier est ignoré (nommé
+`config.toml.txt` ou encodé autrement qu'en UTF-8), ou des lignes sont
+placées sous une section existante (`[windows]`, ajoutée par Codex pour
+Windows). Dans ce dernier cas, `codex doctor` indique que `windows.model`
+est ignoré.
 
 Pour Codex (CLI ou application), la case *catalogue* ajoute
-`~/.codex/llm-proxy-models.json`, à télécharger (il n'est pas affiché) (`model_catalog_json`). Sans lui, Codex
-ne connaît pas les modèles du proxy : `/model` ne les propose pas, et il
-ignore leur contexte et leurs niveaux de raisonnement. Le fichier
-remplace le catalogue intégré de Codex. Les modèles viennent du proxy :
-contexte, et images s'ils en lisent ; les niveaux low, medium et high
-sont proposés sans valeur par défaut, donc rien n'est envoyé tant qu'on
-n'en choisit pas. Le fichier est complet, sans commande à lancer : chaque
-modèle y porte les instructions de base que Codex exige, celles de Codex
-CLI 0.167.2 (Apache-2.0), servies par la page
-(`config/codex-base-instructions.txt`). Re-télécharger le fichier quand
-les modèles du proxy changent.
+`~/.codex/llm-proxy-models.json`, qui doit être téléchargé et n'est pas
+affiché (`model_catalog_json`). Sans ce fichier, Codex ne connaît pas les
+modèles du proxy : `/model` ne les propose pas et Codex ne tient pas
+compte de leur contexte ni de leurs niveaux de raisonnement. Le fichier
+remplace le catalogue intégré de Codex. Les modèles et leur contexte
+proviennent du proxy ; leurs capacités d'image sont incluses si elles
+sont déclarées. Les niveaux de raisonnement low, medium et high sont
+proposés sans valeur par défaut ; aucun niveau n'est envoyé tant qu'il
+n'en est pas choisi un. Le fichier est complet et ne nécessite aucune
+commande. Il contient les instructions de base requises par Codex pour
+chaque modèle ; elles proviennent de Codex CLI 0.167.2 (Apache-2.0) et
+sont servies par la page (`config/codex-base-instructions.txt`). Télécharger
+de nouveau le fichier si les modèles du proxy changent.
 
-*Codex (application de bureau)* produit le même `~/.codex/config.toml`
-que Codex CLI. Lancée du Dock ou du menu Démarrer, l'application ne lit
-pas le profil du shell : la page donne donc de quoi poser la variable de
-la clé pour les applications, par `launchctl setenv` sous macOS et par
-une variable d'utilisateur en PowerShell sous Windows. Quitter
-complètement Codex et le rouvrir après chaque changement de
-configuration ou de clé, sinon le proxy répond 401.
+*Codex (application de bureau)* génère le même `~/.codex/config.toml` que
+Codex CLI. Lancée depuis le Dock ou le menu Démarrer, l'application ne lit
+pas le profil du shell. La page fournit donc les instructions pour définir
+la variable d'environnement de la clé pour les applications :
+`launchctl setenv` sous macOS ou une variable d'utilisateur via PowerShell
+sous Windows. Après chaque changement de configuration ou de clé, quitter
+entièrement Codex puis le relancer ; sinon le proxy répond `401`.
 
-*pi / omp* et *OpenCode* lisent le catalogue du proxy par une extension
-TypeScript, `llm-proxy.ts`, que la page donne avec *Copier* et
-*Télécharger*, son contenu replié (*Afficher le fichier*). Elles font partie des sources du proxy, servies par la
-page à côté de son module (`config/pi-llm-proxy.ts`,
-`config/opencode-llm-proxy.ts`) :
+*pi / omp* et *OpenCode* lisent le catalogue du proxy avec une extension
+TypeScript `llm-proxy.ts`, disponible par *Copier* et *Télécharger* ; son
+contenu est replié sous *Afficher le fichier*. Les sources de ces
+extensions sont servies par la page avec le module correspondant
+(`config/pi-llm-proxy.ts`, `config/opencode-llm-proxy.ts`) :
 
-- **pi / omp** : `~/.pi/agent/extensions/` et `~/.omp/agent/extensions/`,
-  le même fichier ; il enregistre les modèles du proxy sous le provider
-  `llmproxy`, comme le plugin d'OpenCode. Les outils passent par un `mcp.json` propre à chaque client ;
-- **OpenCode** (2.x) : `~/.config/opencode/plugins/`, chargé d'office ;
-  il déclare le provider `llmproxy` (modèles relus toutes les 5 min) et le
-  serveur MCP du proxy, et retire `websearch` et `webfetch` d'OpenCode.
+- **pi / omp** : placer le même fichier dans `~/.pi/agent/extensions/`
+  et `~/.omp/agent/extensions/`. Il enregistre les modèles du proxy sous
+  le provider `llmproxy`, comme le plugin d'OpenCode. Les outils utilisent
+  un fichier `mcp.json` propre à chaque client ;
+- **OpenCode** (2.x) : le plugin est chargé automatiquement depuis
+  `~/.config/opencode/plugins/`. Il déclare le provider `llmproxy` (modèles
+  rechargés toutes les 5 min) et le serveur MCP du proxy, et retire
+  `websearch` et `webfetch` d'OpenCode.
 
-Les deux lisent `LLM_PROXY_URL` et `LLM_PROXY_API_KEY` dans
-l'environnement : rien n'est écrit en dur dans les fichiers.
-Sous Windows, sans profil du shell, la page les pose en variables
-d'utilisateur par PowerShell (clé en saisie masquée). Si `/model` ne
-propose aucun modèle `llmproxy`, `omp models llmproxy` (ou `pi
---list-models llmproxy`) affiche l'erreur de l'extension, que
-l'interface ne montre pas : adresse injoignable (`ECONNREFUSED`, nom
-d'hôte inconnu) ou clé refusée (`HTTP 401`). Aucune erreur affichée :
-l'extension n'est pas chargée, elle n'est pas dans le bon dossier.
+Les deux extensions lisent `LLM_PROXY_URL` et `LLM_PROXY_API_KEY` dans
+l'environnement ; ces valeurs ne sont pas écrites dans les fichiers.
+Sous Windows, sans profil du shell, la page définit ces variables au
+niveau utilisateur avec PowerShell (clé saisie de manière masquée). Si
+`/model` ne propose aucun modèle `llmproxy`, exécuter `omp models llmproxy`
+(ou `pi --list-models llmproxy`) pour afficher l'erreur de l'extension,
+qui n'apparaît pas dans l'interface : adresse injoignable
+(`ECONNREFUSED`, nom d'hôte inconnu) ou clé refusée (`HTTP 401`). Si
+aucune erreur n'est affichée, l'extension n'est pas chargée ou se trouve
+dans un autre dossier.
 
-Les postes les prennent ici aussi, sur la branche `master` :
+Les scripts des postes récupèrent également ces fichiers à cette URL,
+sur la branche `master` :
 `https://raw.githubusercontent.com/c4software/llm-proxy/master/proxy/llm_proxy/ui/web/static/config/<fichier>`
-(le `setup.sh` de dotarchy, `dotarchy-sync` de dev-box).
+(scripts `setup.sh` de dotarchy et `dotarchy-sync` de dev-box).
 
-**Clés** et **Comptes** : avec les [comptes OIDC](#comptes-oidc)
-seulement.
+**Clés** et **Comptes** sont disponibles uniquement avec les [comptes
+OIDC](#comptes-oidc).
 
-**Dépôts** : avec `[repos].enabled`. Chacun y déclare ses sources (forge,
-adresse, jeton, projets permis) pour l'outil `repository`. Voir [Dépôts](depots.md).
+**Dépôts** : lorsque `[repos].enabled` est actif, chaque utilisateur y déclare
+ses sources (forge, adresse, jeton, projets autorisés) pour l'outil
+`repository`. Voir [Dépôts](depots.md).
 
-**Webhooks** : avec `[webhooks].enabled` et `[ui].chat`. Chacun y définit
-ses webhooks entrants (un message reçu au format Slack, auquel le modèle
-répond dans une conversation du chat) et sortants (une URL compatible
-Slack). Voir [Webhooks](webhooks.md).
+**Webhooks** : lorsque `[webhooks].enabled` et `[ui].chat` sont actifs,
+chaque utilisateur peut définir des webhooks entrants (message reçu au
+format Slack, auquel le modèle répond dans une conversation du chat) et
+sortants (URL compatible avec Slack). Voir [Webhooks](webhooks.md).
 
 **Exécution** : avec l'exécuteur de code configuré (`[tools.code_execution]`
-`url` et `token`). Chacun y voit ses bacs (une conversation, ses dépôts) :
-âge, inactivité, échéance, et peut les détruire un à un ou tous. Un admin
-(avec les comptes OIDC ; sans eux, la page connectée) voit en plus l'état de
-l'exécuteur et ses bornes, les bacs de tous les comptes, et les caches du
-proxy (pages web, archives des dépôts, transcriptions, résultats et
-échanges d'outils), qu'il peut vider. Détruire un bac efface ses fichiers,
-même en pleine exécution ; vider un cache ne casse rien, ce qui manque est
-relu au besoin.
+`url` et `token`), chaque utilisateur voit ses bacs associés à une
+conversation ou à ses dépôts : âge, inactivité et échéance. Il peut
+détruire chaque bac séparément ou tous à la fois. Un admin (comptes OIDC)
+ou la page connectée (sans OIDC) voit également l'état et les limites de
+l'exécuteur, les bacs de tous les comptes et les caches du proxy (pages
+web, archives des dépôts, transcriptions, résultats et échanges d'outils).
+Il peut vider ces caches. La destruction d'un bac supprime ses fichiers,
+même pendant une exécution. Après la suppression d'une entrée de cache,
+le proxy la relit au besoin.
 
-**Extensions** : pour un admin (avec les comptes OIDC ; sans eux, la page
-connectée). Les extensions de `[extensions].path` : celles qui sont
-chargées, avec leurs outils, où chacun s'exécute (proxy, navigateur), où
-il est offert et s'il est configuré, et celles qui sont écartées, avec
-leur raison. Une extension déposée y paraît désactivée, au démarrage
-suivant. Chaque outil a son bouton : *Activer* le met en service (celui du
-proxy sans celui du navigateur, par exemple), *Désactiver* le retire tout
-de suite, partout ; l'état est gardé dans `data/extensions.json` et
-survit aux redémarrages. Voir [Extensions](extensions.md#activer-et-désactiver).
+**Extensions** : cette section est accessible à un admin avec les comptes
+OIDC, ou à la page connectée sans OIDC. Elle décrit les extensions de
+`[extensions].path` qui sont chargées, leurs outils, leur lieu d'exécution
+(proxy ou navigateur), leur surface de disponibilité et leur état de
+configuration, ainsi que les extensions rejetées et leur motif. Une
+extension déposée apparaît désactivée après le démarrage suivant. Le bouton
+*Activer* met l'outil en service (par exemple, côté proxy seulement, sans
+le navigateur) ; *Désactiver* le retire immédiatement de toutes les
+surfaces. L'état est conservé dans `data/extensions.json` et survit aux
+redémarrages. Voir [Extensions](extensions.md#activer-et-désactiver).
 
-**Proxy** : toute la configuration, en sections (Accès, Backends,
-Surfaces, Outils, Partage équitable, Comptes, Divers, Avancé, Fichier
-complet, `.env`, Override Docker). Réservé aux admins avec les comptes
-OIDC.
+**Proxy** : sections de configuration Accès, Backends, Surfaces, Outils,
+Partage équitable, Comptes, Divers, Avancé, Fichier complet, `.env` et
+Override Docker. Cette vue est réservée aux admins lorsque les comptes
+OIDC sont activés.
 
-- **Backends** : *Ajouter un fournisseur connu* remplit le nom, l'URL
-  et la variable de la clé (NVIDIA, AMD Token Lab, Groq, Mistral,
-  OpenRouter, OpenCode Go, Albert), les mêmes que le
-  [TP du cours](https://cours.brosseau.ovh/tp/agentic/proxy.html), et
-  Anthropic, en [backend natif](configuration.md#backend-anthropic)
+- **Backends** : *Ajouter un fournisseur connu* préremplit le nom, l'URL
+  et la variable de clé pour NVIDIA, AMD Token Lab, Groq, Mistral,
+  OpenRouter, OpenCode Go et Albert, comme dans le
+  [TP du cours](https://cours.brosseau.ovh/tp/agentic/proxy.html). Anthropic
+  est également disponible en [backend natif](configuration.md#backend-anthropic)
   (`api = "anthropic"`). Le *protocole* de chaque backend (OpenAI ou
-  Anthropic) se choisit sur sa ligne.
-- **Override Docker** : le `docker-compose.override.yml` du service
-  `albert-proxy`, avec l'[image publiée](deploiement.md#limage-publiée)
-  et chaque `${VAR}` du fichier complet que le `docker-compose.yml` ne
-  transmet pas déjà. Sans elle, la variable reste dans le `.env` et le
-  backend part sans clé.
+  Anthropic) se sélectionne sur sa ligne.
+- **Override Docker** : le fichier `docker-compose.override.yml` du
+  service `albert-proxy` contient l'[image publiée](deploiement.md#limage-publiée)
+  et les variables `${VAR}` du fichier complet que `docker-compose.yml`
+  ne transmet pas déjà. Sans cet override, ces variables restent dans
+  `.env` et le backend démarre sans clé.
 
-- Les **sections** partent de la configuration en vigueur (`GET
-  /ui/config`). Un changement ne modifie que sa ligne du fichier
-  (`POST /ui/config/merge`) ; un backend retiré en disparaît.
-- **Avancé** : chaque autre réglage (délais, `[quotas]`, `model_map`,
-  serveurs MCP…), éditable, marqué *défaut* ou *modifié*, avec son
-  **rôle** en dessous et celui de sa table sous le titre. Le filtre
-  cherche dans le nom et dans le rôle (« relais » trouve
-  `linux_relay`). Les rôles sont les commentaires de
-  `data/config.example.toml` (`core/config_docs.py`) : le bloc au-dessus
-  d'une clé, celui au-dessus d'une table pour ses clés sans commentaire,
-  et pour les backends la liste « Champs », un champ par ligne
-  (`#   nom — rôle`). Un test refuse un réglage lu par le proxy sans
-  description. Le texte est rendu en Markdown ; un renvoi
-  `docs/….md` (suivi au besoin de `, « Titre »`) ouvre le fichier sur
-  GitHub, à la section, dans la version qui tourne (son tag, sinon
-  `master`). Un test vérifie que chaque fichier et chaque titre cités
-  existent.
-- **Fichier complet** : le `data/config.toml` résultant, défauts suivis
-  de `# défaut`, `${VAR}` gardés, secrets en clair masqués. Édité à la
-  main, il n'est plus écrasé par les sections (*Réappliquer les
-  sections* les rétablit).
-- **Vérifier** (`POST /ui/config/check`) : syntaxe TOML et clés
-  inconnues, qu'une faute de frappe rendrait sinon inertes sans un mot.
-- **Appliquer**, c'est remplacer `data/config.toml` sur l'hôte (l'ancien
-  en `.bak`, valeurs masquées remises), puis **Recharger**
-  (`POST /ui/config/reload`) : le proxy relit le fichier et applique à
-  chaud les réglages rechargeables ; la page dit ce qui a été appliqué et
-  ce qui attend un redémarrage. Voir
+- Les **sections** sont initialisées à partir de la configuration active
+  (`GET /ui/config`). Une modification ne change que la ligne concernée
+  du fichier (`POST /ui/config/merge`) ; la suppression d'un backend le
+  retire du fichier.
+- **Avancé** : affiche et permet de modifier les autres réglages (délais,
+  `[quotas]`, `model_map`, serveurs MCP…), avec l'état *défaut* ou
+  *modifié*. Le **rôle** du réglage est indiqué sous sa valeur et celui
+  de la table sous son titre. Le filtre porte sur le nom et le rôle
+  (« relais » trouve `linux_relay`). Les rôles proviennent des commentaires
+  de `data/config.example.toml` (`core/config_docs.py`) : commentaire
+  au-dessus d'une clé, commentaire de la table pour les clés sans
+  commentaire, et liste « Champs » pour les backends (un champ par ligne,
+  `#   nom — rôle`). Un test refuse tout réglage lu par le proxy sans
+  description. Le texte est rendu en Markdown ; un renvoi vers
+  `docs/….md`, éventuellement suivi de `, « Titre »`, ouvre la section
+  correspondante sur GitHub dans la version déployée (son tag, sinon
+  `master`). Un test vérifie l'existence de chaque fichier et titre cités.
+- **Fichier complet** : affiche le `data/config.toml` résultant, avec les
+  valeurs par défaut suivies de `# défaut`, les `${VAR}` conservés et les
+  secrets en clair masqués. Une modification manuelle n'est plus écrasée
+  par les sections ; *Réappliquer les sections* les rétablit.
+- **Vérifier** (`POST /ui/config/check`) : valide la syntaxe TOML et
+  signale les clés inconnues, qu'une faute de frappe rendrait autrement
+  inopérantes sans avertissement.
+- **Appliquer** remplace `data/config.toml` sur l'hôte, sauvegarde
+  l'ancienne version en `.bak` et rétablit les valeurs masquées. Puis
+  **Recharger** (`POST /ui/config/reload`) demande au proxy de relire le
+  fichier et d'appliquer à chaud les réglages rechargeables. La page
+  indique ceux appliqués et ceux qui nécessitent un redémarrage. Voir
   [Rechargement à chaud](configuration.md#rechargement-à-chaud).

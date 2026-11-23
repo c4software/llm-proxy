@@ -1,7 +1,7 @@
 # Limites connues
 
-Ce que le proxy ne fait pas, et ce qui n'a pas été validé. Chaque section
-renvoie à la page qui détaille.
+Limites fonctionnelles et périmètre de validation. Les liens renvoient aux
+spécifications détaillées.
 
 ## Général
 

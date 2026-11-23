@@ -1,18 +1,17 @@
 # Outils hébergés : le contrat
 
-Un outil **hébergé** est un outil que le proxy exécute lui-même, à la place
-du fournisseur : la recherche web qu'OpenAI ferait pour
-`{"type": "web_search"}`, l'outil serveur `web_search_20250305` d'Anthropic.
-Cette page dit ce qu'est un outil pour le code du proxy, et comment en
-écrire un. Le point de vue du client (usage, garde-fous, mise en route) est
-dans [Outils hébergés](outils-heberges.md).
+Un outil **hébergé** est exécuté par le proxy à la place du fournisseur :
+par exemple, la recherche web qu'OpenAI associe à `{"type": "web_search"}`
+ou l'outil serveur `web_search_20250305` d'Anthropic. Cette page décrit le
+contrat des outils pour le code du proxy et leur implémentation. Le point de
+vue du client (usage, garde-fous, mise en route) est présenté dans
+[Outils hébergés](outils-heberges.md).
 
-Le contrat est le même pour **tous** les outils, quel que soit le moteur
-qui l'exécute (`Tool.runs`) : le proxy (`run`, en Python) ou le navigateur,
-pour les outils du chat de la page (`BrowserTool` : le proxy n'en a que
-la déclaration, l'exécution est dans la page ; voir
-[Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page)).
-Cette page décrit surtout les premiers.
+Le contrat s'applique à tous les outils, quel que soit leur exécuteur
+(`Tool.runs`) : le proxy (`run`, en Python) ou le navigateur, pour les outils
+du chat de la page (`BrowserTool`, déclaré par le proxy et exécuté dans la
+page ; voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page)).
+Cette page porte principalement sur les outils exécutés par le proxy.
 
 Le code vit dans `proxy/llm_proxy/tools/` :
 
@@ -26,8 +25,7 @@ Le code vit dans `proxy/llm_proxy/tools/` :
   `from llm_proxy import tools`, puis `tools.Tool`, `tools.Result`,
   `tools.ToolName`…
 
-Ce que le contrat prévoit sans qu'aucune surface le fasse encore :
-[Prévu, pas construit](#prévu-pas-construit).
+Éléments prévus mais non construits : [Prévu, pas construit](#prévu-pas-construit).
 
 ## En une page
 
@@ -39,16 +37,14 @@ client ◀──summary / bloc── surface ◀──Result── Hosted.run �
                               └─ texte seul ──▶ mémoire      └─▶ une ligne de statistiques
 ```
 
-- Un outil est un **objet** : un nom, un **prompt** (`prompt`,
-  `parameters`, assemblés en la fonction présentée par `spec`), une
-  exécution (`run`), un résumé de l'appel pour le client (`summary`), et
-  ses **liaisons** aux protocoles, en données.
-- Il rend un **`Result`** : le texte du modèle, un code d'erreur à côté,
-  des sources, des faits pour l'affichage, des fichiers. C'est le seul
-  format d'échange avec le reste du proxy.
-- **Rien d'autre ne connaît l'outil.** Ni les surfaces, ni `/v1/tools`, ni
-  les statistiques ne relisent son texte, ne testent son nom ou ne devinent
-  ce qu'il sait faire.
+- Un outil est un objet composé d'un nom, d'un prompt (`prompt` et `parameters`,
+  assemblés par `spec`), d'une exécution (`run`), d'un résumé de l'appel pour
+  le client (`summary`) et de liaisons aux protocoles, stockées sous forme de données.
+- Il renvoie un `Result` : le texte destiné au modèle, un code d'erreur, des
+  sources, des faits d'affichage et des fichiers. C'est le seul format
+  d'échange avec le reste du proxy.
+- Les surfaces, `/v1/tools` et les statistiques ne relisent pas le texte de
+  l'outil, ne testent pas son nom et ne déduisent pas ses capacités.
 
 ## Le résultat : `Result`
 
@@ -613,28 +609,22 @@ connu : `blocked_domains` et `blocked_urls` restent utiles.
 
 #### Piste non retenue : le rendu des pages en JavaScript
 
-Certaines pages n'affichent leur contenu qu'après leur JavaScript
-(applications d'une seule page), et `web_fetch` les lit vides. Un rendu par
-un vrai navigateur a été essayé le 18/10/2026 : une option `render: true`
-de `web_fetch` et `web_grep`, servie par un Chromium headless
-([browserless](https://docs.browserless.io)) dans un conteneur à part. Il
-marchait, mais il a été **retiré** :
+`web_fetch` ne rend pas les pages dont le contenu dépend de JavaScript
+(applications monopages). Le proxy n'utilise pas Chromium headless
+([browserless](https://docs.browserless.io)) pour ce rendu :
 
-- **Trop lourd pour le besoin** : une image de 2,5 Go, un service de plus,
-  environ 400 Mo de RAM par rendu, pour des pages rencontrées rarement.
-- **Un risque réseau mal maîtrisé** : un navigateur ne passe pas par
-  `net.py`. Ses sous-requêtes peuvent viser le réseau local. On ne pouvait
-  que l'atténuer (refus des IP privées et des noms locaux), sauf à faire
-  sortir le navigateur par un proxy filtrant (Squid), ce qui ajoutait
-  encore un conteneur.
-- **Les grandes API ne le font pas non plus.** Le `web_fetch` d'Anthropic
-  dit *ne pas gérer les sites rendus dynamiquement en JavaScript*, et
-  renvoie vers un outil de navigateur à part. Celui d'OpenAI (`open_page`
-  de `web_search`) ne parle que de contenu en direct ou en cache.
+- Une image de navigateur représente environ 2,5 Go ; chaque rendu sollicite
+  environ 400 Mo de mémoire. Un usage rare nécessiterait un service distinct.
+- Le navigateur ne passerait pas par le filtrage réseau du proxy. Ses
+  sous-requêtes pourraient atteindre le réseau local ; le filtrage des
+  adresses IP privées et des noms locaux ne suffirait pas. Il faudrait un
+  proxy filtrant distinct, tel que Squid.
+- Les outils comparables ont des limites similaires : `web_fetch` d'Anthropic
+  exclut les sites dynamiques et renvoie vers un outil de navigateur distinct ;
+  `open_page` d'OpenAI documente le contenu direct ou mis en cache.
 
-Le code est dans l'historique git (commits `8bed50a` et `2166f54`) si le
-besoin revient. Pour une page qui en a vraiment besoin, l'utilisateur peut
-en coller le texte ou une capture dans le chat.
+Pour lire une page qui nécessite JavaScript, l'utilisateur peut fournir son
+texte ou une capture dans le chat.
 
 ### `ocr` : lire le texte d'une image ou d'un PDF scanné
 

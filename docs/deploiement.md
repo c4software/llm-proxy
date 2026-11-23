@@ -1,8 +1,8 @@
 # Déploiement
 
-Cette page explique comment lancer le proxy avec Docker Compose ou
-Coolify, et comment sauvegarder et restaurer ses données. Les réglages
-eux-mêmes sont décrits dans [Configuration](configuration.md).
+Le proxy se déploie avec Docker Compose ou Coolify. Les données peuvent
+être sauvegardées et restaurées. Voir [Configuration](configuration.md)
+pour les réglages.
 
 ## Docker Compose
 
@@ -13,24 +13,25 @@ docker compose up -d --build
 
 `SEARXNG_SECRET` est la clé du service `searxng`, le métamoteur des
 [outils hébergés](outils-heberges.md). Générez-la avec `openssl rand -hex 32`.
-Sans elle, `docker compose` avertit mais démarre.
+Sans cette variable, Docker Compose avertit mais démarre.
 
-Au premier démarrage, sans `data/config.toml`, la page
-`http://localhost:8000/ui` est celle de l'**installation** : elle génère
-`.env`, `data/config.toml` et `docker-compose.override.yml` d'après les
-fournisseurs cochés. Les poser, compléter les clés dans le `.env`, puis
-`docker compose up -d`.
+Au premier démarrage, si `data/config.toml` est absent,
+`http://localhost:8000/ui` affiche la page d'installation. Celle-ci génère
+`.env`, `data/config.toml` et `docker-compose.override.yml` à partir des
+fournisseurs sélectionnés. Créez ces fichiers, renseignez les clés dans
+`.env`, puis exécutez `docker compose up -d`.
 
-`./data` est monté comme volume. Il porte la configuration
-(`config.toml`) et les bases, dont `stats.db`. Elles survivent aux redémarrages et aux
-reconstructions d'image.
+`./data` est monté comme volume. Il contient la configuration
+(`config.toml`) et les bases, dont `stats.db`. Ces données sont conservées
+après les redémarrages et les reconstructions de l'image.
 
 ### L'override local
 
-Le `docker-compose.yml` du dépôt ne contient que le proxy et SearXNG. Le
-reste va dans un `docker-compose.override.yml`, non versionné, que Docker
-Compose fusionne automatiquement : l'exécuteur de code, un
-`container_name`, un port à ne pas publier, une base commune à étendre.
+Le `docker-compose.yml` du dépôt définit uniquement le proxy et SearXNG.
+Les autres services et réglages se définissent dans
+`docker-compose.override.yml`, non versionné et fusionné automatiquement
+par Docker Compose. Il peut notamment contenir l'exécuteur de code, un
+`container_name`, un port non publié ou une base commune à étendre.
 
 ```bash
 cp docker-compose.override.example.yml docker-compose.override.yml
@@ -39,36 +40,37 @@ docker compose config       # affiche la pile fusionnée
 docker compose up -d --build
 ```
 
-Le service `executor` ([exécution de code](execution-de-code.md)) vit
-dans cet override. Sans lui, il n'est ni construit ni lancé. Pour
+Le service `executor` ([exécution de code](execution-de-code.md)) est
+défini dans cet override. Sans lui, il n'est ni construit ni lancé. Pour
 l'activer :
 
 1. Lire [Ce que le bac à sable vaut](execution-de-code.md#ce-que-le-bac-à-sable-vaut).
 2. Copier le bloc 1 de l'exemple.
-3. Poser `EXECUTOR_TOKEN` dans `.env`.
+3. Définir `EXECUTOR_TOKEN` dans `.env`.
 4. Suivre la [procédure de validation](execution-de-code.md#valider-lexécuteur-sur-le-déploiement).
 
-Détail des deux fichiers :
+Détails des deux fichiers :
 [Le compose de base et son override](execution-de-code.md#le-compose-de-base-et-son-override).
 
 ### L'image publiée
 
 Chaque tag `v*` publie l'image du proxy sur
 `ghcr.io/c4software/llm-proxy`, avec trois étiquettes : le tag
-(`v2026.11.14.1`), `latest` et `sha-xxxxxxx`. C'est le workflow
-`.github/workflows/proxy.yml`. Pour l'utiliser au lieu de construire sur
-place, poser `image:` dans l'override (bloc 2 de l'exemple), puis :
-
+(`v2026.11.14.1`), `latest` et `sha-xxxxxxx`. L'image est publiée par le workflow
+`.github/workflows/proxy.yml`. Pour l'utiliser au lieu de construire
+l'image localement, définir `image:` dans l'override (bloc 2 de
+l'exemple), puis :
 ```bash
 git pull                    # compose et documentation
 docker compose pull albert-proxy && docker compose up -d albert-proxy
 ```
 
-Revenir à une version précédente : mettre son étiquette dans `image:`
-(`ghcr.io/c4software/llm-proxy:v2026.11.12.6`) et relancer les deux
-commandes. Si le paquet est privé, `docker login ghcr.io` sur la machine,
-avec un jeton qui a `read:packages`. `docker compose up -d --build`
-reconstruit toujours sur place, par exemple pour une version modifiée.
+Pour revenir à une version précédente, définir son étiquette dans `image:`
+(`ghcr.io/c4software/llm-proxy:v2026.11.12.6`) et réexécuter les deux
+commandes. Si le paquet est privé, exécuter `docker login ghcr.io` sur la
+machine avec un jeton doté de `read:packages`. La commande
+`docker compose up -d --build` reconstruit toujours l'image localement,
+par exemple pour une version modifiée.
 
 ### Durcissement du conteneur
 
@@ -84,26 +86,27 @@ security_opt:
   - no-new-privileges:true             # pas d'élévation (setuid…)
 ```
 
-Seuls `./data` (configuration, bases) et `/tmp` s'écrivent. `/tmp` sert aux
-outils : conversions audio de `transcribe`, fetch git de l'outil
-[`repository`](depots.md). Pourquoi : [Sécurité](securite.md#le-conteneur-du-proxy).
+Seuls `./data` (configuration et bases) et `/tmp` sont accessibles en
+écriture. `/tmp` est utilisé par les outils : conversions audio de
+`transcribe` et fetch git de l'outil [`repository`](depots.md). Voir
+[Sécurité](securite.md#le-conteneur-du-proxy).
 
-Un déploiement qui recopie le `docker-compose.yml` (sans `git pull`) doit
-y reporter ces lignes. Un override qui monte d'autres dossiers en
-écriture les ajoute en `volumes:`.
+Un déploiement qui recopie le `docker-compose.yml` sans `git pull` doit
+reprendre ces lignes. Un override qui monte d'autres dossiers en écriture
+doit les déclarer dans `volumes:`.
 
 ## Coolify
 
-1. Nouvelle ressource → Dockerfile, pointée sur ce dépôt.
+1. Créer une ressource Dockerfile pointant sur ce dépôt.
    - Répertoire de base : `/` (la racine est le contexte de build).
    - Emplacement du Dockerfile : `/proxy/Dockerfile`.
    - Port : 8000.
 2. Déclarer un **volume persistant sur `/app/data`** (configuration et bases).
-3. Ajouter les secrets en variables d'environnement (`ALBERT_API_KEY`…).
+3. Définir les secrets comme variables d'environnement (`ALBERT_API_KEY`…).
 4. Exposer le service via Nginx Proxy Manager sur un sous-domaine interne.
 
 Les réglages se modifient ensuite dans `data/config.toml`, dans le volume.
-Une partie s'applique sans redémarrer (`docker compose kill -s HUP albert-proxy`,
+Certains s'appliquent sans redémarrage (`docker compose kill -s HUP albert-proxy`
 ou « Recharger » dans la page) : voir [Rechargement à chaud](configuration.md#rechargement-à-chaud).
 
 Le Dockerfile seul ne livre pas :
@@ -115,28 +118,29 @@ Le Dockerfile seul ne livre pas :
 
 ## Sauvegarde et restauration
 
-`data/` contient ce qu'on ne peut pas reconstruire :
+`data/` contient les données qui ne peuvent pas être reconstruites :
 
 - les bases `stats.db`, `memory.db`, `accounts.db`, `conversations.db` ;
-- **`client.secret`** : le perdre ou le remplacer fait perdre toutes les
-  mémoires, toutes les clés gérées et toutes les sessions ;
+- **`client.secret`** : sa perte ou son remplacement invalide toutes les
+  mémoires, les clés gérées et les sessions ;
 - `config.toml` ;
 - `extensions.json` : les extensions et les outils activés dans la page.
 
-`conversations.db` rend au disque la place des conversations et des
-images supprimées (auto_vacuum incrémental). Une base créée avant ce
-réglage le prend une fois, proxy arrêté (le `VACUUM` réécrit toute la
-base : prévoir sa taille en espace libre) :
+`conversations.db` libère l'espace disque occupé par les conversations et
+images supprimées (auto_vacuum incrémental). Pour les bases créées avant
+ce réglage, l'activer une fois avec le proxy arrêté : `VACUUM` réécrit
+toute la base, il faut donc prévoir un espace libre au moins égal à sa
+taille.
 
 ```bash
 sqlite3 data/conversations.db "PRAGMA auto_vacuum=INCREMENTAL; VACUUM;"
 ```
 
-Les bases sont en WAL : un `cp` pendant que le proxy écrit ne donne pas
-une copie fiable. Utilisez `python -m llm_proxy.backup`. Il copie les
-bases à chaud de façon cohérente (API de sauvegarde SQLite) et met le
-tout dans **une** archive datée, en mode `600` car elle contient le
-secret.
+Les bases utilisent le mode WAL : une copie avec `cp` pendant une écriture
+du proxy n'est pas fiable. Utilisez `python -m llm_proxy.backup`, qui
+effectue une copie cohérente à chaud avec l'API de sauvegarde SQLite et
+regroupe les données dans une archive datée unique, en mode `600` car elle
+contient le secret.
 
 ### Sauvegarder
 
@@ -152,18 +156,18 @@ docker compose exec albert-proxy python -m llm_proxy.backup \
 ```
 
 **Depuis la page.** Avec les [comptes OIDC](tableau-de-bord.md#comptes-oidc),
-un admin télécharge la même archive dans *Configuration → Comptes →
-Sauvegarde* (`GET /ui/admin/backup`). Elle est faite à l'instant, dans un
-dossier temporaire effacé après l'envoi. L'admin la garde ainsi **hors du
-disque de `data/`**, à l'abri de sa perte. Sans comptes, pas d'admin ni
-de bouton : utilisez la commande.
+un administrateur télécharge la même archive depuis *Configuration → Comptes →
+Sauvegarde* (`GET /ui/admin/backup`). L'archive est créée au moment de la
+demande dans un dossier temporaire, supprimé après l'envoi. Elle peut ainsi
+être conservée **hors du disque de `data/`**, à l'abri de sa perte. Sans
+comptes, il n'y a ni administrateur ni bouton ; utilisez la commande.
 
-Le **`.env`** (clé Albert, `OIDC_CLIENT_SECRET`…) n'est pas dans
-l'archive. Il vit hors de `data/` : sauvegardez-le à part.
+Le fichier **`.env`** (clé Albert, `OIDC_CLIENT_SECRET`…) n'est pas inclus
+dans l'archive. Il se trouve hors de `data/` et doit être sauvegardé à part.
 
 ### Restaurer
 
-Arrêtez le proxy d'abord : une base ouverte ne doit pas changer sous lui.
+Arrêtez d'abord le proxy pour éviter de modifier une base ouverte.
 
 ```bash
 cd ~/stacks
@@ -177,6 +181,6 @@ docker compose start albert-proxy
 - Chaque fichier revient à son chemin configuré.
 - Ce qui s'y trouvait part dans `data/pre-restore-<date>/`. Rien n'est écrasé.
 
-**Testez la restauration** de temps en temps, sans toucher la
-production : `--check` sur la dernière archive, ou `--restore … --to
-/tmp/essai` puis un coup d'œil aux fichiers.
+**Vérifiez périodiquement la restauration hors production** : utilisez
+`--check` sur la dernière archive, ou `--restore … --to /tmp/essai`, puis
+examinez les fichiers.
