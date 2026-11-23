@@ -145,8 +145,10 @@ outils hébergés du proxy actifs).
   et la transcription utilisent un modèle d'un autre backend.
 
 **Tout modèle doit être préfixé.** Un préfixe inconnu donne `400
-unknown_backend_prefix`. Seules les requêtes sans champ `model` (endpoints
-de compte, corps non JSON) partent vers le backend à quotas.
+unknown_backend_prefix`, un modèle que le compte ne peut pas employer
+`403 model_not_allowed` (voir [modèles permis](tableau-de-bord.md#comptes-oidc)).
+Seules les requêtes sans champ `model` (endpoints de compte, corps non
+JSON) partent vers le backend à quotas.
 
 ## `[proxy]`
 
@@ -449,6 +451,15 @@ L'outil `repository` et les sources de dépôts. Voir [Dépôts](depots.md).
 | `cache_ttl` | `1800` | Durée (s) de vie d'un dépôt téléchargé après sa dernière lecture, dans le proxy (l'archive, purgée chaque minute) comme dans le bac (détruit après cette inactivité). Voir [Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps) |
 | `cache_bytes` | `200000000` | Taille maximale de toutes les archives gardées (RAM du proxy) |
 | `sources.<nom>` | — | Une source partagée : `forge` (`gitlab`, `github`, `gitea`, `git`), `url`, `token` (en `${VAR}`), `username` (forge `git`), `projects` (motifs), `enabled` |
+
+## `[user_backends]`
+
+Les backends que chaque compte déclare. Voir [Backends des comptes](backends.md).
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `enabled` | `true` | Offre la partie *Backends* de la configuration de `/ui` et route les modèles de ces backends. Aucune règle d'adresse : voir [Sécurité](securite.md#backends-des-comptes) |
+| `max_per_user` | `10` | Backends au plus par compte |
 
 ## `[extensions]` et `[extensions.<nom>]`
 

@@ -170,6 +170,8 @@ Lacunes connues, à combler quand le code concerné est touché :
   `still_allowed` pour un compte OIDC bloqué ;
 - dépôts : PUT d'une source par un autre compte, erreurs 401/404 de GitHub et
   Gitea ;
+- backends des comptes : modèles permis du créateur d'un webhook, refus d'un
+  `model` du corps entrant ;
 - tests encore liés au temps réel : `test_the_admin_sets_an_account_share`,
   `test_tous_les_bacs_occupes`, `test_quotas_expiration_destruction_orphelins` ;
 - `test_reponse_non_rangee_ne_reste_pas_en_cours` remplace encore

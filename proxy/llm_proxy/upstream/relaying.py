@@ -33,25 +33,28 @@ from .backends import Backend, backend_offline_message
 ANTHROPIC_HEADERS = {"x-api-key", "anthropic-version", "anthropic-beta"}
 
 
-def clean_headers(request: Request, api_key: str) -> dict:
+def clean_headers(request: Request, b: Backend) -> dict:
     # Authorization du client jamais relayé si le backend a sa clé, ni si
     # l'auth proxy est active (le Bearer du client est la clé DU PROXY,
-    # elle ne doit pas fuiter vers l'upstream).
+    # elle ne doit pas fuiter vers l'upstream), ni vers le backend d'un
+    # compte (son adresse est celle qu'a choisie un compte, peut-être un
+    # autre que le client).
+    foreign = b.owner is not None
     skip = HOP_BY_HOP | ANTHROPIC_HEADERS | {"x-incognito"} | (
-        {"authorization"} if api_key or auth_required() else set()
+        {"authorization"} if b.api_key or foreign or auth_required() else set()
     )
     # Auth proxy active : le cookie posé par /ui porte la clé DU PROXY, ou
     # la session OIDC de la page — même raison que l'Authorization, il ne
     # doit pas fuiter en amont.
-    if auth_required():
+    if auth_required() or foreign:
         skip = skip | {"cookie"}
     headers = {
         k: v for k, v in request.headers.items()
         if k.lower() not in skip
     }
     headers["accept-encoding"] = "identity"
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    if b.api_key:
+        headers["Authorization"] = f"Bearer {b.api_key}"
     return headers
 
 
@@ -319,9 +322,10 @@ def upstream_auth_message(b: Backend) -> str:
     """Un 401 du backend dit que la clé DU PROXY vers lui manque ou est
     refusée : jamais relayé tel quel — le client (la page, un SDK) le
     prendrait pour SA clé refusée et se déconnecterait. 502 à la place."""
+    where = "its account's Configuration → Backends" if b.owner is not None \
+        else "the proxy configuration"
     return (f"backend {b.name} rejected the proxy's credentials (upstream "
-            f"401): its api_key is missing or invalid in the proxy "
-            f"configuration.")
+            f"401): its api_key is missing or invalid in {where}.")
 
 
 async def send_upstream(call: Call, request: Request, path: str,
@@ -344,7 +348,7 @@ async def send_upstream(call: Call, request: Request, path: str,
             request.method,
             f"/{path}",
             content=body or None,
-            headers=clean_headers(request, b.api_key),
+            headers=clean_headers(request, b),
             # Un client Anthropic ajoute «?beta=true» et consorts à SES URLs :
             # sans sens pour l'upstream.
             params=request.query_params if call.dialect == "openai" else None,

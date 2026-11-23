@@ -82,6 +82,18 @@ def ui_client(request: Request) -> str:
     return request_owner(request)
 
 
+def live_owners() -> set[str]:
+    """Les clients dont les backends (storage/backends.py) servent encore :
+    les comptes actifs avec OIDC, les clés du TOML sinon, «» pour un proxy
+    ouvert. BLOQUANT."""
+    if not auth_required():
+        return {""}
+    if oidc.ENABLED:
+        return {account_owner(u["id"]) for u in accounts.users()
+                if u["role"] in accounts.ACTIVE}
+    return toml_digests()
+
+
 def request_user(request: Request) -> dict | None:
     """Le compte de la session OIDC de la page, None sinon."""
     return getattr(getattr(request, "state", None), "user", None)
@@ -116,11 +128,13 @@ class Who(NamedTuple):
     """Qui présente une clé : son api_key_id (les statistiques), son
     client (mémoire, échanges d'outils, partage équitable), son compte
     (None : clé du TOML seule) et ses droits sur les outils hébergés
-    (None : tous ; une clé gérée peut en avoir moins, accounts.py)."""
+    (None : tous ; une clé gérée peut en avoir moins, accounts.py), et les
+    modèles permis de son compte (None : tous)."""
     api_key_id: str
     client: str
     account: int | None
     tools: frozenset | None = None
+    models: frozenset | None = None
 
 
 async def key_client(token: str) -> Who | None:
@@ -140,8 +154,8 @@ async def key_client(token: str) -> Who | None:
             return Who(digest, digest, None)
         # Rattachée : elle suit son compte, bloqué ou en attente compris.
         uid = link["user_id"]
-        return Who(digest, account_owner(uid), uid) if link["active"] \
-            else None
+        return Who(digest, account_owner(uid), uid,
+                   models=link["models"]) if link["active"] else None
     if not oidc.ENABLED:
         return None
     hit = await asyncio.to_thread(accounts.resolve, digest)
@@ -150,7 +164,7 @@ async def key_client(token: str) -> Who | None:
     if accounts.touch_due(hit["id"]):
         await asyncio.to_thread(accounts.touch, hit["id"])
     uid = hit["user_id"]
-    return Who(digest, account_owner(uid), uid, hit["tools"])
+    return Who(digest, account_owner(uid), uid, hit["tools"], hit["models"])
 
 
 def identify(request: Request, who: Who) -> None:
@@ -164,6 +178,8 @@ def identify(request: Request, who: Who) -> None:
     fairshare.ACCOUNT.set(who.account)
     # Les droits de la clé : tools.enabled ne rend que ce qu'ils permettent.
     tools.GRANTED.set(who.tools)
+    # Les modèles permis du compte : upstream/backends.py les applique.
+    accounts.MODELS.set(who.models)
     request.state.owner = who.client
 
 
@@ -191,7 +207,8 @@ async def ui_account(request: Request) -> JSONResponse | None:
             "compte en attente de validation par un admin"
             if user["role"] == "pending" else "compte bloqué")
     owner = account_owner(user["id"])
-    identify(request, Who(owner, owner, user["id"]))
+    identify(request, Who(owner, owner, user["id"],
+                          models=accounts.frozen(user["models"])))
     return None
 
 

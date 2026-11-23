@@ -80,13 +80,24 @@ def still_allowed(owner: str, hook: dict) -> bool:
     return link is None or link["active"]
 
 
-def _identify(owner: str, hook: dict, request: Request) -> None:
+def models_of(owner: str, hook: dict) -> frozenset | None:
+    """Les modèles permis du créateur (None : tous). BLOQUANT."""
+    if hook.get("account") is not None:
+        user = accounts.user(hook["account"])
+        return accounts.frozen(user["models"]) if user else frozenset()
+    link = accounts.bound(owner) if oidc.ENABLED else None
+    return link["models"] if link else None
+
+
+def _identify(owner: str, hook: dict, request: Request,
+              models: frozenset | None) -> None:
     """Ce que le middleware poserait (auth.identify) pour le créateur."""
     request.state.owner = owner
     if auth_required():
         stats.CLIENT.set(hook.get("api_key_id") or owner)
         fairshare.CLIENT.set(owner)
         fairshare.ACCOUNT.set(hook.get("account"))
+        accounts.MODELS.set(models)
 
 
 def _request(body: bytes) -> Request:
@@ -113,7 +124,8 @@ async def complete(owner: str, hook: dict, body: dict) -> dict:
     """Le corps chat/completions envoyé comme par la page → {content,
     reasoning, usage, sources, error}."""
     request = _request(json.dumps(body, ensure_ascii=False).encode())
-    _identify(owner, hook, request)
+    _identify(owner, hook, request, await asyncio.to_thread(models_of, owner, hook)
+              if auth_required() else None)
     response = await chat(request, page=True)
     if isinstance(response, StreamingResponse):
         raw = b"".join([c if isinstance(c, bytes) else c.encode()

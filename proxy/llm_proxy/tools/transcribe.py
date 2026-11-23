@@ -356,7 +356,7 @@ def _backend() -> tuple[backends.Backend, str]:
     """(backend, modèle sans préfixe) de [tools.transcribe].model, lu à
     l'appel : un modèle absent ou mal préfixé est une réponse au modèle,
     pas un proxy qui ne démarre pas."""
-    backend, prefixed = backends.route_backend({"model": MODEL}) \
+    backend, prefixed = backends.route_backend({"model": MODEL}, limited=False) \
         if MODEL else (None, False)
     if backend is None or not prefixed or backend.client is None:
         if MODEL:

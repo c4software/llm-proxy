@@ -6,12 +6,14 @@
     KeysPart.js       ses clés (comptes OIDC)
     WebhooksPart.js   ses webhooks entrants et sortants (si actifs)
     ReposPart.js      ses sources de dépôts (si [repos] est actif)
+    BackendsPart.js   ses backends (si [user_backends] est actif)
     RuntimePart.js    les bacs de l'exécuteur (les siens ; tous pour un
                       admin) et les caches du proxy (admin), à nettoyer
     ../memory/        ce que l'outil `memory` a gardé (si actif)
     ExtensionsPart.js les extensions chargées, à éteindre ou rallumer
                       (admin, ou proxy sans comptes)
-    AccountsPart.js   les comptes et leur part, la sauvegarde (admin)
+    AccountsPart.js   les comptes, leur part et leurs modèles permis, la
+                      sauvegarde (admin)
     ProxyPart.js      toute la configuration du proxy (admin, ou proxy
                       sans comptes) — proxy/form.js, proxy/advanced.js
     shared.js         ce qu'elles partagent : TOML, clé du poste,
@@ -24,6 +26,7 @@ import { ClientsPart } from "./ClientsPart.js";
 import { KeysPart } from "./KeysPart.js";
 import { WebhooksPart } from "./WebhooksPart.js";
 import { ReposPart } from "./ReposPart.js";
+import { BackendsPart } from "./BackendsPart.js";
 import { RuntimePart } from "./RuntimePart.js";
 import { ExtensionsPart } from "./ExtensionsPart.js";
 import { AccountsPart } from "./AccountsPart.js";
@@ -34,7 +37,7 @@ const { computed, onMounted, ref } = Vue;
 const STORE_PART = "llm-proxy-config-part";
 
 export const ConfigPanel = {
-  components: { ClientsPart, KeysPart, WebhooksPart, ReposPart, RuntimePart, ExtensionsPart, AccountsPart, ProxyPart },
+  components: { ClientsPart, KeysPart, WebhooksPart, ReposPart, BackendsPart, RuntimePart, ExtensionsPart, AccountsPart, ProxyPart },
   props: {
     session: { type: Object, required: true },
     health: { type: Object, default: null },
@@ -48,6 +51,7 @@ export const ConfigPanel = {
       ...(props.session.memory ? [{ id: "memory", label: "Mémoire" }] : []),
       ...(props.session.webhooks ? [{ id: "webhooks", label: "Webhooks" }] : []),
       ...(props.session.repos ? [{ id: "repos", label: "Dépôts" }] : []),
+      ...(props.session.backends ? [{ id: "backends", label: "Backends" }] : []),
       ...(props.session.executor ? [{ id: "runtime", label: "Exécution" }] : []),
       ...(!account.value || isAdmin.value ? [{ id: "extensions", label: "Extensions" }] : []),
       ...(isAdmin.value ? [{ id: "accounts", label: "Comptes" }] : []),
@@ -91,6 +95,7 @@ export const ConfigPanel = {
     <keys-part v-else-if="part === 'keys'" :session="session" @goto="setPart"></keys-part>
     <webhooks-part v-else-if="part === 'webhooks'" :session="session"></webhooks-part>
     <repos-part v-else-if="part === 'repos'"></repos-part>
+    <backends-part v-else-if="part === 'backends'" :session="session"></backends-part>
     <runtime-part v-else-if="part === 'runtime'"></runtime-part>
     <div class="config-keys" v-else-if="part === 'memory'">
       <memory-panel expanded></memory-panel>

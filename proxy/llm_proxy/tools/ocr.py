@@ -350,7 +350,7 @@ def engine() -> tuple[Backend, str]:
     """(backend, modèle sans préfixe) de [tools.ocr].model. Lève ToolError
     `unavailable` s'il ne peut pas servir — la raison est journalisée :
     c'est un réglage du proxy, le modèle n'y peut rien."""
-    backend, prefixed = route_backend({"model": MODEL})
+    backend, prefixed = route_backend({"model": MODEL}, limited=False)
     why = ""
     if not MODEL or backend is None or not prefixed:
         why = f"[tools.ocr].model = {MODEL!r} : «<backend>/<modèle>» attendu"

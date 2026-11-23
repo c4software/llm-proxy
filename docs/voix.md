@@ -51,6 +51,7 @@ Le proxy relaie sans modification les erreurs du backend :
 | « Base ICL voice cloning requires non-empty 'reference_text' » | transcription manquante |
 | `backend_offline` « backend … hors ligne » | le backend charge un modèle (voir [Un modèle à la fois](#un-modèle-à-la-fois)) |
 | `unknown_backend_prefix` | modèle sans préfixe de backend |
+| `model_not_allowed` | modèle hors des modèles permis du compte |
 
 ## Voix toutes faites
 

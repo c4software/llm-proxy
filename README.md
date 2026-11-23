@@ -16,23 +16,24 @@ API exposées aux clients ; le backend reçoit des requêtes
 
 Fonctions disponibles autour du relais :
 
-- un catalogue `/v1/models` unifié ;
-- des **outils hébergés** que le proxy exécute pour le modèle : recherche
-  et lecture web (SearXNG), OCR, transcription, génération d'images,
-  mémoire persistante, exécution de code dans un bac à sable
-  ([Exécution de code](docs/execution-de-code.md)), lecture de dépôts
-  ([Dépôts](docs/depots.md)), envoi vers un webhook, serveurs MCP ;
-- des **webhooks** par compte : un message reçu au format Slack, auquel un
-  modèle répond, et des envois vers Slack, Mattermost, Discord, Teams,
-  e-mail… par Apprise
-  ([Webhooks](docs/webhooks.md)) ;
-- des **comptes OIDC** et des clés par compte, chacune limitable à
-  certains outils ; un partage équitable des tokens entre comptes ;
-- un limiteur de quotas pour les backends qui en ont, des statistiques
-  persistantes à la forme de l'Usage API d'OpenAI ;
-- un tableau de bord : statistiques, chat, configuration (clés, comptes,
-  webhooks, dépôts, bacs de l'exécuteur et caches) ;
-- un conteneur durci (lecture seule, sans capacités Linux).
+- Catalogue de modèles unifié (`/v1/models`).
+- Outils hébergés exécutés par le proxy : recherche et lecture web
+  (SearXNG), OCR, transcription, génération d'images, mémoire persistante,
+  exécution de code ([Exécution de code](docs/execution-de-code.md)), lecture
+  de dépôts ([Dépôts](docs/depots.md)), envoi vers un webhook et serveurs MCP.
+- Webhooks par compte : réception de messages au format Slack, réponse par
+  un modèle et envoi via Apprise vers Slack, Mattermost, Discord, Teams ou
+  e-mail ([Webhooks](docs/webhooks.md)).
+- Comptes OIDC et clés associées aux comptes ; chaque clé peut être limitée
+  aux outils autorisés, chaque compte aux modèles autorisés. Chaque compte
+  peut déclarer ses propres backends, pour lui ou pour tous
+  ([Backends des comptes](docs/backends.md)). Le partage équitable répartit les tokens entre les
+  comptes.
+- Limiteur de quotas pour les backends concernés et statistiques persistées
+  au format de l'Usage API d'OpenAI.
+- Tableau de bord `/ui` : statistiques, chat et configuration des clés,
+  comptes, webhooks, dépôts, bacs d'exécution et caches.
+- Conteneur du proxy en lecture seule, sans capacités Linux.
 
 Le tableau de bord `/ui` inclut un chat connecté aux backends du proxy
 ([Chat](docs/chat.md)). Ses fonctions comprennent :
@@ -111,16 +112,16 @@ configuration d'OpenCode comme client.
 
 | Sujet | Fichier |
 |---|---|
-| Ce que fait le proxy, fonction par fonction | [Fonctionnalités](docs/fonctionnalites.md) |
-| Le dépôt, ses dossiers et ses fichiers | [Architecture](docs/architecture.md) |
-| Docker Compose, Coolify, sauvegarde | [Déploiement](docs/deploiement.md) |
-| `data/config.toml`, table par table | [Configuration](docs/configuration.md) |
-| Clés, comptes OIDC, ce qui se sert sans clé, conteneur durci | [Sécurité](docs/securite.md) |
-| `/ui` : statistiques, partage équitable, comptes et clés (droits d'outils), webhooks, dépôts, bacs et caches | [Tableau de bord](docs/tableau-de-bord.md) |
-| Le chat de la page : conversations, modèles d'images, de voix et de transcription, contexte, outils (questions, dossier, artifacts) | [Le chat](docs/chat.md) |
-| Position, caméra, presse-papiers… et JavaScript, TypeScript, PHP, SQLite, PostgreSQL dans le navigateur | [Les outils du navigateur](docs/navigateur.md) |
-| Une VM Linux dans l'onglet (bash, python3), partagée avec un terminal : réseau par relais Wisp, construction et limites | [La VM Linux du navigateur](docs/linux.md) |
-| L'Usage API d'OpenAI servie par le proxy | [Statistiques](docs/statistiques.md) |
+| Fonctionnalités du proxy | [Fonctionnalités](docs/fonctionnalites.md) |
+| Structure du dépôt | [Architecture](docs/architecture.md) |
+| Docker Compose, Coolify, sauvegarde et restauration | [Déploiement](docs/deploiement.md) |
+| `data/config.toml`, référence des réglages | [Configuration](docs/configuration.md) |
+| Clés, comptes OIDC, routes publiques et conteneur | [Sécurité](docs/securite.md) |
+| `/ui` : statistiques, comptes, modèles permis, clés, webhooks, dépôts, bacs et caches | [Tableau de bord](docs/tableau-de-bord.md) |
+| Chat `/ui` : conversations, modèles, contexte et outils | [Le chat](docs/chat.md) |
+| Outils navigateur et runtimes WASM | [Les outils du navigateur](docs/navigateur.md) |
+| VM Linux du navigateur : réseau, construction et limites | [La VM Linux du navigateur](docs/linux.md) |
+| Usage API d'OpenAI | [Statistiques](docs/statistiques.md) |
 | `/v1/messages` : traduction, `model_map`, `[anthropic]` | [API Anthropic Messages](docs/api-anthropic.md) |
 | `/v1/responses` : traduction, outils, `[responses]` | [API OpenAI Responses](docs/api-responses.md) |
 | Recherche web, OCR, transcription, images, mémoire et MCP | [Outils hébergés](docs/outils-heberges.md) |
@@ -128,6 +129,7 @@ configuration d'OpenCode comme client.
 | Bac à sable de `code_execution` et lecture des dépôts | [Exécution de code](docs/execution-de-code.md) |
 | Webhooks entrants et sortants par compte | [Webhooks](docs/webhooks.md) |
 | Sources GitLab, GitHub, Gitea ou Git et outils de lecture | [Dépôts](docs/depots.md) |
+| Backends déclarés par chaque compte, pour lui ou pour tous | [Backends des comptes](docs/backends.md) |
 | Contrat pour écrire un outil hébergé | [Outils hébergés : le contrat](docs/outils.md) |
 | Extensions Python du proxy et JavaScript du navigateur | [Extensions](docs/extensions.md) |
 | Vérifier un déploiement | [Vérification](docs/verification.md) |

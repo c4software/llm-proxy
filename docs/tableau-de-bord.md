@@ -202,6 +202,23 @@ sélection.
   (`offered`, voir [Écrire un outil](outils.md#loutil--tool)) n'est pas
   proposé dans les droits d'une clé ; ces droits ne s'y appliquent pas.
 
+**Modèles permis d'un compte** : l'admin peut borner les modèles d'un
+compte dans *Configuration → Comptes*, colonne *Modèles* : *tous* (défaut)
+ou *limités* à des motifs de noms préfixés (`albert/*`,
+`claude/claude-sonnet-*`, casse ignorée).
+
+- API : `PATCH /ui/users/<id>` `{"models": null | ["albert/*", …]}` ;
+  `[]` = aucun modèle.
+- Un modèle hors des motifs n'apparaît ni dans `/v1/models` ni dans le
+  chat, et une requête qui le vise reçoit `403` `model_not_allowed`, de
+  même qu'une requête sans `model` (le backend de repli servirait le
+  sien). La borne vaut pour toutes les clés du compte, sa page et ses
+  webhooks.
+- Les [backends du compte lui-même](backends.md) n'y sont pas soumis. Les
+  modèles que les outils hébergés tiennent de la configuration (OCR,
+  transcription, images) non plus.
+- Les clés du TOML non rattachées ne sont pas bornées.
+
 **Rattacher une clé du TOML** : l'admin peut associer une clé de
 `proxy.api_keys` à un compte dans *Clés → tous les comptes* ou avec
 `PUT /ui/keys/toml/<condensé>` `{"user_id": <id> | null}`. L'association
@@ -327,6 +344,10 @@ OIDC](#comptes-oidc).
 **Dépôts** : lorsque `[repos].enabled` est actif, chaque utilisateur y déclare
 ses sources (forge, adresse, jeton, projets autorisés) pour l'outil
 `repository`. Voir [Dépôts](depots.md).
+
+**Backends** : sauf `[user_backends].enabled = false`, chaque compte
+déclare ses propres backends, pour lui seul ou pour tous. Voir [Backends
+des comptes](backends.md).
 
 **Webhooks** : lorsque `[webhooks].enabled` et `[ui].chat` sont actifs,
 chaque utilisateur peut définir des webhooks entrants (message reçu au

@@ -156,7 +156,7 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     digest = identity.owner("sk-toml")
     alice, bob, bob_id = admin_and_user(idp)
     # Seule, la clé est son propre client.
-    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None, None)
+    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None, None, None)
 
     # Un user ne rattache rien ; l'admin, si.
     assert bob.put(f"/ui/keys/toml/{digest}",
@@ -165,7 +165,7 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     assert r.status_code == 200 and r.json()["user"] == "bob@example.org"
     # Elle écrit désormais dans la mémoire du compte ; ses stats aussi.
     assert asyncio.run(auth.key_client("sk-toml")) == (
-        digest, auth.account_owner(bob_id), bob_id, None)
+        digest, auth.account_owner(bob_id), bob_id, None, None)
     assert digest in accounts.digests(bob_id)
     # Bob la voit parmi ses clés ; l'admin, dans toutes.
     mine = bob.get("/ui/keys").json()["toml"]
@@ -183,7 +183,7 @@ def test_a_toml_key_bound_to_an_account_follows_it(idp, monkeypatch):
     # Détachée : de nouveau son propre client.
     assert alice.put(f"/ui/keys/toml/{digest}",
                      json={"user_id": None}).json()["user_id"] is None
-    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None, None)
+    assert asyncio.run(auth.key_client("sk-toml")) == (digest, digest, None, None, None)
 
 
 def test_binding_refuses_what_is_not_a_toml_key(idp, monkeypatch):
@@ -381,8 +381,9 @@ def test_mcp_rights_cover_a_whole_server():
 
 
 def test_rights_survive_a_database_from_before(idp, tmp_path, monkeypatch):
-    """Une base d'avant (table keys sans `tools`) : la colonne est ajoutée,
-    ses clés gardent tous les outils."""
+    """Une base d'avant (table keys sans `tools`, users sans `models`) : les
+    colonnes sont ajoutées, ses clés gardent tous les outils et son compte
+    tous les modèles."""
     import sqlite3
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
@@ -399,7 +400,8 @@ def test_rights_survive_a_database_from_before(idp, tmp_path, monkeypatch):
     conn.commit()
     conn.close()
     monkeypatch.setattr(accounts, "DB_PATH", str(path))
-    assert accounts.resolve("d") == {"id": "k", "user_id": 1, "tools": None}
+    assert accounts.resolve("d") == {"id": "k", "user_id": 1, "tools": None,
+                                     "models": None}
 
 
 def test_the_surfaces_only_see_the_granted_tools():

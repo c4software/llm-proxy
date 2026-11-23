@@ -27,6 +27,15 @@ def secret_client(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def conversations_db(monkeypatch, tmp_path):
+    """La base des magasins par compte (historique, webhooks, dépôts,
+    backends) dans un dossier temporaire : un changement de rôle relit les
+    backends des comptes, et un test ne crée jamais data/conversations.db."""
+    from llm_proxy.storage import conversations
+    monkeypatch.setattr(conversations, "DB_PATH", str(tmp_path / "conversations.db"))
+
+
+@pytest.fixture(autouse=True)
 def fresh_direct_calls():
     """Chaque test repart sans appel direct d'outil compté
     (tool_routes.direct_wait)."""

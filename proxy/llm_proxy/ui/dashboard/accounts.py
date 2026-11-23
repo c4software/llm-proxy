@@ -21,6 +21,7 @@ from ...storage import backup
 from ...access.auth import request_user, toml_digests
 from ...core.httputil import error_response, json_only, parse_json
 
+from .. import backend_routes
 from .page import router
 
 
@@ -265,23 +266,32 @@ async def ui_user_update(request: Request, uid: int):
     """Un compte (admin) : son rôle (`role` : accepter un compte en
     attente, le bloquer, le promouvoir ; le dernier admin garde le sien)
     et/ou sa part dans le partage équitable (`share` : null = la part par
-    défaut, 0 = illimitée, sinon des tokens par heure glissante)."""
+    défaut, 0 = illimitée, sinon des tokens par heure glissante) et/ou
+    ses modèles permis (`models` : null = tous, sinon des motifs de noms
+    préfixés, « albert/* »)."""
     if (bad := admin_only(request)) is not None:
         return bad
     if (bad := json_only(request)) is not None:
         return bad
     body = parse_json(await request.body())
-    if not isinstance(body, dict) or not ({"role", "share"} & body.keys()):
+    if not isinstance(body, dict) or not ({"role", "share", "models"} & body.keys()):
         return error_response("openai", 400, "invalid_request_error",
                               "corps attendu : {\"role\": …} et/ou "
-                              "{\"share\": null | 0 | <tokens par heure>}")
+                              "{\"share\": null | 0 | <tokens par heure>} et/ou "
+                              "{\"models\": null | [<motifs>]}")
     try:
         user = None
         if "role" in body:
             user = await asyncio.to_thread(accounts.set_role, uid, body["role"])
+            # Un compte bloqué perd ses backends, partagés compris ; rétabli,
+            # il les retrouve.
+            await backend_routes.changed()
         if "share" in body:
             user = await asyncio.to_thread(accounts.set_share, uid,
                                            body["share"])
+        if "models" in body:
+            user = await asyncio.to_thread(accounts.set_models, uid,
+                                           body["models"])
         return user
     except accounts.AccountError as exc:
         return account_error(exc)

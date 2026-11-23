@@ -19,11 +19,11 @@ from ..ui import page_tools
 from ..upstream import albert, relaying
 from . import anthropic_api, chat_api, responses_api
 from ..upstream.backends import (
-    BACKENDS,
     Backend,
+    no_route,
     route_backend,
     strip_backend_prefix,
-    unknown_prefix_message,
+    visible,
 )
 from ..access.auth import request_owner
 from ..core.httputil import anthropic_disabled, dialect_of, error_response, parse_json
@@ -77,8 +77,7 @@ async def chat(request: Request, page: bool = False):
     # visé (chacun peut la désactiver ou choisir sa valeur).
     backend, prefixed = route_backend(payload)
     if backend is None:
-        return error_response("openai", 400, "unknown_backend_prefix",
-                              unknown_prefix_message(str(payload.get("model", ""))))
+        return no_route("openai", str(payload.get("model", "")))
 
     modified = False
     # Outils hébergés ([chat].hosted_tools) : seule une requête qui en
@@ -239,7 +238,7 @@ async def messages(request: Request):
                               "corps JSON attendu")
 
     requested = str(payload.get("model", "") or "")
-    resolved = anthropic_api.resolve_model(requested, BACKENDS)
+    resolved = anthropic_api.resolve_model(requested, visible())
     if resolved is None:
         return error_response(
             dialect, 400, "unknown_backend_prefix",
@@ -250,8 +249,7 @@ async def messages(request: Request):
     payload["model"] = resolved
     backend, _ = route_backend(payload)
     if backend is None:
-        return error_response(dialect, 400, "unknown_backend_prefix",
-                              unknown_prefix_message(resolved))
+        return no_route(dialect, resolved)
     if requested and requested != resolved:
         log.info("anthropic : modèle %r → %r", requested, resolved)
 
@@ -417,7 +415,7 @@ async def count_tokens(request: Request):
         return error_response("anthropic", 400, "invalid_request_error",
                               "corps JSON attendu")
     resolved = anthropic_api.resolve_model(
-        str(payload.get("model", "") or ""), BACKENDS)
+        str(payload.get("model", "") or ""), visible())
     backend, _ = route_backend({"model": resolved}) if resolved else (None, False)
     if backend is not None and backend.tokenize_path:
         exact = await tokenize_upstream(backend, resolved, payload)
@@ -476,8 +474,7 @@ async def responses(request: Request):
     model_key = str(payload.get("model", "") or "")
     backend, prefixed = route_backend(payload)
     if backend is None or not prefixed:
-        return error_response("openai", 400, "unknown_backend_prefix",
-                              unknown_prefix_message(model_key))
+        return no_route("openai", model_key)
 
     images = False
     if backend.images and responses_api.has_images(payload):
@@ -541,16 +538,14 @@ async def forward_post(request: Request, normalized: str, dialect: str):
         model_key = multipart.model_field(raw, content_type) or ""
         backend, prefixed = route_backend({"model": model_key} if model_key else None)
         if backend is None:
-            return error_response(dialect, 400, "unknown_backend_prefix",
-                                  unknown_prefix_message(model_key))
+            return no_route(dialect, model_key)
         if prefixed:
             raw = multipart.rewrite_model_field(
                 raw, content_type, model_key[len(backend.name) + 1:])
     else:
         backend, prefixed = route_backend(payload)
         if backend is None:
-            return error_response(dialect, 400, "unknown_backend_prefix",
-                                  unknown_prefix_message(str(payload.get("model", ""))))
+            return no_route(dialect, str(payload.get("model", "")))
         model_key = str(payload.get("model", "") or "") if isinstance(payload, dict) else ""
         modified = isinstance(payload, dict) and cap_max_tokens(payload, backend)
         if prefixed:

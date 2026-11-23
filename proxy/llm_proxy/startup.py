@@ -23,7 +23,8 @@ from .core.settings import EXEMPT_SUFFIXES, is_exempt, log
 from .storage import files, stats, webhooks
 from .surfaces import anthropic_api, chat_api, responses_api
 from .upstream import albert
-from .upstream.backends import BACKENDS, FALLBACK_BACKEND, close_clients, open_clients
+from .upstream.backends import (BACKENDS, FALLBACK_BACKEND, close_clients, open_clients,
+                                refresh)
 
 
 def seed_fair_share() -> int:
@@ -124,6 +125,7 @@ async def lifespan(app: FastAPI):
              "relue(s)", f"{fairshare.DEFAULT_SHARE} tokens"
              if fairshare.DEFAULT_SHARE else "aucune limite", seeded)
     await open_clients()
+    await refresh(auth.live_owners)
     # Extensions ([extensions].path) : leurs outils entrent au registre
     # avant ceux des serveurs MCP. Au démarrage seulement.
     tools.extensions.load(tools)

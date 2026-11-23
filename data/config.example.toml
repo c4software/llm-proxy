@@ -727,6 +727,20 @@ tpm = 128000
 models = ["openweight-large", "gpt-oss"]
 
 
+# ── Backends des comptes ────────────────────────────────────────────────
+# Chaque compte déclare ses propres backends (Configuration → Backends) :
+# un nom (le préfixe de ses modèles), un protocole, une adresse, une clé.
+# « moi seul » : lui seul s'en sert ; « tout le monde » : offert à tous les
+# comptes, avec la clé de son créateur. Aucune règle d'adresse : un backend
+# peut viser le réseau interne du proxy. Voir docs/backends.md.
+# Les modèles permis d'un compte se règlent dans Configuration → Comptes.
+[user_backends]
+# true (défaut) ; false = ni partie Backends, ni backends de comptes routés.
+enabled = true
+# Backends au plus par compte.
+max_per_user = 10
+
+
 # ── Backends ────────────────────────────────────────────────────────────
 # Le NOM de la table est le PRÉFIXE de routage («albert/…» → [backends.albert],
 # préfixe retiré avant transfert). Modèle sans préfixe connu → 400.

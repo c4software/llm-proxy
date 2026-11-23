@@ -12,7 +12,7 @@ from fastapi import APIRouter, Request, Response
 from ..upstream.backends import (
     backend_offline_message,
     route_backend,
-    unknown_prefix_message,
+    no_route,
 )
 from ..core.httputil import dialect_of, error_response
 from ..core.settings import FORWARD_POST_PATHS, log
@@ -35,15 +35,14 @@ async def audio_voices(request: Request):
     model = request.query_params.get("model", "")
     backend, prefixed = route_backend({"model": model} if model else None)
     if backend is None:
-        return error_response(dialect, 400, "unknown_backend_prefix",
-                              unknown_prefix_message(model))
+        return no_route(dialect, model)
     params = dict(request.query_params)
     if prefixed:
         params["model"] = model[len(backend.name) + 1:]
     try:
         upstream = await backend.client.get(
             "/v1/audio/voices", params=params,
-            headers=clean_headers(request, backend.api_key),
+            headers=clean_headers(request, backend),
             timeout=backend.meta_timeout)
     except httpx2.RequestError as exc:
         if not backend.quotas:

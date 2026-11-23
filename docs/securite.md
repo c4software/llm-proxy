@@ -75,6 +75,20 @@ forge `git` fait lire un pack par git dans le proxy, avec des limites et
 sans exécuter le contenu du dépôt. Les durées et emplacements sont décrits
 dans [Ce qui est gardé](depots.md#ce-qui-est-gardé-et-combien-de-temps).
 
+## Backends des comptes
+
+Avec `[user_backends].enabled` (actif par défaut), un compte déclare l'adresse d'un backend
+([Backends des comptes](backends.md)), sans filtrage d'adresse : une
+machine du réseau interne du proxy est donc accessible, y compris un
+backend du TOML sans clé : un compte peut ainsi atteindre des modèles que
+ses [modèles permis](tableau-de-bord.md#comptes-oidc) lui refusent, hors
+partage équitable. Le créateur d'un backend partagé reçoit, sur son
+serveur, les requêtes des autres comptes vers ses modèles. Le désactiver
+(`enabled = false`) si les comptes ne sont pas de confiance. La clé d'un backend n'est
+rendue ni à la page ni aux autres comptes. Le proxy ne transmet jamais à un
+backend de compte l'`Authorization` ni les cookies du client, même sans clé
+et proxy ouvert, et n'y suit pas les redirections.
+
 ## Extensions
 
 Une [extension](extensions.md) exécute du code Python dans le processus

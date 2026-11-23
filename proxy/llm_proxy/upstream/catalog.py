@@ -16,7 +16,7 @@ from fastapi import Request
 
 from ..core.settings import CATALOG_TTL, log
 from . import anthropic
-from .backends import Backend, BACKENDS
+from .backends import Backend, permitted, visible
 from .relaying import clean_headers
 
 
@@ -162,8 +162,10 @@ async def fetch_models(b: Backend, request: Request | None = None) -> list | Non
     appel-là a encore l'ancien). Met à jour b.models et b.model_types à
     chaque lecture."""
     headers = b.auth_headers() or (
-        clean_headers(request, "") if request is not None else {})
-    key = (b.name, tuple(sorted((k.lower(), v) for k, v in headers.items())))
+        clean_headers(request, b) if request is not None else {})
+    # Deux comptes peuvent avoir chacun un backend du même nom.
+    key = (b.name, b.owner, b.url,
+           tuple(sorted((k.lower(), v) for k, v in headers.items())))
     hit = _cache.get(key)
     if hit is not None and time.monotonic() - hit[0] < CATALOG_TTL:
         return hit[1]
@@ -253,12 +255,13 @@ async def accepts_images(b: Backend, plain_model: str) -> bool:
 
 
 async def merged_models(request: Request) -> list[dict] | None:
-    """Catalogue unifié : chaque backend en ligne est interrogé, ses
-    modèles exposés préfixés par son nom («albert/…», «bigchuck/…») —
-    les noms renvoyés sont directement routables. None = aucun backend
-    joignable."""
-    results = await asyncio.gather(
-        *(fetch_models(b, request) for b in BACKENDS.values()))
+    """Catalogue unifié : chaque backend que voit le client est interrogé,
+    ses modèles exposés préfixés par son nom («albert/…», «bigchuck/…») —
+    les noms renvoyés sont directement routables ; ceux que son compte ne
+    peut pas employer n'y sont pas. None = aucun backend joignable."""
+    seen = list(visible().values())
+    results = await asyncio.gather(*(fetch_models(b, request) for b in seen))
     if all(lst is None for lst in results):
         return None
-    return [e for lst in results if lst for e in lst]
+    return [e for b, lst in zip(seen, results) if lst for e in lst
+            if permitted(b, e["id"])]

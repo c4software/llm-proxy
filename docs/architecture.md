@@ -163,7 +163,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | Fichier | Rôle |
 |---|---|
 | `access/auth.py` | Clés (TOML, comptes), session signée de la page, middleware d'auth |
-| `access/accounts.py` | Comptes et clés gérées (`data/accounts.db`) : création, révocation, rôles, part de chacun |
+| `access/accounts.py` | Comptes et clés gérées (`data/accounts.db`) : création, révocation, rôles, part de chacun, modèles permis (`MODELS`, posés par `auth.identify`) |
 | `access/oidc.py` | La connexion de la page par OIDC (Authlib) |
 | `access/fairshare.py` | Partage équitable : une part de tokens par client sur une heure glissante, puis attente |
 
@@ -171,7 +171,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 
 | Fichier | Rôle |
 |---|---|
-| `upstream/backends.py` | Backends, clients HTTP, routage au préfixe de modèle |
+| `upstream/backends.py` | Backends, clients HTTP, routage au préfixe de modèle ; les backends des comptes (`refresh`, `visible`) et les modèles permis du compte (`permitted`, `no_route` : `403 model_not_allowed`) |
 | `upstream/albert.py` | Spécificités d'Albert : limiteur de quotas, familles de modèles, `/v1/me/info` |
 | `upstream/anthropic.py` | Le backend Anthropic natif (`api = "anthropic"`) : chat/completions ↔ Messages, flux compris |
 | `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), `forward`, `relay`, `drain` |
@@ -230,7 +230,8 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `storage/conversations.py` | Historique du chat de la page (`data/conversations.db`) : conversations et images par compte |
 | `storage/memories.py` | Magasin de la mémoire persistante (`data/memory.db`), par client, sous `/memories` |
 | `storage/voices.py` | Les voix clonées de la page, par compte (table à part de `conversations.db`) |
-| `storage/owned.py` | Ce que partagent les magasins par compte de `conversations.db` (webhooks, sources) : identifiants, noms (uniques sans casse), adresses, bornes, colonnes ajoutées |
+| `storage/owned.py` | Ce que partagent les magasins par compte de `conversations.db` (webhooks, sources, backends) : identifiants, noms (uniques sans casse), adresses, bornes, colonnes ajoutées |
+| `storage/backends.py` | Les backends de chaque compte, à soi ou partagés avec sa clé (clé gardée, jamais rendue ; table à part de `conversations.db`) |
 | `storage/repos.py` | Les sources de dépôts de chaque compte (jeton gardé, jamais rendu ; table à part de `conversations.db`) et celles de `[repos.sources]` |
 | `storage/webhooks.py` | Les webhooks entrants (jeton gardé, retrouvé par son condensé) et sortants (URL Apprise et son service, exposition à l'outil) de chaque compte (tables à part de `conversations.db`) |
 | `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
@@ -251,6 +252,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `ui/linux_relay.py` | Le relais réseau (Wisp) de la VM Linux : jeton signé, adresses publiques seulement, plafond d'octets et délai d'inactivité |
 | `ui/voice_routes.py` | Routes `/ui/voices` (voix clonées) |
 | `ui/repo_routes.py` | `/ui/repos` : les sources de dépôts du compte |
+| `ui/backend_routes.py` | `/ui/backends` : les backends du compte, et ceux que d'autres partagent |
 | `ui/runtime_routes.py` | `/ui/runtime` : les bacs de l'exécuteur (les siens ; tous pour un admin) et les caches du proxy, à détruire ou vider |
 | `ui/extension_routes.py` | `/ui/extensions` : les extensions chargées et écartées, l'interrupteur à chaud (admin) ; `/ui/extensions/<nom>/<nom>.js`, le module de la page d'une extension dont un outil du navigateur est actif |
 | `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |

@@ -36,6 +36,13 @@ compris) ou de tous (`mcp`) ; [] = aucun. Choisis à la création,
 modifiables ensuite (set_key_tools) ; ils suivent la clé, pas le compte.
 Le filtre lui-même est dans tools.enabled (tools.GRANTED).
 
+LES MODÈLES PERMIS D'UN COMPTE (colonne `models` de `users`) : posés par
+un admin. NULL = tous (le défaut) ; sinon une liste JSON de motifs à
+jokers sur le nom préfixé (`albert/*`, `claude/claude-sonnet-*`) ; [] =
+aucun. Ils valent pour toutes ses clés et sa page ; les backends du
+compte lui-même n'y sont pas soumis. Posés sur la requête par
+auth.identify (MODELS) ; le filtre est dans upstream/backends.py.
+
 Ce module ne connaît ni FastAPI, ni httpx2, ni Authlib. SQLite, une
 connexion par opération sous un verrou, comme memories.py : des
 opérations courtes, appelées hors de la boucle d'événements. Les lectures
@@ -43,6 +50,8 @@ du chemin chaud (une clé présentée, le compte d'une session) passent par
 un petit cache à durée courte, vidé à chaque écriture locale.
 """
 
+import contextvars
+import fnmatch
 import json
 import re
 import sqlite3
@@ -64,6 +73,12 @@ MAX_KEYS = config.integer("oidc.max_keys_per_account", 50)
 # d'un serveur MCP (des noms de fonction : lettres, chiffres, _ . : -).
 MAX_RIGHTS = 200
 RIGHT = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
+# Les modèles permis d'un compte : au plus MAX_RIGHTS motifs, chacun un nom
+# préfixé à jokers (`albert/*`).
+PATTERN = re.compile(r"[A-Za-z0-9_.:/*?\[\]-]{1,200}")
+# Ceux du compte de la requête (None : tous), posés par auth.identify.
+MODELS: contextvars.ContextVar[frozenset | None] = contextvars.ContextVar(
+    "models", default=None)
 # Une clé présentée, le compte d'une session : relus au plus toutes les
 # CACHE_TTL secondes. Assez court pour qu'une révocation faite par un
 # autre processus prenne effet vite ; assez long pour ne pas toucher
@@ -113,6 +128,10 @@ def _setup(conn: sqlite3.Connection) -> None:
     have = {r[1] for r in conn.execute("PRAGMA table_info(keys)")}
     if "tools" not in have:
         conn.execute("ALTER TABLE keys ADD COLUMN tools TEXT")
+    # `models` d'un compte : ses modèles permis (JSON), NULL = tous.
+    have = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+    if "models" not in have:
+        conn.execute("ALTER TABLE users ADD COLUMN models TEXT")
 
 
 _store = Store(lambda: DB_PATH, _setup, row_factory=sqlite3.Row,
@@ -144,7 +163,8 @@ def _user(row) -> dict | None:
         return None
     return {"id": row["id"], "email": row["email"], "name": row["name"],
             "role": row["role"], "created": row["created"],
-            "last_login": row["last_login"], "share": row["share"]}
+            "last_login": row["last_login"], "share": row["share"],
+            "models": _patterns(row["models"])}
 
 
 # ── Comptes ─────────────────────────────────────────────────────────────
@@ -230,6 +250,57 @@ def set_share(uid: int, share) -> dict:
         return _user(conn.execute("SELECT * FROM users WHERE id = ?",
                                   (uid,)).fetchone())
     return _run(go, write=True)
+
+
+def set_models(uid: int, models) -> dict:
+    """Les modèles permis d'un compte (admin) : None = tous, sinon une
+    liste de motifs (`albert/*`) ; [] = aucun."""
+    if models is not None:
+        if not isinstance(models, list) or not all(
+                isinstance(m, str) and PATTERN.fullmatch(m) for m in models):
+            raise AccountError("models : null (tous) ou une liste de motifs "
+                               "de modèles préfixés (« albert/* »)")
+        models = sorted(set(models))
+        if len(models) > MAX_RIGHTS:
+            raise AccountError(f"models : {MAX_RIGHTS} motifs au plus")
+
+    def go(conn):
+        if conn.execute("UPDATE users SET models = ? WHERE id = ?",
+                        (None if models is None else json.dumps(models),
+                         uid)).rowcount == 0:
+            raise AccountError("compte introuvable", 404)
+        return _user(conn.execute("SELECT * FROM users WHERE id = ?",
+                                  (uid,)).fetchone())
+    return _run(go, write=True)
+
+
+def _patterns(text) -> list[str] | None:
+    """La colonne `models` → None (tous) ou la liste ; illisible = aucun
+    (une limite abîmée ne s'ouvre pas)."""
+    if text is None:
+        return None
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return []
+    return [m for m in value if isinstance(m, str)] \
+        if isinstance(value, list) else []
+
+
+def frozen(patterns: list[str] | None) -> frozenset | None:
+    """Les modèles permis d'un compte (`models` de user()) pour MODELS."""
+    return None if patterns is None else frozenset(patterns)
+
+
+def permitted(model: str, patterns=None) -> bool:
+    """Le modèle préfixé est-il permis par `patterns` (ceux de la requête,
+    MODELS, à défaut) ? None = tous ; casse ignorée."""
+    if patterns is None:
+        patterns = MODELS.get()
+    if patterns is None:
+        return True
+    name = model.lower()
+    return any(fnmatch.fnmatchcase(name, p.lower()) for p in patterns)
 
 
 def owners() -> dict[str, int]:
@@ -370,14 +441,15 @@ def bindings() -> dict[str, dict]:
 
 
 def bound(digest: str) -> dict | None:
-    """Le compte d'une clé du TOML rattachée : {"user_id", "active"} ;
+    """Le compte d'une clé du TOML rattachée : {"user_id", "active",
+    "models"} ;
     None si elle ne l'est pas — relu au plus toutes les CACHE_TTL s."""
     def load():
         row = _run(lambda conn: conn.execute(
-            "SELECT b.user_id, u.role FROM bound b JOIN users u "
+            "SELECT b.user_id, u.role, u.models FROM bound b JOIN users u "
             "ON u.id = b.user_id WHERE b.digest = ?", (digest,)).fetchone())
-        return {"user_id": row["user_id"], "active": row["role"] in ACTIVE} \
-            if row else None
+        return {"user_id": row["user_id"], "active": row["role"] in ACTIVE,
+                "models": frozen(_patterns(row["models"]))} if row else None
     return _cached(("bound", digest), load)
 
 
@@ -424,19 +496,21 @@ def update_key(kid: str, uid: int | None = None, *, label=None,
 
 def resolve(digest: str) -> dict | None:
     """La clé de condensé `digest`, si elle vaut encore : non révoquée, et
-    son compte actif → {"id", "user_id", "tools"} (ses droits, None = tous
-    les outils) ; None sinon."""
+    son compte actif → {"id", "user_id", "tools", "models"} (ses droits, None
+    = tous les outils ; les modèles permis du compte, None = tous) ; None
+    sinon."""
     def load():
         def go(conn):
             row = conn.execute(
-                "SELECT k.id, k.user_id, k.tools FROM keys k JOIN users u "
+                "SELECT k.id, k.user_id, k.tools, u.models FROM keys k JOIN users u "
                 "ON u.id = k.user_id WHERE k.digest = ? AND k.revoked IS NULL "
                 "AND u.role IN ('admin', 'user')", (digest,)).fetchone()
             if row is None:
                 return None
             rights = _rights(row["tools"])
             return {"id": row["id"], "user_id": row["user_id"],
-                    "tools": None if rights is None else frozenset(rights)}
+                    "tools": None if rights is None else frozenset(rights),
+                    "models": frozen(_patterns(row["models"]))}
         return _run(go)
     return _cached(("key", digest), load)
 

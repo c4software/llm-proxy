@@ -11,10 +11,10 @@ from ... import tools
 from ...access import accounts, fairshare
 from ...core import config
 from ...core.settings import INCOGNITO
-from ...storage import files, stats
+from ...storage import backends as user_backends, files, stats
 from ...surfaces import chat_api, relay_routes
 from ...upstream import albert, catalog, relaying
-from ...upstream.backends import BACKENDS, route_backend, unknown_prefix_message
+from ...upstream.backends import no_route, route_backend, visible
 from ...access.auth import auth_required, request_user, ui_client
 from ...core.httputil import error_response, json_only, parse_json
 from ...exposure import tool_routes
@@ -108,6 +108,8 @@ async def ui_session(request: Request):
         "webhooks": tools.webhook.ENABLED and UI_CHAT,
         # Les sources de dépôts du compte (Configuration → Dépôts).
         "repos": tools.repository.TOOL.enabled,
+        # Les backends du compte (Configuration → Backends).
+        "backends": user_backends.ENABLED,
         # L'exécuteur de code est configuré : la partie Exécution (ses bacs).
         "executor": bool(tools.code_execution.URL and tools.code_execution.TOKEN),
         # None : proxy ouvert, personne n'est compté.
@@ -137,9 +139,10 @@ async def ui_models(request: Request):
         return error_response("openai", 502, "proxy_error",
                               "aucun backend joignable pour /v1/models")
     data = []
+    seen = visible()
     for entry in entries:
         name, _, plain = str(entry.get("id", "")).partition("/")
-        b = BACKENDS.get(name)
+        b = seen.get(name)
         # Le type du catalogue normalisé, à défaut celui de la configuration.
         kind = entry.get("type") or (
             b.model_types.get(plain, "text-generation") if b else "")
@@ -321,8 +324,7 @@ async def _relay_form(request: Request, payload: dict, fields: dict,
     model_key = str(payload.get("model") or "")
     backend, prefixed = route_backend({"model": model_key})
     if backend is None:
-        return error_response("openai", 400, "unknown_backend_prefix",
-                              unknown_prefix_message(model_key))
+        return no_route("openai", model_key)
     form = httpx2.Request("POST", "http://form.invalid", data={
         "model": model_key[len(backend.name) + 1:] if prefixed else model_key,
         **fields}, files=[(field, (name, data, kind)) for field, name, data, kind

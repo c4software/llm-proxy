@@ -1,9 +1,9 @@
 """
 Ce que partagent les magasins PAR COMPTE rangés dans conversations.db, à
-côté de l'historique et sauvegardés avec lui : les webhooks (webhooks.py)
-et les sources de dépôts (repos.py). Chacun a ses tables ; les règles
-communes sont ici, pour qu'un nom, une adresse ou une borne se jugent de
-la même façon partout.
+côté de l'historique et sauvegardés avec lui : les webhooks (webhooks.py),
+les sources de dépôts (repos.py) et les backends (backends.py). Chacun a
+ses tables ; les règles communes sont ici, pour qu'un nom, une adresse ou
+une borne se jugent de la même façon partout.
 
   OwnedError            une opération refusée (le message est pour la page,
                         `status` le code HTTP), une HistoryError

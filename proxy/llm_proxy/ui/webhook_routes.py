@@ -45,8 +45,8 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Request
 from fastapi.responses import PlainTextResponse
 
-from ..access import fairshare
-from ..access.auth import HOOK_PREFIX, ui_client
+from ..access import accounts, fairshare
+from ..access.auth import HOOK_PREFIX, auth_required, ui_client
 from ..core import config
 from ..core.httputil import error_response, json_only, parse_json
 from ..core.settings import log
@@ -164,6 +164,11 @@ async def receive_hook(request: Request, token: str):
     asked = asked.strip() if isinstance(asked, str) else ""
     if asked and not hook["model_override"]:
         return _slack(403, "action_prohibited")
+    # Routé comme pour le créateur : ses propres backends comptent, ses
+    # modèles permis aussi.
+    if auth_required():
+        fairshare.CLIENT.set(owner)
+        accounts.MODELS.set(await asyncio.to_thread(webhook_turn.models_of, owner, hook))
     if asked and route_backend({"model": asked})[0] is None:
         return _slack(400, "model_not_found")
     if not await asyncio.to_thread(webhook_turn.still_allowed, owner, hook):
