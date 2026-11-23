@@ -347,6 +347,7 @@ par le proxy.
 Le code constitue le corps d'une fonction `async` : `return` renvoie une
 valeur et les appels à `console.log` contribuent également à la sortie.
 Le code dispose des fonctions suivantes :
+
 | Fonction | Rôle |
 |---|---|
 | `readText(chemin)`, `readBytes(chemin)` | lire un fichier fourni par `files` |

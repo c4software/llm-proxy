@@ -17,7 +17,6 @@ Go et des paquets installables lorsque le réseau est ouvert, la VM Linux est
 fichiers statiques ; elle est plus lente et ne permet pas d'installer des
 paquets.
 
-
 ## Ce qu'elle est
 
 | | |
@@ -83,6 +82,7 @@ utilise la VM (sa réponse continue en arrière-plan), le panneau le signale,
 masque le terminal et propose *La reprendre pour celle-ci*. Les commandes
 saisies pendant le démarrage sont conservées et envoyées lorsque la VM est
 prête.
+
 ## Le modèle tape dans le terminal
 
 Lorsque le panneau Terminal est **ouvert** sur la conversation (le modèle
@@ -94,6 +94,7 @@ d'un sous-shell : un `exit` ou un `cd` du script ne modifie pas le shell de
 l'utilisateur. La consigne indique au modèle que le terminal est ouvert ;
 les demandes « lance le script » ou « montre-moi les fichiers » suffisent.
 Le modèle reçoit la sortie et le code de sortie.
+
 - **Une commande qui dépasse le délai** (un serveur, une boucle, `top`)
   reste dans le terminal à la disposition de l'utilisateur, qui l'arrête
   avec Ctrl-C. Le modèle en est informé ; la consigne lui demande de définir
@@ -238,7 +239,7 @@ LinuxPanel ─┘   │                         │   ▲
 ```
 
 - **Le cadre** est un `<iframe sandbox="allow-scripts">` sans origine.
-  Sa politique de sécurité désactive tout accès réseau (`default-src 'none')` ;
+  Sa politique de sécurité désactive tout accès réseau (`default-src 'none'`) ;
   la page, sa session et ses cookies ne lui sont pas accessibles. La page
   télécharge les fichiers de `vendor/linux/` et les transmet sous forme
   d'`ArrayBuffer`. v86 ne reçoit aucune URL.
