@@ -21,8 +21,9 @@ autre, sauf les partagés, en lecture ; la clé n'est jamais rendue.
   DELETE /ui/backends/{id}   le sien ; ?all=1 (admin) : celui de n'importe qui
   GET    /ui/quotas          (admin) le limiteur de chaque backend à quotas :
                              buckets, consommation, plafonds, restant annoncé
-                             par le compte, modèles au générique, 429 reçus ;
-                             ?refresh=1 relit d'abord les limites du compte
+                             par le compte, modèles au générique, 429 reçus,
+                             forfait mensuel (Mistral) ; ?refresh=1 relit
+                             d'abord les limites et le forfait du compte
 
 Admin : un compte admin, ou toute session sans comptes OIDC (comme les
 parties Extensions et Proxy).
@@ -122,14 +123,15 @@ async def _write(request: Request, fn, *args, anyone: bool = False):
 @router.get("/ui/quotas")
 async def ui_quotas(request: Request):
     """Configuration → Quotas (admin) : le limiteur de chaque backend à
-    quotas, du TOML et de tous les comptes (upstream/backends.quota_view).
-    ?refresh=1 relit d'abord les limites de leur compte (une fois par
-    backends.REREAD_SECONDS au plus)."""
+    quotas, du TOML et de tous les comptes (upstream/backends.quota_view),
+    avec le forfait mensuel de leur compte quand il en a un (Mistral,
+    backends.read_for_page). ?refresh=1 relit d'abord les limites et le
+    forfait de leur compte (une fois par backends.REREAD_SECONDS au plus)."""
     if not _admin(request):
         return error_response("openai", 403, "forbidden", "réservé aux admins")
     chosen = backends.quota_backends()
-    if request.query_params.get("refresh") in ("1", "true"):
-        await asyncio.gather(*(backends.reread_account(b) for b in chosen))
+    refresh = request.query_params.get("refresh") in ("1", "true")
+    await asyncio.gather(*(backends.read_for_page(b, refresh) for b in chosen))
     views = [backends.quota_view(b) for b in chosen]
     # `by` : le compte qui l'a déclaré (vide : un backend du TOML).
     owners = [{"owner": v.pop("owner") or ""} for v in views]

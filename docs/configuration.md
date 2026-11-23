@@ -546,7 +546,7 @@ fond au démarrage ; en attendant, les suivantes s'appliquent.
 |---|---|---|
 | `margin` | `0.9` | Fraction des limites réellement utilisée (marge de sécurité) |
 | `max_queue_seconds` | `900` | Attente maximale avant un 429 local (quota journalier épuisé), file derrière les requêtes précédentes comprise. Un client qui raccroche pendant l'attente quitte la file sans consommer de quota |
-| `limits_refresh` | `3600` | Période de rechargement de `/v1/limits`. `0` = jamais. Si les limites n'ont pas pu être lues au démarrage (Albert injoignable), nouvel essai toutes les 60 s jusqu'à la première lecture |
+| `limits_refresh` | `3600` | Période de rechargement de `/v1/limits` et du [forfait mensuel](#forfait-mensuel-mistral). `0` : une seule lecture. Si les limites n'ont pas pu être lues au démarrage (Albert injoignable), nouvel essai toutes les 60 s jusqu'à la première lecture |
 | `generic_rpm` / `generic_tpm` | `30` / `128000` | Limites d'un modèle hors règles, compte, en-têtes et familles, chacun son compteur |
 | `status_interval` | `600` | Période du résumé des compteurs dans les logs |
 | `[quotas.family_limits.<famille>]` | *(aucune)* | `rpm`, `tpm`, `models = [préfixes]` : limites par famille de noms de modèles, pour tous les backends à quotas. `data/config.example.toml` donne celles d'Albert |
@@ -593,6 +593,22 @@ séparément), une minute au plus, fenêtre du jour comprise. Une seule
 requête part alors sonder l'amont ; les suivantes attendent sa réponse, ou
 une minute de plus. Chaque réponse remplace l'annonce précédente
 (plafonds, restant), sauf si elle date d'une requête admise avant.
+
+### Forfait mensuel (Mistral)
+
+`GET /v1/billing/budget`, lu avec la clé (ou les en-têtes propres) d'un
+backend à quotas `api = "openai"`, donne le forfait du compte Mistral :
+pour l'API et pour Vibe & Studio, le montant alloué pour le mois, la part
+consommée, la date de réinitialisation et si le paiement à l'usage prend le
+relais. Il s'affiche dans *Configuration → Quotas*, sans retenir aucune
+requête.
+
+Il est lu à l'affichage de la page, au plus une fois par
+`[quotas].limits_refresh` (3 600 s par défaut ; `0` : une seule lecture),
+au plus toutes les 60 s tant qu'il n'a pas pu l'être, et par *Relire les
+limites* au plus une fois par 30 s. Un backend dont la route répond `401`,
+`403`, `404`, `405`, ou un corps illisible ou sans forfait, n'en a pas et
+n'est plus interrogé, jusqu'à un changement de ses en-têtes propres.
 
 L'état du limiteur se lit dans
 [*Configuration → Quotas*](tableau-de-bord.md#longlet-configuration).

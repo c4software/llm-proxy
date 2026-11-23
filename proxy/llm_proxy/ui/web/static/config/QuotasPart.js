@@ -7,8 +7,9 @@
   délai avant que sa plus ancienne requête la quitte (une place se
   libère). Le restant annoncé par le compte (Albert) ou par les en-têtes
   des réponses (Mistral, OpenAI, Groq, Anthropic), les modèles laissés au
-  générique, les 429 reçus de l'amont. Relu toutes les REFRESH_MS ;
-  « Relire les limites » interroge le compte tout de suite.
+  générique, les 429 reçus de l'amont ; le forfait mensuel du compte
+  (Mistral : API, Vibe & Studio). Relu toutes les REFRESH_MS ; « Relire
+  les limites » interroge le compte tout de suite.
 */
 import { call } from "../lib/http.js";
 
@@ -38,6 +39,22 @@ function gauge(w) {
   if (w.max_tokens) { used = Math.max(used, w.tokens / w.max_tokens); parts.push(`${short(w.tokens)}/${short(w.max_tokens)} tok`); }
   return { used: Math.min(used, 1), limited: parts.length > 0, text: parts.join(" · ") || "illimité" };
 }
+const BUDGETS = { api: ["API", "API"], vibe: ["Vibe", "Vibe & Studio"] };
+function money(amount, currency) {
+  if (currency) {
+    try { return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(amount); }
+    catch { return `${amount.toFixed(2)} ${currency}`; }
+  }
+  return amount.toFixed(2);
+}
+/** Un forfait : consommé / alloué, la date de réinitialisation, le paiement à l'usage. */
+function budgetText(f) {
+  const parts = [`${money(f.initial * f.used_percent / 100, f.currency)} / ${money(f.initial, f.currency)}`];
+  const reset = f.reset_at ? new Date(f.reset_at) : null;
+  if (reset && !isNaN(reset)) parts.push(`réinitialisation le ${reset.toLocaleDateString()}`);
+  if (f.payg) parts.push("puis paiement à l'usage");
+  return parts.join(" · ");
+}
 function left(remaining) {
   const keys = Object.keys(remaining || {});
   return keys.length ? keys.map((k) => `${short(remaining[k])} ${k}`).join(" · ") : "";
@@ -62,7 +79,7 @@ export const QuotasPart = {
     onMounted(() => { load(); timer = setInterval(() => load(), REFRESH_MS); });
     onUnmounted(() => clearInterval(timer));
     const read = (t) => t ? new Date(t * 1000).toLocaleTimeString() : "";
-    return { list, error, loading, load, gauge, delay, left, read, SOURCES };
+    return { list, error, loading, load, gauge, delay, left, read, SOURCES, BUDGETS, budgetText };
   },
   template: `
     <div class="config-keys quotas">
@@ -81,6 +98,19 @@ export const QuotasPart = {
           <span class="dim">{{ b.by || "config.toml" }}<template v-if="b.account_read"> · limites du compte lues à {{ read(b.account_read) }}</template></span></div>
         <p class="err" v-if="b.upstream_429" role="status">{{ b.upstream_429 }} réponse(s) 429 du backend malgré le
           limiteur : ses plafonds réels sont plus bas que ceux du proxy.</p>
+        <div class="quota-rows" v-if="b.budget.length">
+          <div class="quota-row">
+            <div class="quota-name"><strong>Forfait mensuel</strong>
+              <span class="dim" v-if="b.budget_read">lu à {{ read(b.budget_read) }}</span></div>
+            <template v-for="f in b.budget" :key="f.kind">
+              <span class="quota-label" :title="(BUDGETS[f.kind] || [f.kind, f.kind])[1]">{{ (BUDGETS[f.kind] || [f.kind])[0] }}</span>
+              <span class="quota-bar" role="meter" :aria-label="(BUDGETS[f.kind] || [f.kind, f.kind])[1]"
+                    :aria-valuenow="Math.round(f.used_percent)" aria-valuemin="0" aria-valuemax="100">
+                <i :style="{ width: f.used_percent + '%' }" :class="{ high: f.used_percent >= 80 }"></i></span>
+              <span class="quota-text wrap">{{ budgetText(f) }}</span>
+            </template>
+          </div>
+        </div>
         <div class="quota-rows">
           <div class="quota-row" v-for="q in b.buckets" :key="q.key">
             <div class="quota-name"><strong>{{ q.name }}</strong>

@@ -423,6 +423,10 @@ class QuotaState:
         self.account_read = 0.0                             # heure de la lecture (s)
         self.account_tried = 0.0                            # heure du dernier essai (s)
         self.no_account = False                             # pas de limites de compte
+        self.budget: list[dict] | None = None               # forfait mensuel (mistral.py)
+        self.budget_read = 0.0                              # heure de sa lecture (s)
+        self.budget_tried = 0.0                             # heure du dernier essai (s)
+        self.no_budget = False                              # pas de forfait
         self.upstream_429 = 0                               # 429 reçus malgré le limiteur
         self.daily_requests = False                         # `requests` à la journée (Groq)
         self.limiters: dict[str, Limiter] = {}

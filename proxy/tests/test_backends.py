@@ -22,6 +22,13 @@ from llm_proxy.upstream import backends, relaying
 # ici, c'est l'adresse et les en-têtes reçus par le backend qui comptent.
 REAL_SEND = relaying.send_upstream
 MODELS = ("permis-1", "autre")
+# Le forfait mensuel d'un compte Mistral (GET /v1/billing/budget), tel
+# que l'API le rend.
+BUDGET = {"vibe_budget": {"usage_percentage": 0.0048, "initial_budget": 255.0, "currency": "EUR",
+                          "reset_at": "2026-12-01T00:00:00Z", "payg_enabled": False},
+          "api_budget": {"usage_percentage": 0.0, "initial_budget": 25.5, "currency": "EUR",
+                         "reset_at": "2026-12-01T00:00:00Z", "payg_enabled": True},
+          "usage_percentage": 0.0, "initial_budget": 25.5, "currency": "EUR"}
 # Ce qu'un backend comme Mistral annonce de ses limites, à une requête du
 # modèle « autre » : 1 000 requêtes la minute, dont 40 prises.
 ANNOUNCED = {"x-ratelimit-limit-req-minute": "1000", "x-ratelimit-remaining-req-minute": "960",
@@ -61,6 +68,13 @@ def env(idp, monkeypatch, tmp_path):
         if request.url.path == "/v1/limits":
             idp.limits_asked.append(request.url.host)
             return httpx2.Response(500)
+        if request.url.path == "/v1/billing/budget":
+            host = request.url.host
+            return (httpx2.Response(200, json=BUDGET) if host == "perso.exemple.fr"
+                    else httpx2.Response(200, text="<html>accueil</html>") if host == "html.exemple.fr"
+                    else httpx2.Response(200, text="[" * 100_000) if host == "profond.exemple.fr"
+                    else httpx2.Response(500) if host == "panne.exemple.fr"
+                    else httpx2.Response(404))
         if request.method == "GET":
             return httpx2.Response(200, json={"data": [{"id": m} for m in MODELS]})
         if request.url.path == "/tokenize":
@@ -389,6 +403,36 @@ def test_l_admin_voit_l_etat_des_quotas(env):
             told["minute"]["requests"], told["remaining"]) == \
         ("en-têtes", 900, 450000, 1, {"rpm": 960, "tpm": 499000})
     assert "sk-perso" not in alice.get("/ui/quotas").text
+
+
+def test_l_admin_voit_le_forfait_mensuel_d_un_compte_mistral(env, monkeypatch):
+    """Configuration → Quotas : le forfait mensuel du compte d'un backend à
+    quotas (Mistral : GET /v1/billing/budget, avec sa clé), lu à
+    l'affichage, une fois par [quotas].limits_refresh au plus, relu par
+    « Relire les limites ». Un backend qui n'en a pas (404, une page HTML,
+    un corps piégé) n'est plus interrogé ; une panne passagère (500) se
+    réessaie."""
+    alice, _, _ = admin_and_user(env)
+    hosts = ("perso", "ailleurs", "html", "profond", "panne")
+    for host in hosts:
+        alice.post("/ui/backends", json={**MINE, "name": host, "url": f"https://{host}.exemple.fr",
+                                         "shared": True, "quotas": True})
+    asked = lambda: sorted((h, hd.get("authorization")) for h, path, hd in env.gets
+                           if path == "/v1/billing/budget")
+    for _ in range(3):
+        views = {b["name"]: b for b in alice.get("/ui/quotas").json()["backends"]}
+    assert views["perso"]["budget"] == [
+        {"kind": "api", "initial": 25.5, "used_percent": 0.0, "currency": "EUR",
+         "reset_at": "2026-12-01T00:00:00Z", "payg": True},
+        {"kind": "vibe", "initial": 255.0, "used_percent": 0.0048, "currency": "EUR",
+         "reset_at": "2026-12-01T00:00:00Z", "payg": False}]
+    assert views["perso"]["budget_read"]
+    assert all(views[h]["budget"] == [] for h in hosts[1:])
+    assert asked() == [(f"{h}.exemple.fr", "Bearer sk-perso") for h in sorted(hosts)]
+    monkeypatch.setattr(backends, "REREAD_SECONDS", 0.0)
+    assert alice.get("/ui/quotas?refresh=1").status_code == 200
+    assert asked() == [(f"{h}.exemple.fr", "Bearer sk-perso")
+                       for h in sorted(hosts + ("panne", "perso"))]
 
 
 def test_relire_les_limites_ne_martele_pas_l_amont(env):

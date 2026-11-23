@@ -175,6 +175,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `upstream/backends.py` | Backends, clients HTTP, routage au préfixe de modèle ; les backends des comptes (`refresh`, `visible` ; `served` : ceux du TOML et les partagés, pour les outils hébergés et le partage équitable ; `watch_quotas` : la tâche de fond d'un backend à quotas, du TOML comme d'un compte) et les modèles permis du compte (`permitted`, `no_route` : `403 model_not_allowed`) |
 | `upstream/quotas.py` | Le limiteur des backends à quotas : fenêtres minute et jour, buckets (compte, règles `limits`, en-têtes, familles, générique), `settle`, `observe` (plafonds annoncés ; restant : `Window.announce`) |
 | `upstream/albert.py` | Les limites du compte Albert : `/v1/limits`, un bucket par routeur, alias compris (`refresh`) |
+| `upstream/mistral.py` | Le forfait mensuel d'un compte Mistral : `/v1/billing/budget` (`refresh`), lu par `backends.read_for_page` pour *Configuration → Quotas* |
 | `upstream/rate_headers.py` | Les limites annoncées dans les en-têtes d'une réponse (Mistral, OpenAI, Groq, Anthropic) : `parse`, appliquées par `QuotaState.observe` depuis `send_upstream`, sur le bucket de la requête |
 | `upstream/anthropic.py` | Le backend Anthropic natif (`api = "anthropic"`) : chat/completions ↔ Messages, flux compris |
 | `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), `forward`, `relay`, `drain` |

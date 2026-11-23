@@ -33,7 +33,7 @@ from ..core import config, limits
 from ..core.httputil import backend_headers, error_response, merge_headers
 from ..core.settings import META_TIMEOUT, TIMEOUT, TOOL_CHOICE, log
 from ..storage import backends as user_backends
-from . import albert, anthropic, quotas
+from . import albert, anthropic, mistral, quotas
 
 
 class Backend:
@@ -373,7 +373,8 @@ def quota_view(b: Backend) -> dict:
                      and getattr(st.limiters.get(key), "source", "") != "en-têtes")
     return {"name": b.name, "owner": b.owner,
             "account_read": st.account_read or None, "upstream_429": st.upstream_429,
-            "buckets": rows, "generic_models": generic}
+            "buckets": rows, "generic_models": generic,
+            "budget": st.budget or [], "budget_read": st.budget_read or None}
 
 
 def quota_backends() -> list[Backend]:
@@ -391,6 +392,36 @@ async def reread_account(b: Backend) -> None:
     st.account_tried = time.time()
     if await albert.refresh(st, b) is None:
         st.no_account = True
+
+
+async def read_for_page(b: Backend, refresh: bool = False) -> None:
+    """Le forfait mensuel du compte de `b` (mistral.refresh), lu quand la
+    page Quotas s'affiche, comme watch_quotas lit ses limites : une fois
+    par [quotas].limits_refresh (0 : une seule fois), toutes les
+    RETRY_UNLOADED s au plus tant qu'il n'a jamais pu l'être ; `refresh`
+    (bouton) : ses limites aussi (reread_account), une fois par
+    REREAD_SECONDS chacun. Jamais pour un backend qui n'en a pas."""
+    st = b.quota_state
+    if refresh:
+        await reread_account(b)
+    if st.no_budget:
+        return
+    age = time.time() - st.budget_tried
+    if not st.budget_tried:
+        due = True
+    elif refresh:
+        due = age >= REREAD_SECONDS
+    elif quotas.LIMITS_REFRESH <= 0:
+        due = False
+    elif st.budget is None:
+        due = age >= min(quotas.LIMITS_REFRESH, quotas.RETRY_UNLOADED)
+    else:
+        due = age >= quotas.LIMITS_REFRESH
+    if not due:
+        return
+    st.budget_tried = time.time()
+    if await mistral.refresh(st, b) is None:
+        st.no_budget = True
 
 
 def _stop(b: Backend) -> None:
@@ -421,10 +452,13 @@ def _retune(b: Backend, name: str, cfg: dict) -> None:
     other = Backend(name, {**cfg, "quotas": False})
     b.name, b.cfg = name, cfg
     b.images, b.tokenize_path, b.tool_choice = other.images, other.tokenize_path, other.tool_choice
+    headers_changed = b.headers != other.headers
     b.limits, b.headers = other.limits, other.headers
     if b.quota_state is not None:
         b.quota_state.name = name
         b.quota_state.set_rules(other.limits)
+        if headers_changed:             # de nouveaux identifiants : le forfait se relit
+            b.quota_state.no_budget, b.quota_state.budget_tried = False, 0.0
 
 
 async def refresh(live) -> None:

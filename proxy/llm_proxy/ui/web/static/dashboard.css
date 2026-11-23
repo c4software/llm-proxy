@@ -933,6 +933,7 @@ a.btn { display: inline-block; text-decoration: none; }
 .quota-bar i.high { background: var(--err); }
 .quota-bar.off { opacity: .5; }
 .quota-text { color: var(--muted); font-size: 13px; text-align: right; white-space: nowrap; }
+.quota-text.wrap { white-space: normal; }
 @media (max-width: 560px) {
   .quota-row { grid-template-columns: 48px 1fr; }
   .quota-text { grid-column: 2; text-align: left; white-space: normal; }
