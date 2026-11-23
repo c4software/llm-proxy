@@ -82,16 +82,17 @@ def ui_client(request: Request) -> str:
     return request_owner(request)
 
 
-def live_owners() -> set[str]:
-    """Les clients dont les backends (storage/backends.py) servent encore :
-    les comptes actifs avec OIDC, les clés du TOML sinon, «» pour un proxy
-    ouvert. BLOQUANT."""
+def live_owners() -> dict[str, bool]:
+    """Les clients dont les backends (storage/backends.py) servent encore,
+    chacun avec «admin ?» : les comptes actifs avec OIDC, les clés du TOML
+    sinon, «» pour un proxy ouvert — sans OIDC, tous ont les droits
+    d'admin de la page. BLOQUANT."""
     if not auth_required():
-        return {""}
+        return {"": True}
     if oidc.ENABLED:
-        return {account_owner(u["id"]) for u in accounts.users()
+        return {account_owner(u["id"]): u["role"] == "admin" for u in accounts.users()
                 if u["role"] in accounts.ACTIVE}
-    return toml_digests()
+    return dict.fromkeys(toml_digests(), True)
 
 
 def request_user(request: Request) -> dict | None:

@@ -171,7 +171,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 
 | Fichier | Rôle |
 |---|---|
-| `upstream/backends.py` | Backends, clients HTTP, routage au préfixe de modèle ; les backends des comptes (`refresh`, `visible`) et les modèles permis du compte (`permitted`, `no_route` : `403 model_not_allowed`) |
+| `upstream/backends.py` | Backends, clients HTTP, routage au préfixe de modèle ; les backends des comptes (`refresh`, `visible` ; `served` : ceux du TOML et les partagés, pour les outils hébergés et le partage équitable) et les modèles permis du compte (`permitted`, `no_route` : `403 model_not_allowed`) |
 | `upstream/albert.py` | Spécificités d'Albert : limiteur de quotas, familles de modèles, `/v1/me/info` |
 | `upstream/anthropic.py` | Le backend Anthropic natif (`api = "anthropic"`) : chat/completions ↔ Messages, flux compris |
 | `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), `forward`, `relay`, `drain` |

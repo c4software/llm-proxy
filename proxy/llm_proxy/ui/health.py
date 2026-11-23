@@ -14,7 +14,7 @@ from ..exposure import mcp_server
 from ..storage import files
 from ..surfaces import anthropic_api, chat_api, responses_api
 from ..upstream import albert
-from ..upstream.backends import BACKENDS
+from ..upstream.backends import served
 from ..upstream.catalog import CHAT_TYPES
 from .dashboard import ui_login_mode
 
@@ -116,7 +116,7 @@ def health_detail() -> dict:
                     if b.model_types.get(m, "text-generation") in CHAT_TYPES),
                 **(b.quota_state.snapshot() if b.quotas else {}),
             }
-            for name, b in BACKENDS.items()
+            for name, b in served().items()
         },
         "generic_limits": {"rpm": albert.GENERIC_RPM, "tpm": albert.GENERIC_TPM},
         "max_queue_seconds": albert.MAX_QUEUE_SECONDS,

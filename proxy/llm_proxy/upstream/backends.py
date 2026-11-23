@@ -15,7 +15,12 @@ de la requête (fairshare.CLIENT) : les siens, puis ceux que d'autres
 partagent. Un nom du TOML l'emporte toujours. Les MODÈLES PERMIS du compte
 (accounts.MODELS, posés par l'admin) bornent le reste : un modèle hors de
 ses motifs n'est ni listé ni routé (403 `model_not_allowed`), une requête
-sans modèle non plus ; ses propres backends n'y sont pas soumis.
+sans modèle non plus ; ses propres backends n'y sont pas soumis. Un
+backend PARTAGÉ sert aussi les outils hébergés (served) et compte dans le
+partage équitable, comme un backend du TOML ; un backend à soi, non. Un
+outil hébergé ne vise qu'un backend partagé par un ADMIN : son nom, pris
+par le premier qui le partage, ne doit pas pouvoir capter le trafic des
+outils.
 """
 
 import asyncio
@@ -91,6 +96,10 @@ class Backend:
         # un backend du TOML) et s'il est offert à tous.
         self.owner: str | None = None
         self.shared = False
+        # Son créateur est admin : les outils hébergés peuvent le viser.
+        self.admin = False
+        # Sa table, telle que lue du magasin (refresh compare).
+        self.cfg: dict | None = None
         # Dernier catalogue vu lors d'un GET /v1/models (informel, healthz).
         self.models: set[str] = set()
         # id (minuscule) → type normalisé («image-text-to-text»…), rempli
@@ -189,6 +198,17 @@ def visible() -> dict[str, Backend]:
     return out
 
 
+def served() -> dict[str, Backend]:
+    """Les backends de tous, sans compte : ceux du TOML puis les partagés.
+    Pour le modèle qu'un outil hébergé tient de la configuration, et pour
+    le partage équitable."""
+    out = dict(BACKENDS)
+    for b in ACCOUNTS.values():
+        if b.shared:
+            out.setdefault(b.name, b)
+    return out
+
+
 def permitted(b: Backend, model: str) -> bool:
     """Le client de la requête peut-il employer `model` (préfixé) de `b` ?
     Toujours sur ses propres backends ; ailleurs, selon les modèles permis
@@ -207,9 +227,9 @@ def route_backend(payload, *, limited: bool = True) -> tuple[Backend | None, boo
     vers le backend <nom> ; requête sans champ model → FALLBACK_BACKEND ;
     modèle sans préfixe reconnu, ou non permis au compte → None (no_route
     dit lequel). Renvoie (backend, préfixé) — préfixé impose de retirer
-    «nom/». `limited` faux : les backends du TOML seuls, sans les modèles
-    permis du compte — pour le modèle qu'un outil hébergé tient de la
-    configuration."""
+    «nom/». `limited` faux : ceux du TOML et les partagés d'un admin, sans
+    les modèles permis du compte — pour le modèle qu'un outil hébergé tient
+    de la configuration."""
     model = ""
     if isinstance(payload, dict):
         model = str(payload.get("model", "") or "")
@@ -219,7 +239,9 @@ def route_backend(payload, *, limited: bool = True) -> tuple[Backend | None, boo
         if limited and accounts.MODELS.get() is not None:
             return None, False
         return FALLBACK_BACKEND, False
-    b = _find(model, visible() if limited else BACKENDS)
+    table = visible() if limited else {
+        n: b for n, b in served().items() if b.owner is None or b.admin}
+    b = _find(model, table)
     if b is None or (limited and not permitted(b, model)):
         return None, False
     return b, True
@@ -276,40 +298,48 @@ async def open_clients() -> None:
         b.client = open_client(b)
 
 
+def _cfg(row: dict) -> dict:
+    """La table [backends.<nom>] d'une ligne du magasin."""
+    cfg = {"url": row["url"], "api_key": row["api_key"], "api": row["api"],
+           "tokenize_path": row["tokenize_path"], "connect_timeout": 15.0}
+    if row["images"] is not None:
+        cfg["images"] = row["images"]
+    return cfg
+
+
 def _same(b: Backend, row: dict) -> bool:
-    return (b.name, b.api, b.url, b.api_key) == \
-        (row["name"], row["api"], row["url"], row["api_key"])
+    return (b.name, b.cfg) == (row["name"], _cfg(row))
 
 
 async def refresh(live) -> None:
     """Relit les backends des comptes de leur magasin. `live` : la fonction
-    BLOQUANTE qui rend les clients dont les backends servent encore
-    (auth.live_owners : un compte bloqué perd les siens, partagés compris).
+    BLOQUANTE qui rend les clients dont les backends servent encore, avec
+    «admin ?» (auth.live_owners : un compte bloqué perd les siens, partagés
+    compris).
     Un backend inchangé garde son client et son catalogue ; le client d'un
     backend retiré ou modifié se ferme après son délai de requête (une
     réponse en cours finit)."""
     def read():
         if not user_backends.ENABLED:
-            return []
+            return {}, []
         owners = live()
-        return [r for r in user_backends.rows() if r["owner"] in owners]
+        return owners, [r for r in user_backends.rows() if r["owner"] in owners]
     async with _refreshing:
-        rows = await asyncio.to_thread(read)
+        owners, rows = await asyncio.to_thread(read)
         fresh: dict[tuple[str, str], Backend] = {}
         for row in rows:
             key = (row["owner"], row["id"])
             b = ACCOUNTS.get(key)
             if b is None or not _same(b, row):
                 try:
-                    b = Backend(row["name"], {
-                        "url": row["url"], "api_key": row["api_key"], "api": row["api"],
-                        "connect_timeout": 15.0, "fair_share": False})
+                    b = Backend(row["name"], _cfg(row))
                 except SystemExit as exc:    # une ligne abîmée : écartée seule
                     log.warning("backend de compte %s écarté : %s", row["name"], exc)
                     continue
-                b.owner = row["owner"]
+                b.owner, b.cfg = row["owner"], _cfg(row)
                 b.client = open_client(b)
-            b.shared = row["shared"]
+            b.shared = b.fair_share = row["shared"]
+            b.admin = owners[row["owner"]]
             fresh[key] = b
         gone = [b for key, b in ACCOUNTS.items() if fresh.get(key) is not b]
         ACCOUNTS.clear()

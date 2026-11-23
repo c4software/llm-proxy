@@ -49,6 +49,8 @@ def env(idp, monkeypatch, tmp_path):
     def handler(request):
         if request.method == "GET":
             return httpx2.Response(200, json={"data": [{"id": m} for m in MODELS]})
+        if request.url.path == "/tokenize":
+            return httpx2.Response(200, json={"tokens": [1] * 42})
         idp.got.append((request.url.host, dict(request.headers), json.loads(request.content)))
         return httpx2.Response(200, stream=Body(chat_doc(
             {"role": "assistant", "content": "ok"}, "stop", 3, 1)),
@@ -118,6 +120,10 @@ def test_noms_et_bornes_refuses(env, monkeypatch):
         "préfixe illisible": (alice, {**MINE, "name": "a/b"}),
         "identifiants dans l'adresse": (alice, {**MINE, "name": "x", "url": "https://u:p@h.fr"}),
         "protocole inconnu": (alice, {**MINE, "name": "x", "api": "grpc"}),
+        "images ni vrai ni faux": (alice, {**MINE, "name": "x", "images": "oui"}),
+        "tokenisation hors de l'adresse": (alice, {**MINE, "name": "x", "tokenize_path": "/../x"}),
+        "tokenisation sans chemin": (alice, {**MINE, "name": "x", "tokenize_path": "tokenize"}),
+        "tokenisation vers un hôte": (alice, {**MINE, "name": "x", "tokenize_path": "//h/x"}),
     }
     for case, (who, body) in cases.items():
         assert who.post("/ui/backends", json=body).status_code == 400, case
@@ -185,6 +191,36 @@ def test_un_backend_partage_sert_tous_avec_la_cle_du_createur(env):
     assert (env.got[-1][0], env.got[-1][1]["authorization"]) == ("bob.exemple.fr", "Bearer sk-bob")
     ask(alice, "perso/m")
     assert env.got[-1][0] == "perso.exemple.fr"
+
+
+def test_un_backend_partage_sert_les_outils_et_le_partage_equitable(env):
+    """Comme un backend du TOML : un outil hébergé peut le viser (partagé
+    par un admin seulement : le nom d'un partagé est au premier qui le
+    prend), ses requêtes comptent dans le partage équitable, ses réglages
+    valent et suivent une modification. Un backend à soi ne sert que son
+    compte, ni outil ni partage."""
+    alice, bob, _ = admin_and_user(env)
+    bid = alice.post("/ui/backends", json={**MINE, "name": "commun", "shared": True,
+                                           "images": True}).json()["backend"]["id"]
+    bob.post("/ui/backends", json={**MINE, "name": "debob", "shared": True})
+    alice.post("/ui/backends", json={**MINE, "name": "claude", "api": "anthropic",
+                                     "shared": True})
+    alice.post("/ui/backends", json={**MINE, "images": True})
+    assert backends.route_backend({"model": "commun/m"}, limited=False)[0].name == "commun"
+    for model in ("perso/m", "debob/m"):
+        assert backends.route_backend({"model": model}, limited=False)[0] is None, model
+
+    health = alice.get("/ui/health").json()["backends"]
+    assert "perso" not in health
+    assert {n: (health[n]["images"], health[n]["fair_share"]) for n in ("commun", "claude")} \
+        == {"commun": (True, True), "claude": (True, True)}
+    # Le chemin de tokenisation, posé après coup, sert.
+    alice.put(f"/ui/backends/{bid}", json={**MINE, "name": "commun", "shared": True,
+                                          "images": True, "tokenize_path": "/tokenize"})
+    key = bob.post("/ui/keys", json={"label": "cli"}).json()["key"]
+    r = env.client.post("/v1/messages/count_tokens", headers=bearer(key), json={
+        "model": "commun/m", "messages": [{"role": "user", "content": "bonjour"}]})
+    assert r.status_code == 200 and r.json() == {"input_tokens": 42}, r.text
 
 
 def test_un_createur_bloque_perd_ses_backends_partages(env):

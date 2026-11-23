@@ -6,7 +6,7 @@ sauf `[user_backends].enabled = false` (voir [`[user_backends]`](configuration.m
 
 ## Déclarer un backend
 
-Un backend de compte a quatre champs :
+Un backend de compte a ces champs :
 
 | Champ | Rôle |
 |---|---|
@@ -14,6 +14,8 @@ Un backend de compte a quatre champs :
 | Protocole | `openai` (`/v1/chat/completions`) ou `anthropic` (`/v1/messages`, voir [Backend Anthropic](configuration.md#backend-anthropic)) |
 | Adresse | La base du backend, sans `/v1`, sans identifiants |
 | Clé | Envoyée au backend en `Authorization: Bearer` (`x-api-key` en `anthropic`). Facultative. Jamais rendue à la page |
+| Images | Comme [`images`](configuration.md#backendsnom) d'une table `[backends.<nom>]` : *oui*, *non*, ou *selon le protocole* (oui en `anthropic`, non en `openai`) |
+| Tokenisation | Comme [`tokenize_path`](configuration.md#backendsnom) : un chemin sous l'adresse (`/tokenize` pour llama.cpp) qui rend `count_tokens` exact. Vide : estimation |
 
 Ses modèles s'emploient comme les autres : dans le chat de la page, et
 avec toutes les clés du compte sur `/v1/*`. Ils apparaissent dans
@@ -37,9 +39,20 @@ Un compte bloqué perd ses backends, partagés compris ; il les retrouve
 quand il est rétabli. L'admin voit les backends de tous les comptes dans
 la même partie et peut en supprimer.
 
-Les requêtes vers un backend de compte ne comptent pas dans le
-[partage équitable](tableau-de-bord.md#partage-équitable). Un backend
-partagé n'a pas d'autre borne que celles de son serveur.
+Un backend partagé se comporte comme un backend de `[backends.<nom>]` :
+
+- ses requêtes comptent dans le
+  [partage équitable](tableau-de-bord.md#partage-équitable), celles de son
+  créateur comprises ;
+- partagé par un admin, un outil hébergé peut le viser dans son réglage
+  `model` (`[tools.ocr].model = "commun/…"`, de même pour `transcribe` et
+  `image_generation`). Partagé par un autre compte, non : le nom d'un
+  backend partagé revient au premier compte qui le prend ;
+- il figure dans `/ui/health`.
+
+Un backend *moi seul* ne sert que son compte : ni partage équitable, ni
+outil hébergé. Aucun backend de compte n'a de quotas ni d'injection de
+`tool_choice` : ces réglages restent propres à `[backends.<nom>]`.
 
 Les [modèles permis d'un compte](tableau-de-bord.md#comptes-oidc),
 posés par l'admin, ne s'appliquent pas à ses propres backends ; ils

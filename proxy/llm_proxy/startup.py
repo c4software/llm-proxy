@@ -24,7 +24,7 @@ from .storage import files, stats, webhooks
 from .surfaces import anthropic_api, chat_api, responses_api
 from .upstream import albert
 from .upstream.backends import (BACKENDS, FALLBACK_BACKEND, close_clients, open_clients,
-                                refresh)
+                                refresh, served)
 
 
 def seed_fair_share() -> int:
@@ -34,10 +34,11 @@ def seed_fair_share() -> int:
     owners = accounts.owners() if oidc.ENABLED else {}
     pages = {account_owner(uid): uid for uid in accounts.user_ids()} \
         if oidc.ENABLED else {}
+    table = served()
     rows = []
     for ts, key_id, backend, endpoint, tokens in stats.recent(
             time.time() - fairshare.WINDOW):
-        b = BACKENDS.get(backend)
+        b = table.get(backend)
         if b is None or not b.fair_share or is_exempt(endpoint):
             continue
         uid = owners.get(key_id, pages.get(key_id))
@@ -119,13 +120,14 @@ async def lifespan(app: FastAPI):
         # Une fois aussi : le salon d'un sortant Slack passe dans son URL Apprise.
         if (n := await asyncio.to_thread(webhooks.move_channels_to_urls)):
             log.info("webhooks : salon passé dans l'URL Apprise de %d sortant(s)", n)
+    # Avant le partage équitable : un backend partagé y compte.
+    await open_clients()
+    await refresh(auth.live_owners)
     seeded = await asyncio.to_thread(seed_fair_share)
     log.info("partage équitable : %s par heure glissante par défaut, "
              "réglable par compte ; %d requête(s) de la dernière heure "
              "relue(s)", f"{fairshare.DEFAULT_SHARE} tokens"
              if fairshare.DEFAULT_SHARE else "aucune limite", seeded)
-    await open_clients()
-    await refresh(auth.live_owners)
     # Extensions ([extensions].path) : leurs outils entrent au registre
     # avant ceux des serveurs MCP. Au démarrage seulement.
     tools.extensions.load(tools)

@@ -2,7 +2,9 @@
 Les BACKENDS DES COMPTES : ceux qu'un compte déclare lui-même
 (Configuration → Backends), avec [user_backends].enabled. Un nom (le
 préfixe de routage, comme celui d'une table [backends.<nom>]), un
-protocole (`openai` ou `anthropic`), une adresse et une clé.
+protocole (`openai` ou `anthropic`), une adresse, une clé, et deux
+réglages d'une table [backends.<nom>] : `images` (vide : selon le
+protocole) et `tokenize_path`.
 
   à soi          (`shared` faux) : seul son compte le voit et s'en sert ;
   partagé        (`shared` vrai) : offert à tous les comptes, AVEC la clé
@@ -31,7 +33,9 @@ APIS = ("openai", "anthropic")
 MAX_KEY = 4000
 # Un préfixe de routage : « monllama/qwen3 » vise le backend « monllama ».
 NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
-_FIELDS = "id, name, api, url, shared, created, owner"
+# Un chemin sous l'adresse du backend (llama.cpp : « /tokenize »).
+TOKENIZE_PATH = re.compile(r"/[A-Za-z0-9._~/-]{0,199}\Z")
+_FIELDS = "id, name, api, url, shared, created, owner, images, tokenize_path"
 
 BackendError = owned.OwnedError
 
@@ -42,6 +46,8 @@ def _table(c) -> None:
         api TEXT NOT NULL, url TEXT NOT NULL, api_key TEXT NOT NULL,
         shared INTEGER NOT NULL, created REAL NOT NULL,
         PRIMARY KEY (owner, id))""")
+    owned.add_columns(c, "user_backends", {"images": "INTEGER",
+                                           "tokenize_path": "TEXT NOT NULL DEFAULT ''"})
 
 
 _run = owned.runner(_table)
@@ -50,9 +56,11 @@ _run = owned.runner(_table)
 def _meta(row) -> dict:
     """Une ligne pour la page, sans clé ; `owner` (le client du créateur)
     sert à le nommer, la route le retire."""
-    bid, name, api, url, shared, created, owner = row
+    bid, name, api, url, shared, created, owner, images, tokenize_path = row
     return {"id": bid, "name": name, "api": api, "url": url, "shared": bool(shared),
-            "created": owned.seconds(created), "owner": owner}
+            "images": None if images is None else bool(images),
+            "tokenize_path": tokenize_path, "created": owned.seconds(created),
+            "owner": owner}
 
 
 def _fields(body, reserved) -> dict:
@@ -76,8 +84,16 @@ def _fields(body, reserved) -> dict:
     key = str(body.get("api_key") or "").strip()
     if len(key) > MAX_KEY:
         raise BackendError("clé trop longue")
+    images = body.get("images")
+    if images is not None and not isinstance(images, bool):
+        raise BackendError("`images` : true, false ou absent (selon le protocole)")
+    tokenize = str(body.get("tokenize_path") or "").strip()
+    if tokenize and (not TOKENIZE_PATH.match(tokenize) or ".." in tokenize
+                     or "//" in tokenize):
+        raise BackendError("`tokenize_path` : un chemin sous l'adresse, « /tokenize »")
     return {"name": name, "api": api, "url": url, "api_key": key,
-            "shared": 1 if body.get("shared") else 0}
+            "shared": 1 if body.get("shared") else 0,
+            "images": None if images is None else int(images), "tokenize_path": tokenize}
 
 
 def _clash(c, f: dict, owner: str, but: str = "") -> None:
@@ -125,9 +141,9 @@ def create(owner: str, body, reserved=frozenset()) -> dict:
         owned.room(c, "user_backends", owner, MAX_PER_USER, "backends")
         _clash(c, f, owner)
         c.execute("INSERT INTO user_backends (owner, id, name, api, url, api_key, shared, "
-                  "created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "created, images, tokenize_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   (owner, bid, f["name"], f["api"], f["url"], f["api_key"], f["shared"],
-                   time.time()))
+                   time.time(), f["images"], f["tokenize_path"]))
         return _one(c, owner, bid)
     return _meta(_run(q))
 
@@ -147,8 +163,9 @@ def update(owner: str, bid: str, body, reserved=frozenset()) -> dict:
         key = f["api_key"] or ("" if origin(old[0]) != origin(f["url"]) else old[1])
         _clash(c, f, owner, bid)
         c.execute("UPDATE user_backends SET name = ?, api = ?, url = ?, api_key = ?, "
-                  "shared = ? WHERE owner = ? AND id = ?",
-                  (f["name"], f["api"], f["url"], key, f["shared"], owner, bid))
+                  "shared = ?, images = ?, tokenize_path = ? WHERE owner = ? AND id = ?",
+                  (f["name"], f["api"], f["url"], key, f["shared"], f["images"],
+                   f["tokenize_path"], owner, bid))
         return _one(c, owner, bid)
     return _meta(_run(q))
 
@@ -167,7 +184,8 @@ def rows() -> list[dict]:
     """Tous les backends des comptes, clés COMPRISES : pour le routage
     (upstream/backends.py) seulement. BLOQUANT."""
     got = _run(lambda c: c.execute(
-        "SELECT owner, id, name, api, url, api_key, shared FROM user_backends "
-        "ORDER BY created, id").fetchall())
+        "SELECT owner, id, name, api, url, api_key, shared, images, tokenize_path "
+        "FROM user_backends ORDER BY created, id").fetchall())
     return [{"owner": o, "id": i, "name": n, "api": a, "url": u, "api_key": k,
-             "shared": bool(s)} for o, i, n, a, u, k, s in got]
+             "shared": bool(s), "images": None if im is None else bool(im),
+             "tokenize_path": t} for o, i, n, a, u, k, s, im, t in got]

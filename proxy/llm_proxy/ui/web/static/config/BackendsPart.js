@@ -2,7 +2,8 @@
   Configuration → Backends : les BACKENDS du compte connecté (/ui/backends,
   backend_routes.py) — un nom (le préfixe de ses modèles), un protocole, une
   adresse, une clé, et pour qui : soi seul, ou tout le monde (avec la clé du
-  créateur). La clé n'est jamais relue : vide à la modification, elle reste.
+  créateur), et deux réglages d'une table [backends.<nom>] : images et
+  tokenize_path. La clé n'est jamais relue : vide à la modification, elle reste.
   En dessous, ceux que d'autres comptes partagent, en lecture, et pour
   l'admin ceux de tous les comptes, à retirer.
 */
@@ -13,7 +14,9 @@ import { useAccount } from "./shared.js";
 const { ref, reactive, onMounted } = Vue;
 
 const API_LABELS = { openai: "OpenAI (chat/completions)", anthropic: "Anthropic (Messages)" };
-const blank = () => ({ id: null, name: "", api: "openai", url: "", api_key: "", shared: false });
+const blank = () => ({ id: null, name: "", api: "openai", url: "", api_key: "", shared: false,
+                       images: null, tokenize_path: "" });
+const IMAGES = [[null, "selon le protocole"], [true, "oui"], [false, "non"]];
 
 export const BackendsPart = {
   props: { session: { type: Object, required: true } },
@@ -46,6 +49,7 @@ export const BackendsPart = {
     async function save() {
       error.value = "";
       const body = { name: form.name, api: form.api, url: form.url, shared: form.shared,
+                     images: form.images, tokenize_path: form.tokenize_path,
                      ...(form.api_key ? { api_key: form.api_key } : {}) };
       try {
         if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id), body);
@@ -68,7 +72,8 @@ export const BackendsPart = {
     }
 
     onMounted(load);
-    return { mine, shared, every, admin, reserved, error, form, editing, armed, open, save, remove, when, API_LABELS };
+    return { mine, shared, every, admin, reserved, error, form, editing, armed, open, save, remove, when,
+             API_LABELS, IMAGES };
   },
   template: `
     <div class="config-keys owned">
@@ -100,6 +105,12 @@ export const BackendsPart = {
               <option :value="false">moi seul</option>
               <option :value="true">tout le monde (avec ma clé)</option>
             </select></label>
+          <label>Images <span class="dim">(pour les modèles que son catalogue dit multimodaux)</span>
+            <select v-model="form.images">
+              <option v-for="[v, label] in IMAGES" :key="String(v)" :value="v">{{ label }}</option>
+            </select></label>
+          <label>Tokenisation <span class="dim">(chemin d'un comptage exact, llama.cpp : /tokenize ; vide : estimation)</span>
+            <input v-model="form.tokenize_path" maxlength="200" spellcheck="false" placeholder="/tokenize"></label>
           <div class="item-actions">
             <button type="submit" class="btn">{{ form.id ? "Enregistrer" : "Créer" }}</button>
             <button type="button" class="btn ghost" @click="editing = false">Annuler</button>
