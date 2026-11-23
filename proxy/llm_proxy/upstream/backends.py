@@ -334,10 +334,13 @@ REREAD_SECONDS = 30.0
 
 def _bucket(lim, caps: dict | None = None) -> dict:
     """Un bucket pour la page : ses fenêtres (consommation, plafonds, délai
-    avant libération) ; sans limiteur encore créé, les plafonds seuls."""
+    avant libération) et les restants qu'annoncent les en-têtes de l'amont ;
+    sans limiteur encore créé, les plafonds seuls."""
     if lim is not None:
         snap = lim.snapshot()
-        return {"source": snap["limits_source"], "minute": snap["minute"], "day": snap["day"]}
+        live = time.monotonic() < lim.left_until
+        return {"source": snap["limits_source"], "minute": snap["minute"], "day": snap["day"],
+                "remaining": dict(lim.left) if live else {}}
     caps = {k: quotas.with_margin(caps[k]) for k in limits.KINDS if (caps or {}).get(k)}
     window = lambda r, t: {"requests": 0, "tokens": 0, "frees_in": 0.0,
                            "max_requests": caps.get(r) or None, "max_tokens": caps.get(t) or None}
@@ -348,8 +351,9 @@ def quota_view(b: Backend) -> dict:
     """L'état du limiteur d'un backend à quotas, pour Configuration →
     Quotas : un bucket par routeur du compte (même inutilisé, avec le restant
     annoncé), par règle, puis les familles et génériques en service ; les
-    modèles de son dernier catalogue qui tombent sur le générique ; les 429
-    reçus de l'amont malgré le limiteur."""
+    modèles de son dernier catalogue qui tombent sur le générique sans que
+    l'amont n'en ait annoncé les limites ; les 429 reçus de l'amont malgré
+    le limiteur."""
     st = b.quota_state
     rows = []
     for rid, caps in sorted(st.router_limits.items(),
@@ -365,7 +369,8 @@ def quota_view(b: Backend) -> dict:
     for key, lim in sorted(st.limiters.items()):
         if not key.startswith(("router:", "rule:")):
             rows.append({"key": key, "name": lim.name, **_bucket(lim)})
-    generic = sorted(m for m in b.models if st.bucket_of(m).startswith("generic:"))
+    generic = sorted(m for m in b.models if (key := st.bucket_of(m)).startswith("generic:")
+                     and getattr(st.limiters.get(key), "source", "") != "en-têtes")
     return {"name": b.name, "owner": b.owner,
             "account_read": st.account_read or None, "upstream_429": st.upstream_429,
             "buckets": rows, "generic_models": generic}

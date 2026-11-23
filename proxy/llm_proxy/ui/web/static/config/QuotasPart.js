@@ -1,20 +1,22 @@
 /*
   Configuration → Quotas (admin) : le limiteur de chaque backend à quotas
   (/ui/quotas, backend_routes.py). Par bucket — un routeur du compte, une
-  règle du backend, une famille, un générique — une barre par fenêtre
-  (minute, jour) : la part prise du plafond (requêtes ou tokens, la plus
-  haute), et, la fenêtre presque pleine, le délai avant que sa plus
-  ancienne requête la quitte (une place se libère). Le
-  restant annoncé par le compte (Albert), les modèles laissés au générique,
-  les 429 reçus de l'amont. Relu toutes les REFRESH_MS ; « Relire les
-  limites » interroge le compte tout de suite.
+  règle du backend, les en-têtes de l'amont, une famille, un générique —
+  une barre par fenêtre (minute, jour) : la part prise du plafond
+  (requêtes ou tokens, la plus haute), et, la fenêtre presque pleine, le
+  délai avant que sa plus ancienne requête la quitte (une place se
+  libère). Le restant annoncé par le compte (Albert) ou par les en-têtes
+  des réponses (Mistral, OpenAI, Groq, Anthropic), les modèles laissés au
+  générique, les 429 reçus de l'amont. Relu toutes les REFRESH_MS ;
+  « Relire les limites » interroge le compte tout de suite.
 */
 import { call } from "../lib/http.js";
 
 const { ref, onMounted, onUnmounted } = Vue;
 
 const REFRESH_MS = 10_000;
-const SOURCES = { compte: "compte", backend: "règle", famille: "famille", "générique": "générique" };
+const SOURCES = { compte: "compte", backend: "règle", "en-têtes": "en-têtes", famille: "famille",
+                  "générique": "générique" };
 
 function short(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + " M";
@@ -94,8 +96,8 @@ export const QuotasPart = {
           </div>
         </div>
         <p class="note" v-if="!b.buckets.length">Aucune requête encore, ni limite de compte.</p>
-        <p class="note" v-if="b.generic_models.length">Au générique, faute de limite du compte, de règle ou de
-          famille : <code v-for="m in b.generic_models" :key="m">{{ m }} </code></p>
+        <p class="note" v-if="b.generic_models.length">Au générique, faute de limite du compte (ou de ses
+          en-têtes), de règle ou de famille : <code v-for="m in b.generic_models" :key="m">{{ m }} </code></p>
       </section>
     </div>
   `,

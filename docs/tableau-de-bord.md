@@ -350,14 +350,14 @@ des comptes](backends.md).
 
 **Quotas** (admin, ou proxy sans comptes) : l'état du limiteur de chaque
 backend à quotas, relu toutes les 10 s. Par bucket (règle du backend,
-limite du compte, famille, générique), une barre pour la fenêtre minute et
-une pour la fenêtre jour : la part prise du plafond, marge
-`[quotas].margin` comprise, et, la fenêtre presque pleine, le délai avant
-qu'une place se libère. Le
-restant annoncé par Albert, les modèles du catalogue laissés au générique
-et les `429` reçus du backend malgré le limiteur y figurent. *Relire les
-limites* interroge le compte sans attendre (au plus une fois par
-30 s). Voir [`[quotas]`](configuration.md#quotas).
+limite du compte, en-têtes de l'amont, famille, générique), une barre pour
+la fenêtre minute et une pour la fenêtre jour : la part prise du plafond,
+marge `[quotas].margin` comprise, et, la fenêtre presque pleine, le délai
+avant qu'une place se libère. Le restant annoncé par Albert ou par les
+en-têtes de l'amont, les modèles du catalogue laissés au générique et les
+`429` reçus du backend malgré le limiteur y figurent. *Relire les limites*
+interroge le compte sans attendre (au plus une fois par 30 s). Voir
+[`[quotas]`](configuration.md#quotas).
 
 **Webhooks** : lorsque `[webhooks].enabled` et `[ui].chat` sont actifs,
 chaque utilisateur peut définir des webhooks entrants (message reçu au

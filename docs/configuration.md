@@ -535,7 +535,9 @@ Les limites d'un modèle, par priorité :
    [plus bas](#limites-du-compte-albert)) ; un backend sans clé, ou dont
    `/v1/limits` répond `404` ou `405`, n'en a pas et n'est plus interrogé ;
 3. les familles `[quotas.family_limits]` ;
-4. la limite générique, par modèle.
+4. la limite générique, par modèle, ou celle que les réponses du backend
+   annoncent pour ce modèle dans leurs en-têtes (Mistral, OpenAI, Groq,
+   Anthropic, voir [plus bas](#limites-annoncées-par-les-en-têtes)).
 
 `margin` s'applique à toutes. Les limites du compte sont lues en tâche de
 fond au démarrage ; en attendant, les suivantes s'appliquent.
@@ -545,7 +547,7 @@ fond au démarrage ; en attendant, les suivantes s'appliquent.
 | `margin` | `0.9` | Fraction des limites réellement utilisée (marge de sécurité) |
 | `max_queue_seconds` | `900` | Attente maximale avant un 429 local (quota journalier épuisé), file derrière les requêtes précédentes comprise. Un client qui raccroche pendant l'attente quitte la file sans consommer de quota |
 | `limits_refresh` | `3600` | Période de rechargement de `/v1/limits`. `0` = jamais. Si les limites n'ont pas pu être lues au démarrage (Albert injoignable), nouvel essai toutes les 60 s jusqu'à la première lecture |
-| `generic_rpm` / `generic_tpm` | `30` / `128000` | Limites d'un modèle hors règles, compte et familles, chacun son compteur |
+| `generic_rpm` / `generic_tpm` | `30` / `128000` | Limites d'un modèle hors règles, compte, en-têtes et familles, chacun son compteur |
 | `status_interval` | `600` | Période du résumé des compteurs dans les logs |
 | `[quotas.family_limits.<famille>]` | *(aucune)* | `rpm`, `tpm`, `models = [préfixes]` : limites par famille de noms de modèles, pour tous les backends à quotas. `data/config.example.toml` donne celles d'Albert |
 
@@ -556,6 +558,41 @@ fond au démarrage ; en attendant, les suivantes s'appliquent.
 routeur Albert partagent un compteur, comme un modèle et ses alias
 (`/v1/models`). Un modèle absent de `/v1/limits` relève des règles, des
 familles ou du générique.
+
+### Limites annoncées par les en-têtes
+
+Les réponses relayées par un backend à quotas (chat, complétions…, hors
+`[proxy].exempt_paths`, voir [`[proxy]`](#proxy)) sont lues pour les
+en-têtes de limites qu'elles portent, `429` compris. Celles des outils
+hébergés d'OCR, de transcription et d'images ne le sont pas.
+
+| Fournisseur | En-têtes | Fenêtres |
+|---|---|---|
+| Mistral | `x-ratelimit-{limit,remaining}-{req,tokens}-{minute,day}` | minute, jour |
+| OpenAI | `x-ratelimit-{limit,remaining,reset}-{requests,tokens}` | minute |
+| Groq | les mêmes noms | requêtes : jour ; tokens : minute |
+| Anthropic | `anthropic-ratelimit-{requests,tokens}-{limit,remaining}` | minute |
+
+Groq se distingue d'OpenAI par son `x-ratelimit-reset-requests` : au-delà
+d'une minute, les requêtes du backend sont comptées à la journée jusqu'au
+redémarrage. Un compte Groq de 1 440 requêtes par jour ou plus annonce des
+délais plus courts : il reste lu comme OpenAI, à la minute.
+
+Les plafonds annoncés remplacent, type par type, la limite générique du
+modèle de la requête, une fois la première réponse reçue. Ils ne remplacent
+ni une règle `limits`, ni une famille, ni les limites du compte Albert, ni
+le générique commun des modèles au-delà de 64 buckets.
+
+Le restant annoncé vaut pour tous les buckets qui ont au moins un plafond :
+l'amont compte aussi ce que le proxy ne voit pas (un autre client de la
+même clé). Moins la marge
+`margin`, il borne les requêtes admises après celle qui l'a rapporté. Une
+fois épuisé, elles attendent le délai de libération annoncé
+(`x-ratelimit-reset-*` d'OpenAI et de Groq, pour les requêtes et les tokens
+séparément), une minute au plus, fenêtre du jour comprise. Une seule
+requête part alors sonder l'amont ; les suivantes attendent sa réponse, ou
+une minute de plus. Chaque réponse remplace l'annonce précédente
+(plafonds, restant), sauf si elle date d'une requête admise avant.
 
 L'état du limiteur se lit dans
 [*Configuration → Quotas*](tableau-de-bord.md#longlet-configuration).

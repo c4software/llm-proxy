@@ -376,6 +376,11 @@ async def send_upstream(call: Call, request: Request, path: str,
         return call.error(502, "upstream_auth_error",
                           upstream_auth_message(b))
 
+    if b.quotas and call.tickets:
+        # Les limites que l'amont annonce, sur le bucket de CETTE requête
+        # (la dernière place prise, datée), avant l'adaptateur Anthropic.
+        limiter, minute, day, _ = call.tickets[-1]
+        b.quota_state.observe(limiter, upstream.headers, (minute or day)[0])
     if b.api == "anthropic":
         upstream = anthropic.Upstream(upstream, stream)
     if upstream.status_code == 429 and b.quotas:

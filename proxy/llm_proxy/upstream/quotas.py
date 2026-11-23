@@ -16,8 +16,14 @@ Le bucket d'un modèle (nom sans préfixe), par priorité :
   2. un routeur du compte, quand le backend en publie les limites
      (Albert : /v1/limits, voir albert.py) ;
   3. une famille de [quotas.family_limits] (préfixes de noms) ;
-  4. le générique ([quotas].generic_rpm / generic_tpm), un par modèle.
+  4. le générique ([quotas].generic_rpm / generic_tpm), un par modèle ;
+     les plafonds qu'annoncent les en-têtes des réponses (rate_headers.py)
+     le remplacent.
 [quotas].margin s'applique à toutes ces limites.
+
+Quel que soit le bucket, le RESTANT qu'annoncent ces en-têtes retient
+aussi les requêtes (Window.told) : l'amont compte ce que le proxy ne voit
+pas (un autre client de la même clé).
 
 Chaque backend à quotas a SA QuotaState (deux clés = deux jeux de
 limiteurs). Ce module ne connaît ni FastAPI ni httpx2.
@@ -30,6 +36,7 @@ import time
 from collections import deque
 
 from ..core import config
+from . import rate_headers
 
 log = logging.getLogger("albert-proxy")
 
@@ -89,6 +96,14 @@ class Window:
         self.max_tok = max_tok
         self.events: deque = deque()  # [timestamp, tokens, vivant]
         self.tokens = 0
+        # Les admissions de la dernière minute, [instant, coût], plafonnée
+        # ou non : ce qui est parti depuis une annonce de l'amont.
+        self.admitted: deque = deque()
+        # La dernière annonce de l'amont (announce) : (instant, {"req" |
+        # "tok": [place, valable jusqu'à]}) ; None : rien d'annoncé.
+        self.told: tuple | None = None
+        # La prochaine requête admise sondera l'amont (_told_wait, record).
+        self.probe = False
 
     def evict(self, now: float) -> None:
         cutoff = now - self.seconds
@@ -96,9 +111,49 @@ class Window:
             entry = self.events.popleft()
             entry[2] = False
             self.tokens -= entry[1]
+        while self.admitted and self.admitted[0][0] <= now - MINUTE:
+            self.admitted.popleft()
+
+    def newer_than(self, since: float) -> bool:
+        """L'annonce en cours date-t-elle d'une requête admise après `since` ?"""
+        return self.told is not None and self.told[0] > since
+
+    def announce(self, since: float, room: dict) -> None:
+        """L'amont, au moment où il admettait la requête placée à `since`,
+        laissait encore `room` ({"req" | "tok": [place, valable jusqu'à]}) :
+        remplace l'annonce précédente."""
+        self.told = (since, room)
+
+    def _told_wait(self, now: float, cost: int) -> float:
+        """L'attente qu'impose la dernière annonce : jusqu'à la fin de la
+        place épuisée par les admissions qui l'ont suivie. Passé ce délai,
+        la place toujours épuisée, une seule requête part sonder l'amont ;
+        les suivantes attendent sa réponse, une minute au plus. La sonde
+        n'est posée qu'à son admission (record) : une requête retenue
+        ensuite par autre chose ne bloque personne."""
+        self.probe = False
+        if self.told is None:
+            return 0.0
+        since, room = self.told
+        newer = [c for ts, c in self.admitted if ts > since]
+        used = {"req": len(newer) + 1, "tok": sum(newer) + cost}
+        wait, probe = 0.0, False
+        for dim, (place, until) in list(room.items()):
+            if used[dim] <= place:
+                if now >= until:
+                    del room[dim]
+            elif now < until:
+                wait = max(wait, until - now)
+            else:
+                probe = True
+        if probe and not wait:
+            self.probe = True
+        elif not room:
+            self.told = None
+        return wait
 
     def wait_needed(self, now: float, cost: int) -> float:
-        waits = []
+        waits = [self._told_wait(now, cost)]
         if self.max_req and len(self.events) >= self.max_req:
             waits.append(self.events[0][0] + self.seconds - now)
         if self.max_tok and self.tokens + cost > self.max_tok:
@@ -117,6 +172,9 @@ class Window:
     def record(self, now: float, cost: int) -> list | None:
         """Enregistre un événement ; rend son entrée (pour `adjust`), ou
         None si la fenêtre est illimitée (rien n'est gardé)."""
+        self.admitted.append([now, cost])
+        if self.probe:                  # cette requête est la sonde : plus rien après elle
+            self.told, self.probe = (now, {"req": [0, now + MINUTE]}), False
         if self.max_req or self.max_tok:
             entry = [now, cost, True]
             self.events.append(entry)
@@ -157,10 +215,16 @@ class Limiter:
     def __init__(self, name: str, source: str,
                  rpm: int = 0, tpm: int = 0, rpd: int = 0, tpd: int = 0):
         self.name = name
-        self.source = source  # "compte" | "backend" | "famille" | "générique"
+        # "compte" | "backend" | "famille" | "générique" | "en-têtes"
+        self.source = source
         self.minute = Window(MINUTE, rpm, tpm)
         self.day = Window(DAY, rpd, tpd)
         self.lock = asyncio.Lock()
+        # Le générique d'UN modèle : les plafonds qu'annoncent les en-têtes
+        # le remplacent (announced). Ni une famille ni le générique commun.
+        self.own_generic = False
+        self.left: dict[str, int] = {}   # restants annoncés par les en-têtes
+        self.left_until = 0.0            # … montrés jusque-là
 
     def update(self, rpm: int, tpm: int, rpd: int, tpd: int, source: str) -> None:
         old = (self.minute.max_req, self.minute.max_tok,
@@ -276,6 +340,31 @@ class Limiter:
         self.minute.adjust(minute, tokens)
         self.day.adjust(day, tokens)
 
+    def announced(self, told: dict, since: float) -> None:
+        """Ce qu'une réponse de l'amont annonce (rate_headers.parse) pour
+        la requête placée à `since` : les plafonds remplacent, type par
+        type, ceux du générique du modèle ; le restant, moins la marge,
+        retient les requêtes suivantes jusqu'au délai annoncé, une minute
+        au plus après `since` (Window.announce). Une annonce plus ancienne
+        que celle en cours est ignorée."""
+        if self.minute.newer_than(since) or self.day.newer_than(since):
+            return
+        if self.own_generic:
+            caps = {"rpm": self.minute.max_req, "tpm": self.minute.max_tok,
+                    "rpd": self.day.max_req, "tpd": self.day.max_tok}
+            caps.update({k: max(with_margin(cap), 1) for k, (cap, _, _) in told.items()})
+            self.update(caps["rpm"], caps["tpm"], caps["rpd"], caps["tpd"], "en-têtes")
+        until = {k: since + min(MINUTE, max(reset, 1.0) if reset is not None else MINUTE)
+                 for k, (_, _, reset) in told.items()}
+        room = {k: [left - (cap - max(with_margin(cap), 1)), until[k]]
+                for k, (cap, left, _) in told.items()}
+        for window, req, tok in ((self.minute, "rpm", "tpm"), (self.day, "rpd", "tpd")):
+            dims = {d: room[k] for d, k in (("req", req), ("tok", tok)) if k in room}
+            if dims:
+                window.announce(since, dims)
+        self.left = {k: left for k, (_, left, _) in told.items()}
+        self.left_until = max(until.values())
+
     def snapshot(self) -> dict:
         now = time.monotonic()
         self.minute.evict(now)
@@ -335,6 +424,7 @@ class QuotaState:
         self.account_tried = 0.0                            # heure du dernier essai (s)
         self.no_account = False                             # pas de limites de compte
         self.upstream_429 = 0                               # 429 reçus malgré le limiteur
+        self.daily_requests = False                         # `requests` à la journée (Groq)
         self.limiters: dict[str, Limiter] = {}
         _states.append(self)
 
@@ -369,6 +459,21 @@ class QuotaState:
                 if r:
                     lim.update(with_margin(r["rpm"]), with_margin(r["tpm"]),
                                with_margin(r["rpd"]), with_margin(r["tpd"]), "compte")
+
+    def observe(self, limiter: Limiter, headers, since: float) -> None:
+        """Les en-têtes d'une réponse de l'amont, sur le limiteur qui a
+        placé sa requête à `since` (Limiter.announced). Les `requests` de
+        Groq reconnues à la journée : le rpm qu'elles avaient donné aux
+        génériques des modèles revient au générique."""
+        daily = self.daily_requests
+        told, self.daily_requests = rate_headers.parse(headers, daily)
+        if self.daily_requests and not daily:
+            for lim in self.limiters.values():
+                if lim.source == "en-têtes":
+                    lim.update(with_margin(GENERIC_RPM), lim.minute.max_tok,
+                               lim.day.max_req, lim.day.max_tok, lim.source)
+        if told:
+            limiter.announced(told, since)
 
     def _rule_of(self, m: str) -> int | None:
         base = m.rsplit("/", 1)[-1]
@@ -436,6 +541,7 @@ class QuotaState:
                 )
             lim = Limiter(key.removeprefix("generic:"), "générique",
                           rpm=with_margin(GENERIC_RPM), tpm=with_margin(GENERIC_TPM))
+            lim.own_generic = key != "generic:*"
             log.info(
                 "[%s] modèle %r hors compte, règles et familles → bucket "
                 "générique (%d RPM, %d TPM)", self.name, model, GENERIC_RPM, GENERIC_TPM,

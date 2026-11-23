@@ -696,7 +696,8 @@ limits_refresh = 3600
 # Attente au-delà de N s (quota journalier épuisé), file comprise → 429
 # local avec Retry-After plutôt que de bloquer.
 max_queue_seconds = 900
-# Limites des modèles hors compte, règles et familles.
+# Limites des modèles hors compte, règles et familles ; les plafonds
+# qu'annoncent les en-têtes des réponses du backend les remplacent.
 generic_rpm = 30
 generic_tpm = 128000
 # Ligne d'état dans les logs, au plus toutes les N s (0 = désactivé).

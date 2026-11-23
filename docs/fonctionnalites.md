@@ -24,14 +24,15 @@ réglage et outil.
   OpenCode).
 - **Limiteur de quotas** (`quotas = true`) : retarde les requêtes pour
   rester sous des limites minute et jour : celles du compte (Albert,
-  `/v1/limits`), les règles du backend, des familles de modèles. Leur
-  état se lit dans *Configuration → Quotas*. Au-delà de `quotas.max_queue_seconds` : 429 local avec
-  `Retry-After` (la file derrière les requêtes précédentes compte dans
-  cette attente). Un client qui raccroche quitte la file sans rien
-  consommer (compté `499`), même avant son tour. L'entrée est estimée à
-  la taille du corps, puis la fenêtre est recalée sur l'`usage` réel de
-  la réponse (sortie comprise). Deux backends à quotas ont des limiteurs
-  indépendants.
+  `/v1/limits`), celles qu'annoncent les en-têtes des réponses (Mistral,
+  OpenAI, Groq, Anthropic, usage hors du proxy compris), les règles du
+  backend, des familles de modèles. Leur état se lit dans *Configuration →
+  Quotas*. Au-delà de `quotas.max_queue_seconds` : 429 local avec
+  `Retry-After` (la file derrière les requêtes précédentes compte dans cette
+  attente). Un client qui raccroche quitte la file sans rien consommer
+  (compté `499`), même avant son tour. L'entrée est estimée à la taille du
+  corps, puis la fenêtre est recalée sur l'`usage` réel de la réponse
+  (sortie comprise). Deux backends à quotas ont des limiteurs indépendants.
 - **Un seul processus par dossier de données** : quotas, partage
   équitable et mémoires vivent en mémoire du processus. Un second
   processus (`--workers`, `WEB_CONCURRENCY`) sur les mêmes données

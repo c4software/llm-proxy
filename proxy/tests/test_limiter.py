@@ -77,6 +77,146 @@ def test_an_unlimited_window_keeps_no_ticket():
     run(scenario())
 
 
+def mistral(left_req=999, left_tok=499_983, **day):
+    """Ce que Mistral annonce : 1 000 requêtes et 500 000 tokens la minute,
+    et ce qu'il en reste ; `day` : ses fenêtres du jour."""
+    return {"x-ratelimit-limit-req-minute": "1000", "x-ratelimit-remaining-req-minute": str(left_req),
+            "x-ratelimit-limit-tokens-minute": "500000",
+            "x-ratelimit-remaining-tokens-minute": str(left_tok), **day}
+
+
+def test_the_caps_announced_in_the_headers_replace_a_model_s_generic_ones(monkeypatch):
+    """Mistral, OpenAI, Groq (its `requests` count the day: a reset beyond a
+    minute says so, and the backend stays counted per day) and Anthropic
+    announce their caps: a model's own generic bucket takes them (margin
+    applied), never a family, the shared overflow bucket nor a backend rule.
+    Unreadable, non-ASCII or oversized values change nothing."""
+    monkeypatch.setattr(quotas, "FAMILY_LIMITS",
+                        {"qwen": {"rpm": 50, "tpm": 1000, "models": ["qwen"]}})
+    monkeypatch.setattr(quotas, "PREFIX_MAP", [("qwen", "qwen")])
+    generic = {"rpm": 27, "tpm": 115200, "rpd": 0, "tpd": 0}
+    cases = [
+        ("mistral", mistral(**{"x-ratelimit-limit-tokens-day": "9000000",
+                               "x-ratelimit-remaining-tokens-day": "9000000"}),
+         {"rpm": 900, "tpm": 450000, "rpd": 0, "tpd": 8100000}),
+        ("openai", {"x-ratelimit-limit-requests": "500", "x-ratelimit-remaining-requests": "499",
+                    "x-ratelimit-reset-requests": "120ms", "x-ratelimit-limit-tokens": "30000",
+                    "x-ratelimit-remaining-tokens": "29000", "x-ratelimit-reset-tokens": "2s"},
+         {"rpm": 450, "tpm": 27000, "rpd": 0, "tpd": 0}),
+        ("groq", {"x-ratelimit-limit-requests": "1000", "x-ratelimit-remaining-requests": "999",
+                  "x-ratelimit-reset-requests": "1m26.4s", "x-ratelimit-limit-tokens": "8000",
+                  "x-ratelimit-remaining-tokens": "7900", "x-ratelimit-reset-tokens": "750ms"},
+         {"rpm": 27, "tpm": 7200, "rpd": 900, "tpd": 0}),
+        ("anthropic", {"anthropic-ratelimit-requests-limit": "1",
+                       "anthropic-ratelimit-requests-remaining": "1",
+                       "anthropic-ratelimit-tokens-limit": "40000",
+                       "anthropic-ratelimit-tokens-remaining": "39000"},
+         {"rpm": 1, "tpm": 36000, "rpd": 0, "tpd": 0}),       # 1 × 0.9 : 1, pas illimité
+        ("illisible", {"x-ratelimit-limit-req-minute": "1" + "0" * 400,
+                       "x-ratelimit-remaining-req-minute": "1",
+                       "x-ratelimit-limit-tokens-minute": "1_000",
+                       "x-ratelimit-remaining-tokens-minute": "１０"}, generic),
+    ]
+    for case, headers, expected in cases:
+        state = quotas.QuotaState(case, limits.rules([{"models": ["regle"], "rpm": 10}]))
+        try:
+            get = lambda m: state.get_limiter({"model": m})
+            own, rule, family = get("m"), get("regle"), get("qwen-x")
+            for lim in (own, rule, family):
+                state.observe(lim, headers, time.monotonic())
+            caps = {"rpm": own.minute.max_req, "tpm": own.minute.max_tok,
+                    "rpd": own.day.max_req, "tpd": own.day.max_tok}
+            assert caps == expected, case
+            assert own.source == ("générique" if case == "illisible" else "en-têtes"), case
+            assert (rule.source, rule.minute.max_req) == ("backend", 9), case
+            assert (family.source, family.minute.max_req) == ("famille", 45), case
+        finally:
+            state.close()
+    # Groq ensuite : un reset court ne fait pas revenir ses `requests` à la minute.
+    state = quotas.QuotaState("groq")
+    try:
+        lim, other = state.get_limiter({"model": "m"}), state.get_limiter({"model": "n"})
+        for bucket, reset in ((other, "6s"), (lim, "6s"), (lim, "14m24s"), (lim, "6s")):
+            state.observe(bucket, {"x-ratelimit-limit-requests": "1000",
+                                   "x-ratelimit-remaining-requests": "990",
+                                   "x-ratelimit-reset-requests": reset}, time.monotonic())
+        # Le rpm des réponses à 6 s ôté, de tous les buckets.
+        assert (lim.minute.max_req, lim.day.max_req, other.minute.max_req) == (27, 900, 27)
+    finally:
+        state.close()
+    # Le générique commun (au-delà de MAX_BUCKETS) ne prend les plafonds d'aucun modèle.
+    monkeypatch.setattr(quotas, "MAX_BUCKETS", 0)
+    state = quotas.QuotaState("plein")
+    try:
+        shared = state.get_limiter({"model": "a"})
+        state.observe(shared, mistral(), time.monotonic())
+        assert (shared.name, shared.source, shared.minute.max_req) == ("*", "générique", 27)
+    finally:
+        state.close()
+
+
+def test_what_the_upstream_says_is_left_holds_the_requests_back(monkeypatch):
+    """Another client of the same key (Vibe CLI on a Mistral key): once the
+    upstream says nothing is left (margin kept), requests wait — whatever
+    the bucket, a backend rule included, capped window or not — rather than
+    get its 429; with no time to wait, a local 429. Each dimension waits
+    for its own reset, a minute at most, even for a day window; then a
+    single request goes out to probe the upstream, the next ones wait for
+    its answer. An announcement older than the current one is ignored."""
+    monkeypatch.setattr(quotas, "MAX_QUEUE_SECONDS", 0)
+    tell = lambda state, lim, headers: state.observe(lim, headers, time.monotonic())
+
+    async def scenario():
+        state = quotas.QuotaState("mistral", limits.rules([{"models": ["regle"], "rpm": 5},
+                                                           {"models": ["jour"], "rpd": 900}]))
+        try:
+            for model in ("m", "regle", "jour"):            # « jour » : minute sans plafond
+                lim = state.get_limiter({"model": model})
+                tell(state, lim, mistral(left_req=102))     # marge : 100 de réserve
+                await lim.acquire(10)
+                await lim.acquire(10)
+                with pytest.raises(quotas.QuotaWaitTooLong):
+                    await lim.acquire(10)
+                tell(state, lim, mistral(left_req=500, left_tok=50_010))
+                with pytest.raises(quotas.QuotaWaitTooLong):
+                    await lim.acquire(20)                   # 10 tokens de place
+                await lim.acquire(10)
+                assert lim.left == {"rpm": 500, "tpm": 50_010}, model
+                # Plus ancienne que celle en cours : sans effet.
+                tell(state, lim, mistral())
+                state.observe(lim, mistral(left_req=0), time.monotonic() - 5)
+                await lim.acquire(1)
+            lim = state.get_limiter({"model": "m"})
+            # Tokens épuisés pour 30 s, requêtes libres dans 0,1 s : 30 s.
+            now = time.monotonic() + 1
+            state.observe(lim, {"x-ratelimit-limit-requests": "500",
+                              "x-ratelimit-remaining-requests": "400",
+                              "x-ratelimit-reset-requests": "100ms",
+                              "x-ratelimit-limit-tokens": "30000",
+                              "x-ratelimit-remaining-tokens": "0",
+                                "x-ratelimit-reset-tokens": "30s"}, now)
+            assert lim.minute.wait_needed(now, 1) == 30
+            # Le jour épuisé ailleurs : une minute d'attente, pas une journée ;
+            # puis une sonde, et la suivante attend sa réponse.
+            now += 1
+            state.observe(lim, mistral(**{"x-ratelimit-limit-tokens-day": "9000000",
+                                          "x-ratelimit-remaining-tokens-day": "0"}), now)
+            assert lim.day.wait_needed(now, 1) == quotas.MINUTE
+            later = now + quotas.MINUTE
+            # Une sonde retenue par autre chose n'est pas partie : rien ne bloque.
+            assert lim.day.wait_needed(later, 1) == lim.day.wait_needed(later + 1, 1) == 0
+            lim.day.record(later + 1, 1)                    # la sonde part
+            assert lim.day.wait_needed(later + 2, 1) == quotas.MINUTE - 1
+            # La réponse de la sonde, datée de sa place : la place revient.
+            state.observe(lim, mistral(**{"x-ratelimit-limit-tokens-day": "9000000",
+                                          "x-ratelimit-remaining-tokens-day": "9000000"}),
+                          later + 1)
+            assert lim.day.wait_needed(later + 2, 1) == 0
+        finally:
+            state.close()
+    run(scenario())
+
+
 class Broken(FakeUpstream):
     """Un upstream qui tombe après le premier morceau."""
 

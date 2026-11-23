@@ -22,6 +22,11 @@ from llm_proxy.upstream import backends, relaying
 # ici, c'est l'adresse et les en-têtes reçus par le backend qui comptent.
 REAL_SEND = relaying.send_upstream
 MODELS = ("permis-1", "autre")
+# Ce qu'un backend comme Mistral annonce de ses limites, à une requête du
+# modèle « autre » : 1 000 requêtes la minute, dont 40 prises.
+ANNOUNCED = {"x-ratelimit-limit-req-minute": "1000", "x-ratelimit-remaining-req-minute": "960",
+             "x-ratelimit-limit-tokens-minute": "500000",
+             "x-ratelimit-remaining-tokens-minute": "499000"}
 
 
 class Body(httpx2.AsyncByteStream):
@@ -66,7 +71,8 @@ def env(idp, monkeypatch, tmp_path):
                                    headers={"content-type": "application/json"})
         return httpx2.Response(200, stream=Body(chat_doc(
             {"role": "assistant", "content": "ok"}, "stop", 3, 1)),
-            headers={"content-type": "application/json"})
+            headers={"content-type": "application/json",
+                     **(ANNOUNCED if idp.got[-1][2].get("model") == "autre" else {})})
 
     def client(b):
         return httpx2.AsyncClient(base_url=b.url, transport=httpx2.MockTransport(handler))
@@ -356,9 +362,10 @@ def test_modifier_un_reglage_garde_les_fenetres_du_limiteur(env):
 
 def test_l_admin_voit_l_etat_des_quotas(env):
     """Configuration → Quotas : par backend à quotas, ses buckets (la
-    règle, sa consommation et son plafond, marge comprise), les modèles de
-    son catalogue laissés au générique, les 429 reçus malgré le limiteur.
-    Réservé à l'admin."""
+    règle, sa consommation et son plafond, marge comprise ; les limites et
+    restants que l'amont annonce dans ses en-têtes, l'usage qu'il a vu hors
+    du proxy compté), les modèles de son catalogue laissés au générique,
+    les 429 reçus malgré le limiteur. Réservé à l'admin."""
     alice, bob, _ = admin_and_user(env)
     alice.post("/ui/backends", json={**MINE, "shared": True, "quotas": True,
                                      "limits": [{"models": ["permis-*"], "rpm": 7}]})
@@ -373,6 +380,14 @@ def test_l_admin_voit_l_etat_des_quotas(env):
     assert (rule["source"], rule["name"], rule["minute"]["requests"],
             rule["minute"]["max_requests"]) == ("backend", "permis-*", 1, 6)
     assert rule["minute"]["frees_in"] > 0
+    # « autre » : l'amont en annonce les limites, il n'est plus au générique.
+    assert ask(alice, "perso/autre").status_code == 200
+    view = next(b for b in alice.get("/ui/quotas").json()["backends"] if b["name"] == "perso")
+    assert view["generic_models"] == []
+    told = next(x for x in view["buckets"] if x["key"] == "generic:autre")
+    assert (told["source"], told["minute"]["max_requests"], told["minute"]["max_tokens"],
+            told["minute"]["requests"], told["remaining"]) == \
+        ("en-têtes", 900, 450000, 1, {"rpm": 960, "tpm": 499000})
     assert "sk-perso" not in alice.get("/ui/quotas").text
 
 
