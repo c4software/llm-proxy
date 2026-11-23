@@ -48,8 +48,11 @@ def env(idp, monkeypatch, tmp_path):
     idp.got = []
 
     idp.limits_asked = []
+    idp.gets = []
 
     def handler(request):
+        if request.method == "GET" or request.url.path == "/tokenize":
+            idp.gets.append((request.url.host, request.url.path, dict(request.headers)))
         if request.url.path == "/v1/limits":
             idp.limits_asked.append(request.url.host)
             return httpx2.Response(500)
@@ -420,6 +423,88 @@ def test_sans_aucun_backend_le_catalogue_est_vide(env, monkeypatch):
     key = alice.post("/ui/keys", json={"label": "cli"}).json()["key"]
     for r in (env.client.get("/v1/models", headers=bearer(key)), alice.get("/ui/models")):
         assert r.status_code == 200 and r.json()["data"] == [], r.text
+
+
+def test_les_en_tetes_propres_d_un_backend_partent_en_dernier(env, monkeypatch):
+    """[backends.<nom>.headers] : ajoutés à chaque requête, ils l'emportent sur
+    ceux du client ; un en-tête réglé par le proxy est refusé au démarrage."""
+    alice, _, _ = admin_and_user(env)
+    toml = backends.Backend("hdr", {"url": "http://hdr.invalid", "api_key": "sk-cle",
+                                    "headers": {"X-Equipe": "ia", "User-Agent": "mien/1",
+                                                "authorization": "Bearer autre", "X-Vide": " "}})
+    toml.client = backends.open_client(toml)
+    monkeypatch.setitem(backends.BACKENDS, "hdr", toml)
+    assert ask(alice, "hdr/m", **{"User-Agent": "client/9"}).status_code == 200
+    sent = env.got[-1][1]
+    assert (sent["x-equipe"], sent["user-agent"], sent["authorization"]) == \
+        ("ia", "mien/1", "Bearer autre")
+    # Une valeur vide (un ${VAR} absent du .env) ne part pas.
+    assert "x-vide" not in sent
+    for bad in ({"Host": "x"}, {"Content-Length": "1"}, {"X-A": "a\r\nX-B: b"}, {"a b": "x"},
+                {"X-A": "é"}, {"X-A": "a\x01"}):
+        with pytest.raises(SystemExit):
+            backends.Backend("bad", {"url": "http://x.invalid", "headers": bad})
+
+
+def test_un_backend_du_toml_sans_cle_garde_l_authorization_du_client_avec_ses_en_tetes(
+        env, monkeypatch):
+    """Proxy ouvert, backend du TOML sans clé : son catalogue part avec
+    l'Authorization du client ET ses en-têtes propres ; count_tokens
+    (tokenize, par la clé du backend) aussi avec ses en-têtes."""
+    monkeypatch.setattr(oidc, "ENABLED", False)
+    toml = backends.Backend("hdr", {"url": "http://hdr.invalid", "tokenize_path": "/tokenize",
+                                    "headers": {"X-Equipe": "ia"}})
+    toml.client = backends.open_client(toml)
+    monkeypatch.setitem(backends.BACKENDS, "hdr", toml)
+    r = env.client.get("/v1/models", headers={"Authorization": "Bearer sk-client"})
+    assert r.status_code == 200, r.text
+    got = next(h for host, path, h in env.gets if host == "hdr.invalid" and path == "/v1/models")
+    assert (got["authorization"], got["x-equipe"]) == ("Bearer sk-client", "ia")
+    r = env.client.post("/v1/messages/count_tokens", json={
+        "model": "hdr/m", "messages": [{"role": "user", "content": "x"}]})
+    assert r.json() == {"input_tokens": 42}, r.text
+    assert next(h for host, path, h in env.gets if path == "/tokenize")["x-equipe"] == "ia"
+
+
+def test_les_en_tetes_d_un_backend_de_compte_restent_secrets(env):
+    """Envoyés au backend, jamais rendus (ni au créateur, ni aux autres, ni à
+    l'admin) : la page n'en voit que les noms. Une valeur vide garde
+    l'ancienne, sauf vers une autre origine ; absents, ils sont retirés."""
+    alice, bob, _ = admin_and_user(env)
+    heads = {"X-Secret": "s3cret", "X-Autre": "a"}
+    bid = bob.post("/ui/backends", json={**MINE, "shared": True, "headers": heads}
+                   ).json()["backend"]["id"]
+    ask(alice, "perso/m")
+    assert env.got[-1][1]["x-secret"] == "s3cret"
+    for page in (bob.get("/ui/backends"), alice.get("/ui/backends"),
+                 alice.get("/ui/backends?all=1")):
+        assert "s3cret" not in page.text, page.text
+    assert bob.get("/ui/backends").json()["backends"][0]["headers"] == ["X-Autre", "X-Secret"]
+
+    body = {k: v for k, v in MINE.items() if k != "api_key"} | {"shared": True}
+    assert bob.put(f"/ui/backends/{bid}", json={**body, "headers": {"X-Secret": ""}}).status_code == 200
+    ask(alice, "perso/m")
+    assert env.got[-1][1]["x-secret"] == "s3cret" and "x-autre" not in env.got[-1][1]
+    # L'admin qui bascule les quotas (?all=1) renvoie les noms vides : gardés.
+    assert alice.put(f"/ui/backends/{bid}?all=1", json={
+        **body, "quotas": True, "headers": {"X-Secret": ""}}).status_code == 200
+    ask(alice, "perso/m")
+    assert env.got[-1][1]["x-secret"] == "s3cret"
+    away = {**body, "url": "https://ailleurs.exemple.fr", "headers": {"X-Secret": ""}}
+    assert bob.put(f"/ui/backends/{bid}", json=away).status_code == 400
+    # Absents d'une modification : gardés ; une table vide les retire.
+    assert bob.put(f"/ui/backends/{bid}", json=body).status_code == 200
+    ask(alice, "perso/m")
+    assert env.got[-1][1]["x-secret"] == "s3cret"
+    assert "s3cret" not in alice.get("/ui/quotas").text
+    # Un autre compte ne les touche pas.
+    assert alice.put(f"/ui/backends/{bid}", json={**body, "headers": {}}).status_code == 404
+    assert bob.put(f"/ui/backends/{bid}", json={**body, "headers": {}}).status_code == 200
+    ask(alice, "perso/m")
+    assert "x-secret" not in env.got[-1][1]
+    for bad in ({"Host": "x"}, {"X-A": "a\nb"}, {"X-A": ""}, {"X-A": "é"}):
+        r = bob.post("/ui/backends", json={**MINE, "name": "x", "headers": bad})
+        assert r.status_code == 400, (bad, r.text)
 
 
 def test_un_nom_du_toml_l_emporte(env, monkeypatch):

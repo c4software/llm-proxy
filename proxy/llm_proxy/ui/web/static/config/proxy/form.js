@@ -25,7 +25,8 @@ export const TOOL_LIST = [
 export function newForm() {
   return {
     keys: [],                  // [{ name, value }] : name = variable d'env
-    backends: [],              // [{ name, url, key, quotas, images, toolChoice, maxTokens, fairShare }]
+    backends: [],              // [{ name, url, key, quotas, images, toolChoice, maxTokens, fairShare,
+                               //    headerNames, headerValues, headersPlain }]
     anthropic: true, defaultModel: "", responses: true,
     hostedTools: true, always: "", alwaysExcept: "",
     tools: Object.fromEntries(TOOL_LIST.map((t) => [t.id, false])),
@@ -47,6 +48,13 @@ export function newForm() {
 
 // ${VAR} : le nom de la variable ; toute autre valeur : "".
 const VAR_REF = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+// Un renvoi au .env quelque part dans la valeur (« Bearer ${VAR} »).
+const VAR_ANY = /\$\{[A-Za-z_][A-Za-z0-9_]*\}/;
+// Les noms d'en-têtes qu'accepte le proxy (core/httputil.backend_headers).
+const HEADER_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+const RESERVED_HEADERS = new Set(["connection", "keep-alive", "proxy-authenticate",
+  "proxy-authorization", "te", "trailer", "trailers", "transfer-encoding", "upgrade", "host",
+  "content-length", "content-type", "content-encoding", "accept-encoding"]);
 const varOf = (v) => (typeof v === "string" && (VAR_REF.exec(v) || [])[1]) || "";
 
 export function prefillForm(px, c) {
@@ -64,6 +72,13 @@ export function prefillForm(px, c) {
     api: b.api === "anthropic" ? "anthropic" : "openai",
     images: b.images === undefined ? b.api === "anthropic" : !!b.images, toolChoice: typeof b.force_tool_choice === "string" ? b.force_tool_choice : "",
     maxTokens: b.max_tokens || "", fairShare: b.fair_share !== false,
+    // Ses en-têtes : les noms. Une valeur qui renvoie au .env (« ${VAR} »,
+    // « Bearer ${VAR} »…) est gardée telle quelle ; une valeur écrite en
+    // clair, masquée ici, devient un ${VAR}, comme une clé.
+    headerNames: Object.keys(b.headers || {}).join(", "),
+    headerValues: Object.fromEntries(Object.entries(b.headers || {})
+      .filter(([, v]) => VAR_ANY.test(v)).map(([n, v]) => [n.toLowerCase(), v])),
+    headersPlain: Object.values(b.headers || {}).some((v) => !VAR_ANY.test(v)),
   }));
   px.fairShare = g("fair_share.tokens_per_hour", 0);
   const o = g("oidc", {});
@@ -188,6 +203,26 @@ export function buildProxy(px) {
     if (b.toolChoice) L.push(`force_tool_choice = ${q(b.toolChoice)}`);
     if (Number(b.maxTokens) > 0) L.push(`max_tokens = ${Number(b.maxTokens)}`);
     if (!b.fairShare) L.push("fair_share = false");
+    const heads = [];
+    for (const h of String(b.headerNames || "").split(",").map((x) => x.trim()).filter(Boolean)) {
+      if (!HEADER_NAME.test(h) || RESERVED_HEADERS.has(h.toLowerCase()))
+        warn.push(`Backend « ${name} » : en-tête « ${h} » ignoré (nom invalide ou réglé par le proxy).`);
+      else if (heads.some((x) => x.toLowerCase() === h.toLowerCase()))
+        warn.push(`Backend « ${name} » : en-tête « ${h} » en double.`);
+      else heads.push(h);
+    }
+    if (heads.length) {
+      L.push(`[backends.${name}.headers]`);
+      for (const h of heads) {
+        const kept = (b.headerValues || {})[h.toLowerCase()];
+        if (kept) { L.push(`${q(h)} = ${q(kept)}`); continue; }
+        const v = `${envName(name)}_HEADER_${envName(h)}`;
+        L.push(`${q(h)} = "\${${v}}"`);
+        if (!env.includes(`${v}=`)) env.push(`${v}=`);
+      }
+      if (b.headersPlain) warn.push(`Backend « ${name} » : un en-tête était écrit en clair ; `
+        + "il devient un ${VAR}, sa valeur est à mettre dans le .env.");
+    }
     L.push("");
   }
   if (!names.size) warn.push("Aucun backend dans le TOML : seuls ceux des comptes (Configuration → Backends) serviront.");

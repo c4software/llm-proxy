@@ -223,25 +223,26 @@ def test_a_malformed_limits_rule_is_refused_even_in_the_toml():
 
 
 def test_no_account_limits_stops_the_background_refresh(monkeypatch):
-    """/v1/limits → 404 (not Albert): said once, never asked again."""
-    asked = []
+    """/v1/limits → 404 (not Albert) or 401 (credentials that read no
+    account, e.g. headers without a key): said once, never asked again."""
+    for status, cfg in ((404, {"api_key": "k"}), (401, {"headers": {"X-Equipe": "ia"}})):
+        asked = []
 
-    def handler(request):
-        asked.append(request.url.path)
-        return httpx2.Response(404, json={"detail": "Not Found"})
+        def handler(request):
+            asked.append(request.url.path)
+            return httpx2.Response(status, json={"detail": "no"})
 
-    async def go():
-        b = backends.Backend("zen", {"url": "http://zen.invalid", "api_key": "k",
-                                     "quotas": True})
-        b.client = httpx2.AsyncClient(base_url=b.url, transport=httpx2.MockTransport(handler))
-        monkeypatch.setattr(quotas, "RETRY_UNLOADED", 0.0)
-        try:
-            await asyncio.wait_for(backends.watch_quotas(b), 2)
-        finally:
-            b.quota_state.close()
-            await b.client.aclose()
-    asyncio.run(go())
-    assert asked == ["/v1/limits"]
+        async def go():
+            b = backends.Backend("zen", {"url": "http://zen.invalid", "quotas": True, **cfg})
+            b.client = httpx2.AsyncClient(base_url=b.url, transport=httpx2.MockTransport(handler))
+            monkeypatch.setattr(quotas, "RETRY_UNLOADED", 0.0)
+            try:
+                await asyncio.wait_for(backends.watch_quotas(b), 2)
+            finally:
+                b.quota_state.close()
+                await b.client.aclose()
+        asyncio.run(go())
+        assert asked == ["/v1/limits"], status
 
 
 def test_a_stream_cut_midway_is_told_and_counted_502(proxy, monkeypatch):

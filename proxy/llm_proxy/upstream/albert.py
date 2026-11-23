@@ -57,17 +57,21 @@ def _aliases(doc) -> dict[str, list[str]]:
 async def refresh(state: "quotas.QuotaState", backend) -> bool | None:
     """Lit /v1/limits (et les alias de /v1/models) du backend dans `state`.
     True : lues ; False : échec passager (injoignable, réponse illisible),
-    rien n'est écrasé ; None : pas de limites de compte (sans clé, ou
-    /v1/limits → 404 ou 405). `backend` : objet avec .client
+    rien n'est écrasé ; None : pas de limites de compte (ni clé ni en-têtes
+    propres, ou /v1/limits → 401, 403, 404 ou 405). `backend` : objet avec .client
     (httpx2.AsyncClient), .auth_headers() et .meta_timeout."""
     if backend is None or backend.client is None:
         return False
-    if not backend.api_key:
-        return None
+    if not backend.api_key and not getattr(backend, "headers", None):
+        return None              # ni clé ni en-têtes propres : pas de compte à lire
     client, headers, timeout = backend.client, backend.auth_headers(), backend.meta_timeout
     try:
         r = await client.get("/v1/limits", headers=headers, timeout=timeout)
         if r.status_code in (404, 405):
+            return None
+        if r.status_code in (401, 403):
+            log.warning("[%s] /v1/limits → %d : pas de limites de compte lisibles "
+                        "avec ces identifiants", state.name, r.status_code)
             return None
         if r.status_code != 200:
             log.warning("[%s] /v1/limits → %d — limites précédentes conservées",

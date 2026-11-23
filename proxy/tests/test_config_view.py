@@ -28,6 +28,7 @@ api_key = "${ALBERT_API_KEY}"
 url = "http://local:8080"
 api_key = "sk-local-en-clair"
 timeout = 30
+headers = { "X-Equipe" = "valeur-en-clair" }
 
 [tools.mcp.notes]
 url = "http://notes/mcp"
@@ -57,6 +58,7 @@ def test_the_effective_configuration(conf):
     assert tree["proxy"]["api_keys"] == [V.MASK, "${PROXY_API_KEY}"]
     assert tree["backends"]["local"]["api_key"] == V.MASK
     assert tree["tools"]["mcp"]["notes"]["headers"]["Authorization"] == V.MASK
+    assert tree["backends"]["local"]["headers"]["X-Equipe"] == V.MASK
     assert "en-clair" not in r["toml"]
     # Les défauts : ce que le proxy lit sans que le fichier le dise.
     assert r["defaults"] > 0
@@ -128,7 +130,8 @@ fair_share = false
 
 def test_a_backend_keeps_what_the_form_does_not_set(conf):
     """Une clé de backend que le formulaire ne règle pas (timeout) reste ;
-    une qu'il règle et omet (api_key, case décochée) disparaît."""
+    une qu'il règle et omet (api_key, case décochée ; headers, champ vidé)
+    disparaît ; ses en-têtes écrits remplacent les anciens."""
     r = conf.client.post("/ui/config/merge", json={"toml": """
 [backends.albert]
 url = "https://albert.example"
@@ -138,6 +141,14 @@ url = "http://local:8080"
     tree = tomllib.loads(r["toml"])
     assert "api_key" not in tree["backends"]["albert"]
     assert tree["backends"]["local"] == {"url": "http://local:8080", "timeout": 30}
+    r = conf.client.post("/ui/config/merge", json={"toml": """
+[backends.local]
+url = "http://local:8080"
+[backends.local.headers]
+"X-Autre" = "${LOCAL_HEADER_X_AUTRE}"
+"""}).json()
+    assert tomllib.loads(r["toml"])["backends"]["local"]["headers"] == {
+        "X-Autre": "${LOCAL_HEADER_X_AUTRE}"}
 
 
 def test_the_advanced_section_sets_any_setting(conf):

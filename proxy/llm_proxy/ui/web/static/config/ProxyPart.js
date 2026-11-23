@@ -85,7 +85,8 @@ export const ProxyPart = {
     }
 
     const addBackend = () => px.backends.push({ name: "", url: "http://", key: false,
-      api: "openai", quotas: false, images: false, toolChoice: "", maxTokens: "", fairShare: true });
+      api: "openai", quotas: false, images: false, toolChoice: "", maxTokens: "", fairShare: true,
+      headerNames: "", headerValues: {}, headersPlain: false });
     // Un fournisseur connu : nom, URL et variable de la clé remplis. Le
     // menu revient à son libellé, prêt pour le suivant.
     const provider = ref("");
@@ -314,6 +315,11 @@ export const ProxyPart = {
                   aria-label="max_tokens" placeholder="—"></span>
                 <label class="check" title="Décoché : ses requêtes ne comptent pas dans la part des clients (fair_share = false)">
                   <input type="checkbox" v-model="b.fairShare"> partage équitable</label>
+              </div>
+              <div class="row">
+                <span class="check grow" title="Ajoutés à chaque requête vers ce backend ; leurs valeurs vont dans le .env (\${VAR}), jamais en clair ici">en-têtes
+                  <input v-model="b.headerNames" class="mono grow" spellcheck="false" aria-label="en-têtes du backend"
+                         placeholder="X-Equipe, User-Agent (valeurs dans le .env)"></span>
               </div>
             </div>
             <div class="row">

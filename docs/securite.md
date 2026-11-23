@@ -86,11 +86,14 @@ partage équitable. Le créateur d'un backend partagé reçoit, sur son
 serveur, les requêtes des autres comptes vers ses modèles. Les outils
 hébergés (OCR, transcription, images) ne visent que les backends partagés
 par un admin : un autre compte ne capte pas leur trafic en partageant un
-backend sous le nom attendu. Le désactiver
-(`enabled = false`) si les comptes ne sont pas de confiance. La clé d'un backend n'est
-rendue ni à la page ni aux autres comptes. Le proxy ne transmet jamais à un
-backend de compte l'`Authorization` ni les cookies du client, même sans clé
-et proxy ouvert, et n'y suit pas les redirections.
+backend sous le nom attendu. Le désactiver (`enabled = false`) si les
+comptes ne sont pas de confiance.
+
+La clé d'un backend et la valeur de ses en-têtes ne sont rendues ni à la
+page ni aux autres comptes ; ceux-ci voient les noms des en-têtes d'un
+backend partagé. Le proxy ne transmet jamais à un backend de compte
+l'`Authorization` ni les cookies du client, même sans clé et proxy ouvert,
+et n'y suit pas les redirections.
 
 ## Extensions
 

@@ -86,6 +86,7 @@ url = "http://bigchuck:8009"
 |---|---|---|
 | `url` | *(requis)* | Base du backend |
 | `api` | `"openai"` | Protocole du backend : `"openai"` (`/v1/chat/completions`) ou `"anthropic"` (`/v1/messages`). Voir [Backend Anthropic](#backend-anthropic) |
+| `headers` | `{}` | En-têtes ajoutés à chaque requête vers le backend (relais, catalogue, limites, outils hébergés) : `[backends.<nom>.headers]`, `"X-Equipe" = "${EQUIPE}"`, `"Authorization" = "Bearer ${TOKEN}"`. Ils passent en dernier et l'emportent sur la clé et sur les en-têtes du client ; un `anthropic-beta` propre est complété, pas remplacé. Une valeur vide (variable absente du `.env`) n'est pas envoyée, le journal le signale. Noms : `A-Z a-z 0-9 . _ -`, 64 caractères au plus ; valeurs en ASCII imprimable, 2 000 au plus ; 20 en-têtes au plus. Refusés : ceux que règle le proxy (`Host`, `Content-Length`, `Content-Type`, `Connection`…) |
 | `api_key` | *(aucune)* | Champ de configuration de la clé du backend (clé Albert, `--api-key` de llama-server). Si définie, elle remplace l'`Authorization` du client |
 | `quotas` | `false` | Active le limiteur : fenêtres minute et jour, attente puis `429` local. Voir [`[quotas]`](#quotas) |
 | `limits` | `[]` | Avec `quotas` : règles `[[backends.<nom>.limits]]`, `models = ["claude-*", …]` (motifs, casse ignorée, nom sans préfixe) et des plafonds `rpm`, `tpm`, `rpd`, `tpd` (absent = illimité). La première règle qui correspond s'applique ; ses modèles partagent ses compteurs. Sans `quotas`, ignorées |

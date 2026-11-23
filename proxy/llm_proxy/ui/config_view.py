@@ -223,6 +223,9 @@ def merged(partial: dict, overrides: list | None = None) -> tuple[dict, set[str]
                 for key in BACKEND_FORM_KEYS:
                     if key not in partial["backends"][name]:
                         current[name].pop(key, None)
+                # Ses en-têtes : la table du formulaire remplace l'ancienne
+                # (un en-tête retiré du champ disparaît).
+                current[name].pop("headers", None)
     touched: set[str] = set()
     _overlay(tree, partial, (), touched)
     for item in overrides or ():

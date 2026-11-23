@@ -181,8 +181,10 @@ async def fetch_models(b: Backend, request: Request | None = None) -> list | Non
     puis relu en arrière-plan au premier appel qui le trouve périmé (cet
     appel-là a encore l'ancien). Met à jour b.models et b.model_types à
     chaque lecture."""
-    headers = b.auth_headers() or (
-        clean_headers(request, b) if request is not None else {})
+    # Sans clé, un backend du TOML lit son catalogue avec l'Authorization du
+    # client (clean_headers, qui ajoute aussi ses en-têtes propres).
+    headers = b.auth_headers() if b.api_key or b.api == "anthropic" or request is None \
+        else clean_headers(request, b)
     # Deux comptes peuvent avoir chacun un backend du même nom.
     key = (b.name, b.owner, b.url,
            tuple(sorted((k.lower(), v) for k, v in headers.items())))

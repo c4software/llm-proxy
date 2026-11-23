@@ -397,7 +397,10 @@ OIDC sont activés.
   [TP du cours](https://cours.brosseau.ovh/tp/agentic/proxy.html). Anthropic
   est également disponible en [backend natif](configuration.md#backend-anthropic)
   (`api = "anthropic"`). Le *protocole* de chaque backend (OpenAI ou
-  Anthropic) se sélectionne sur sa ligne.
+  Anthropic) se sélectionne sur sa ligne. Ses *en-têtes*
+  ([`headers`](configuration.md#backendsnom)) se donnent par leurs noms :
+  chaque valeur devient une variable `${VAR}` du `.env`, comme une clé,
+  et n'est jamais affichée.
 - **Override Docker** : le fichier `docker-compose.override.yml` du
   service `albert-proxy` contient l'[image publiée](deploiement.md#limage-publiée)
   et les variables `${VAR}` du fichier complet que `docker-compose.yml`

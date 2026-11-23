@@ -753,6 +753,8 @@ max_per_user = 10
 #     effort traduits ; seul /v1/chat/completions y passe) ;
 #   api_key — la clé du backend, en «${VAR}» du .env ; absente, le
 #     proxy transmet l'Authorization du client ;
+#   headers — en-têtes ajoutés à chaque requête, prioritaires sur la clé et
+#     sur ceux du client : [backends.<nom>.headers] "X-Equipe" = "${EQUIPE}" ;
 #   verify_ssl — vérifier le certificat HTTPS (true) ;
 #   timeout — délai (s) d'une requête ([proxy].upstream_timeout par défaut) ;
 #   meta_timeout — délai (s) de /v1/models et des appels de service

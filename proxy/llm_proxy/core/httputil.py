@@ -97,3 +97,49 @@ def origin(url: str) -> tuple:
         port = None
     return (p.scheme.lower(), (p.hostname or "").lower(),
             port or (443 if p.scheme.lower() == "https" else 80))
+
+
+# ── En-têtes propres à un backend ([backends.<nom>.headers], backends des
+# comptes) : ajoutés à chaque requête vers lui, en dernier.
+HEADER_NAME_MAX, HEADER_VALUE_MAX, MAX_HEADERS = 64, 2000, 20
+# Ceux que le proxy règle lui-même (transport, corps).
+RESERVED_HEADERS = frozenset({
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
+    "trailer", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
+    "content-type", "content-encoding", "accept-encoding",
+})
+
+
+def backend_headers(value) -> dict[str, str]:
+    """Les en-têtes propres d'un backend, vérifiés : {nom: valeur}, noms de
+    jetons HTTP, valeurs en ASCII imprimable (tabulation admise : ni retour
+    à la ligne, ni accent, que la bibliothèque HTTP refuserait à chaque
+    requête). Lève ValueError, au message lisible."""
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, dict) or len(value) > MAX_HEADERS:
+        raise ValueError(f"`headers` : une table de {MAX_HEADERS} en-têtes au plus")
+    out: dict[str, str] = {}
+    for name, v in value.items():
+        name = str(name).strip()
+        if not name or len(name) > HEADER_NAME_MAX or not all(
+                c.isalnum() or c in "-_." for c in name) or not name.isascii():
+            raise ValueError(f"`headers` : nom d'en-tête invalide {name!r}")
+        if name.lower() in RESERVED_HEADERS:
+            raise ValueError(f"`headers` : « {name} » est réglé par le proxy")
+        if any(n.lower() == name.lower() for n in out):
+            raise ValueError(f"`headers` : « {name} » en double")
+        if not isinstance(v, str) or len(v) > HEADER_VALUE_MAX or not all(
+                c == "\t" or " " <= c <= "~" for c in v):
+            raise ValueError(f"`headers` : valeur invalide pour « {name} »")
+        out[name] = v
+    return out
+
+
+def merge_headers(base: dict, extra: dict) -> dict:
+    """`base` complété par `extra`, qui l'emporte (noms comparés sans
+    casse)."""
+    if not extra:
+        return base
+    lowered = {n.lower() for n in extra}
+    return {**{k: v for k, v in base.items() if k.lower() not in lowered}, **extra}

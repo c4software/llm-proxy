@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..access import accounts, fairshare
 from ..access.auth import auth_required
-from ..core.httputil import error_response
+from ..core.httputil import error_response, merge_headers
 from ..core import settings
 from ..core.settings import HOP_BY_HOP, is_exempt, log
 from ..storage import stats
@@ -55,7 +55,8 @@ def clean_headers(request: Request, b: Backend) -> dict:
     headers["accept-encoding"] = "identity"
     if b.api_key:
         headers["Authorization"] = f"Bearer {b.api_key}"
-    return headers
+    # Ses en-têtes propres, en dernier : ils l'emportent sur ceux du client.
+    return merge_headers(headers, b.headers)
 
 
 def response_headers(upstream: httpx2.Response) -> dict:
@@ -406,7 +407,10 @@ async def _anthropic_request(call: Call, path: str, body: bytes):
                                 b.model_max_out.get(model))
     hdrs = b.auth_headers()
     if "block_binding" in (out.get("thinking") or {}):
-        hdrs["anthropic-beta"] = anthropic.BINDING_BETA
+        # Un anthropic-beta propre au backend est complété, pas remplacé.
+        name = next((n for n in hdrs if n.lower() == "anthropic-beta"), "anthropic-beta")
+        betas = [x.strip() for x in hdrs.get(name, "").split(",") if x.strip()]
+        hdrs[name] = ",".join(dict.fromkeys([*betas, anthropic.BINDING_BETA]))
     return b.client.build_request(
         "POST", "/v1/messages", headers=hdrs,
         content=json.dumps(out, ensure_ascii=False).encode()), bool(out.get("stream"))

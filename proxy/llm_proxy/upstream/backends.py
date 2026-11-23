@@ -30,7 +30,7 @@ import httpx2
 
 from ..access import accounts, fairshare
 from ..core import config, limits
-from ..core.httputil import error_response
+from ..core.httputil import backend_headers, error_response, merge_headers
 from ..core.settings import META_TIMEOUT, TIMEOUT, TOOL_CHOICE, log
 from ..storage import backends as user_backends
 from . import albert, anthropic, quotas
@@ -93,6 +93,13 @@ class Backend:
         # Albert avec des clés différentes ne partagent rien).
         try:
             self.limits = limits.rules(cfg.get("limits"))
+            # En-têtes propres, ajoutés à chaque requête vers lui, en dernier ;
+            # une valeur vide (un ${VAR} absent du .env) n'est pas envoyée.
+            heads = backend_headers(cfg.get("headers"))
+            self.headers = {n: v for n, v in heads.items() if v.strip()}
+            if empty := sorted(set(heads) - set(self.headers)):
+                log.warning("backends.%s : en-tête(s) vide(s), non envoyé(s) : %s",
+                            name, ", ".join(empty))
         except ValueError as exc:
             raise SystemExit(f"backends.{name} : {exc}")
         self.quota_state = quotas.QuotaState(name, self.limits) if self.quotas else None
@@ -137,9 +144,13 @@ class Backend:
         return str(value)
 
     def auth_headers(self) -> dict:
+        """Ce que le proxy envoie de lui-même au backend : sa clé, ses
+        en-têtes propres (qui l'emportent)."""
         if self.api == "anthropic":
-            return anthropic.headers(self.api_key)
-        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+            base = anthropic.headers(self.api_key)
+        else:
+            base = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        return merge_headers(base, self.headers)
 
 
 def load_backends() -> dict[str, Backend]:
@@ -389,7 +400,7 @@ def _cfg(row: dict) -> dict:
     cfg = {"url": row["url"], "api_key": row["api_key"], "api": row["api"],
            "tokenize_path": row["tokenize_path"], "connect_timeout": 15.0,
            "quotas": row["quotas"], "force_tool_choice": row["tool_choice"] or None,
-           "limits": row["limits"]}
+           "limits": row["limits"], "headers": row["headers"]}
     if row["images"] is not None:
         cfg["images"] = row["images"]
     return cfg
@@ -405,7 +416,7 @@ def _retune(b: Backend, name: str, cfg: dict) -> None:
     other = Backend(name, {**cfg, "quotas": False})
     b.name, b.cfg = name, cfg
     b.images, b.tokenize_path, b.tool_choice = other.images, other.tokenize_path, other.tool_choice
-    b.limits = other.limits
+    b.limits, b.headers = other.limits, other.headers
     if b.quota_state is not None:
         b.quota_state.name = name
         b.quota_state.set_rules(other.limits)

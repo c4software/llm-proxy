@@ -38,6 +38,7 @@ export const providerBackend = (p) => ({
   name: p.id, url: p.url, key: true, keyVar: p.keyVar, quotas: !!p.quotas,
   api: p.api || "openai", images: p.api === "anthropic",
   toolChoice: p.toolChoice || "", maxTokens: "", fairShare: true,
+  headerNames: "", headerValues: {}, headersPlain: false,
 });
 
 // Les variables que le docker-compose.yml du dépôt transmet déjà au

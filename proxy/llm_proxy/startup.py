@@ -284,7 +284,7 @@ async def lifespan(app: FastAPI):
     for b in BACKENDS.values():
         if not b.quotas:
             continue
-        if not b.api_key:
+        if not b.api_key and not b.headers:
             log.warning(
                 "backend %s sans api_key : 401 upstream probables", b.name,
             )

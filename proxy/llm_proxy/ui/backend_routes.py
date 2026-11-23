@@ -9,7 +9,8 @@ autre, sauf les partagés, en lecture ; la clé n'est jamais rendue.
                              comptes partagent, sans clé, avec `by` : qui),
                              reserved (les noms des backends du proxy)} ;
                              ?all=1 (admin) : `all`, ceux de tous les comptes
-  POST   /ui/backends        crée {name, api, url, api_key?, shared, images?
+  POST   /ui/backends        crée {name, api, url, api_key?, headers? (valeurs
+                             jamais rendues, seulement les noms), shared, images?
                              (vide : selon le protocole), tokenize_path?,
                              enabled? (vrai par défaut ; faux : gardé, pas routé),
                              tool_choice? ("", auto, required, none),

@@ -5,6 +5,10 @@
   créateur), et deux réglages d'une table [backends.<nom>] : images et
   tokenize_path, l'injection de tool_choice et (admin) le limiteur : quotas,
   et ses règles `limits`, une par ligne (« claude-*, qwen-big rpm=10 tpd=5000 »).
+  Ses en-têtes propres (« Nom: valeur », un par ligne) : secrets comme la
+  clé, la page n'en reçoit que les noms ; « Nom: » sans valeur garde
+  l'ancienne. L'admin ouvre aussi le backend d'un autre compte (PUT ?all=1) :
+  en-têtes, limites, quotas… sans jamais voir sa clé ni ses valeurs.
   Désactivé, il reste (clé comprise) sans être routé. La clé
   n'est jamais relue : vide à la modification, elle reste.
   En dessous, ceux que d'autres comptes partagent, en lecture, et pour
@@ -19,11 +23,23 @@ const { ref, reactive, onMounted } = Vue;
 const API_LABELS = { openai: "OpenAI (chat/completions)", anthropic: "Anthropic (Messages)" };
 const blank = () => ({ id: null, name: "", api: "openai", url: "", api_key: "", shared: false,
                        images: null, tokenize_path: "", enabled: true, tool_choice: "", quotas: false,
-                       limits: [], limitsText: "" });
+                       limits: [], limitsText: "", headers: [], headersText: "",
+                       anyone: false, by: "" });
 const KINDS = ["rpm", "tpm", "rpd", "tpd"];
 // Une règle par ligne : des motifs de noms, puis des plafonds « rpm=10 ».
 const rulesText = (limits) => (limits || []).map((r) => [r.models.join(", "),
   ...KINDS.filter((k) => r[k]).map((k) => `${k}=${r[k]}`)].join(" ")).join("\n");
+// Les en-têtes : « Nom: valeur » par ligne ; sans valeur, l'ancienne reste.
+function headersOf(text) {
+  const out = {};
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const at = line.indexOf(":");
+    if (at <= 0) throw new Error(`en-têtes : « ${line} » (attendu : Nom: valeur)`);
+    out[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+  }
+  return out;
+}
+const keepHeaders = (names) => Object.fromEntries((names || []).map((n) => [n, ""]));
 function rulesOf(text) {
   return text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
     const rule = { models: [] };
@@ -63,19 +79,26 @@ export const BackendsPart = {
         error.value = "";
       } catch (e) { error.value = e.message; }
     }
-    function open(b = null) {
-      Object.assign(form, blank(), b ? { ...b, api_key: "", limitsText: rulesText(b.limits) } : {});
+    // `anyone` : l'admin ouvre le backend d'un autre compte (PUT ?all=1).
+    function open(b = null, anyone = false) {
+      Object.assign(form, blank(), b ? { ...b, api_key: "", limitsText: rulesText(b.limits),
+                                         headersText: (b.headers || []).map((n) => `${n}:`).join("\n"),
+                                         anyone, by: anyone ? b.by : "" } : {});
       editing.value = true;
+      if (anyone) Vue.nextTick(() => document.querySelector(".backends-form")?.scrollIntoView({ block: "start" }));
     }
     const fields = (b) => ({ name: b.name, api: b.api, url: b.url, shared: b.shared,
                              images: b.images, tokenize_path: b.tokenize_path, enabled: b.enabled,
                              tool_choice: b.tool_choice, quotas: b.quotas, limits: b.limits || [],
+                             headers: b.sentHeaders || keepHeaders(b.headers),
                              ...(b.api_key ? { api_key: b.api_key } : {}) });
     async function save() {
       error.value = "";
       try {
-        const body = fields({ ...form, limits: rulesOf(form.limitsText) });
-        if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id), body);
+        const body = fields({ ...form, limits: rulesOf(form.limitsText),
+                              sentHeaders: headersOf(form.headersText) });
+        if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id)
+                                + (form.anyone ? "?all=1" : ""), body);
         else await call("POST", "/ui/backends", body);
         editing.value = false;
         await load();
@@ -125,7 +148,9 @@ export const BackendsPart = {
           Partagé avec tout le monde, il sert à tous les comptes avec votre clé, qui
           ne leur est jamais montrée.<template v-if="reserved.length"> Noms pris par le
           proxy : {{ reserved.join(", ") }}.</template></p>
-        <form class="item-form" v-if="editing" @submit.prevent="save">
+        <form class="item-form backends-form" v-if="editing" @submit.prevent="save">
+          <p class="note" v-if="form.anyone">Admin : le backend <code>{{ form.name }}/</code> de {{ form.by }}.
+            Sa clé et la valeur de ses en-têtes ne sont pas montrées ; laissées vides, elles restent.</p>
           <label>Nom <span class="dim">(le préfixe des modèles : a-z, 0-9, « . _ - »)</span>
             <input v-model="form.name" maxlength="40" required spellcheck="false"
                    pattern="[a-z0-9][a-z0-9._\\-]*" placeholder="perso"></label>
@@ -154,6 +179,10 @@ export const BackendsPart = {
             </select></label>
           <label>Tokenisation <span class="dim">(chemin d'un comptage exact, llama.cpp : /tokenize ; vide : estimation)</span>
             <input v-model="form.tokenize_path" maxlength="200" spellcheck="false" placeholder="/tokenize"></label>
+          <label>En-têtes <span class="dim">(un par ligne, « Nom: valeur », ajoutés à chaque requête ;
+            jamais réaffichés : « Nom: » sans valeur garde l'ancienne)</span>
+            <textarea v-model="form.headersText" rows="2" spellcheck="false" autocomplete="off"
+                      placeholder="X-Mon-En-Tete: valeur"></textarea></label>
           <label>tool_choice <span class="dim">(injecté quand une requête a des outils sans tool_choice ; Albert : auto)</span>
             <select v-model="form.tool_choice">
               <option v-for="[v, label] in TOOL_CHOICES" :key="v" :value="v">{{ label }}</option>
@@ -215,6 +244,7 @@ export const BackendsPart = {
               <td>{{ b.shared ? "tout le monde" : "lui seul" }}</td>
               <td>{{ b.enabled ? "actif" : "désactivé" }}{{ b.quotas ? " · quotas" : "" }}</td><td>{{ b.by }}</td>
               <td><div class="row-actions">
+                <button type="button" class="btn ghost" @click="open(b, true)">Modifier</button>
                 <button type="button" class="btn ghost" @click="quotas(b)">{{ b.quotas ? "Sans quotas" : "Quotas" }}</button>
                 <button type="button" class="btn danger" :class="{ armed: armed === b.id }"
                         @click="remove(b, true)">{{ armed === b.id ? "Supprimer ?" : "Supprimer" }}</button></div></td>

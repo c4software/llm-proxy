@@ -151,7 +151,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 |---|---|
 | `core/config.py` | Lecture de `data/config.toml` : `${VAR}`, accès typés ; absent, le mode installation (`SETUP`) |
 | `core/settings.py` | La table `[proxy]` en constantes typées |
-| `core/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON |
+| `core/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON, en-têtes propres d'un backend (`backend_headers`, `merge_headers`) |
 | `core/identity.py` | Le client : condensé stable de sa clé (`owner`), secret `data/client.secret` |
 | `core/limits.py` | La forme des règles `limits` d'un backend à quotas, du TOML comme d'un compte |
 | `core/reload.py` | Le rechargement à chaud : réglages rechargeables (`SAFE`), réévalués et propagés à leurs copies, tout ou rien |

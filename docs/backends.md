@@ -14,6 +14,7 @@ Un backend de compte a ces champs :
 | Protocole | `openai` (`/v1/chat/completions`) ou `anthropic` (`/v1/messages`, voir [Backend Anthropic](configuration.md#backend-anthropic)) |
 | Adresse | La base du backend, sans `/v1`, sans identifiants |
 | Clé | Envoyée au backend en `Authorization: Bearer` (`x-api-key` en `anthropic`). Facultative. Jamais rendue à la page |
+| En-têtes | Comme [`headers`](configuration.md#backendsnom) : un par ligne, `Nom: valeur`. Secrets comme la clé : la page n'en montre que les noms. `Nom:` sans valeur garde l'ancienne ; si l'adresse change d'origine, il faut la ressaisir (sinon `400`). Une ligne retirée retire l'en-tête. Les autres comptes voient les noms d'un backend partagé, jamais les valeurs. Noms et valeurs : voir [`headers`](configuration.md#backendsnom) |
 | Images | Comme [`images`](configuration.md#backendsnom) d'une table `[backends.<nom>]` : *oui*, *non*, ou *selon le protocole* (oui en `anthropic`, non en `openai`) |
 | Tokenisation | Comme [`tokenize_path`](configuration.md#backendsnom) : un chemin sous l'adresse (`/tokenize` pour llama.cpp) qui rend `count_tokens` exact. Vide : estimation |
 | tool_choice | Comme [`force_tool_choice`](configuration.md#backendsnom) : `auto`, `required` ou `none`, injecté quand une requête a des outils sans `tool_choice`. Albert : `auto`. Vide : aucune injection |
@@ -45,7 +46,10 @@ peut reprendre le nom d'un backend partagé : il le masque pour son compte.
 
 Un compte bloqué perd ses backends, partagés compris ; il les retrouve
 quand il est rétabli. L'admin voit les backends de tous les comptes dans
-la même partie et peut en supprimer.
+la même partie, peut les modifier (en-têtes, limites, quotas, état, et
+leur partage : un backend qu'il partage sert alors tous les comptes avec la
+clé de son créateur) ou les supprimer, sans jamais voir leur clé ni la
+valeur de leurs en-têtes.
 
 Un backend partagé se comporte comme un backend de `[backends.<nom>]` :
 
@@ -73,8 +77,8 @@ Par la session de la page, en JSON :
 | Route | Effet |
 |---|---|
 | `GET /ui/backends` | `{backends, shared, reserved}` : les siens, ceux que d'autres partagent et qui sont actifs (avec `by`, leur créateur), les noms de `[backends.<nom>]`. Admin, `?all=1` : `all`, ceux de tous les comptes |
-| `POST /ui/backends` | Crée `{name, api, url, api_key?, shared, images?, tokenize_path?, tool_choice?, quotas?, enabled?}` (`enabled` vrai par défaut ; `quotas` : admin, sinon `403`) |
-| `PUT /ui/backends/<id>` | Modifie (même corps ; `enabled` absent : état inchangé). Admin, `?all=1` : celui de n'importe quel compte (même règle de clé). Un compte ordinaire garde les quotas posés par l'admin tant que l'adresse ne change pas d'origine |
+| `POST /ui/backends` | Crée `{name, api, url, api_key?, headers?, shared, images?, tokenize_path?, tool_choice?, quotas?, limits?, enabled?}` (`enabled` vrai par défaut ; `quotas` : admin, sinon `403`) |
+| `PUT /ui/backends/<id>` | Modifie (même corps ; `enabled` absent : état inchangé ; `headers` absent : inchangés ; présent, il remplace la liste, une valeur vide gardant l'ancienne). Admin, `?all=1` : celui de n'importe quel compte (même règle de clé). Un compte ordinaire garde les quotas posés par l'admin tant que l'adresse ne change pas d'origine |
 | `DELETE /ui/backends/<id>` | Supprime → `{deleted}`. Admin, `?all=1` : celui de n'importe quel compte |
 
 Un compte ne voit ni ne modifie le backend d'un autre (`404`) ; sa
