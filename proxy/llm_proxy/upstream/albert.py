@@ -481,6 +481,11 @@ class QuotaState:
         self.limiters: dict[str, Limiter] = {}
         _states.append(self)
 
+    def close(self) -> None:
+        """Le backend est retiré : son état quitte le cartouche."""
+        if self in _states:
+            _states.remove(self)
+
     async def refresh(self, backend) -> bool:
         """Charge /v1/me/info + /v1/models du backend et reconstruit
         l'association. N'écrase jamais des données valides par un échec.
@@ -505,13 +510,19 @@ class QuotaState:
             )
             return False
 
-        rlimits = _parse_me_info_limits(info.json())
+        try:
+            info_doc, models_doc = info.json(), models.json()
+            rlimits = _parse_me_info_limits(info_doc)
+        except Exception as exc:     # 200 mais pas le JSON attendu
+            log.warning("[%s] refresh : réponse illisible (%s) — fallbacks conservés",
+                        self.name, exc)
+            return False
         if not rlimits:
-            excerpt = json.dumps(info.json(), ensure_ascii=False)[:LOG_EXCERPT_CHARS]
+            excerpt = json.dumps(info_doc, ensure_ascii=False)[:LOG_EXCERPT_CHARS]
             log.warning("[%s] /v1/me/info : limits vide/non reconnu. Extrait : %s",
                         self.name, excerpt)
             return False
-        groups = _parse_model_groups(models.json())
+        groups = _parse_model_groups(models_doc)
 
         r_fams, n2b, display = _associate_routers(rlimits, groups)
         self.router_limits, self.name_to_bucket = rlimits, n2b

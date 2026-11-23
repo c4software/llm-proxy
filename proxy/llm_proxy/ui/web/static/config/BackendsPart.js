@@ -3,7 +3,8 @@
   backend_routes.py) — un nom (le préfixe de ses modèles), un protocole, une
   adresse, une clé, et pour qui : soi seul, ou tout le monde (avec la clé du
   créateur), et deux réglages d'une table [backends.<nom>] : images et
-  tokenize_path. Désactivé, il reste (clé comprise) sans être routé. La clé
+  tokenize_path, l'injection de tool_choice et (admin) les quotas Albert.
+  Désactivé, il reste (clé comprise) sans être routé. La clé
   n'est jamais relue : vide à la modification, elle reste.
   En dessous, ceux que d'autres comptes partagent, en lecture, et pour
   l'admin ceux de tous les comptes, à retirer.
@@ -16,7 +17,8 @@ const { ref, reactive, onMounted } = Vue;
 
 const API_LABELS = { openai: "OpenAI (chat/completions)", anthropic: "Anthropic (Messages)" };
 const blank = () => ({ id: null, name: "", api: "openai", url: "", api_key: "", shared: false,
-                       images: null, tokenize_path: "", enabled: true });
+                       images: null, tokenize_path: "", enabled: true, tool_choice: "", quotas: false });
+const TOOL_CHOICES = [["", "aucune injection"], ["auto", "auto"], ["required", "required"], ["none", "none"]];
 const IMAGES = [[null, "selon le protocole"], [true, "oui"], [false, "non"]];
 
 export const BackendsPart = {
@@ -49,6 +51,7 @@ export const BackendsPart = {
     }
     const fields = (b) => ({ name: b.name, api: b.api, url: b.url, shared: b.shared,
                              images: b.images, tokenize_path: b.tokenize_path, enabled: b.enabled,
+                             tool_choice: b.tool_choice, quotas: b.quotas,
                              ...(b.api_key ? { api_key: b.api_key } : {}) });
     async function save() {
       error.value = "";
@@ -56,6 +59,13 @@ export const BackendsPart = {
         if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id), fields(form));
         else await call("POST", "/ui/backends", fields(form));
         editing.value = false;
+        await load();
+      } catch (e) { error.value = e.message; }
+    }
+    async function quotas(b) {
+      error.value = "";
+      try {
+        await call("PUT", "/ui/backends/" + encodeURIComponent(b.id) + "?all=1", fields({ ...b, quotas: !b.quotas }));
         await load();
       } catch (e) { error.value = e.message; }
     }
@@ -81,8 +91,8 @@ export const BackendsPart = {
     }
 
     onMounted(load);
-    return { mine, shared, every, admin, reserved, error, form, editing, armed, open, save, toggle, remove, when,
-             API_LABELS, IMAGES };
+    return { mine, shared, every, admin, reserved, error, form, editing, armed, open, save, toggle, quotas, remove, when,
+             API_LABELS, IMAGES, TOOL_CHOICES };
   },
   template: `
     <div class="config-keys owned">
@@ -125,6 +135,13 @@ export const BackendsPart = {
             </select></label>
           <label>Tokenisation <span class="dim">(chemin d'un comptage exact, llama.cpp : /tokenize ; vide : estimation)</span>
             <input v-model="form.tokenize_path" maxlength="200" spellcheck="false" placeholder="/tokenize"></label>
+          <label>tool_choice <span class="dim">(injecté quand une requête a des outils sans tool_choice ; Albert : auto)</span>
+            <select v-model="form.tool_choice">
+              <option v-for="[v, label] in TOOL_CHOICES" :key="v" :value="v">{{ label }}</option>
+            </select></label>
+          <label v-if="admin || form.quotas" class="check">
+            <input type="checkbox" v-model="form.quotas" :disabled="!admin && !form.quotas">
+            Quotas Albert <span class="dim">(le limiteur : limites du compte lues sur /v1/me/info ; admin)</span></label>
           <div class="item-actions">
             <button type="submit" class="btn">{{ form.id ? "Enregistrer" : "Créer" }}</button>
             <button type="button" class="btn ghost" @click="editing = false">Annuler</button>
@@ -138,7 +155,7 @@ export const BackendsPart = {
               <td>{{ API_LABELS[b.api] || b.api }}</td>
               <td><code>{{ b.url }}</code></td>
               <td>{{ b.shared ? "tout le monde" : "moi seul" }}</td>
-              <td>{{ b.enabled ? "actif" : "désactivé" }}</td>
+              <td>{{ b.enabled ? "actif" : "désactivé" }}{{ b.quotas ? " · quotas" : "" }}</td>
               <td>{{ when(b.created) }}</td>
               <td><div class="row-actions">
                 <button type="button" class="btn ghost" @click="open(b)">Modifier</button>
@@ -173,9 +190,11 @@ export const BackendsPart = {
             <tr v-for="b in every" :key="b.id" :class="{ dim: !b.enabled }">
               <td><code>{{ b.name }}/</code></td><td><code>{{ b.url }}</code></td>
               <td>{{ b.shared ? "tout le monde" : "lui seul" }}</td>
-              <td>{{ b.enabled ? "actif" : "désactivé" }}</td><td>{{ b.by }}</td>
-              <td><button type="button" class="btn danger" :class="{ armed: armed === b.id }"
-                          @click="remove(b, true)">{{ armed === b.id ? "Supprimer ?" : "Supprimer" }}</button></td>
+              <td>{{ b.enabled ? "actif" : "désactivé" }}{{ b.quotas ? " · quotas" : "" }}</td><td>{{ b.by }}</td>
+              <td><div class="row-actions">
+                <button type="button" class="btn ghost" @click="quotas(b)">{{ b.quotas ? "Sans quotas" : "Quotas Albert" }}</button>
+                <button type="button" class="btn danger" :class="{ armed: armed === b.id }"
+                        @click="remove(b, true)">{{ armed === b.id ? "Supprimer ?" : "Supprimer" }}</button></div></td>
             </tr>
           </tbody>
         </table></div>

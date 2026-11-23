@@ -93,3 +93,35 @@ def test_architecture_a_la_forme_d_openrouter():
                                        "output_modalities": ["text"]}
     assert got["cat/forcé"] == {"modality": "text->image",
                                 "input_modalities": ["text"], "output_modalities": ["image"]}
+
+
+def test_un_catalogue_multi_protocoles_ne_garde_que_ce_que_le_backend_sert():
+    """OpenCode Zen dit par modèle les API qui le servent (`api`) et des
+    types à lui (`chat`, `embedding`, `image`) : un backend `openai` garde
+    chat-completions, embeddings et images, un backend `anthropic` messages ;
+    les types sont ramenés à ceux d'Albert."""
+    def zen(api):
+        return [
+            {"id": "glm", "type": "chat", "api": {"chat-completions": {}},
+             "modalities": {"input": ["text"], "output": ["text"]}},
+            {"id": "kimi", "type": "chat", "api": {"chat-completions": {}},
+             "modalities": {"input": ["text", "image/jpeg"], "output": ["text"]}},
+            {"id": "gpt", "type": "chat", "api": {"responses": {}}},
+            {"id": "gemini", "type": "chat", "api": {"generate-content": {}}},
+            {"id": "claude", "type": "chat", "api": {"messages": {}},
+             "modalities": {"input": ["text", "image/png"], "output": ["text"]}},
+            {"id": "emb", "type": "embedding", "api": {"embeddings": {}}},
+            {"id": "img", "type": "image", "api": {"images": {}}},
+        ]
+    for api, expected in (
+            ("openai", {"glm": "text-generation", "kimi": "image-text-to-text",
+                        "emb": "text-embeddings-inference", "img": "text-to-image"}),
+            ("anthropic", {"claude": "image-text-to-text"})):
+        b = backends.Backend("zen", {"url": f"http://zen-{api}.test", "api_key": "k", "api": api})
+
+        async def handler(request):
+            return httpx.Response(200, json={"data": zen(api)})
+        b.client = httpx.AsyncClient(base_url=b.url, transport=httpx.MockTransport(handler))
+        got = asyncio.run(catalog.fetch_models(b))
+        assert {e["id"].removeprefix("zen/"): e["type"] for e in got} == expected, api
+        assert b.models == set(expected), api

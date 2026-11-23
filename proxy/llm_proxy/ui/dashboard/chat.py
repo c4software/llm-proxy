@@ -322,11 +322,11 @@ async def _relay_form(request: Request, payload: dict, fields: dict,
     de quota (coût estimé sur `cost`), flux. `file` : (champ, nom,
     octets, type), ou une liste de tels fichiers."""
     model_key = str(payload.get("model") or "")
-    backend, prefixed = route_backend({"model": model_key})
+    backend = route_backend({"model": model_key})
     if backend is None:
         return no_route("openai", model_key)
     form = httpx2.Request("POST", "http://form.invalid", data={
-        "model": model_key[len(backend.name) + 1:] if prefixed else model_key,
+        "model": model_key[len(backend.name) + 1:],
         **fields}, files=[(field, (name, data, kind)) for field, name, data, kind
                           in (file if isinstance(file, list) else [file])])
     raw = form.read()

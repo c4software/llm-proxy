@@ -162,9 +162,7 @@ def always_shown() -> list[str]:
     return offered(tools.enabled())
 
 
-def spares(b, model: str) -> bool:
+def spares(model: str) -> bool:
     """Ce modèle est-il de ceux à qui rien n'est présenté d'office
-    ([chat].always_except) ? Jugé sur son nom PRÉFIXÉ, que le client l'ait
-    écrit ainsi ou non (backend de repli)."""
-    plain = model.lower().removeprefix(b.name + "/")
-    return excepted(f"{b.name}/{plain}")
+    ([chat].always_except) ? Jugé sur son nom PRÉFIXÉ."""
+    return excepted(model.lower())

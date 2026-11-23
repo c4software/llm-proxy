@@ -64,22 +64,20 @@ async def chat(request: Request, page: bool = False):
         # Incognito : pas de mémoire persistante, même déclarée.
         kept = [t for t in payload["tools"]
                 if not (isinstance(t, dict) and t.get("type") == tools.ToolName.MEMORY)]
-        if len(kept) != len(payload["tools"]):
-            payload["tools"] = kept
-            raw = json.dumps(payload, ensure_ascii=False).encode()
+        payload["tools"] = kept
 
     # Le chat de la page : ses outils refusés à tous ([ui].page_tools_disabled)
     # sont retirés ici, quoi que la page déclare.
-    if page and isinstance(payload, dict) and page_tools.strip(payload):
-        raw = json.dumps(payload, ensure_ascii=False).encode()
+    if page and isinstance(payload, dict):
+        page_tools.strip(payload)
 
     # Le routage d'abord : l'injection de tool_choice dépend du backend
     # visé (chacun peut la désactiver ou choisir sa valeur).
-    backend, prefixed = route_backend(payload)
+    backend = route_backend(payload)
     if backend is None:
-        return no_route("openai", str(payload.get("model", "")))
+        return no_route("openai", str(payload.get("model", "") or "")
+                        if isinstance(payload, dict) else "")
 
-    modified = False
     # Outils hébergés ([chat].hosted_tools) : seule une requête qui en
     # DÉCLARE un quitte le relais brut — sa déclaration est remplacée par
     # les fonctions du paquet tools/, avant l'injection de tool_choice
@@ -90,11 +88,11 @@ async def chat(request: Request, page: bool = False):
     # client, outils inactifs), elle repart en relais brut, intacte.
     ctx = hosted = None
     declared = always = False
-    if chat_api.ENABLED and isinstance(payload, dict):
+    if chat_api.ENABLED:
         declared = chat_api.declares(payload, tools.kinds())
         model = str(payload.get("model") or "")
         always = not page and chat_api.unasked(payload) \
-            and converses(backend, model) and not chat_api.spares(backend, model)
+            and converses(backend, model) and not chat_api.spares(model)
     if declared or always:
         # Le chat de la page et les webhooks : les outils offerts au web.
         hosted = tools.Hosted(offer=tools.Offer.WEB if page else tools.Offer.API)
@@ -106,7 +104,6 @@ async def chat(request: Request, page: bool = False):
             return error_response("openai", 400, "invalid_request_error",
                                   str(exc))
         ctx.progress = page
-        modified = declared or bool(ctx.hosted)
         if ctx.hosted:
             # Les échanges cachés des réponses précédentes, absents de
             # l'historique du client, reprennent leur place ([chat].memory),
@@ -117,22 +114,17 @@ async def chat(request: Request, page: bool = False):
                 log.info("chat/completions : %d échange(s) d'outils hébergés "
                          "réinséré(s) depuis la mémoire (model=%s)", found,
                          payload.get("model"))
-    if isinstance(payload, dict):
-        if inject_tool_choice(payload, backend):
-            modified = True
-            log.info(
-                "tool_choice=%s injecté (backend=%s, model=%s, %d tools)",
-                backend.tool_choice, backend.name, payload.get("model"),
-                len(payload["tools"]),
-            )
-        modified = cap_max_tokens(payload, backend) or modified
+    if inject_tool_choice(payload, backend):
+        log.info(
+            "tool_choice=%s injecté (backend=%s, model=%s, %d tools)",
+            backend.tool_choice, backend.name, payload.get("model"),
+            len(payload["tools"]),
+        )
+    cap_max_tokens(payload, backend)
     # Nom PRÉFIXÉ tel que demandé : c'est la clé des stats (le corps, lui,
     # est dé-préfixé juste après pour l'upstream).
-    model_key = str(payload.get("model", "") or "") if isinstance(payload, dict) else ""
-    if prefixed:
-        raw = strip_backend_prefix(payload, backend)
-    elif modified:
-        raw = json.dumps(payload, ensure_ascii=False).encode()
+    model_key = str(payload["model"])
+    raw = strip_backend_prefix(payload, backend)
 
     call = Call(backend, model_key, "/v1/chat/completions")
     blocked = await gate(call, request, payload, albert.estimate_chat_cost(raw))
@@ -247,7 +239,7 @@ async def messages(request: Request):
             f"par un backend",
         )
     payload["model"] = resolved
-    backend, _ = route_backend(payload)
+    backend = route_backend(payload)
     if backend is None:
         return no_route(dialect, resolved)
     if requested and requested != resolved:
@@ -416,7 +408,7 @@ async def count_tokens(request: Request):
                               "corps JSON attendu")
     resolved = anthropic_api.resolve_model(
         str(payload.get("model", "") or ""), visible())
-    backend, _ = route_backend({"model": resolved}) if resolved else (None, False)
+    backend = route_backend({"model": resolved})
     if backend is not None and backend.tokenize_path:
         exact = await tokenize_upstream(backend, resolved, payload)
         if exact is not None:
@@ -472,8 +464,8 @@ async def responses(request: Request):
         return error_response("openai", 400, "invalid_request_error",
                               "corps JSON attendu")
     model_key = str(payload.get("model", "") or "")
-    backend, prefixed = route_backend(payload)
-    if backend is None or not prefixed:
+    backend = route_backend(payload)
+    if backend is None:
         return no_route("openai", model_key)
 
     images = False
@@ -536,22 +528,19 @@ async def forward_post(request: Request, normalized: str, dialect: str):
         # Formulaire (transcription audio, édition d'image) : le préfixe du
         # champ model route aussi, et se retire comme en JSON.
         model_key = multipart.model_field(raw, content_type) or ""
-        backend, prefixed = route_backend({"model": model_key} if model_key else None)
+        backend = route_backend({"model": model_key})
         if backend is None:
             return no_route(dialect, model_key)
-        if prefixed:
-            raw = multipart.rewrite_model_field(
-                raw, content_type, model_key[len(backend.name) + 1:])
+        raw = multipart.rewrite_model_field(
+            raw, content_type, model_key[len(backend.name) + 1:])
     else:
-        backend, prefixed = route_backend(payload)
+        backend = route_backend(payload)
         if backend is None:
-            return no_route(dialect, str(payload.get("model", "")))
-        model_key = str(payload.get("model", "") or "") if isinstance(payload, dict) else ""
-        modified = isinstance(payload, dict) and cap_max_tokens(payload, backend)
-        if prefixed:
-            raw = strip_backend_prefix(payload, backend)
-        elif modified:
-            raw = json.dumps(payload, ensure_ascii=False).encode()
+            model = payload.get("model", "") if isinstance(payload, dict) else ""
+            return no_route(dialect, str(model or ""))
+        model_key = str(payload["model"])
+        cap_max_tokens(payload, backend)
+        raw = strip_backend_prefix(payload, backend)
 
     call = Call(backend, model_key, normalized, dialect)
     blocked = await gate(call, request, payload,

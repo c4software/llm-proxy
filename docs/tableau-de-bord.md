@@ -210,9 +210,8 @@ ou *limités* à des motifs de noms préfixés (`albert/*`,
 - API : `PATCH /ui/users/<id>` `{"models": null | ["albert/*", …]}` ;
   `[]` = aucun modèle.
 - Un modèle hors des motifs n'apparaît ni dans `/v1/models` ni dans le
-  chat, et une requête qui le vise reçoit `403` `model_not_allowed`, de
-  même qu'une requête sans `model` (le backend de repli servirait le
-  sien). La borne vaut pour toutes les clés du compte, sa page et ses
+  chat, et une requête qui le vise reçoit `403` `model_not_allowed`. La
+  borne vaut pour toutes les clés du compte, sa page et ses
   webhooks.
 - Les [backends du compte lui-même](backends.md) n'y sont pas soumis. Les
   modèles que les outils hébergés tiennent de la configuration (OCR,

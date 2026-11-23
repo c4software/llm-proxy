@@ -6,21 +6,20 @@ PRÉFIXE du modèle désigne le backend. Un backend parle chat/completions
 
 « albert/openweight-large » part vers [backends.albert], « bigchuck/qwen3 »
 vers [backends.bigchuck], préfixe retiré avant transfert. Tout modèle doit
-être préfixé : sans préfixe reconnu → 400. Seules les requêtes SANS champ
-model (endpoints de compte, corps non JSON) n'ont rien à router et
-tombent sur le backend de repli.
+être préfixé : sans préfixe reconnu → 400, sans champ model → 400 aussi
+(rien à router). Sans table [backends.<nom>], le TOML n'en apporte aucun.
 
 Les BACKENDS DES COMPTES (storage/backends.py) s'y ajoutent, pour le client
 de la requête (fairshare.CLIENT) : les siens, puis ceux que d'autres
 partagent. Un nom du TOML l'emporte toujours. Les MODÈLES PERMIS du compte
 (accounts.MODELS, posés par l'admin) bornent le reste : un modèle hors de
-ses motifs n'est ni listé ni routé (403 `model_not_allowed`), une requête
-sans modèle non plus ; ses propres backends n'y sont pas soumis. Un
+ses motifs n'est ni listé ni routé (403 `model_not_allowed`) ; ses propres backends n'y sont pas soumis. Un
 backend PARTAGÉ sert aussi les outils hébergés (served) et compte dans le
 partage équitable, comme un backend du TOML ; un backend à soi, non. Un
 outil hébergé ne vise qu'un backend partagé par un ADMIN : son nom, pris
 par le premier qui le partage, ne doit pas pouvoir capter le trafic des
-outils.
+outils. Les QUOTAS (limiteur Albert) et l'injection de `tool_choice` valent
+pour les deux ; seul un admin pose les quotas d'un backend de compte.
 """
 
 import asyncio
@@ -96,6 +95,8 @@ class Backend:
         # un backend du TOML) et s'il est offert à tous.
         self.owner: str | None = None
         self.shared = False
+        # La tâche qui relit ses limites (watch_quotas), avec quotas.
+        self.watch: asyncio.Task | None = None
         # Son créateur est admin : les outils hébergés peuvent le viser.
         self.admin = False
         # Sa table, telle que lue du magasin (refresh compare).
@@ -135,22 +136,10 @@ class Backend:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
 
-# Défaut si [backends] est absent du TOML : Albert seul. URLs ET clés ne
-# vivent QUE là (champ api_key par backend), rien ailleurs.
-DEFAULT_BACKENDS = {
-    # Albert a besoin du correctif tool_choice (son schéma déclare
-    # «default: none»).
-    "albert": {"url": "https://albert.api.etalab.gouv.fr", "quotas": True,
-               "force_tool_choice": "auto"},
-}
-
-
 def load_backends() -> dict[str, Backend]:
     """Une table [backends.<nom>] par backend ; <nom> EST le préfixe de
-    routage."""
-    parsed = config.section("backends") or DEFAULT_BACKENDS
-    if not isinstance(parsed, dict) or not parsed:
-        raise SystemExit("[backends] : au moins un backend attendu")
+    routage. Aucune : aucun backend du TOML (ceux des comptes restent)."""
+    parsed = config.section("backends")
     out: dict[str, Backend] = {}
     for name, cfg in parsed.items():
         key = str(name).strip().strip("/").lower()
@@ -161,13 +150,6 @@ def load_backends() -> dict[str, Backend]:
 
 
 BACKENDS: dict[str, Backend] = load_backends()
-# Les requêtes SANS champ model (endpoints de compte, corps non JSON)
-# n'ont pas de préfixe à router : elles partent vers le premier backend
-# à quotas (à défaut, le premier déclaré).
-FALLBACK_BACKEND = next(
-    (b for b in BACKENDS.values() if b.quotas),
-    next(iter(BACKENDS.values())),
-)
 
 # Les backends des comptes : (client, identifiant) → Backend. Rechargés de
 # leur magasin par refresh(), au démarrage, après chaque écriture et chaque
@@ -222,29 +204,24 @@ def _find(model: str, table: dict[str, Backend]) -> Backend | None:
     return next((b for name, b in table.items() if m.startswith(name + "/")), None)
 
 
-def route_backend(payload, *, limited: bool = True) -> tuple[Backend | None, bool]:
+def route_backend(payload, *, limited: bool = True) -> Backend | None:
     """Discriminant de routage : le préfixe du modèle. «<nom>/…» part
-    vers le backend <nom> ; requête sans champ model → FALLBACK_BACKEND ;
-    modèle sans préfixe reconnu, ou non permis au compte → None (no_route
-    dit lequel). Renvoie (backend, préfixé) — préfixé impose de retirer
-    «nom/». `limited` faux : ceux du TOML et les partagés d'un admin, sans
+    vers le backend <nom> ; sans champ model, modèle sans préfixe reconnu,
+    ou non permis au compte → None (no_route dit lequel). Le préfixe
+    «nom/» se retire avant l'envoi. `limited` faux : ceux du TOML et les partagés d'un admin, sans
     les modèles permis du compte — pour le modèle qu'un outil hébergé tient
     de la configuration."""
     model = ""
     if isinstance(payload, dict):
         model = str(payload.get("model", "") or "")
     if not model:
-        # Un compte borné n'a pas de modèle par défaut : le backend de repli
-        # en servirait un que l'admin n'a peut-être pas permis.
-        if limited and accounts.MODELS.get() is not None:
-            return None, False
-        return FALLBACK_BACKEND, False
+        return None
     table = visible() if limited else {
         n: b for n, b in served().items() if b.owner is None or b.admin}
     b = _find(model, table)
     if b is None or (limited and not permitted(b, model)):
-        return None, False
-    return b, True
+        return None
+    return b
 
 
 def unknown_prefix_message(model: str) -> str:
@@ -256,11 +233,14 @@ def unknown_prefix_message(model: str) -> str:
 
 
 def no_route(dialect: str, model: str):
-    """La réponse quand route_backend n'a rien rendu pour `model` : 403
-    `model_not_allowed` si son backend existe mais que le compte ne peut
-    pas l'employer, 400 `unknown_backend_prefix` sinon."""
-    if _find(model, visible()) is not None or (
-            not model and accounts.MODELS.get() is not None):
+    """La réponse quand route_backend n'a rien rendu pour `model` : 400
+    `model_required` sans modèle, 403 `model_not_allowed` si son backend
+    existe mais que le compte ne peut pas l'employer, 400
+    `unknown_backend_prefix` sinon."""
+    if not model:
+        return error_response(dialect, 400, "model_required",
+                              "champ «model» attendu : «<backend>/<modèle>»")
+    if _find(model, visible()) is not None:
         log.warning("modèle %r non permis au compte → 403", model)
         return error_response(dialect, 403, "model_not_allowed",
                               f"modèle «{model}» non permis à ce compte")
@@ -298,17 +278,51 @@ async def open_clients() -> None:
         b.client = open_client(b)
 
 
+def watch_quotas(b: Backend) -> asyncio.Task:
+    """La tâche de fond d'un backend à quotas, du TOML comme d'un compte :
+    lit les limites de son compte Albert, puis les relit toutes les
+    [quotas].limits_refresh s. Arrêtée quand le backend est retiré."""
+    async def run():
+        got = await b.quota_state.refresh(b)
+        if not got:
+            log.info("[%s] limites du compte indisponibles — familles statiques : %s",
+                     b.name, ", ".join(f"{fam}({cfg['rpm']}rpm/{cfg['tpm']}tpm)"
+                                       for fam, cfg in albert.FAMILY_LIMITS.items()))
+        if albert.LIMITS_REFRESH > 0:
+            await b.quota_state.refresh_loop(b, loaded=got)
+    b.watch = asyncio.create_task(run())
+    return b.watch
+
+
+def _stop(b: Backend) -> None:
+    if b.watch is not None:
+        b.watch.cancel()
+    if b.quota_state is not None:
+        b.quota_state.close()
+
+
 def _cfg(row: dict) -> dict:
     """La table [backends.<nom>] d'une ligne du magasin."""
     cfg = {"url": row["url"], "api_key": row["api_key"], "api": row["api"],
-           "tokenize_path": row["tokenize_path"], "connect_timeout": 15.0}
+           "tokenize_path": row["tokenize_path"], "connect_timeout": 15.0,
+           "quotas": row["quotas"], "force_tool_choice": row["tool_choice"] or None}
     if row["images"] is not None:
         cfg["images"] = row["images"]
     return cfg
 
 
-def _same(b: Backend, row: dict) -> bool:
-    return (b.name, b.cfg) == (row["name"], _cfg(row))
+# Ce qui fait le client et le limiteur : le reste se règle sur place.
+_STRUCTURE = ("url", "api_key", "api", "quotas")
+
+
+def _retune(b: Backend, name: str, cfg: dict) -> None:
+    """Les réglages d'une ligne modifiée, sur le backend en place : son
+    client, son catalogue et son limiteur (fenêtres en cours) restent."""
+    other = Backend(name, {**cfg, "quotas": False})
+    b.name, b.cfg = name, cfg
+    b.images, b.tokenize_path, b.tool_choice = other.images, other.tokenize_path, other.tool_choice
+    if b.quota_state is not None:
+        b.quota_state.name = name
 
 
 async def refresh(live) -> None:
@@ -316,9 +330,10 @@ async def refresh(live) -> None:
     BLOQUANTE qui rend les clients dont les backends servent encore, avec
     «admin ?» (auth.live_owners : un compte bloqué perd les siens, partagés
     compris).
-    Un backend inchangé garde son client et son catalogue ; le client d'un
-    backend retiré ou modifié se ferme après son délai de requête (une
-    réponse en cours finit)."""
+    Un backend dont ni l'adresse, ni la clé, ni le protocole, ni les quotas
+    ne changent garde son client, son catalogue et son limiteur ; le client
+    d'un backend retiré ou reconstruit se ferme après son délai de requête
+    (une réponse en cours finit)."""
     def read():
         if not user_backends.ENABLED:
             return {}, []
@@ -330,14 +345,20 @@ async def refresh(live) -> None:
         for row in rows:
             key = (row["owner"], row["id"])
             b = ACCOUNTS.get(key)
-            if b is None or not _same(b, row):
+            cfg = _cfg(row)
+            if b is not None and all(b.cfg[k] == cfg[k] for k in _STRUCTURE):
+                if (b.name, b.cfg) != (row["name"], cfg):
+                    _retune(b, row["name"], cfg)
+            else:
                 try:
                     b = Backend(row["name"], _cfg(row))
                 except SystemExit as exc:    # une ligne abîmée : écartée seule
                     log.warning("backend de compte %s écarté : %s", row["name"], exc)
                     continue
-                b.owner, b.cfg = row["owner"], _cfg(row)
+                b.owner, b.cfg = row["owner"], cfg
                 b.client = open_client(b)
+                if b.quotas:
+                    watch_quotas(b)
             b.shared = b.fair_share = row["shared"]
             b.admin = owners[row["owner"]]
             fresh[key] = b
@@ -345,6 +366,7 @@ async def refresh(live) -> None:
         ACCOUNTS.clear()
         ACCOUNTS.update(fresh)
     for b in gone:
+        _stop(b)
         _retired.add(b.client)
         asyncio.get_running_loop().call_later(
             b.timeout, lambda c=b.client: asyncio.ensure_future(_close(c)))
@@ -358,6 +380,7 @@ async def _close(client: httpx2.AsyncClient) -> None:
 
 async def close_clients() -> None:
     for b in [*BACKENDS.values(), *ACCOUNTS.values()]:
+        _stop(b)
         if b.client is not None:
             await b.client.aclose()
     for client in list(_retired):

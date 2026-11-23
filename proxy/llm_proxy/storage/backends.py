@@ -4,7 +4,9 @@ Les BACKENDS DES COMPTES : ceux qu'un compte déclare lui-même
 préfixe de routage, comme celui d'une table [backends.<nom>]), un
 protocole (`openai` ou `anthropic`), une adresse, une clé, et deux
 réglages d'une table [backends.<nom>] : `images` (vide : selon le
-protocole) et `tokenize_path`. Désactivé (`enabled` faux), il garde sa clé
+protocole), `tokenize_path`, `tool_choice` (`force_tool_choice` : "",
+"auto", "required" ou "none") et `quotas` (le limiteur Albert ; posé par un
+admin seulement, ôtable par tous). Désactivé (`enabled` faux), il garde sa clé
 et son nom mais n'est plus routé, ni montré aux autres comptes.
 
   à soi          (`shared` faux) : seul son compte le voit et s'en sert ;
@@ -31,12 +33,14 @@ from . import owned
 ENABLED = config.flag("user_backends.enabled", True)
 MAX_PER_USER = config.integer("user_backends.max_per_user", 10)
 APIS = ("openai", "anthropic")
+TOOL_CHOICES = ("", "auto", "required", "none")
 MAX_KEY = 4000
 # Un préfixe de routage : « monllama/qwen3 » vise le backend « monllama ».
 NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Un chemin sous l'adresse du backend (llama.cpp : « /tokenize »).
 TOKENIZE_PATH = re.compile(r"/[A-Za-z0-9._~/-]{0,199}\Z")
-_FIELDS = "id, name, api, url, shared, created, owner, images, tokenize_path, disabled"
+_FIELDS = ("id, name, api, url, shared, created, owner, images, tokenize_path, disabled, "
+           "quotas, tool_choice")
 
 BackendError = owned.OwnedError
 
@@ -49,7 +53,9 @@ def _table(c) -> None:
         PRIMARY KEY (owner, id))""")
     owned.add_columns(c, "user_backends", {"images": "INTEGER",
                                            "tokenize_path": "TEXT NOT NULL DEFAULT ''",
-                                           "disabled": "INTEGER NOT NULL DEFAULT 0"})
+                                           "disabled": "INTEGER NOT NULL DEFAULT 0",
+                                           "quotas": "INTEGER NOT NULL DEFAULT 0",
+                                           "tool_choice": "TEXT NOT NULL DEFAULT ''"})
 
 
 _run = owned.runner(_table)
@@ -58,9 +64,10 @@ _run = owned.runner(_table)
 def _meta(row) -> dict:
     """Une ligne pour la page, sans clé ; `owner` (le client du créateur)
     sert à le nommer, la route le retire."""
-    bid, name, api, url, shared, created, owner, images, tokenize_path, disabled = row
+    (bid, name, api, url, shared, created, owner, images, tokenize_path, disabled,
+     quotas, tool_choice) = row
     return {"id": bid, "name": name, "api": api, "url": url, "shared": bool(shared),
-            "enabled": not disabled,
+            "enabled": not disabled, "quotas": bool(quotas), "tool_choice": tool_choice,
             "images": None if images is None else bool(images),
             "tokenize_path": tokenize_path, "created": owned.seconds(created),
             "owner": owner}
@@ -94,13 +101,28 @@ def _fields(body, reserved) -> dict:
     if tokenize and (not TOKENIZE_PATH.match(tokenize) or ".." in tokenize
                      or "//" in tokenize):
         raise BackendError("`tokenize_path` : un chemin sous l'adresse, « /tokenize »")
+    tool_choice = body.get("tool_choice") or ""
+    if tool_choice not in TOOL_CHOICES:
+        raise BackendError("`tool_choice` : " + ", ".join(repr(t) for t in TOOL_CHOICES))
+    quotas = body.get("quotas", False)
+    if not isinstance(quotas, bool):
+        raise BackendError("`quotas` : true ou false")
     # Absent : actif à la création, inchangé à la modification.
     enabled = body.get("enabled")
     if enabled is not None and not isinstance(enabled, bool):
         raise BackendError("`enabled` : true ou false")
     return {"name": name, "api": api, "url": url, "api_key": key,
             "shared": 1 if body.get("shared") else 0, "disabled": None if enabled is None else int(not enabled),
-            "images": None if images is None else int(images), "tokenize_path": tokenize}
+            "images": None if images is None else int(images), "tokenize_path": tokenize,
+            "tool_choice": tool_choice, "quotas": int(quotas)}
+
+
+def _quotas(f: dict, admin: bool, had: bool = False) -> None:
+    """Le limiteur ne se pose que par un admin (il règle l'attente de tous
+    les comptes sur ce backend) ; un backend qui l'a déjà le garde, tant
+    que son adresse reste de la même origine."""
+    if f["quotas"] and not admin and not had:
+        raise BackendError("les quotas se posent par un admin", 403)
 
 
 def _clash(c, f: dict, owner: str, but: str = "") -> None:
@@ -141,42 +163,54 @@ def list_all() -> list[dict]:
     return [_meta(r) for r in rows]
 
 
-def create(owner: str, body, reserved=frozenset()) -> dict:
+def create(owner: str, body, reserved=frozenset(), admin: bool = False) -> dict:
     f = _fields(body, reserved)
+    _quotas(f, admin)
     bid = secrets.token_urlsafe(12)
 
     def q(c):
         owned.room(c, "user_backends", owner, MAX_PER_USER, "backends")
         _clash(c, f, owner)
         c.execute("INSERT INTO user_backends (owner, id, name, api, url, api_key, shared, "
-                  "created, images, tokenize_path, disabled) "
-                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "created, images, tokenize_path, disabled, quotas, tool_choice) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   (owner, bid, f["name"], f["api"], f["url"], f["api_key"], f["shared"],
-                   time.time(), f["images"], f["tokenize_path"], f["disabled"] or 0))
+                   time.time(), f["images"], f["tokenize_path"], f["disabled"] or 0,
+                   f["quotas"], f["tool_choice"]))
         return _one(c, owner, bid)
     return _meta(_run(q))
 
 
-def update(owner: str, bid: str, body, reserved=frozenset()) -> dict:
-    """La clé absente reste (la page ne la connaît pas) — sauf si l'adresse
-    change d'origine : elle n'irait pas, sans être ressaisie, vers un autre
-    hôte. `enabled` absent : l'état reste."""
+def update(owner: str | None, bid: str, body, reserved=frozenset(),
+           admin: bool = False) -> dict:
+    """Le backend `bid` du compte `owner`, ou de n'importe qui (None : admin,
+    qui y pose les quotas par exemple). La clé absente reste (la page ne la
+    connaît pas) — sauf si l'adresse change d'origine : elle n'irait pas,
+    sans être ressaisie, vers un autre hôte. `enabled` absent : l'état
+    reste."""
     owned.check_id(bid, "backend")
     f = _fields(body, reserved)
 
     def q(c):
-        old = c.execute("SELECT url, api_key, disabled FROM user_backends "
+        nonlocal owner
+        if owner is None:
+            row = c.execute("SELECT owner FROM user_backends WHERE id = ?", (bid,)).fetchone()
+            owner = row[0] if row else ""
+        old = c.execute("SELECT url, api_key, disabled, quotas FROM user_backends "
                         "WHERE owner = ? AND id = ?", (owner, bid)).fetchone()
         if old is None:
             raise BackendError("backend inconnu", 404)
+        # L'accord de l'admin vaut pour une adresse : une autre origine ne
+        # le garde pas (comme la clé).
+        _quotas(f, admin, bool(old[3]) and origin(old[0]) == origin(f["url"]))
         key = f["api_key"] or ("" if origin(old[0]) != origin(f["url"]) else old[1])
         _clash(c, f, owner, bid)
         c.execute("UPDATE user_backends SET name = ?, api = ?, url = ?, api_key = ?, "
-                  "shared = ?, images = ?, tokenize_path = ?, disabled = ? "
-                  "WHERE owner = ? AND id = ?",
+                  "shared = ?, images = ?, tokenize_path = ?, disabled = ?, quotas = ?, "
+                  "tool_choice = ? WHERE owner = ? AND id = ?",
                   (f["name"], f["api"], f["url"], key, f["shared"], f["images"],
                    f["tokenize_path"], old[2] if f["disabled"] is None else f["disabled"],
-                   owner, bid))
+                   f["quotas"], f["tool_choice"], owner, bid))
         return _one(c, owner, bid)
     return _meta(_run(q))
 
@@ -195,8 +229,10 @@ def rows() -> list[dict]:
     """Les backends actifs des comptes, clés COMPRISES : pour le routage
     (upstream/backends.py) seulement. BLOQUANT."""
     got = _run(lambda c: c.execute(
-        "SELECT owner, id, name, api, url, api_key, shared, images, tokenize_path "
-        "FROM user_backends WHERE disabled = 0 ORDER BY created, id").fetchall())
+        "SELECT owner, id, name, api, url, api_key, shared, images, tokenize_path, "
+        "quotas, tool_choice FROM user_backends WHERE disabled = 0 "
+        "ORDER BY created, id").fetchall())
     return [{"owner": o, "id": i, "name": n, "api": a, "url": u, "api_key": k,
              "shared": bool(s), "images": None if im is None else bool(im),
-             "tokenize_path": t} for o, i, n, a, u, k, s, im, t in got]
+             "tokenize_path": t, "quotas": bool(q), "tool_choice": tc}
+            for o, i, n, a, u, k, s, im, t, q, tc in got]

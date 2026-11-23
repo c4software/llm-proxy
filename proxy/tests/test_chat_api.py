@@ -97,10 +97,10 @@ def deltas(docs: list[dict]) -> list[dict]:
     return [c["delta"] for d in docs for c in d["choices"]]
 
 
-def test_request_without_declaration_is_relayed_byte_for_byte(chat, monkeypatch):
-    """Mêmes octets vers le backend, mêmes octets vers le client, clé
-    active ou non — et la clé inactive laisse passer jusqu'à la
-    déclaration elle-même."""
+def test_request_without_declaration_is_relayed_unchanged(chat, monkeypatch):
+    """Le même corps vers le backend (seul le préfixe du modèle est
+    retiré), les mêmes octets vers le client, clé active ou non — et la clé
+    inactive laisse passer jusqu'à la déclaration elle-même."""
     raws = []
     inner = relaying.send_upstream
 
@@ -109,17 +109,18 @@ def test_request_without_declaration_is_relayed_byte_for_byte(chat, monkeypatch)
         return await inner(call, request, path, body)
 
     monkeypatch.setattr(relaying, "send_upstream", send_upstream)
-    # Sans modèle (backend de repli) ni rien à injecter : aucun octet
-    # n'est réécrit, pas même l'espacement.
-    body = (b'{"messages":  [{"role": "user", "content": "h\\u00e9"}],\n'
-            b' "stream": true, "user": "web_search"}')
+    body = {"model": "essai/qwen", "messages": [{"role": "user", "content": "hé"}],
+            "stream": True, "user": "web_search"}
     answer = stream(chunk({"role": "assistant", "content": "Bonjour"}),
                     chunk(finish="stop"), usage(7, 2))
     for enabled in (True, False):
         everywhere(monkeypatch, C, "ENABLED", enabled)
         chat.replies = [FakeUpstream(answer)]
-        r = chat.client.post("/v1/chat/completions", content=body)
-        assert raws.pop() == body and r.content == answer
+        r = chat.client.post("/v1/chat/completions", json=body)
+        sent = raws.pop()
+        # Les accents partent en UTF-8, pas en «\u00e9».
+        assert json.loads(sent) == {**body, "model": "qwen"} and "hé".encode() in sent
+        assert r.content == answer
     # Clé inactive : la déclaration part telle quelle, c'est l'affaire du backend.
     chat.replies = [FakeUpstream(answer)]
     post(chat)

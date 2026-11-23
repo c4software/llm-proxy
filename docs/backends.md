@@ -16,6 +16,8 @@ Un backend de compte a ces champs :
 | Clé | Envoyée au backend en `Authorization: Bearer` (`x-api-key` en `anthropic`). Facultative. Jamais rendue à la page |
 | Images | Comme [`images`](configuration.md#backendsnom) d'une table `[backends.<nom>]` : *oui*, *non*, ou *selon le protocole* (oui en `anthropic`, non en `openai`) |
 | Tokenisation | Comme [`tokenize_path`](configuration.md#backendsnom) : un chemin sous l'adresse (`/tokenize` pour llama.cpp) qui rend `count_tokens` exact. Vide : estimation |
+| tool_choice | Comme [`force_tool_choice`](configuration.md#backendsnom) : `auto`, `required` ou `none`, injecté quand une requête a des outils sans `tool_choice`. Albert : `auto`. Vide : aucune injection |
+| Quotas | Comme [`quotas`](configuration.md#backendsnom) : le limiteur Albert, avec les limites du compte lues sur `/v1/me/info` et les réglages de [`[quotas]`](configuration.md#quotas). Posé par un admin seulement, sur ses backends ou, depuis *Backends de tous les comptes*, sur ceux d'un autre compte ; un compte garde ou ôte celui de son backend |
 
 Ses modèles s'emploient comme les autres : dans le chat de la page, et
 avec toutes les clés du compte sur `/v1/*`. Ils apparaissent dans
@@ -56,8 +58,7 @@ Un backend partagé se comporte comme un backend de `[backends.<nom>]` :
 - il figure dans `/ui/health`.
 
 Un backend *moi seul* ne sert que son compte : ni partage équitable, ni
-outil hébergé. Aucun backend de compte n'a de quotas ni d'injection de
-`tool_choice` : ces réglages restent propres à `[backends.<nom>]`.
+outil hébergé.
 
 Les [modèles permis d'un compte](tableau-de-bord.md#comptes-oidc),
 posés par l'admin, ne s'appliquent pas à ses propres backends ; ils
@@ -71,8 +72,8 @@ Par la session de la page, en JSON :
 | Route | Effet |
 |---|---|
 | `GET /ui/backends` | `{backends, shared, reserved}` : les siens, ceux que d'autres partagent et qui sont actifs (avec `by`, leur créateur), les noms de `[backends.<nom>]`. Admin, `?all=1` : `all`, ceux de tous les comptes |
-| `POST /ui/backends` | Crée `{name, api, url, api_key?, shared, images?, tokenize_path?, enabled?}` (`enabled` vrai par défaut) |
-| `PUT /ui/backends/<id>` | Modifie (même corps ; `enabled` absent : état inchangé) |
+| `POST /ui/backends` | Crée `{name, api, url, api_key?, shared, images?, tokenize_path?, tool_choice?, quotas?, enabled?}` (`enabled` vrai par défaut ; `quotas` : admin, sinon `403`) |
+| `PUT /ui/backends/<id>` | Modifie (même corps ; `enabled` absent : état inchangé). Admin, `?all=1` : celui de n'importe quel compte (même règle de clé). Un compte ordinaire garde les quotas posés par l'admin tant que l'adresse ne change pas d'origine |
 | `DELETE /ui/backends/<id>` | Supprime → `{deleted}`. Admin, `?all=1` : celui de n'importe quel compte |
 
 Un compte ne voit ni ne modifie le backend d'un autre (`404`) ; sa

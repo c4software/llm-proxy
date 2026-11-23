@@ -23,8 +23,8 @@ from .core.settings import EXEMPT_SUFFIXES, is_exempt, log
 from .storage import files, stats, webhooks
 from .surfaces import anthropic_api, chat_api, responses_api
 from .upstream import albert
-from .upstream.backends import (BACKENDS, FALLBACK_BACKEND, close_clients, open_clients,
-                                refresh, served)
+from .upstream.backends import (BACKENDS, close_clients, open_clients, refresh, served,
+                                watch_quotas)
 
 
 def seed_fair_share() -> int:
@@ -138,9 +138,8 @@ async def lifespan(app: FastAPI):
 
     for name, b in BACKENDS.items():
         log.info(
-            "backend %s%s → %s | %s | clé : %s",
-            name, " (fallback sans modèle)" if b is FALLBACK_BACKEND else "",
-            b.url,
+            "backend %s → %s | %s | clé : %s",
+            name, b.url,
             "quotas (limiteur)" if b.quotas
             else "sans quota, contacté à la demande",
             "injectée" if b.api_key else "aucune (Authorization du client "
@@ -284,7 +283,6 @@ async def lifespan(app: FastAPI):
     if albert.ROUTER_MODELS:
         log.info("mapping manuel ROUTER_MODELS actif : %s", albert.ROUTER_MODELS)
 
-    refresh_tasks = []
     for b in BACKENDS.values():
         if not b.quotas:
             continue
@@ -292,20 +290,8 @@ async def lifespan(app: FastAPI):
             log.warning(
                 "backend %s sans api_key : 401 upstream probables", b.name,
             )
-        got_account = await b.quota_state.refresh(b)
-        if not got_account:
-            log.info(
-                "[%s] limites du compte indisponibles — familles "
-                "statiques : %s",
-                b.name,
-                ", ".join(
-                    f"{fam}({cfg['rpm']}rpm/{cfg['tpm']}tpm)"
-                    for fam, cfg in albert.FAMILY_LIMITS.items()
-                ),
-            )
-        if albert.LIMITS_REFRESH > 0:
-            refresh_tasks.append(asyncio.create_task(
-                b.quota_state.refresh_loop(b, loaded=bool(got_account))))
+        # Arrêtée par close_clients.
+        watch_quotas(b)
     log.info(
         "générique %d RPM / %d TPM | marge %.0f%% | attente max %ds | "
         "cartouche %.0fs | exemptés : %s",
@@ -316,7 +302,7 @@ async def lifespan(app: FastAPI):
 
     # La purge des caches en mémoire (pages, transcriptions, dépôts) :
     # une entrée expirée en sort même si personne ne la redemande.
-    refresh_tasks.append(asyncio.create_task(tools.webcache.sweep()))
+    sweep = asyncio.create_task(tools.webcache.sweep())
 
     hup = watch_sighup()
     # La lecture du source des modules (core/reload.py), une fois, hors de
@@ -326,8 +312,7 @@ async def lifespan(app: FastAPI):
     yield
     if hup:
         asyncio.get_running_loop().remove_signal_handler(signal.SIGHUP)
-    for task in refresh_tasks:
-        task.cancel()
+    sweep.cancel()
     await tools.mcp.stop()
     await close_clients()
     stats.close()

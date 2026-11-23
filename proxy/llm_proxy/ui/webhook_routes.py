@@ -169,7 +169,7 @@ async def receive_hook(request: Request, token: str):
     if auth_required():
         fairshare.CLIENT.set(owner)
         accounts.MODELS.set(await asyncio.to_thread(webhook_turn.models_of, owner, hook))
-    if asked and route_backend({"model": asked})[0] is None:
+    if asked and route_backend({"model": asked}) is None:
         return _slack(400, "model_not_found")
     if not await asyncio.to_thread(webhook_turn.still_allowed, owner, hook):
         return _slack(403, "action_prohibited")

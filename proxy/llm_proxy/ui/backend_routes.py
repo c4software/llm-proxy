@@ -11,9 +11,12 @@ autre, sauf les partagés, en lecture ; la clé n'est jamais rendue.
                              ?all=1 (admin) : `all`, ceux de tous les comptes
   POST   /ui/backends        crée {name, api, url, api_key?, shared, images?
                              (vide : selon le protocole), tokenize_path?,
-                             enabled? (vrai par défaut ; faux : gardé, pas routé)}
+                             enabled? (vrai par défaut ; faux : gardé, pas routé),
+                             tool_choice? ("", auto, required, none),
+                             quotas? (le limiteur Albert : posé par un admin)}
   PUT    /ui/backends/{id}   modifie (api_key absente ou vide : inchangée,
-                             sauf si l'adresse change d'origine)
+                             sauf si l'adresse change d'origine) ; ?all=1
+                             (admin) : celui de n'importe qui (ses quotas…)
   DELETE /ui/backends/{id}   le sien ; ?all=1 (admin) : celui de n'importe qui
 
 Admin : un compte admin, ou toute session sans comptes OIDC (comme les
@@ -86,13 +89,24 @@ async def ui_backends(request: Request):
     return await asyncio.to_thread(read)
 
 
-async def _write(request: Request, fn, *args):
+def _anyone(request: Request):
+    """?all=1 : (True, None) pour un admin (tous les comptes), (True, 403)
+    sinon ; (False, None) sans lui."""
+    if request.query_params.get("all") not in ("1", "true"):
+        return False, None
+    if not _admin(request):
+        return True, error_response("openai", 403, "forbidden", "réservé aux admins")
+    return True, None
+
+
+async def _write(request: Request, fn, *args, anyone: bool = False):
     if (bad := _closed()) is not None:
         return bad
     if (bad := json_only(request)) is not None:
         return bad
-    got, bad = await run(fn, ui_client(request), *args,
-                         parse_json(await request.body()), frozenset(backends.BACKENDS))
+    got, bad = await run(fn, None if anyone else ui_client(request), *args,
+                         parse_json(await request.body()), frozenset(backends.BACKENDS),
+                         _admin(request))
     if bad is not None:
         return bad
     await changed()
@@ -107,16 +121,19 @@ async def ui_backend_create(request: Request):
 
 @router.put("/ui/backends/{bid}")
 async def ui_backend_update(request: Request, bid: str):
-    return await _write(request, user_backends.update, bid)
+    anyone, bad = _anyone(request)
+    if bad is not None:
+        return bad
+    return await _write(request, user_backends.update, bid, anyone=anyone)
 
 
 @router.delete("/ui/backends/{bid}")
 async def ui_backend_delete(request: Request, bid: str):
     if (bad := _closed()) is not None:
         return bad
-    anyone = request.query_params.get("all") in ("1", "true")
-    if anyone and not _admin(request):
-        return error_response("openai", 403, "forbidden", "réservé aux admins")
+    anyone, bad = _anyone(request)
+    if bad is not None:
+        return bad
     n, bad = await run(user_backends.delete, None if anyone else ui_client(request), bid)
     if bad is not None:
         return bad

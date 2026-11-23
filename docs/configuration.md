@@ -68,7 +68,8 @@ le `.env` nécessite de recréer le conteneur.
 ## `[backends.<nom>]`
 
 Une table par backend. **Le nom de la table est le préfixe de routage.**
-Ces tables sont la seule source des URLs.
+Sans aucune table, le proxy n'a aucun backend du TOML : il démarre et sert
+les [backends des comptes](backends.md).
 
 ```toml
 [backends.albert]
@@ -91,12 +92,23 @@ url = "http://bigchuck:8009"
 | `meta_timeout` | `proxy.meta_timeout` | Secondes pour `/v1/models`, `/v1/me/info`, `tokenize_path` |
 | `connect_timeout` | `1` sans quota, `15` avec quotas ou `api = "anthropic"` | Délai limité à l'établissement de la connexion TCP. Un backend local arrêté échoue en 1 s ; un hôte joignable répond rapidement, même s'il est occupé |
 | `verify_ssl` | `true` | `false` pour un certificat auto-signé |
-| `force_tool_choice` | *(aucune injection)* | Injecte `tool_choice` quand `tools` est présent sans lui. `true` → `proxy.tool_choice` ; `"auto"`, `"required"`… → cette valeur. Exception : sans aucune table `[backends]`, Albert est utilisé par défaut avec `"auto"` |
+| `force_tool_choice` | *(aucune injection)* | Injecte `tool_choice` quand `tools` est présent sans lui. `true` → `proxy.tool_choice` ; `"auto"`, `"required"`… → cette valeur. Albert en a besoin (`"auto"`) : son schéma a `"none"` pour défaut |
 | `max_tokens` | `0` (aucun) | Plafond : le `max_tokens` / `max_completion_tokens` du client y est ramené. Jamais augmenté ni ajouté |
 | `images` | `false` (`true` avec `api = "anthropic"`) | Les modèles multimodaux du backend reçoivent les `image_url` d'un client Anthropic. Sinon, texte de remplacement |
 | `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact. llama.cpp : `"/tokenize"` |
 | `fair_share` | `true` | Le backend relève du [partage équitable](tableau-de-bord.md#partage-équitable). `false` : ses requêtes ne comptent dans la part de personne et n'attendent jamais |
 | `model_types` | `{}` | Type imposé à des modèles, par motif (`"*-vision-*" = "image-text-to-text"`). Sinon : le catalogue du backend ou, à défaut (llama-swap), le nom du modèle (`image`, `tts`, `asr`, `embed`…). Détermine les modèles proposés à un client de chat et ceux qui reçoivent les images |
+
+**Catalogue multi-protocoles.** Quand le catalogue d'un backend dit, par
+modèle, les API qui le servent (champ `api`), seuls restent les modèles
+que son protocole sait parler : `chat-completions`, `embeddings` et
+`images` pour `api = "openai"`, `messages` pour `api = "anthropic"`. Les
+types `chat`, `embedding` et `image` d'un tel catalogue sont ramenés à
+ceux d'Albert. Exemple, OpenCode Zen : deux backends avec la même clé,
+`https://opencode.ai/inference/openai` (`openai`) et
+`https://opencode.ai/inference/anthropic` (`anthropic`). Ses modèles GPT
+(API Responses) et Gemini ne sont pas servis ; ses modèles gratuits
+répondent `403` à tout client autre qu'OpenCode.
 
 ### Backend Anthropic
 
@@ -147,8 +159,8 @@ outils hébergés du proxy actifs).
 **Tout modèle doit être préfixé.** Un préfixe inconnu donne `400
 unknown_backend_prefix`, un modèle que le compte ne peut pas employer
 `403 model_not_allowed` (voir [modèles permis](tableau-de-bord.md#comptes-oidc)).
-Seules les requêtes sans champ `model` (endpoints de compte, corps non
-JSON) partent vers le backend à quotas.
+Une requête sans champ `model` (corps non JSON compris) n'a rien à
+router : `400 model_required`.
 
 ## `[proxy]`
 
@@ -505,7 +517,10 @@ Voir [Comptes OIDC](tableau-de-bord.md#comptes-oidc).
 
 ## `[quotas]`
 
-Pour les backends à `quotas = true`.
+Pour les backends à `quotas = true`, du TOML ou des
+[comptes](backends.md). Les limites du compte (`/v1/me/info`) sont lues en
+tâche de fond au démarrage ; en attendant, les familles statiques
+s'appliquent.
 
 | Clé | Défaut | Rôle |
 |---|---|---|

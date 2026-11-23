@@ -48,6 +48,19 @@ def _model_max_context(m: dict) -> int | None:
 CHAT_TYPES = ("text-generation", "image-text-to-text")
 IMAGE_TYPE = "text-to-image"
 
+# Les `type` d'autres catalogues (OpenCode Zen : chat, embedding, image),
+# ramenés à ceux d'Albert ; « chat » dépend des modalités d'entrée.
+_FOREIGN_TYPES = {"embedding": "text-embeddings-inference",
+                  "embeddings": "text-embeddings-inference",
+                  "image": IMAGE_TYPE}
+
+# Un catalogue MULTI-PROTOCOLES dit par modèle, dans `api` (un objet), les
+# API qui le servent (OpenCode Zen : chat-completions, responses, messages,
+# generate-content…). Seuls restent ceux que le protocole du backend sait
+# parler : un autre échouerait.
+_SERVED_APIS = {"openai": {"chat-completions", "embeddings", "images"},
+                "anthropic": {"messages"}}
+
 # Un catalogue sans `type` ni `architecture` (llama-swap) : le nom est le
 # seul indice, pour ne pas proposer un modèle d'image ou de voix à un
 # client de chat. Un mot entier du nom, jamais une sous-chaîne ; pour un
@@ -122,8 +135,15 @@ def _model_type(m: dict, b: Backend | None = None) -> str:
     for pattern, kind in (b.type_overrides.items() if b is not None else ()):
         if fnmatch.fnmatchcase(name, pattern):
             return kind
-    if isinstance(m.get("type"), str):
-        return m["type"]
+    kind = m.get("type")
+    if kind == "chat":
+        mods, arch = m.get("modalities"), m.get("architecture")
+        sees = [*((mods.get("input") if isinstance(mods, dict) else None) or []),
+                *((arch.get("input_modalities") if isinstance(arch, dict) else None) or [])]
+        return "image-text-to-text" if any(
+            str(x).startswith("image") for x in sees) else "text-generation"
+    if isinstance(kind, str):
+        return _FOREIGN_TYPES.get(kind, kind)
     arch = m.get("architecture")
     if isinstance(arch, dict):
         inp = arch.get("input_modalities") or []
@@ -210,33 +230,31 @@ async def _read_models(b: Backend, headers: dict) -> list | None:
     # llama.cpp) est écarté : à ne pas publier.
     entries = []
     types: dict[str, str] = {}
-    for m in data:
-        if isinstance(m, dict) and m.get("id"):
-            costs = m.get("costs")
-            kind = _model_type(m, b)
-            types[str(m["id"]).lower()] = kind
-            for a in m.get("aliases") or []:
-                if isinstance(a, str):
-                    types[a.lower()] = kind
-            entries.append({
-                "object": "model",
-                "id": f"{b.name}/{m['id']}",
-                "created": m.get("created") or 0,
-                "owned_by": m.get("owned_by") or b.name,
-                "type": kind,
-                "architecture": _architecture(m, kind, b),
-                "costs": costs if isinstance(costs, dict)
-                else {"prompt_tokens": 0.0, "completion_tokens": 0.0},
-                "max_context_length": _model_max_context(m),
-                "aliases": [
-                    f"{b.name}/{a}" for a in (m.get("aliases") or [])
-                    if isinstance(a, str)
-                ],
-            })
-    b.models = {
-        str(m.get("id")).lower() for m in data
-        if isinstance(m, dict) and m.get("id")
-    }
+    served = [m for m in data if isinstance(m, dict) and m.get("id") and (
+        not isinstance(m.get("api"), dict) or _SERVED_APIS[b.api].intersection(m["api"]))]
+    for m in served:
+        costs = m.get("costs")
+        kind = _model_type(m, b)
+        types[str(m["id"]).lower()] = kind
+        for a in m.get("aliases") or []:
+            if isinstance(a, str):
+                types[a.lower()] = kind
+        entries.append({
+            "object": "model",
+            "id": f"{b.name}/{m['id']}",
+            "created": m.get("created") or 0,
+            "owned_by": m.get("owned_by") or b.name,
+            "type": kind,
+            "architecture": _architecture(m, kind, b),
+            "costs": costs if isinstance(costs, dict)
+            else {"prompt_tokens": 0.0, "completion_tokens": 0.0},
+            "max_context_length": _model_max_context(m),
+            "aliases": [
+                f"{b.name}/{a}" for a in (m.get("aliases") or [])
+                if isinstance(a, str)
+            ],
+        })
+    b.models = {str(m["id"]).lower() for m in served}
     b.model_types = types
     return entries
 
@@ -258,10 +276,11 @@ async def merged_models(request: Request) -> list[dict] | None:
     """Catalogue unifié : chaque backend que voit le client est interrogé,
     ses modèles exposés préfixés par son nom («albert/…», «bigchuck/…») —
     les noms renvoyés sont directement routables ; ceux que son compte ne
-    peut pas employer n'y sont pas. None = aucun backend joignable."""
+    peut pas employer n'y sont pas. None = aucun backend joignable ; aucun
+    backend du tout : une liste vide."""
     seen = list(visible().values())
     results = await asyncio.gather(*(fetch_models(b, request) for b in seen))
-    if all(lst is None for lst in results):
+    if results and all(lst is None for lst in results):
         return None
     return [e for b, lst in zip(seen, results) if lst for e in lst
             if permitted(b, e["id"])]

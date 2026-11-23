@@ -33,12 +33,10 @@ async def audio_voices(request: Request):
     relais générique ne transmet que des POST."""
     dialect = dialect_of(request)
     model = request.query_params.get("model", "")
-    backend, prefixed = route_backend({"model": model} if model else None)
+    backend = route_backend({"model": model})
     if backend is None:
         return no_route(dialect, model)
-    params = dict(request.query_params)
-    if prefixed:
-        params["model"] = model[len(backend.name) + 1:]
+    params = {**request.query_params, "model": model[len(backend.name) + 1:]}
     try:
         upstream = await backend.client.get(
             "/v1/audio/voices", params=params,

@@ -515,7 +515,8 @@ def _created(value) -> int:
 def catalog_entry(m: dict) -> dict:
     """Un modèle de /v1/models d'Anthropic, à la forme que le catalogue du
     proxy normalise : type et `architecture` tirés des capabilities,
-    contexte de max_input_tokens."""
+    contexte de max_input_tokens ; `api` (catalogue multi-protocoles,
+    OpenCode Zen) gardé, le catalogue y lit si Messages le sert."""
     caps = m.get("capabilities") if isinstance(m.get("capabilities"), dict) else {}
     images = bool((caps.get("image_input") or {}).get("supported", True))
     return {"id": m.get("id"), "created": _created(m.get("created_at")),
@@ -523,7 +524,8 @@ def catalog_entry(m: dict) -> dict:
             "type": "image-text-to-text" if images else "text-generation",
             "architecture": {"input_modalities": ["text", "image"] if images else ["text"],
                              "output_modalities": ["text"]},
-            "max_context_length": m.get("max_input_tokens")}
+            "max_context_length": m.get("max_input_tokens"),
+            **({"api": m["api"]} if isinstance(m.get("api"), dict) else {})}
 
 
 async def read_models(b, hdrs: dict) -> list:

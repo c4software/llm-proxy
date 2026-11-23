@@ -743,7 +743,9 @@ max_per_user = 10
 
 # ── Backends ────────────────────────────────────────────────────────────
 # Le NOM de la table est le PRÉFIXE de routage («albert/…» → [backends.albert],
-# préfixe retiré avant transfert). Modèle sans préfixe connu → 400.
+# préfixe retiré avant transfert). Modèle sans préfixe connu → 400, requête
+# sans model → 400. Aucune table : aucun backend du TOML (ceux des comptes,
+# Configuration → Backends, suffisent).
 #
 # Champs (un par ligne : la page Configuration → Proxy les reprend) :
 #   url — l'adresse du backend, sans /v1 (requis) ;

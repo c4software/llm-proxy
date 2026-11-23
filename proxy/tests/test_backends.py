@@ -13,6 +13,7 @@ import pytest
 from fakes import admin_and_user, bearer, chat_doc, everywhere
 
 from llm_proxy.access import oidc
+from llm_proxy.core import config
 from llm_proxy.storage import backends as user_backends, conversations
 from llm_proxy.ui import dashboard
 from llm_proxy.upstream import backends, relaying
@@ -125,6 +126,8 @@ def test_noms_et_bornes_refuses(env, monkeypatch):
         "tokenisation sans chemin": (alice, {**MINE, "name": "x", "tokenize_path": "tokenize"}),
         "tokenisation vers un hôte": (alice, {**MINE, "name": "x", "tokenize_path": "//h/x"}),
         "état ni vrai ni faux": (alice, {**MINE, "name": "x", "enabled": "non"}),
+        "tool_choice inconnu": (alice, {**MINE, "name": "x", "tool_choice": "toujours"}),
+        "quotas ni vrai ni faux": (alice, {**MINE, "name": "x", "quotas": 1}),
     }
     for case, (who, body) in cases.items():
         assert who.post("/ui/backends", json=body).status_code == 400, case
@@ -204,7 +207,7 @@ def test_un_backend_desactive_reste_mais_ne_sert_plus(env):
     assert r.status_code == 200 and r.json()["backend"]["enabled"] is False, r.text
     for who in (alice, bob):
         assert ask(who, "perso/m").status_code == 400
-    assert backends.route_backend({"model": "perso/m"}, limited=False)[0] is None
+    assert backends.route_backend({"model": "perso/m"}, limited=False) is None
     assert bob.get("/ui/backends").json()["shared"] == []
     for who in (alice, bob):
         assert not any(m["id"].startswith("perso/") for m in who.get("/ui/models").json()["data"])
@@ -233,9 +236,9 @@ def test_un_backend_partage_sert_les_outils_et_le_partage_equitable(env):
     alice.post("/ui/backends", json={**MINE, "name": "claude", "api": "anthropic",
                                      "shared": True})
     alice.post("/ui/backends", json={**MINE, "images": True})
-    assert backends.route_backend({"model": "commun/m"}, limited=False)[0].name == "commun"
+    assert backends.route_backend({"model": "commun/m"}, limited=False).name == "commun"
     for model in ("perso/m", "debob/m"):
-        assert backends.route_backend({"model": model}, limited=False)[0] is None, model
+        assert backends.route_backend({"model": model}, limited=False) is None, model
 
     health = alice.get("/ui/health").json()["backends"]
     assert "perso" not in health
@@ -258,6 +261,102 @@ def test_un_createur_bloque_perd_ses_backends_partages(env):
     assert ask(alice, "perso/m").status_code == 400
     alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
     assert ask(alice, "perso/m").status_code == 200
+
+
+def test_tool_choice_injecte_sur_un_backend_de_compte(env):
+    alice, _, _ = admin_and_user(env)
+    alice.post("/ui/backends", json={**MINE, "tool_choice": "auto"})
+    tool = {"type": "function", "function": {"name": "f", "parameters": {"type": "object"}}}
+    key = alice.post("/ui/keys", json={"label": "cli"}).json()["key"]
+    for sent, expected in (({}, "auto"), ({"tool_choice": "none"}, "none")):
+        r = env.client.post("/v1/chat/completions", headers=bearer(key), json={
+            "model": "perso/m", "tools": [tool], **sent,
+            "messages": [{"role": "user", "content": "x"}]})
+        assert r.status_code == 200, r.text
+        assert env.got[-1][2]["tool_choice"] == expected, sent
+
+
+def test_seul_un_admin_pose_les_quotas_d_un_backend(env):
+    """Le limiteur règle l'attente de tous sur ce backend : un compte
+    ordinaire ne le pose pas, mais garde ou ôte celui qu'il a ; l'admin le
+    pose aussi sur le backend d'un autre compte (?all=1), sa clé gardée."""
+    alice, bob, bob_id = admin_and_user(env)
+    alice_id = alice.get("/ui/session").json()["account"]["id"]
+    assert bob.post("/ui/backends", json={**MINE, "quotas": True}).status_code == 403
+    body = {k: v for k, v in MINE.items() if k != "api_key"} | {"shared": True}
+    bid = bob.post("/ui/backends", json={**MINE, "shared": True}).json()["backend"]["id"]
+    assert bob.put(f"/ui/backends/{bid}?all=1", json={**body, "quotas": True}).status_code == 403
+    r = alice.put(f"/ui/backends/{bid}?all=1", json={**body, "quotas": True})
+    assert r.status_code == 200 and r.json()["backend"]["quotas"] is True, r.text
+    assert alice.get("/ui/health").json()["backends"]["perso"]["quotas"] is True
+    ask(alice, "perso/m")
+    assert env.got[-1][1]["authorization"] == "Bearer sk-perso"
+
+    # L'accord vaut pour une adresse : vers une autre origine, Bob ne garde
+    # pas les quotas.
+    away = {**body, "url": "https://ailleurs.exemple.fr", "quotas": True}
+    assert bob.put(f"/ui/backends/{bid}", json=away).status_code == 403
+    # Bob garde les quotas, les ôte, ne les repose plus ; de même pour
+    # Alice redevenue simple compte.
+    for quotas, status in ((True, 200), (False, 200), (True, 403)):
+        r = bob.put(f"/ui/backends/{bid}", json={**body, "quotas": quotas})
+        assert r.status_code == status, (quotas, r.text)
+    assert alice.patch(f"/ui/users/{bob_id}", json={"role": "admin"}).status_code == 200
+    assert bob.patch(f"/ui/users/{alice_id}", json={"role": "user"}).status_code == 200
+    assert alice.put(f"/ui/backends/{bid}?all=1", json={**body, "quotas": True}).status_code == 403
+
+
+def test_modifier_un_reglage_garde_les_fenetres_du_limiteur(env):
+    """Changer le tool_choice ou le nom d'un backend à quotas ne remet pas
+    ses compteurs à zéro ; changer son adresse, si."""
+    alice, _, _ = admin_and_user(env)
+    body = {k: v for k, v in MINE.items() if k != "api_key"} | {"shared": True, "quotas": True}
+    bid = alice.post("/ui/backends", json={**MINE, "shared": True, "quotas": True}
+                     ).json()["backend"]["id"]
+    limits = lambda name: alice.get("/ui/health").json()["backends"][name]["rate_limits"]
+    assert ask(alice, "perso/m").status_code == 200
+    used = limits("perso")
+    assert used, used
+    alice.put(f"/ui/backends/{bid}", json={**body, "tool_choice": "auto", "name": "autre"})
+    assert limits("autre") == used
+    alice.put(f"/ui/backends/{bid}", json={**body, "name": "autre",
+                                          "url": "https://ailleurs.exemple.fr"})
+    assert limits("autre") == {}
+
+
+def test_sans_table_backends_aucun_backend_du_toml(monkeypatch):
+    """Pas d'Albert créé d'office : un TOML sans [backends] n'en a aucun."""
+    monkeypatch.setattr(config, "CONFIG", {})
+    assert backends.load_backends() == {}
+
+
+def test_une_requete_sans_modele_est_refusee(env):
+    """Aucun backend de repli : sans `model`, rien ne part, pour un compte
+    libre comme pour un compte borné."""
+    alice, bob, bob_id = admin_and_user(env)
+    alice.patch(f"/ui/users/{bob_id}", json={"models": ["essai/*"]})
+    for who in (alice, bob):
+        key = who.post("/ui/keys", json={"label": "cli"}).json()["key"]
+        for method, path, body in (
+                ("POST", "/v1/embeddings", {"input": "x"}),
+                ("POST", "/v1/chat/completions", {"messages": [{"role": "user", "content": "x"}]}),
+                ("GET", "/v1/audio/voices", None)):
+            r = env.client.request(method, path, headers=bearer(key), json=body)
+            assert r.status_code == 400 and r.json()["error"]["type"] == "model_required", \
+                (path, r.text)
+        # Un corps qui n'est pas un objet JSON non plus.
+        for content in (b"pas du json", b"[]", b'"x"'):
+            r = env.client.post("/v1/chat/completions", headers=bearer(key), content=content)
+            assert r.status_code == 400, (content, r.text)
+    assert env.got == []
+
+
+def test_sans_aucun_backend_le_catalogue_est_vide(env, monkeypatch):
+    alice, _, _ = admin_and_user(env)
+    monkeypatch.setattr(backends, "BACKENDS", {})
+    key = alice.post("/ui/keys", json={"label": "cli"}).json()["key"]
+    for r in (env.client.get("/v1/models", headers=bearer(key)), alice.get("/ui/models")):
+        assert r.status_code == 200 and r.json()["data"] == [], r.text
 
 
 def test_un_nom_du_toml_l_emporte(env, monkeypatch):
@@ -319,9 +418,6 @@ def test_l_admin_borne_les_modeles_d_un_compte(env):
             assert r.status_code == status, (surface, model, r.text)
     r = surfaces["chat"]("essai/autre")
     assert r.json()["error"]["type"] == "model_not_allowed"
-    # Sans modèle, le backend de repli servirait un modèle non permis.
-    r = env.client.post("/v1/embeddings", headers=bearer(key), json={"input": "x"})
-    assert r.status_code == 403, r.text
 
     # Alice n'est pas bornée ; aucun motif = aucun modèle.
     assert ask(alice, "essai/autre").status_code == 200

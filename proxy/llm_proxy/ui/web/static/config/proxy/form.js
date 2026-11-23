@@ -190,7 +190,7 @@ export function buildProxy(px) {
     if (!b.fairShare) L.push("fair_share = false");
     L.push("");
   }
-  if (!names.size) warn.push("Aucun backend : le proxy n'aurait rien à servir.");
+  if (!names.size) warn.push("Aucun backend dans le TOML : seuls ceux des comptes (Configuration → Backends) serviront.");
   if (px.always && !px.hostedTools) warn.push("[chat].always est sans effet sans hosted_tools.");
   return {
     warn,

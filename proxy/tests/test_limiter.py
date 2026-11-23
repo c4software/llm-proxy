@@ -6,6 +6,7 @@ travers le proxy, une coupure upstream en plein flux et le partage
 import asyncio
 import json
 import time
+import types
 
 import httpx2
 import pytest
@@ -82,6 +83,28 @@ class Broken(FakeUpstream):
     async def aiter_raw(self):
         yield self.body[:40]
         raise httpx2.ReadError("boom")
+
+
+def test_unreadable_account_limits_keep_the_fallbacks():
+    """A 200 that is not the expected JSON leaves the static families in
+    place instead of killing the background refresh."""
+    def handler(request):
+        if request.url.path == "/v1/me/info":
+            return httpx2.Response(200, text="<html>maintenance</html>")
+        return httpx2.Response(200, json={"data": []})
+
+    async def go():
+        client = httpx2.AsyncClient(base_url="http://albert.invalid",
+                                    transport=httpx2.MockTransport(handler))
+        backend = types.SimpleNamespace(client=client, api_key="k", meta_timeout=1,
+                                        auth_headers=lambda: {})
+        state = albert.QuotaState("test")
+        try:
+            return await state.refresh(backend)
+        finally:
+            state.close()
+            await client.aclose()
+    assert asyncio.run(go()) is False
 
 
 def test_a_stream_cut_midway_is_told_and_counted_502(proxy, monkeypatch):
