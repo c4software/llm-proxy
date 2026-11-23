@@ -27,6 +27,16 @@ def backend(replies):
     return b
 
 
+def serving(data, name="cat", **cfg):
+    """Un backend dont /v1/models rend les entrées `data` telles quelles."""
+    b = backends.Backend(name, {"url": f"http://{name}.test", "api_key": "k", **cfg})
+
+    async def handler(request):
+        return httpx.Response(200, json={"object": "list", "data": data})
+    b.client = httpx.AsyncClient(base_url=b.url, transport=httpx.MockTransport(handler))
+    return b
+
+
 def test_shared_and_kept():
     b = backend([["m1"], ["m2"]])
 
@@ -63,8 +73,6 @@ def test_architecture_a_la_forme_d_openrouter():
     llama.cpp) : celle du backend telle quelle, sinon déduite du type —
     le cas d'Albert, qui n'a que `type` ; un motif de model_types la
     fait déduire aussi."""
-    b = backends.Backend("cat", {"url": "http://cat.test", "api_key": "k",
-                                 "model_types": {"forcé": "text-to-image"}})
     data = [
         {"id": "vl", "type": "image-text-to-text"},                       # Albert
         {"id": "emb", "type": "text-embeddings-inference"},
@@ -76,10 +84,7 @@ def test_architecture_a_la_forme_d_openrouter():
         {"id": "forcé", "architecture": {"input_modalities": ["text"],
                                          "output_modalities": ["text"]}},
     ]
-
-    async def handler(request):
-        return httpx.Response(200, json={"data": data})
-    b.client = httpx.AsyncClient(base_url=b.url, transport=httpx.MockTransport(handler))
+    b = serving(data, model_types={"forcé": "text-to-image"})
     got = {e["id"]: e["architecture"] for e in asyncio.run(catalog.fetch_models(b))}
     assert got["cat/vl"] == {"modality": "text+image->text",
                              "input_modalities": ["text", "image"], "output_modalities": ["text"]}
@@ -117,11 +122,52 @@ def test_un_catalogue_multi_protocoles_ne_garde_que_ce_que_le_backend_sert():
             ("openai", {"glm": "text-generation", "kimi": "image-text-to-text",
                         "emb": "text-embeddings-inference", "img": "text-to-image"}),
             ("anthropic", {"claude": "image-text-to-text"})):
-        b = backends.Backend("zen", {"url": f"http://zen-{api}.test", "api_key": "k", "api": api})
-
-        async def handler(request):
-            return httpx.Response(200, json={"data": zen(api)})
-        b.client = httpx.AsyncClient(base_url=b.url, transport=httpx.MockTransport(handler))
+        b = serving(zen(api), "zen", url=f"http://zen-{api}.test", api=api)
         got = asyncio.run(catalog.fetch_models(b))
         assert {e["id"].removeprefix("zen/"): e["type"] for e in got} == expected, api
         assert b.models == set(expected), api
+
+
+def test_un_catalogue_mistral_est_type_par_ses_capacites():
+    """Mistral met `type: "base"` (ou `fine-tuned`) sur chaque carte : c'est
+    son origine, pas sa tâche, que disent les `capabilities`. Ses modèles de
+    conversation restent proposés à un client de chat ; ceux d'OCR, de
+    voix, de modération, d'embeddings ou de temps réel ne le sont pas."""
+    def card(mid, kind="base", **caps):
+        return {"id": mid, "object": "model", "type": kind, "owned_by": "mistralai",
+                "capabilities": {"completion_chat": False, "vision": False, **caps}}
+    cards = [
+        card("mistral-small-latest", completion_chat=True, vision=True, function_calling=True),
+        card("codestral-latest", completion_chat=True, completion_fim=True),
+        card("ft:mistral-small:abc", kind="fine-tuned", completion_chat=True),
+        card("mistral-ocr-latest", ocr=True, vision=True),
+        card("voxtral-mini-latest", audio_transcription=True),
+        card("voxtral-mini-tts-latest", audio_speech=True),
+        card("mistral-moderation-latest", classification=True, moderation=True),
+        card("mistral-embed"),
+        card("voxtral-mini-realtime-latest", audio_transcription_realtime=True),
+        card("forcé"),
+        # Un autre catalogue, des `capabilities` à lui : pas lues comme Mistral.
+        {"id": "autre", "capabilities": {"vision": {"supported": True}}},
+    ]
+    b = serving(cards, "mistral", model_types={"forcé": "text-generation"})
+    entries = asyncio.run(catalog.fetch_models(b))
+    got = {e["id"].removeprefix("mistral/"): e["type"] for e in entries}
+    assert got == {
+        "mistral-small-latest": "image-text-to-text",
+        "codestral-latest": "text-generation",
+        "ft:mistral-small:abc": "text-generation",
+        "mistral-ocr-latest": "image-to-text",
+        "voxtral-mini-latest": "automatic-speech-recognition",
+        "voxtral-mini-tts-latest": "text-to-speech",
+        "mistral-moderation-latest": "text-classification",
+        "mistral-embed": "text-embeddings-inference",
+        "voxtral-mini-realtime-latest": "other",
+        "forcé": "text-generation",
+        "autre": "text-generation",
+    }
+    chat = {m for m, kind in got.items() if kind in catalog.CHAT_TYPES}
+    assert chat == {"mistral-small-latest", "codestral-latest", "ft:mistral-small:abc",
+                    "forcé", "autre"}
+    ocr = next(e for e in entries if e["id"] == "mistral/mistral-ocr-latest")
+    assert ocr["architecture"]["modality"] == "image->text"

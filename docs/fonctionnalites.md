@@ -18,7 +18,7 @@ réglage et outil.
   (chemins `.gguf`, arguments). Chaque modèle porte aussi ses modalités à
   la forme d'OpenRouter et de llama.cpp (`architecture` : `modality`,
   `input_modalities`, `output_modalities`) : celles du backend telles
-  quelles, sinon déduites du `type` (Albert, llama-swap) —
+  quelles, sinon déduites du `type` (Albert, Mistral, llama-swap) —
   `image-text-to-text` donne `text+image->text`. Les clients s'en servent
   pour savoir si un modèle lit les images (extensions de pi, omp,
   OpenCode).

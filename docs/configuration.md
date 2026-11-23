@@ -99,7 +99,7 @@ url = "http://bigchuck:8009"
 | `images` | `false` (`true` avec `api = "anthropic"`) | Les modèles multimodaux du backend reçoivent les `image_url` d'un client Anthropic. Sinon, texte de remplacement |
 | `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact. llama.cpp : `"/tokenize"` |
 | `fair_share` | `true` | Le backend relève du [partage équitable](tableau-de-bord.md#partage-équitable). `false` : ses requêtes ne comptent dans la part de personne et n'attendent jamais |
-| `model_types` | `{}` | Type imposé à des modèles, par motif (`"*-vision-*" = "image-text-to-text"`). Sinon : le catalogue du backend ou, à défaut (llama-swap), le nom du modèle (`image`, `tts`, `asr`, `embed`…). Détermine les modèles proposés à un client de chat et ceux qui reçoivent les images |
+| `model_types` | `{}` | Type imposé à des modèles, par motif (`"*-vision-*" = "image-text-to-text"`). Sinon : le catalogue du backend, ou, à défaut (llama-swap), le nom du modèle (`image`, `tts`, `asr`, `embed`…). Détermine les modèles proposés à un client de chat et ceux qui reçoivent les images. Chez Mistral, dont le `type` vaut `base` ou `fine-tuned`, le type vient des `capabilities` (`completion_chat`, `vision`, `ocr`, `audio_transcription`, `audio_speech`, `moderation`) ; sans aucune capacité, embeddings ; une capacité que le proxy ne sert pas (transcription temps réel) donne `other`, proposé nulle part |
 
 **Catalogue multi-protocoles.** Quand le catalogue d'un backend dit, par
 modèle, les API qui le servent (champ `api`), seuls restent les modèles

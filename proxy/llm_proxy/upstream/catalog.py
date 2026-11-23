@@ -94,6 +94,7 @@ _TYPE_MODALITIES = {
     "image-text-to-text": (["text", "image"], ["text"]),
     "text-to-image": (["text"], ["image"]),
     "text-to-speech": (["text"], ["audio"]),
+    "image-to-text": (["image"], ["text"]),
     "automatic-speech-recognition": (["audio"], ["text"]),
     "text-embeddings-inference": (["text"], ["embeddings"]),
     "text-classification": (["text"], ["text"]),
@@ -126,15 +127,42 @@ def _architecture(m: dict, kind: str, b: Backend | None = None) -> dict:
             "input_modalities": list(inp), "output_modalities": list(out)}
 
 
+def _capability_type(caps: dict) -> str:
+    """Type d'une carte de modèle Mistral, d'après ses `capabilities`
+    (ModelCapabilities : des booléens, faux par défaut). Son `type` (`base`
+    ou `fine-tuned`) dit l'origine du modèle, pas sa tâche. Aucune capacité :
+    un modèle d'embeddings, le seul que Mistral liste sans drapeau. Une
+    capacité que le proxy ne sert pas (transcription temps réel, par
+    WebSocket seulement) : « other », proposé nulle part."""
+    if caps.get("completion_chat") is True:
+        return "image-text-to-text" if caps.get("vision") is True else "text-generation"
+    if caps.get("audio_transcription") is True:
+        return "automatic-speech-recognition"
+    if caps.get("audio_speech") is True:
+        return "text-to-speech"
+    if caps.get("ocr") is True:
+        return "image-to-text"
+    if caps.get("classification") is True or caps.get("moderation") is True:
+        return "text-classification"
+    if not any(v is True for v in caps.values()):
+        return "text-embeddings-inference"
+    return "other"
+
+
 def _model_type(m: dict, b: Backend | None = None) -> str:
     """`type` d'une entrée /v1/models, par ordre de confiance : le motif
-    de [backends.<nom>.model_types] ; le `type` du backend (Albert le
-    fournit) ; `architecture.{input,output}_modalities` (llama.cpp) ; à
-    défaut le nom (voir _NAME_TYPES) ; sinon «text-generation»."""
+    de [backends.<nom>.model_types] ; les `capabilities` (Mistral) ; le
+    `type` du backend (Albert le fournit) ;
+    `architecture.{input,output}_modalities` (llama.cpp) ; à défaut le nom
+    (voir _NAME_TYPES) ; sinon «text-generation»."""
     name = str(m.get("id") or "").lower()
     for pattern, kind in (b.type_overrides.items() if b is not None else ()):
         if fnmatch.fnmatchcase(name, pattern):
             return kind
+    # Une carte de Mistral (BaseModelCard, FTModelCard) : `type` est son
+    # discriminant ; un autre catalogue peut avoir ses `capabilities` à lui.
+    if m.get("type") in ("base", "fine-tuned") and isinstance(m.get("capabilities"), dict):
+        return _capability_type(m["capabilities"])
     kind = m.get("type")
     if kind == "chat":
         mods, arch = m.get("modalities"), m.get("architecture")
