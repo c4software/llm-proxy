@@ -77,18 +77,21 @@ connectée) liste les extensions du dossier :
   service) ;
 - celles qui sont écartées, avec leur raison.
 
-Chaque outil a son bouton : son outil du proxy s'active sans son outil du
-navigateur, ou l'inverse ; l'état de l'extension dit active, en partie ou
-inactive. *Désactiver* retire tout de suite l'outil, partout :
-présentation au modèle, `/v1/tools`, `/mcp`, menu Outils du chat,
-webhooks. *Activer* le rend (pour un outil du navigateur, au prochain
-chargement de la page). Le `.js` de l'extension n'est servi que si un de
-ses outils du navigateur est actif. Un outil qu'une nouvelle version de
-l'extension ajoute reste désactivé tant qu'on ne l'active pas. L'état, par
-outil, est gardé dans `data/extensions.json`
-(dans la [sauvegarde](deploiement.md#sauvegarde-et-restauration)) et
-survit aux redémarrages. Une extension nouvellement déposée est
-**désactivée** : ses outils ne servent qu'une fois qu'un admin l'a activée.
+Chaque outil a son bouton : l'outil du proxy peut être actif sans l'outil du
+navigateur, ou l'inverse. L'état de l'extension indique si elle est active,
+en partie ou inactive. *Désactiver* retire l'outil de la présentation au
+modèle, de `/v1/tools`, de `/mcp`, du menu Outils du chat et des webhooks.
+*Activer* le remet en service ; un outil du navigateur devient disponible au
+prochain chargement de la page. Le `.js` de l'extension n'est servi que si
+au moins un de ses outils du navigateur est actif.
+
+Dans `data/extensions.json`, `true` active tous les outils de l'extension,
+y compris ceux ajoutés ensuite. Une liste n'active que les outils qu'elle
+nomme ; les nouveaux outils restent alors désactivés jusqu'à leur activation
+dans la page. L'état est conservé dans `data/extensions.json` (dans la
+[sauvegarde](deploiement.md#sauvegarde-et-restauration)) et survit aux
+redémarrages. Une extension nouvellement déposée est **désactivée** : ses
+outils ne servent qu'après activation par un administrateur.
 Un fichier `extensions.json` illisible est dit au journal et laissé tel
 quel (la première bascule le réécrit) ; aucune extension n'est alors
 activée. Après une mise à jour depuis une version où une extension était

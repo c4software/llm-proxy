@@ -55,14 +55,21 @@ configure ou utilise le proxy.
 - **Une règle, une page.** Chaque sujet a sa page de référence ; ailleurs, un
   renvoi (lien vers l'ancre), pas une copie. Avant d'écrire, chercher où le
   sujet est déjà décrit (`grep` dans `docs/`) et compléter là.
-- **Vérifiée contre le code** : une durée, une borne, un défaut, un nom de
-  réglage se relisent dans le code avant d'être écrits. Une valeur réglable
-  se cite par son réglage (`[repos].cache_ttl`, 30 min par défaut), pas
-  seulement par sa valeur.
-- **Courte et factuelle** : phrases courtes, pas d'emphase, pas de détail
-  d'implémentation qui n'aide ni l'admin ni l'utilisateur (les noms de
-  fonctions internes vont dans `docs/architecture.md` seulement). Une liste
-  sert à énumérer, pas à découper une explication.
+- **Vérifiée contre le code** : les durées, bornes, défauts, noms de réglages
+  et comportements se relisent dans le code avant publication. Toute
+  modification qui change un comportement ou un réglage met à jour sa page de
+  référence dans le même lot. Une valeur réglable se cite par son réglage
+  (`[repos].cache_ttl`, 30 min par défaut), pas seulement par sa valeur.
+- **Courte et factuelle** : français technique, neutre et direct ; éviter les
+  tournures conversationnelles ou artificielles et l'emphase. Conserver les
+  contrats, bornes, valeurs par défaut, commandes, exemples et détails utiles ;
+  ne pas sacrifier l'exactitude à la concision. Les noms de fonctions internes
+  vont dans `docs/architecture.md` seulement. Une liste énumère des éléments,
+  elle ne découpe pas une explication.
+- **Mise en forme Markdown** : prose d'environ 80 colonnes, hors tableaux,
+  code et texte alternatif d'images. Respecter les lignes blanches entre
+  paragraphes, titres, listes et tableaux ; vérifier le rendu, notamment des
+  tableaux.
 - **Aucun nom tiré d'un déploiement réel** (hôtes internes, groupes ou projets
   d'une entreprise, adresses e-mail) : des exemples génériques
   (`gitlab.exemple.fr`, `equipe/*`).
@@ -70,8 +77,9 @@ configure ou utilise le proxy.
   l'exige) et décrit dans `docs/configuration.md` ; toute nouvelle page est
   citée dans `README.md` (tableau des pages) et reliée depuis les pages
   voisines.
-- Un titre ne se renomme pas sans corriger les liens qui y pointent ; les
-  liens et ancres internes se vérifient avant de rendre la main.
+- Conserver les titres et ancres existants. Si un titre doit changer, mettre à
+  jour tous les liens qui y pointent ; vérifier les liens et ancres internes
+  avant de rendre la main.
 
 ## Tests
 
