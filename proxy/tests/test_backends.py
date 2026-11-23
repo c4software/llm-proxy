@@ -124,6 +124,7 @@ def test_noms_et_bornes_refuses(env, monkeypatch):
         "tokenisation hors de l'adresse": (alice, {**MINE, "name": "x", "tokenize_path": "/../x"}),
         "tokenisation sans chemin": (alice, {**MINE, "name": "x", "tokenize_path": "tokenize"}),
         "tokenisation vers un hôte": (alice, {**MINE, "name": "x", "tokenize_path": "//h/x"}),
+        "état ni vrai ni faux": (alice, {**MINE, "name": "x", "enabled": "non"}),
     }
     for case, (who, body) in cases.items():
         assert who.post("/ui/backends", json=body).status_code == 400, case
@@ -191,6 +192,32 @@ def test_un_backend_partage_sert_tous_avec_la_cle_du_createur(env):
     assert (env.got[-1][0], env.got[-1][1]["authorization"]) == ("bob.exemple.fr", "Bearer sk-bob")
     ask(alice, "perso/m")
     assert env.got[-1][0] == "perso.exemple.fr"
+
+
+def test_un_backend_desactive_reste_mais_ne_sert_plus(env):
+    """Désactivé : ni routé ni montré aux autres comptes, ni aux outils ;
+    son créateur le garde, clé comprise, et le réactive tel quel."""
+    alice, bob, _ = admin_and_user(env)
+    bid = alice.post("/ui/backends", json={**MINE, "shared": True}).json()["backend"]["id"]
+    off = {k: v for k, v in MINE.items() if k != "api_key"} | {"shared": True}
+    r = alice.put(f"/ui/backends/{bid}", json={**off, "enabled": False})
+    assert r.status_code == 200 and r.json()["backend"]["enabled"] is False, r.text
+    for who in (alice, bob):
+        assert ask(who, "perso/m").status_code == 400
+    assert backends.route_backend({"model": "perso/m"}, limited=False)[0] is None
+    assert bob.get("/ui/backends").json()["shared"] == []
+    for who in (alice, bob):
+        assert not any(m["id"].startswith("perso/") for m in who.get("/ui/models").json()["data"])
+    # Une modification qui ne dit rien de l'état le garde.
+    alice.put(f"/ui/backends/{bid}", json={**off, "url": MINE["url"] + "/v2"})
+    assert ask(bob, "perso/m").status_code == 400
+    assert [b["enabled"] for b in alice.get("/ui/backends").json()["backends"]] == [False]
+    # Son nom reste pris.
+    assert bob.post("/ui/backends", json={**MINE, "shared": True}).status_code == 400
+
+    alice.put(f"/ui/backends/{bid}", json={**off, "enabled": True})
+    assert ask(bob, "perso/m").status_code == 200
+    assert env.got[-1][1]["authorization"] == "Bearer sk-perso"
 
 
 def test_un_backend_partage_sert_les_outils_et_le_partage_equitable(env):

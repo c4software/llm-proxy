@@ -25,6 +25,11 @@ l'emporte sur celui d'un compte.
 À la modification, une clé laissée vide reste, sauf si l'adresse change
 d'origine (schéma, hôte ou port) : il faut alors la ressaisir.
 
+*Désactiver* retire un backend du routage sans le supprimer : ses modèles
+ne sont plus servis ni listés, et un backend partagé n'apparaît plus aux
+autres comptes (l'admin le voit, avec son état). Il garde sa clé et son nom, qu'aucun autre backend partagé ne peut
+prendre. *Activer* le remet tel quel.
+
 ## Pour qui
 
 | Choix | Effet |
@@ -65,9 +70,9 @@ Par la session de la page, en JSON :
 
 | Route | Effet |
 |---|---|
-| `GET /ui/backends` | `{backends, shared, reserved}` : les siens, ceux que d'autres partagent (avec `by`, leur créateur), les noms de `[backends.<nom>]`. Admin, `?all=1` : `all`, ceux de tous les comptes |
-| `POST /ui/backends` | Crée `{name, api, url, api_key?, shared}` |
-| `PUT /ui/backends/<id>` | Modifie (même corps) |
+| `GET /ui/backends` | `{backends, shared, reserved}` : les siens, ceux que d'autres partagent et qui sont actifs (avec `by`, leur créateur), les noms de `[backends.<nom>]`. Admin, `?all=1` : `all`, ceux de tous les comptes |
+| `POST /ui/backends` | Crée `{name, api, url, api_key?, shared, images?, tokenize_path?, enabled?}` (`enabled` vrai par défaut) |
+| `PUT /ui/backends/<id>` | Modifie (même corps ; `enabled` absent : état inchangé) |
 | `DELETE /ui/backends/<id>` | Supprime → `{deleted}`. Admin, `?all=1` : celui de n'importe quel compte |
 
 Un compte ne voit ni ne modifie le backend d'un autre (`404`) ; sa

@@ -3,7 +3,8 @@
   backend_routes.py) — un nom (le préfixe de ses modèles), un protocole, une
   adresse, une clé, et pour qui : soi seul, ou tout le monde (avec la clé du
   créateur), et deux réglages d'une table [backends.<nom>] : images et
-  tokenize_path. La clé n'est jamais relue : vide à la modification, elle reste.
+  tokenize_path. Désactivé, il reste (clé comprise) sans être routé. La clé
+  n'est jamais relue : vide à la modification, elle reste.
   En dessous, ceux que d'autres comptes partagent, en lecture, et pour
   l'admin ceux de tous les comptes, à retirer.
 */
@@ -15,7 +16,7 @@ const { ref, reactive, onMounted } = Vue;
 
 const API_LABELS = { openai: "OpenAI (chat/completions)", anthropic: "Anthropic (Messages)" };
 const blank = () => ({ id: null, name: "", api: "openai", url: "", api_key: "", shared: false,
-                       images: null, tokenize_path: "" });
+                       images: null, tokenize_path: "", enabled: true });
 const IMAGES = [[null, "selon le protocole"], [true, "oui"], [false, "non"]];
 
 export const BackendsPart = {
@@ -46,15 +47,23 @@ export const BackendsPart = {
       Object.assign(form, blank(), b ? { ...b, api_key: "" } : {});
       editing.value = true;
     }
+    const fields = (b) => ({ name: b.name, api: b.api, url: b.url, shared: b.shared,
+                             images: b.images, tokenize_path: b.tokenize_path, enabled: b.enabled,
+                             ...(b.api_key ? { api_key: b.api_key } : {}) });
     async function save() {
       error.value = "";
-      const body = { name: form.name, api: form.api, url: form.url, shared: form.shared,
-                     images: form.images, tokenize_path: form.tokenize_path,
-                     ...(form.api_key ? { api_key: form.api_key } : {}) };
       try {
-        if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id), body);
-        else await call("POST", "/ui/backends", body);
+        if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id), fields(form));
+        else await call("POST", "/ui/backends", fields(form));
         editing.value = false;
+        await load();
+      } catch (e) { error.value = e.message; }
+    }
+    async function toggle(b) {
+      error.value = "";
+      try {
+        await call("PUT", "/ui/backends/" + encodeURIComponent(b.id), fields({ ...b, enabled: !b.enabled }));
+        if (form.id === b.id) form.enabled = !b.enabled;
         await load();
       } catch (e) { error.value = e.message; }
     }
@@ -72,7 +81,7 @@ export const BackendsPart = {
     }
 
     onMounted(load);
-    return { mine, shared, every, admin, reserved, error, form, editing, armed, open, save, remove, when,
+    return { mine, shared, every, admin, reserved, error, form, editing, armed, open, save, toggle, remove, when,
              API_LABELS, IMAGES };
   },
   template: `
@@ -105,6 +114,11 @@ export const BackendsPart = {
               <option :value="false">moi seul</option>
               <option :value="true">tout le monde (avec ma clé)</option>
             </select></label>
+          <label>État
+            <select v-model="form.enabled">
+              <option :value="true">actif</option>
+              <option :value="false">désactivé (gardé, pas routé)</option>
+            </select></label>
           <label>Images <span class="dim">(pour les modèles que son catalogue dit multimodaux)</span>
             <select v-model="form.images">
               <option v-for="[v, label] in IMAGES" :key="String(v)" :value="v">{{ label }}</option>
@@ -117,16 +131,18 @@ export const BackendsPart = {
           </div>
         </form>
         <div class="scroll" v-if="mine.length"><table>
-          <thead><tr><th>Nom</th><th>Protocole</th><th>Adresse</th><th>Pour</th><th>Créé</th><th></th></tr></thead>
+          <thead><tr><th>Nom</th><th>Protocole</th><th>Adresse</th><th>Pour</th><th>État</th><th>Créé</th><th></th></tr></thead>
           <tbody>
-            <tr v-for="b in mine" :key="b.id">
+            <tr v-for="b in mine" :key="b.id" :class="{ dim: !b.enabled }">
               <td><code>{{ b.name }}/</code></td>
               <td>{{ API_LABELS[b.api] || b.api }}</td>
               <td><code>{{ b.url }}</code></td>
               <td>{{ b.shared ? "tout le monde" : "moi seul" }}</td>
+              <td>{{ b.enabled ? "actif" : "désactivé" }}</td>
               <td>{{ when(b.created) }}</td>
               <td><div class="row-actions">
                 <button type="button" class="btn ghost" @click="open(b)">Modifier</button>
+                <button type="button" class="btn ghost" @click="toggle(b)">{{ b.enabled ? "Désactiver" : "Activer" }}</button>
                 <button type="button" class="btn danger" :class="{ armed: armed === b.id }"
                         @click="remove(b)">{{ armed === b.id ? "Supprimer ?" : "Supprimer" }}</button></div></td>
             </tr>
@@ -152,11 +168,12 @@ export const BackendsPart = {
         <div class="panel-head"><h2>Backends de tous les comptes</h2></div>
         <p class="note">Admin : ceux de chaque compte, à soi ou partagés. Un compte bloqué perd les siens.</p>
         <div class="scroll"><table>
-          <thead><tr><th>Nom</th><th>Adresse</th><th>Pour</th><th>Compte</th><th></th></tr></thead>
+          <thead><tr><th>Nom</th><th>Adresse</th><th>Pour</th><th>État</th><th>Compte</th><th></th></tr></thead>
           <tbody>
-            <tr v-for="b in every" :key="b.id">
+            <tr v-for="b in every" :key="b.id" :class="{ dim: !b.enabled }">
               <td><code>{{ b.name }}/</code></td><td><code>{{ b.url }}</code></td>
-              <td>{{ b.shared ? "tout le monde" : "lui seul" }}</td><td>{{ b.by }}</td>
+              <td>{{ b.shared ? "tout le monde" : "lui seul" }}</td>
+              <td>{{ b.enabled ? "actif" : "désactivé" }}</td><td>{{ b.by }}</td>
               <td><button type="button" class="btn danger" :class="{ armed: armed === b.id }"
                           @click="remove(b, true)">{{ armed === b.id ? "Supprimer ?" : "Supprimer" }}</button></td>
             </tr>
