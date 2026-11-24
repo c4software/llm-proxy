@@ -378,8 +378,8 @@ def test_l_admin_voit_l_etat_des_quotas(env):
     """Configuration → Quotas : par backend à quotas, ses buckets (la
     règle, sa consommation et son plafond, marge comprise ; les limites et
     restants que l'amont annonce dans ses en-têtes, l'usage qu'il a vu hors
-    du proxy compté), les modèles de son catalogue laissés au générique,
-    les 429 reçus malgré le limiteur. Réservé à l'admin."""
+    du proxy compté), les 429 reçus malgré le limiteur. Réservé à
+    l'admin."""
     alice, bob, _ = admin_and_user(env)
     alice.post("/ui/backends", json={**MINE, "shared": True, "quotas": True,
                                      "limits": [{"models": ["permis-*"], "rpm": 7}]})
@@ -388,16 +388,14 @@ def test_l_admin_voit_l_etat_des_quotas(env):
     assert ask(alice, "perso/trop").status_code == 429
     assert bob.get("/ui/quotas").status_code == 403
     view = next(b for b in alice.get("/ui/quotas").json()["backends"] if b["name"] == "perso")
-    assert (view["by"], view["upstream_429"], view["generic_models"]) == \
-        ("alice@example.org", 1, ["autre"])
+    assert (view["by"], view["upstream_429"]) == ("alice@example.org", 1)
     rule = next(x for x in view["buckets"] if x["key"] == "rule:0")
     assert (rule["source"], rule["name"], rule["minute"]["requests"],
             rule["minute"]["max_requests"]) == ("backend", "permis-*", 1, 6)
     assert rule["minute"]["frees_in"] > 0
-    # « autre » : l'amont en annonce les limites, il n'est plus au générique.
+    # « autre » : l'amont en annonce les limites.
     assert ask(alice, "perso/autre").status_code == 200
     view = next(b for b in alice.get("/ui/quotas").json()["backends"] if b["name"] == "perso")
-    assert view["generic_models"] == []
     told = next(x for x in view["buckets"] if x["key"] == "generic:autre")
     assert (told["source"], told["minute"]["max_requests"], told["minute"]["max_tokens"],
             told["minute"]["requests"], told["remaining"]) == \

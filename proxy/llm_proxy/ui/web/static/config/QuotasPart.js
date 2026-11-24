@@ -6,10 +6,12 @@
   (requêtes ou tokens, la plus haute), et, la fenêtre presque pleine, le
   délai avant que sa plus ancienne requête la quitte (une place se
   libère). Le restant annoncé par le compte (Albert) ou par les en-têtes
-  des réponses (Mistral, OpenAI, Groq, Anthropic), les modèles laissés au
-  générique, les 429 reçus de l'amont ; le forfait mensuel du compte
-  (Mistral : API, Vibe & Studio). Relu toutes les REFRESH_MS ; « Relire
-  les limites » interroge le compte tout de suite.
+  des réponses (Mistral, OpenAI, Groq, Anthropic), les 429 reçus de
+  l'amont ; le forfait mensuel du compte (Mistral : API, Vibe & Studio).
+  Seul ce qui est reçu ou défini s'affiche : une fenêtre sans plafond, un
+  bucket sans fenêtre ni restant, un backend sans rien de tout cela sont
+  omis. Relu toutes les REFRESH_MS ; « Relire les limites » interroge le
+  compte tout de suite.
 */
 import { call } from "../lib/http.js";
 
@@ -37,7 +39,7 @@ function gauge(w) {
   let used = 0;
   if (w.max_requests) { used = Math.max(used, w.requests / w.max_requests); parts.push(`${w.requests}/${short(w.max_requests)} req`); }
   if (w.max_tokens) { used = Math.max(used, w.tokens / w.max_tokens); parts.push(`${short(w.tokens)}/${short(w.max_tokens)} tok`); }
-  return { used: Math.min(used, 1), limited: parts.length > 0, text: parts.join(" · ") || "illimité" };
+  return { used: Math.min(used, 1), limited: parts.length > 0, text: parts.join(" · ") };
 }
 const BUDGETS = { api: ["API", "API"], vibe: ["Vibe", "Vibe & Studio"] };
 function money(amount, currency) {
@@ -55,6 +57,14 @@ function budgetText(f) {
   if (f.payg) parts.push("puis paiement à l'usage");
   return parts.join(" · ");
 }
+const WINDOWS = [["minute", "minute"], ["jour", "day"]];
+/** Les fenêtres plafonnées d'un bucket : [libellé, fenêtre]. */
+const windows = (q) => WINDOWS.filter(([, k]) => gauge(q[k]).limited).map(([label, k]) => [label, q[k]]);
+/** Un backend, ses seuls buckets reçus ou définis ; null s'il n'a rien à montrer. */
+function shown(b) {
+  const buckets = b.buckets.filter((q) => windows(q).length || left(q.remaining));
+  return buckets.length || b.budget.length || b.upstream_429 ? { ...b, buckets } : null;
+}
 function left(remaining) {
   const keys = Object.keys(remaining || {});
   return keys.length ? keys.map((k) => `${short(remaining[k])} ${k}`).join(" · ") : "";
@@ -65,21 +75,23 @@ export const QuotasPart = {
     const list = ref([]);
     const error = ref("");
     const loading = ref(false);
+    const loaded = ref(false);
     let timer = null;
 
     async function load(refresh = false) {
       loading.value = refresh;
       try {
         const d = await call("GET", "/ui/quotas" + (refresh ? "?refresh=1" : ""));
-        list.value = d.backends || [];
+        list.value = (d.backends || []).map(shown).filter(Boolean);
         error.value = "";
+        loaded.value = true;
       } catch (e) { error.value = e.message; }
       loading.value = false;
     }
     onMounted(() => { load(); timer = setInterval(() => load(), REFRESH_MS); });
     onUnmounted(() => clearInterval(timer));
     const read = (t) => t ? new Date(t * 1000).toLocaleTimeString() : "";
-    return { list, error, loading, load, gauge, delay, left, read, SOURCES, BUDGETS, budgetText };
+    return { list, error, loading, loaded, load, gauge, windows, delay, left, read, SOURCES, BUDGETS, budgetText };
   },
   template: `
     <div class="config-keys quotas">
@@ -88,10 +100,7 @@ export const QuotasPart = {
         <div class="panel-head"><h2>Quotas</h2>
           <div class="item-actions">
             <button type="button" class="btn" :disabled="loading" @click="load(true)">Relire les limites</button></div></div>
-        <p class="note">Le limiteur de chaque backend à quotas : une barre par fenêtre (minute, jour),
-          la part prise du plafond (marge comprise) et, presque pleine, le délai avant qu'une place se libère.
-          Rafraîchi toutes les 10 s.</p>
-        <p class="note" v-if="!list.length">Aucun backend à quotas.</p>
+        <p class="note" v-if="loaded && !error && !list.length">Aucune limite reçue ni définie.</p>
       </section>
       <section class="panel" v-for="b in list" :key="b.name + b.by">
         <div class="panel-head"><h2><code>{{ b.name }}/</code></h2>
@@ -116,18 +125,15 @@ export const QuotasPart = {
             <div class="quota-name"><strong>{{ q.name }}</strong>
               <span class="tag">{{ SOURCES[q.source] || q.source }}</span>
               <span class="dim" v-if="left(q.remaining)">reste au compte : {{ left(q.remaining) }}</span></div>
-            <div class="quota-line" v-for="[label, w] in [['minute', q.minute], ['jour', q.day]]" :key="label">
+            <div class="quota-line" v-for="[label, w] in windows(q)" :key="label">
               <span class="quota-label">{{ label }}</span>
-              <span class="quota-bar" :class="{ off: !gauge(w).limited }" role="meter" :aria-label="label"
+              <span class="quota-bar" role="meter" :aria-label="label"
                     :aria-valuenow="Math.round(gauge(w).used * 100)" aria-valuemin="0" aria-valuemax="100">
                 <i :style="{ width: (gauge(w).used * 100) + '%' }" :class="{ high: gauge(w).used >= 0.8 }"></i></span>
               <span class="quota-text">{{ gauge(w).text }}<template v-if="w.frees_in && gauge(w).used >= 0.8"> · place libre dans {{ delay(w.frees_in) }}</template></span>
             </div>
           </div>
         </div>
-        <p class="note" v-if="!b.buckets.length">Aucune requête encore, ni limite de compte.</p>
-        <p class="note" v-if="b.generic_models.length">Au générique, faute de limite du compte (ou de ses
-          en-têtes), de règle ou de famille : <code v-for="m in b.generic_models" :key="m">{{ m }} </code></p>
       </section>
     </div>
   `,

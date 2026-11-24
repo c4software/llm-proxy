@@ -931,7 +931,6 @@ a.btn { display: inline-block; text-decoration: none; }
 .quota-bar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
 .quota-bar i { display: block; height: 100%; background: var(--accent); }
 .quota-bar i.high { background: var(--err); }
-.quota-bar.off { opacity: .5; }
 .quota-text { color: var(--muted); font-size: 13px; text-align: right; white-space: nowrap; }
 .quota-text.long { white-space: normal; }
 .quota-line { display: contents; }

@@ -354,10 +354,12 @@ limite du compte, en-têtes de l'amont, famille, générique), une barre pour
 la fenêtre minute et une pour la fenêtre jour : la part prise du plafond,
 marge `[quotas].margin` comprise, et, la fenêtre presque pleine, le délai
 avant qu'une place se libère. Le restant annoncé par Albert ou par les
-en-têtes de l'amont, les modèles du catalogue laissés au générique et les
-`429` reçus du backend malgré le limiteur y figurent, ainsi que le
-[forfait mensuel](configuration.md#forfait-mensuel-mistral) d'un compte
-Mistral (API, Vibe & Studio : consommé, alloué, réinitialisation). *Relire
+en-têtes de l'amont et les `429` reçus du backend malgré le limiteur y
+figurent, ainsi que le [forfait
+mensuel](configuration.md#forfait-mensuel-mistral) d'un compte Mistral
+(API, Vibe & Studio : consommé, alloué, réinitialisation). Seul ce qui est
+reçu ou défini s'affiche : une fenêtre sans plafond, un bucket sans fenêtre
+ni restant et un backend sans rien de tout cela sont omis. *Relire
 les limites* interroge le compte sans attendre (au plus une fois par 30 s).
 Voir [`[quotas]`](configuration.md#quotas).
 

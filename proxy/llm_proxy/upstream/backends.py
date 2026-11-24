@@ -351,9 +351,7 @@ def quota_view(b: Backend) -> dict:
     """L'état du limiteur d'un backend à quotas, pour Configuration →
     Quotas : un bucket par routeur du compte (même inutilisé, avec le restant
     annoncé), par règle, puis les familles et génériques en service ; les
-    modèles de son dernier catalogue qui tombent sur le générique sans que
-    l'amont n'en ait annoncé les limites ; les 429 reçus de l'amont malgré
-    le limiteur."""
+    429 reçus de l'amont malgré le limiteur ; le forfait mensuel."""
     st = b.quota_state
     rows = []
     for rid, caps in sorted(st.router_limits.items(),
@@ -369,11 +367,9 @@ def quota_view(b: Backend) -> dict:
     for key, lim in sorted(st.limiters.items()):
         if not key.startswith(("router:", "rule:")):
             rows.append({"key": key, "name": lim.name, **_bucket(lim)})
-    generic = sorted(m for m in b.models if (key := st.bucket_of(m)).startswith("generic:")
-                     and getattr(st.limiters.get(key), "source", "") != "en-têtes")
     return {"name": b.name, "owner": b.owner,
             "account_read": st.account_read or None, "upstream_429": st.upstream_429,
-            "buckets": rows, "generic_models": generic,
+            "buckets": rows,
             "budget": st.budget or [], "budget_read": st.budget_read or None}
 
 
