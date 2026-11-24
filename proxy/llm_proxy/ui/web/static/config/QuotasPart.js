@@ -102,13 +102,13 @@ export const QuotasPart = {
           <div class="quota-row">
             <div class="quota-name"><strong>Forfait mensuel</strong>
               <span class="dim" v-if="b.budget_read">lu à {{ read(b.budget_read) }}</span></div>
-            <template v-for="f in b.budget" :key="f.kind">
+            <div class="quota-line" v-for="f in b.budget" :key="f.kind">
               <span class="quota-label" :title="(BUDGETS[f.kind] || [f.kind, f.kind])[1]">{{ (BUDGETS[f.kind] || [f.kind])[0] }}</span>
               <span class="quota-bar" role="meter" :aria-label="(BUDGETS[f.kind] || [f.kind, f.kind])[1]"
                     :aria-valuenow="Math.round(f.used_percent)" aria-valuemin="0" aria-valuemax="100">
                 <i :style="{ width: f.used_percent + '%' }" :class="{ high: f.used_percent >= 80 }"></i></span>
-              <span class="quota-text wrap">{{ budgetText(f) }}</span>
-            </template>
+              <span class="quota-text long">{{ budgetText(f) }}</span>
+            </div>
           </div>
         </div>
         <div class="quota-rows">
@@ -116,13 +116,13 @@ export const QuotasPart = {
             <div class="quota-name"><strong>{{ q.name }}</strong>
               <span class="tag">{{ SOURCES[q.source] || q.source }}</span>
               <span class="dim" v-if="left(q.remaining)">reste au compte : {{ left(q.remaining) }}</span></div>
-            <template v-for="[label, w] in [['minute', q.minute], ['jour', q.day]]" :key="label">
+            <div class="quota-line" v-for="[label, w] in [['minute', q.minute], ['jour', q.day]]" :key="label">
               <span class="quota-label">{{ label }}</span>
               <span class="quota-bar" :class="{ off: !gauge(w).limited }" role="meter" :aria-label="label"
                     :aria-valuenow="Math.round(gauge(w).used * 100)" aria-valuemin="0" aria-valuemax="100">
                 <i :style="{ width: (gauge(w).used * 100) + '%' }" :class="{ high: gauge(w).used >= 0.8 }"></i></span>
               <span class="quota-text">{{ gauge(w).text }}<template v-if="w.frees_in && gauge(w).used >= 0.8"> · place libre dans {{ delay(w.frees_in) }}</template></span>
-            </template>
+            </div>
           </div>
         </div>
         <p class="note" v-if="!b.buckets.length">Aucune requête encore, ni limite de compte.</p>

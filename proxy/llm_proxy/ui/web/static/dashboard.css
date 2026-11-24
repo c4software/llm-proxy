@@ -933,10 +933,15 @@ a.btn { display: inline-block; text-decoration: none; }
 .quota-bar i.high { background: var(--err); }
 .quota-bar.off { opacity: .5; }
 .quota-text { color: var(--muted); font-size: 13px; text-align: right; white-space: nowrap; }
-.quota-text.wrap { white-space: normal; }
+.quota-text.long { white-space: normal; }
+.quota-line { display: contents; }
 @media (max-width: 560px) {
-  .quota-row { grid-template-columns: 48px 1fr; }
-  .quota-text { grid-column: 2; text-align: left; white-space: normal; }
+  .quota-row { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+  .quota-line { display: grid; grid-template-columns: auto 1fr; grid-template-areas: "label text" "bar bar";
+    gap: 4px 12px; align-items: baseline; }
+  .quota-line .quota-label { grid-area: label; }
+  .quota-line .quota-text { grid-area: text; white-space: normal; }
+  .quota-line .quota-bar { grid-area: bar; }
 }
 .config-keys td .tag { margin-left: 6px; }
 .config-keys .share-cell { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
