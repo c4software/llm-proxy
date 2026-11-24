@@ -20,10 +20,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ..access import accounts, fairshare
 from ..access.auth import auth_required
 from ..core.httputil import error_response, merge_headers
-from ..core import settings
+from ..core import efforts, settings
 from ..core.settings import HOP_BY_HOP, is_exempt, log
 from ..storage import stats
-from . import anthropic, quotas
+from . import anthropic, openai, quotas
 from .backends import Backend, backend_offline_message
 
 
@@ -93,37 +93,37 @@ def cap_max_tokens(payload: dict, b: Backend) -> bool:
     return changed
 
 
-# Les champs des seuls serveurs à gabarit (llama.cpp, vLLM) — `store`
-# compris, qu'y ajoutent pi et omp : une API stricte (Mistral) refuse la
-# requête qui les porte. Dans l'historique, la réflexion rendue au modèle.
-TEMPLATE_FIELDS = ("chat_template_kwargs", "store")
+# Ce que seuls les serveurs à gabarit (llama.cpp, vLLM) acceptent, et
+# qu'une API stricte (Mistral) refuse : `chat_template_kwargs`, `store`
+# (pi, omp), et dans l'historique la réflexion rendue au modèle.
 TEMPLATE_MESSAGE_FIELDS = ("reasoning_content", "reasoning")
-# Les niveaux de `chat_template_kwargs.reasoning_effort` qui ne coupent pas
-# la réflexion : ceux-là seuls passent en `reasoning_effort`.
-NO_EFFORT = ("", "none", "off")
 
 
-def fit_chat_template(payload: dict, b: Backend) -> bool:
-    """Sans [backends.<nom>].chat_template, retire TEMPLATE_FIELDS, et
-    TEMPLATE_MESSAGE_FIELDS des messages de l'historique. Le
-    niveau de réflexion qu'ils portaient (`reasoning_effort` du gabarit)
-    devient `reasoning_effort` si le client n'en a pas mis ; « sans
-    réflexion » n'a pas d'équivalent sûr (refusé par les modèles qui ne
-    raisonnent pas) : le défaut du backend. Un backend Anthropic n'est pas
-    concerné : son adaptateur lit ces champs et bâtit son propre corps."""
-    if b.chat_template or b.api == "anthropic":
-        return False
-    found = {k: payload.pop(k) for k in TEMPLATE_FIELDS if k in payload}
-    messages = payload.get("messages")
-    for msg in messages if isinstance(messages, list) else ():
-        if isinstance(msg, dict):
-            for k in TEMPLATE_MESSAGE_FIELDS:
-                if k in msg:
-                    found.setdefault(k, msg.pop(k))
-    effort = anthropic.template_effort(found.get("chat_template_kwargs"))
-    if effort not in NO_EFFORT and payload.get("reasoning_effort") is None:
-        payload["reasoning_effort"] = effort
-    return bool(found)
+def fit_fields(payload: dict, b: Backend) -> None:
+    """Le corps d'une requête de chat ajusté à ce que le backend accepte.
+    Sans [backends.<nom>].chat_template : `chat_template_kwargs` et `store`
+    retirés, et TEMPLATE_MESSAGE_FIELDS des messages de l'historique ; le niveau de
+    réflexion du gabarit devient `reasoning_effort` si le client n'en a pas
+    mis (« sans réflexion » n'a pas d'équivalent sûr, refusé par les
+    modèles qui ne raisonnent pas : le défaut du backend). Puis
+    `reasoning_effort`, et celui de `chat_template_kwargs` qui reste vers
+    un backend à gabarit, passent par [backends.<nom>].effort_map. Un backend
+    Anthropic n'est pas concerné : son adaptateur lit ces champs et bâtit
+    son propre corps."""
+    if b.api == "anthropic":
+        return
+    if not b.chat_template:
+        kwargs = payload.pop("chat_template_kwargs", None)
+        payload.pop("store", None)
+        messages = payload.get("messages")
+        for msg in messages if isinstance(messages, list) else ():
+            if isinstance(msg, dict):
+                for k in TEMPLATE_MESSAGE_FIELDS:
+                    msg.pop(k, None)
+        effort = efforts.template_effort(kwargs)
+        if effort not in ("", "none", "off") and payload.get("reasoning_effort") is None:
+            payload["reasoning_effort"] = effort
+    efforts.remap(payload, b.effort_map)
 
 
 # Convention nginx : le client a fermé la connexion avant la réponse.
@@ -424,6 +424,10 @@ async def send_upstream(call: Call, request: Request, path: str,
         b.quota_state.observe(limiter, upstream.headers, (minute or day)[0])
     if b.api == "anthropic":
         upstream = anthropic.Upstream(upstream, stream)
+    elif upstream.status_code < 400 and path.rstrip("/").endswith("chat/completions"):
+        # Un `content` en liste (Mistral) ramené à une chaîne, la réflexion
+        # en `reasoning_content`.
+        upstream = openai.Upstream(upstream)
     if upstream.status_code == 429 and b.quotas:
         b.quota_state.upstream_429 += 1
         log.warning("[%s] 429 reçu du backend malgré le limiteur (%s) : ses "

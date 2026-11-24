@@ -96,8 +96,9 @@ class Window:
         self.max_tok = max_tok
         self.events: deque = deque()  # [timestamp, tokens, vivant]
         self.tokens = 0
-        # Les admissions de la dernière minute, [instant, coût], plafonnée
-        # ou non : ce qui est parti depuis une annonce de l'amont.
+        # Les admissions de la dernière minute, plafonnée ou non : ce qui
+        # est parti depuis une annonce de l'amont. Mêmes entrées que
+        # `events` quand la fenêtre est plafonnée : `adjust` les recale aussi.
         self.admitted: deque = deque()
         # La dernière annonce de l'amont (announce) : (instant, {"req" |
         # "tok": [place, valable jusqu'à]}) ; None : rien d'annoncé.
@@ -135,7 +136,7 @@ class Window:
         if self.told is None:
             return 0.0
         since, room = self.told
-        newer = [c for ts, c in self.admitted if ts > since]
+        newer = [c for ts, c, _ in self.admitted if ts > since]
         used = {"req": len(newer) + 1, "tok": sum(newer) + cost}
         wait, probe = 0.0, False
         for dim, (place, until) in list(room.items()):
@@ -175,11 +176,11 @@ class Window:
     def record(self, now: float, cost: int) -> list | None:
         """Enregistre un événement ; rend son entrée (pour `adjust`), ou
         None si la fenêtre est illimitée (rien n'est gardé)."""
-        self.admitted.append([now, cost])
+        entry = [now, cost, True]
+        self.admitted.append(entry)
         if self.probe:                  # cette requête est la sonde : plus rien après elle
             self.told, self.probe = (now, {"req": [0, now + MINUTE]}), False
         if self.max_req or self.max_tok:
-            entry = [now, cost, True]
             self.events.append(entry)
             self.tokens += cost
             return entry

@@ -164,6 +164,9 @@ def test_noms_et_bornes_refuses(env, monkeypatch):
         "tool_choice inconnu": (alice, {**MINE, "name": "x", "tool_choice": "toujours"}),
         "quotas ni vrai ni faux": (alice, {**MINE, "name": "x", "quotas": 1}),
         "gabarit ni vrai ni faux": (alice, {**MINE, "name": "x", "chat_template": "oui"}),
+        "niveau de réflexion inconnu": (alice, {**MINE, "name": "x",
+                                                 "effort_map": {"medium": "fort"}}),
+        "table de niveaux mal formée": (alice, {**MINE, "name": "x", "effort_map": ["low"]}),
     }
     for case, (who, body) in cases.items():
         assert who.post("/ui/backends", json=body).status_code == 400, case
@@ -316,9 +319,10 @@ def test_les_champs_du_gabarit_ne_partent_qu_a_un_backend_a_gabarit(env):
     """`chat_template_kwargs`, `store` et le `reasoning_content` /
     `reasoning` de l'historique (pi, omp) font refuser la requête par une
     API stricte (Mistral, 422) : retirés, sauf vers un backend
-    `chat_template` (llama.cpp, vLLM). Le niveau de réflexion qu'ils portaient
-    passe en `reasoning_effort`, sans écraser celui du client ; « sans
-    réflexion » n'en donne aucun."""
+    `chat_template` (llama.cpp, vLLM). Le niveau de réflexion qu'ils
+    portaient passe en `reasoning_effort`, sans écraser celui du client ;
+    « sans réflexion » n'en donne aucun. `effort_map` ramène ensuite tout
+    `reasoning_effort` aux niveaux du backend, à gabarit ou non."""
     alice, _, _ = admin_and_user(env)
     bid = alice.post("/ui/backends", json=MINE).json()["backend"]["id"]
     key = alice.post("/ui/keys", json={"label": "cli"}).json()["key"]
@@ -338,19 +342,38 @@ def test_les_champs_du_gabarit_ne_partent_qu_a_un_backend_a_gabarit(env):
                if k in body}
         out.update({k: v for k, v in body["messages"][1].items() if k.startswith("reasoning")})
         return out
-    cases = (
+
+    def check(cases):
+        for kwargs, own, expected in cases:
+            assert sent(chat_template_kwargs=kwargs, **own) == expected, (kwargs, own)
+    check((
         ({"thinking": True, "reasoning_effort": "high"}, {}, {"reasoning_effort": "high"}),
         ({"enable_thinking": True, "reasoning_effort": "low"}, {"reasoning_effort": "medium"},
          {"reasoning_effort": "medium"}),
         ({"enable_thinking": False}, {}, {}),
-    )
-    for kwargs, own, expected in cases:
-        assert sent(chat_template_kwargs=kwargs, **own) == expected, kwargs
-    alice.put(f"/ui/backends/{bid}", json={**MINE, "chat_template": True})
+        ({"reasoning_effort": "xhigh"}, {}, {"reasoning_effort": "xhigh"}),
+    ))
+    # Les niveaux de DeepSeek V4 Flash : low, high, max ; « none » retiré.
+    deepseek = {"minimal": "low", "medium": "high", "xhigh": "high", "none": ""}
+    alice.put(f"/ui/backends/{bid}", json={**MINE, "effort_map": deepseek})
+    assert alice.get("/ui/backends").json()["backends"][0]["effort_map"] == deepseek
+    check((
+        ({"reasoning_effort": "medium"}, {}, {"reasoning_effort": "high"}),
+        ({"reasoning_effort": "minimal"}, {}, {"reasoning_effort": "low"}),
+        ({}, {"reasoning_effort": "xhigh"}, {"reasoning_effort": "high"}),
+        ({}, {"reasoning_effort": "none"}, {}),
+        ({}, {"reasoning_effort": "max"}, {"reasoning_effort": "max"}),
+    ))
+    alice.put(f"/ui/backends/{bid}", json={**MINE, "chat_template": True,
+                                          "effort_map": deepseek})
     assert alice.get("/ui/backends").json()["backends"][0]["chat_template"] is True
     kwargs = {"enable_thinking": False}
-    assert sent(chat_template_kwargs=kwargs) == {"store": False, "chat_template_kwargs": kwargs,
-                                                 "reasoning_content": "", "reasoning": "z"}
+    assert sent(chat_template_kwargs=kwargs, reasoning_effort="medium") == {
+        "store": False, "chat_template_kwargs": kwargs, "reasoning_effort": "high",
+        "reasoning_content": "", "reasoning": "z"}
+    # À gabarit, le niveau reste dans les kwargs : la table s'y applique.
+    assert sent(chat_template_kwargs={"reasoning_effort": "xhigh"})["chat_template_kwargs"] \
+        == {"reasoning_effort": "high"}
 
 
 def test_seul_un_admin_pose_les_quotas_d_un_backend(env):

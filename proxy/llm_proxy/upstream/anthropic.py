@@ -31,7 +31,9 @@ import uuid
 from collections import OrderedDict
 from datetime import datetime
 
+from ..core import efforts
 from ..core.settings import log
+from .openai import Adapted
 
 VERSION = "2023-06-01"
 # Les blocs de réflexion signés sont liés à la conversation qui les a
@@ -232,19 +234,6 @@ def _tool_choice(choice, parallel) -> dict | None:
     return out
 
 
-def template_effort(kwargs) -> str:
-    """Le niveau de réflexion que porte `chat_template_kwargs` (pi, omp ; la
-    page) : son `reasoning_effort`, « none » quand il coupe la réflexion
-    (`enable_thinking` ou `thinking` faux), sinon «»."""
-    if not isinstance(kwargs, dict):
-        return ""
-    effort = kwargs.get("reasoning_effort")
-    if isinstance(effort, str) and effort.strip():
-        return effort.strip().lower()
-    if kwargs.get("enable_thinking") is False or kwargs.get("thinking") is False:
-        return "none"
-    return ""
-
 def to_messages(payload: dict, caps: dict | None = None,
                 max_out: int | None = None) -> dict:
     """La requête Messages d'une requête chat/completions (modèle déjà
@@ -291,7 +280,7 @@ def to_messages(payload: dict, caps: dict | None = None,
     # page). La réflexion ne se coupe pas sur les modèles récents :
     # « sans » devient l'effort le plus bas.
     effort = (str(payload.get("reasoning_effort") or "").lower()
-              or template_effort(payload.get("chat_template_kwargs")))
+              or efforts.template_effort(payload.get("chat_template_kwargs")))
     effort = {"minimal": "low", "none": "low", "off": "low"}.get(effort, effort)
     supported = caps.get("effort") if isinstance(caps.get("effort"), dict) else {}
     if effort in EFFORTS and (supported.get(effort) or {}).get("supported"):
@@ -473,34 +462,24 @@ class StreamTranslator:
         return b""
 
 
-class Upstream:
-    """La réponse d'Anthropic, vue comme une réponse chat/completions :
-    ce que les appelants de send_upstream lisent (status_code, headers,
-    aiter_raw, aread, aclose)."""
+class Upstream(Adapted):
+    """La réponse d'Anthropic, vue comme une réponse chat/completions."""
 
     def __init__(self, raw, stream: bool):
-        self._raw = raw
-        self.status_code = raw.status_code
-        self._sse = stream and raw.status_code < 400 \
+        sse = stream and raw.status_code < 400 \
             and "text/event-stream" in raw.headers.get("content-type", "")
-        self.headers = {k: v for k, v in raw.headers.items()
-                        if k.lower() in ("request-id", "retry-after")
-                        or k.lower().startswith("anthropic-ratelimit")}
-        self.headers["content-type"] = ("text/event-stream; charset=utf-8"
-                                        if self._sse else "application/json")
+        headers = {k: v for k, v in raw.headers.items()
+                   if k.lower() in ("request-id", "retry-after")
+                   or k.lower().startswith("anthropic-ratelimit")}
+        headers["content-type"] = ("text/event-stream; charset=utf-8"
+                                   if sse else "application/json")
+        super().__init__(raw, sse, headers)
+        self._translator = StreamTranslator()
 
-    async def aiter_raw(self):
-        if self._sse:
-            t = StreamTranslator()
-            async for chunk in self._raw.aiter_raw():
-                out = t.feed(chunk)
-                if out:
-                    yield out
-            return
-        yield await self.aread()
+    def _feed(self, chunk: bytes) -> bytes:
+        return self._translator.feed(chunk)
 
-    async def aread(self) -> bytes:
-        raw = await self._raw.aread()
+    def _whole(self, raw: bytes) -> bytes:
         if self.status_code >= 400:
             return error_body(raw, self.status_code)
         try:
@@ -508,9 +487,6 @@ class Upstream:
         except (ValueError, AttributeError) as exc:
             log.warning("[anthropic] réponse illisible : %s", exc)
             return error_body(raw, self.status_code)
-
-    async def aclose(self) -> None:
-        await self._raw.aclose()
 
 
 # ── catalogue ───────────────────────────────────────────────────────────

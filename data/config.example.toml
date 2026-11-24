@@ -779,6 +779,14 @@ max_per_user = 10
 #     chat_template_kwargs, store et le reasoning_content / reasoning des messages
 #     (false : retirés, une API stricte comme Mistral les refuse ; le
 #     reasoning_effort du gabarit passe en reasoning_effort) ;
+#   effort_map — niveau de réflexion demandé → niveau envoyé, ceux que le
+#     backend accepte ("" : non envoyé ; absent : tels quels), parmi none,
+#     minimal, low, medium, high, xhigh, max :
+#   [backends.mistral.effort_map]
+#   minimal = "low"
+#   medium = "high"
+#   xhigh = "high"
+#   none = ""
 #   fair_share — compté au partage équitable (true) ;
 #   models — les modèles exposés : motifs sans préfixe, jokers, casse
 #     ignorée (["qwen3-*"]) ; les autres ni listés ni routés (absent = tous) ;

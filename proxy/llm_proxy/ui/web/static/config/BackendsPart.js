@@ -3,7 +3,8 @@
   backend_routes.py) — un nom (le préfixe de ses modèles), un protocole, une
   adresse, une clé, et pour qui : soi seul, ou tout le monde (avec la clé du
   créateur), et des réglages d'une table [backends.<nom>] : images,
-  tokenize_path, chat_template, l'injection de tool_choice et (admin) le
+  tokenize_path, chat_template, effort_map (« medium=high, none= », un
+  niveau vide n'est pas envoyé), l'injection de tool_choice et (admin) le
   limiteur : quotas, et ses règles `limits`, une par ligne (« claude-*, qwen-big rpm=10 tpd=5000 »).
   Ses en-têtes propres (« Nom: valeur », un par ligne) : secrets comme la
   clé, la page n'en reçoit que les noms ; « Nom: » sans valeur garde
@@ -27,7 +28,8 @@ const { ref, reactive, onMounted } = Vue;
 
 const API_LABELS = { openai: "OpenAI (chat/completions)", anthropic: "Anthropic (Messages)" };
 const blank = () => ({ id: null, name: "", api: "openai", url: "", api_key: "", shared: false,
-                       images: null, tokenize_path: "", chat_template: false, enabled: true, tool_choice: "", quotas: false,
+                       images: null, tokenize_path: "", chat_template: false, effort_map: {}, effortsText: "",
+                       enabled: true, tool_choice: "", quotas: false,
                        limits: [], limitsText: "", headers: [], headersText: "",
                        models: [], catalog: null, picked: [], touched: false, reading: false,
                        saved_enabled: true,
@@ -43,6 +45,18 @@ function headersOf(text) {
     const at = line.indexOf(":");
     if (at <= 0) throw new Error(`en-têtes : « ${line} » (attendu : Nom: valeur)`);
     out[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+  }
+  return out;
+}
+// Les niveaux de réflexion : « demandé=envoyé », séparés par des virgules ;
+// « none= » : ce niveau n'est pas envoyé.
+const effortsText = (map) => Object.entries(map || {}).map(([k, v]) => `${k}=${v}`).join(", ");
+function effortsOf(text) {
+  const out = {};
+  for (const word of text.split(/[\s,]+/).filter(Boolean)) {
+    const [k, v] = word.split("=");
+    if (v === undefined) throw new Error(`niveaux de réflexion : « ${word} » (attendu : medium=high)`);
+    out[k] = v;
   }
   return out;
 }
@@ -91,6 +105,7 @@ export const BackendsPart = {
     // `anyone` : l'admin ouvre le backend d'un autre compte (PUT ?all=1).
     function open(b = null, anyone = false) {
       Object.assign(form, blank(), b ? { ...b, api_key: "", saved_enabled: b.enabled, limitsText: rulesText(b.limits),
+                                         effortsText: effortsText(b.effort_map),
                                          headersText: (b.headers || []).map((n) => `${n}:`).join("\n"),
                                          anyone, by: anyone ? b.by : "" } : {});
       editing.value = true;
@@ -98,7 +113,8 @@ export const BackendsPart = {
     }
     const fields = (b) => ({ name: b.name, api: b.api, url: b.url, shared: b.shared,
                              images: b.images, tokenize_path: b.tokenize_path,
-                             chat_template: !!b.chat_template, enabled: b.enabled,
+                             chat_template: !!b.chat_template, effort_map: b.effort_map || {},
+                             enabled: b.enabled,
                              tool_choice: b.tool_choice, quotas: b.quotas, limits: b.limits || [],
                              headers: b.sentHeaders || keepHeaders(b.headers),
                              models: b.models || [],
@@ -131,6 +147,7 @@ export const BackendsPart = {
       error.value = "";
       try {
         const body = fields({ ...form, limits: rulesOf(form.limitsText), models: chosen(),
+                              effort_map: effortsOf(form.effortsText),
                               sentHeaders: headersOf(form.headersText) });
         if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id)
                                 + (form.anyone ? "?all=1" : ""), body);
@@ -218,6 +235,10 @@ export const BackendsPart = {
           <label v-if="form.api !== 'anthropic'" class="check"><input type="checkbox" v-model="form.chat_template">
             Gabarit <span class="dim">(llama.cpp, vLLM : reçoit chat_template_kwargs, store, la réflexion de l'historique ;
             décoché, ils sont retirés et le niveau de réflexion passe en reasoning_effort)</span></label>
+          <label v-if="form.api !== 'anthropic'">Niveaux de réflexion <span class="dim">(ceux que le backend
+            accepte : « demandé=envoyé », « medium=high, xhigh=high, none= » ; vide : tels quels)</span>
+            <input v-model="form.effortsText" maxlength="300" spellcheck="false"
+                   placeholder="minimal=low, medium=high, xhigh=high"></label>
           <label>En-têtes <span class="dim">(un par ligne, « Nom: valeur », ajoutés à chaque requête ;
             jamais réaffichés : « Nom: » sans valeur garde l'ancienne)</span>
             <textarea v-model="form.headersText" rows="2" spellcheck="false" autocomplete="off"

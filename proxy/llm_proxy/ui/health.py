@@ -105,6 +105,7 @@ def health_detail() -> dict:
                 "fair_share": b.fair_share,
                 "tokenize_path": b.tokenize_path or None,
                 "chat_template": b.chat_template,
+                "effort_map": b.effort_map,
                 "timeout": b.timeout,
                 "meta_timeout": b.meta_timeout,
                 "connect_timeout": b.connect_timeout,

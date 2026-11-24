@@ -97,6 +97,22 @@ def test_a_request_refused_upstream_gives_its_place_back(proxy):
         return lim.minute.wait_needed(time.monotonic(), 300_000)
     assert run(oversized_waits_after_a_refusal()) == 0
 
+    # Les limites que l'amont annonce (Mistral) : la place rendue sort
+    # aussi de ce qui est parti depuis l'annonce.
+    async def waits_under_an_announcement_after_a_refusal():
+        state = quotas.QuotaState("mistral")
+        try:
+            lim = state.get_limiter({"model": "m"})
+            state.observe(lim, mistral(left_tok=400_000), time.monotonic())
+            call = relaying.Call(backends.BACKENDS["essai"], "essai/qwen",
+                                 "/v1/chat/completions")
+            await lim.acquire(300_000, ticket=call.tickets)
+            call.done(422)
+            return lim.minute.wait_needed(time.monotonic(), 300_000)
+        finally:
+            state.close()
+    assert run(waits_under_an_announcement_after_a_refusal()) == 0
+
 
 def test_an_unlimited_window_keeps_no_ticket():
     async def scenario():

@@ -30,7 +30,7 @@ import time
 import httpx2
 
 from ..access import accounts, fairshare
-from ..core import config, limits
+from ..core import config, efforts, limits
 from ..core.httputil import backend_headers, error_response, merge_headers
 from ..core.settings import META_TIMEOUT, TIMEOUT, TOOL_CHOICE, log
 from ..storage import backends as user_backends
@@ -92,8 +92,14 @@ class Backend:
         self.tokenize_path = str(cfg.get("tokenize_path", "") or "").strip()
         # Serveur à gabarit (llama.cpp, vLLM) : il lit `chat_template_kwargs`
         # (et tolère `store`). Faux : ces champs sont retirés avant l'envoi
-        # (relaying.fit_chat_template), une API stricte (Mistral) les refuse.
+        # (relaying.fit_fields), une API stricte (Mistral) les refuse.
         self.chat_template = bool(cfg.get("chat_template", False))
+        # Niveau de réflexion demandé → niveau envoyé (core/efforts.py) :
+        # ceux que le backend accepte ; vide : tels quels.
+        try:
+            self.effort_map = efforts.effort_map(cfg.get("effort_map"))
+        except ValueError as exc:
+            raise SystemExit(f"backends.{name} : {exc}")
         # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
         # Albert avec des clés différentes ne partagent rien).
         try:
@@ -474,6 +480,7 @@ def _cfg(row: dict) -> dict:
     """La table [backends.<nom>] d'une ligne du magasin."""
     cfg = {"url": row["url"], "api_key": row["api_key"], "api": row["api"],
            "tokenize_path": row["tokenize_path"], "chat_template": row["chat_template"],
+           "effort_map": row["effort_map"],
            "connect_timeout": 15.0,
            "quotas": row["quotas"], "force_tool_choice": row["tool_choice"] or None,
            "limits": row["limits"], "headers": row["headers"], "models": row["models"]}
@@ -492,7 +499,7 @@ def _retune(b: Backend, name: str, cfg: dict) -> None:
     other = Backend(name, {**cfg, "quotas": False})
     b.name, b.cfg = name, cfg
     b.images, b.tokenize_path, b.tool_choice = other.images, other.tokenize_path, other.tool_choice
-    b.chat_template = other.chat_template
+    b.chat_template, b.effort_map = other.chat_template, other.effort_map
     b.exposed = other.exposed
     headers_changed = b.headers != other.headers
     b.limits, b.headers = other.limits, other.headers

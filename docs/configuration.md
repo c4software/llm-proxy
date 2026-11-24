@@ -97,8 +97,9 @@ url = "http://bigchuck:8009"
 | `force_tool_choice` | *(aucune injection)* | Injecte `tool_choice` quand `tools` est présent sans lui. `true` → `proxy.tool_choice` ; `"auto"`, `"required"`… → cette valeur. Albert en a besoin (`"auto"`) : son schéma a `"none"` pour défaut |
 | `max_tokens` | `0` (aucun) | Plafond : le `max_tokens` / `max_completion_tokens` du client y est ramené. Jamais augmenté ni ajouté |
 | `images` | `false` (`true` avec `api = "anthropic"`) | Les modèles multimodaux du backend reçoivent les `image_url` d'un client Anthropic. Sinon, texte de remplacement |
+| `effort_map` | `{}` (niveaux tels quels) | Niveau de réflexion demandé → niveau envoyé, pour s'en tenir à ceux que le backend accepte : `{ minimal = "low", medium = "high", xhigh = "high", none = "" }` (DeepSeek V4 Flash : `low`, `high`, `max`). Niveaux : `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` ; `""` : `reasoning_effort` n'est pas envoyé. S'applique au `reasoning_effort` de la requête comme à celui de `chat_template_kwargs` (backend à gabarit ou non). Sans effet avec `api = "anthropic"` |
 | `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact. llama.cpp : `"/tokenize"` |
-| `chat_template` | `false` | Serveur à gabarit (llama.cpp, vLLM) : `chat_template_kwargs`, `store` et le `reasoning_content` / `reasoning` des messages de l'historique lui sont transmis. `false` : ils sont retirés, une API stricte (Mistral) refusant la requête qui les porte (`422`) ; un niveau de réflexion `chat_template_kwargs.reasoning_effort` devient `reasoning_effort` si la requête n'en a pas. Un `enable_thinking: false` n'a pas d'équivalent : le modèle garde son comportement par défaut. Sans effet avec `api = "anthropic"` |
+| `chat_template` | `false` | Serveur à gabarit (llama.cpp, vLLM) : `chat_template_kwargs`, `store` et le `reasoning_content` / `reasoning` des messages de l'historique lui sont transmis. `false` : ils sont retirés, une API stricte (Mistral) refusant la requête qui les porte (`422`) ; un niveau de réflexion `chat_template_kwargs.reasoning_effort` devient `reasoning_effort` si la requête n'en a pas, puis passe par `effort_map`. Un `enable_thinking: false` n'a pas d'équivalent : le modèle garde son comportement par défaut. Sans effet avec `api = "anthropic"`. Mise à jour : un backend llama.cpp ou vLLM déjà déclaré reçoit `chat_template = true` (case *Gabarit* pour un backend de compte) |
 | `fair_share` | `true` | Le backend relève du [partage équitable](tableau-de-bord.md#partage-équitable). `false` : ses requêtes ne comptent dans la part de personne et n'attendent jamais |
 | `models` | `[]` (tous) | Les modèles exposés : motifs de noms sans préfixe (`["qwen3-*", "gpt-oss-120b"]`, jokers shell, casse ignorée). Les autres ne figurent ni dans `/v1/models` ni dans `/ui/health` ; une requête qui les vise reçoit `404` `model_not_found`, et un outil hébergé réglé sur l'un d'eux est indisponible. Un alias du catalogue suit son modèle, une fois le catalogue du backend lu |
 | `model_types` | `{}` | Type imposé à des modèles, par motif (`"*-vision-*" = "image-text-to-text"`). Sinon : le catalogue du backend, ou, à défaut (llama-swap), le nom du modèle (`image`, `tts`, `asr`, `embed`…). Détermine les modèles proposés à un client de chat et ceux qui reçoivent les images. Chez Mistral, dont le `type` vaut `base` ou `fine-tuned`, le type vient des `capabilities` (`completion_chat`, `vision`, `ocr`, `audio_transcription`, `audio_speech`, `moderation`) ; sans aucune capacité, embeddings ; une capacité que le proxy ne sert pas (transcription temps réel) donne `other`, proposé nulle part |
@@ -113,6 +114,14 @@ ceux d'Albert. Exemple, OpenCode Zen : deux backends avec la même clé,
 `https://opencode.ai/inference/anthropic` (`anthropic`). Ses modèles GPT
 (API Responses) et Gemini ne sont pas servis ; ses modèles gratuits
 répondent `403` à tout client autre qu'OpenCode.
+
+**Contenu en morceaux.** Un backend `openai` dont la réponse de chat porte
+un `content` en liste de morceaux (Mistral : `text` et `thinking`, en flux
+comme en JSON) est ramené à la forme habituelle : le texte en chaîne dans
+`content`, la réflexion dans `reasoning_content`. Les clients et les
+traductions du proxy (`/v1/messages`, `/v1/responses`, outils hébergés)
+lisent alors l'une et l'autre ; un client qui attend les morceaux de
+Mistral ne les reçoit pas. Une réponse ordinaire passe inchangée.
 
 ### Backend Anthropic
 

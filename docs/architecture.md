@@ -154,6 +154,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `core/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON, en-têtes propres d'un backend (`backend_headers`, `merge_headers`) |
 | `core/identity.py` | Le client : condensé stable de sa clé (`owner`), secret `data/client.secret` |
 | `core/limits.py` | La forme des règles `limits` d'un backend à quotas, du TOML comme d'un compte |
+| `core/efforts.py` | Les niveaux de réflexion : celui de `chat_template_kwargs` (`template_effort`), la table `effort_map` d'un backend (`effort_map`, `remap`) |
 | `core/reload.py` | Le rechargement à chaud : réglages rechargeables (`SAFE`), réévalués et propagés à leurs copies, tout ou rien |
 | `core/sqlite_store.py` | Une base de magasin (comptes, mémoire, conversations) : une connexion par processus, schéma posé une fois, opérations sous verrou |
 | `core/config_docs.py` | La description de chaque réglage, lue dans `config.example.toml` (montrée par Configuration → Proxy, exigée par un test) |
@@ -178,7 +179,8 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `upstream/mistral.py` | Le forfait mensuel d'un compte Mistral : `/v1/billing/budget` (`refresh`), lu par `backends.read_for_page` pour *Configuration → Quotas* |
 | `upstream/rate_headers.py` | Les limites annoncées dans les en-têtes d'une réponse (Mistral, OpenAI, Groq, Anthropic) : `parse`, appliquées par `QuotaState.observe` depuis `send_upstream`, sur le bucket de la requête |
 | `upstream/anthropic.py` | Le backend Anthropic natif (`api = "anthropic"`) : chat/completions ↔ Messages, flux compris |
-| `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), le corps ajusté au backend (`inject_tool_choice`, `cap_max_tokens`, `fit_chat_template`), `forward`, `relay`, `drain` |
+| `upstream/openai.py` | La réponse de chat d'un backend `openai` dont le `content` est une liste de morceaux (Mistral) ramenée à une chaîne et à `reasoning_content` (`normalize`, `Upstream`) ; l'enveloppe des adaptateurs de réponse (`Adapted`) |
+| `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), le corps ajusté au backend (`inject_tool_choice`, `cap_max_tokens`, `fit_fields`), `forward`, `relay`, `drain` |
 | `upstream/catalog.py` | Catalogue fusionné et préfixé (servi par `/v1/models`), type et contexte de chaque modèle |
 
 ### `surfaces/` : les API de conversation
