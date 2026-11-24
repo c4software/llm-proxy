@@ -98,6 +98,25 @@ def recent(since: float) -> list[tuple]:
             "WHERE ts > ? AND api_key_id != ''", (since,)).fetchall()
 
 
+# Le pas des agrégats de slots() : une demi-heure, pour que chaque tranche
+# tombe dans un seul jour local, quel que soit le fuseau (tous ont un
+# décalage multiple de 30 min, sauf quelques-uns de 45 min, arrondis).
+SLOT = 1800
+
+
+def slots(keys=None) -> list[tuple]:
+    """L'usage des clés `keys` (None : toutes), par demi-heure et par
+    modèle, sur tout ce que la base garde : (début de la tranche en s,
+    model_key, tokens d'entrée, de sortie, d'entrée servis du cache,
+    requêtes). Pour l'enregistrement d'usage d'un compte (agent_usage)."""
+    where, tail = _key_filter(keys)
+    with _reader() as conn:
+        return conn.execute(
+            f"SELECT CAST(ts / {SLOT} AS INTEGER) * {SLOT}, model_key, SUM(prompt_tokens), "
+            "SUM(completion_tokens), SUM(cached_tokens), COUNT(*) FROM requests "
+            f"WHERE 1{where} GROUP BY 1, 2", tail).fetchall()
+
+
 def default_limit(bucket_width: str) -> int:
     return DEFAULT_LIMITS.get(bucket_width, 7)
 

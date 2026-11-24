@@ -21,7 +21,7 @@ autre, sauf les partagés, en lecture ; la clé n'est jamais rendue.
   DELETE /ui/backends/{id}   le sien ; ?all=1 (admin) : celui de n'importe qui
   GET    /ui/quotas          (admin) le limiteur de chaque backend à quotas :
                              buckets, consommation, plafonds, restant annoncé
-                             par le compte, modèles au générique, 429 reçus,
+                             par le compte, 429 reçus,
                              forfait mensuel (Mistral) ; ?refresh=1 relit
                              d'abord les limites et le forfait du compte
 

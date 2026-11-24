@@ -41,6 +41,7 @@ from .ui import (
     linux_relay,
     static_files,
     usage_api,
+    agent_usage,
     backend_routes,
     repo_routes,
     runtime_routes,
@@ -77,7 +78,7 @@ async def setup_gate(request: Request, call_next):
 
 # Les routes des modules, le relais (son catch-all) EN DERNIER, qui sinon
 # les prendrait toutes.
-for module in (endpoints, usage_api, static_files, dashboard,
+for module in (endpoints, usage_api, agent_usage, static_files, dashboard,
                conversation_routes, voice_routes, config_view, health, tool_routes,
                linux_relay, webhook_routes, repo_routes, backend_routes,
                runtime_routes, extension_routes):

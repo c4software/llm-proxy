@@ -348,6 +348,12 @@ ses sources (forge, adresse, jeton, projets autorisés) pour l'outil
 déclare ses propres backends, pour lui seul ou pour tous. Voir [Backends
 des comptes](backends.md).
 
+**Usage** : l'usage et les limites du compte (part équitable, forfait
+mensuel de ses backends à quotas), ses tokens des sept derniers jours et
+par modèle, relus toutes les 30 s, et de quoi les montrer dans le panneau
+d'agents d'Omarchy. Voir [Usage d'un
+compte](statistiques.md#usage-dun-compte-omarchy).
+
 **Quotas** (admin, ou proxy sans comptes) : l'état du limiteur de chaque
 backend à quotas, relu toutes les 10 s. Par bucket (règle du backend,
 limite du compte, en-têtes de l'amont, famille, générique), une barre pour

@@ -251,6 +251,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `ui/conversation_routes.py` | `/ui/conversations`, `/ui/assets` : l'historique du chat (`storage/conversations.py`) |
 | `ui/config_view.py` | La configuration effective pour la page (secrets masqués), le formulaire, la vérification d'un TOML modifié. N'écrit jamais |
 | `ui/usage_api.py` | L'Usage API (`/v1/organization/usage/*`) et ce qu'une page connectée en voit |
+| `ui/agent_usage.py` | `/v1/usage/agent` et `/ui/usage/agent` : l'usage et les limites d'un compte au format du panneau d'agents d'Omarchy (`stats.slots`, part équitable, forfaits) |
 | `ui/health.py` | `/healthz` et `/ui/health` : état détaillé du déploiement |
 | `ui/page_tools.py` | Les outils du navigateur pour la page : leurs déclarations (`tools.PAGE`, `tools.FAMILIES`) servies par `/ui/session`, moins celles que refuse `[ui].page_tools_disabled` ou d'une extension désactivée, retirées aussi de toute requête du chat de la page ; les familles `authored` (provenance) |
 | `ui/linux_relay.py` | Le relais réseau (Wisp) de la VM Linux : jeton signé, adresses publiques seulement, plafond d'octets et délai d'inactivité |

@@ -75,6 +75,36 @@ percentile**, qui n'a pas cette propriété.
 - Une requête en erreur sans `usage` (500 du backend, 429 local, client
   parti) compte **0 token**.
 
+## Usage d'un compte (Omarchy)
+
+```http
+GET /v1/usage/agent?tz=Europe/Paris
+```
+
+Rend l'usage et les limites du client de la clé au format des
+enregistrements du panneau d'agents d'Omarchy (`schemaVersion: 1`) : le
+corps se dépose tel quel dans `~/.local/state/omarchy/agents/usage/` sous
+le nom `llm-proxy.json`, que le panneau affiche. *Configuration → Usage*
+montre le même enregistrement et donne un service et un minuteur systemd
+de l'utilisateur qui le déposent toutes les 2 minutes.
+
+- **Périmètre** : toutes les clés du compte et sa page ; la clé seule pour
+  une clé du TOML non rattachée ; tout pour un proxy ouvert
+  (`"scope": "account"`).
+- **`limits`** : la [part équitable](tableau-de-bord.md#partage-équitable)
+  du compte, consommée sur l'heure glissante (`title: "Session"`, sans
+  `resetsAt`), et le [forfait
+  mensuel](configuration.md#forfait-mensuel-mistral) de chaque backend à
+  quotas du compte, ceux du TOML aussi pour un admin (`title: "Monthly"`,
+  `resetsAt` de Mistral).
+- **Statistiques** : les tokens par jour et par modèle préfixé sur toute la
+  base (`[stats].retention_days`) ; l'entrée servie du cache est
+  `cacheReadInputTokens`, le reste de l'entrée `inputTokens`. Une requête
+  compte pour un prompt (`hasPromptStats: false`), sans session.
+- **`tz`** : le fuseau IANA des jours (défaut : l'heure locale du proxy) ;
+  un fuseau inconnu rend `400`. L'usage est découpé à la demi-heure : un
+  fuseau décalé de 45 min date au plus 15 min de travers.
+
 ## Usage des outils hébergés
 
 Chaque exécution d'un [outil hébergé](outils-heberges.md) laisse une

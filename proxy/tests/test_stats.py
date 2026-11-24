@@ -36,14 +36,6 @@ def test_usage_collector_json_without_details():
     assert stats.cached_tokens({"prompt_tokens_details": {"cached_tokens": 12}}) == 12
 
 
-@pytest.fixture
-def db(tmp_path, monkeypatch):
-    everywhere(monkeypatch, stats, "DB_PATH", str(tmp_path / "stats.db"))
-    stats.init()
-    yield
-    stats.close()
-
-
 def test_migration_adds_cached_column_to_old_base(tmp_path, monkeypatch):
     """Une base d'avant les colonnes cached_tokens et api_key_id est
     complétée au démarrage — aucune migration à jouer à la main."""
@@ -72,7 +64,7 @@ def test_migration_adds_cached_column_to_old_base(tmp_path, monkeypatch):
         stats.close()
 
 
-def test_rows_carry_the_client_and_filter_by_key(db):
+def test_rows_carry_the_client_and_filter_by_key(stats_db):
     """La ligne porte le client du contexte (stats.CLIENT) ; `keys` ne
     compte que les siennes, group_by=api_key_id les sépare."""
     token = stats.CLIENT.set("k1")
@@ -103,7 +95,7 @@ def test_rows_carry_the_client_and_filter_by_key(db):
     assert stats.recording_since(["k1"]) > 0
 
 
-def test_usage_api_exposes_input_cached_tokens(db):
+def test_usage_api_exposes_input_cached_tokens(stats_db):
     stats.record("a/m", "a", "m", "/v1/messages", 200, 0.5, 20000, 5, True,
                  True, cached_tokens=18000)
     stats.record("a/m", "a", "m", "/v1/messages", 200, 0.5, 20000, 5, True,
@@ -133,7 +125,7 @@ def flushed():
                          "result_chars FROM tool_calls ORDER BY id").fetchall()
 
 
-def test_tool_run_recorded_from_each_of_the_three_paths(proxy, db):
+def test_tool_run_recorded_from_each_of_the_three_paths(proxy, stats_db):
     """Une exécution par /v1/responses, /v1/messages et /v1/tools : une
     ligne chacune, avec SA route et le modèle préfixé de la conversation
     (aucun pour l'appel direct) — et rien de ce qui a été cherché ou lu."""
@@ -169,7 +161,7 @@ def test_tool_run_recorded_from_each_of_the_three_paths(proxy, db):
         assert secret not in dump, secret
 
 
-def test_tool_run_outcome_ok_error_limit(db):
+def test_tool_run_outcome_ok_error_limit(stats_db):
     """Succès, échec (le résultat porte un code d'erreur, quelle qu'en
     soit la cause — et pas son texte : un succès peut commencer par
     «Error:») et refus par limite d'appels sont trois issues distinctes ;
@@ -204,7 +196,7 @@ def test_tool_run_outcome_ok_error_limit(db):
     assert rows[0][5] == 2 and rows[1][5] == len("Error: moteur éteint.")
 
 
-def test_tool_run_never_raises_when_stats_fail(db, monkeypatch):
+def test_tool_run_never_raises_when_stats_fail(stats_db, monkeypatch):
     """Une panne des statistiques ne casse ni l'outil ni la réponse ; et
     sans écrivain (stats.init() jamais appelé) rien n'est mis en file."""
     import asyncio
@@ -228,7 +220,7 @@ def test_tool_run_never_raises_when_stats_fail(db, monkeypatch):
     assert flushed() == []
 
 
-def test_usage_tools_route_buckets_group_by_window_and_pagination(proxy, db):
+def test_usage_tools_route_buckets_group_by_window_and_pagination(proxy, stats_db):
     """La route sœur de l'Usage API : même page → bucket → result, mêmes
     paramètres, même pagination et mêmes validations que /completions ;
     group_by sur l'outil, la route d'appel et le modèle."""
@@ -328,7 +320,7 @@ def test_migration_adds_tool_calls_to_a_base_with_requests_only(tmp_path, monkey
         stats.close()
 
 
-def test_purge_drops_old_tool_calls_with_old_requests(db, monkeypatch):
+def test_purge_drops_old_tool_calls_with_old_requests(stats_db, monkeypatch):
     """La rétention vaut pour les deux tables ; 0 = rien n'est purgé."""
     old, recent = time.time() - 10 * 86_400, time.time() - 3600
     with stats._reader() as conn:

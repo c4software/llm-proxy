@@ -433,6 +433,23 @@ def test_l_admin_voit_le_forfait_mensuel_d_un_compte_mistral(env, monkeypatch):
                        for h in sorted(hosts + ("panne", "perso"))]
 
 
+def test_le_forfait_figure_dans_l_usage_de_son_proprietaire_seul(env, stats_db):
+    """L'enregistrement d'usage (ui/agent_usage.py) porte le forfait
+    mensuel des backends à quotas du compte, une jauge « Monthly » par
+    forfait avec sa réinitialisation, pas celui du backend d'un autre
+    compte, même partagé ni pour l'admin."""
+    alice, bob, _ = admin_and_user(env)
+    alice.post("/ui/backends", json={**MINE, "shared": True, "quotas": True})
+    bid = bob.post("/ui/backends", json={**MINE, "name": "abob"}).json()["backend"]["id"]
+    r = alice.put(f"/ui/backends/{bid}?all=1", json={**MINE, "name": "abob", "quotas": True})
+    assert r.status_code == 200, r.text
+    limits = lambda who: who.get("/ui/usage/agent").json()["limits"]
+    meter = lambda name, kind, used: {"label": f"{name} {kind}", "title": "Monthly",
+                                      "percent": used, "resetsAt": "2026-12-01T00:00:00Z"}
+    assert limits(alice) == [meter("perso", "API", 0.0), meter("perso", "Vibe", 0.0048 / 100)]
+    assert limits(bob) == [meter("abob", "API", 0.0), meter("abob", "Vibe", 0.0048 / 100)]
+
+
 def test_relire_les_limites_ne_martele_pas_l_amont(env):
     """?refresh=1 : un essai par backend toutes les 30 s au plus, réussi ou
     non ; un backend sans limites de compte (404) n'est plus redemandé."""

@@ -118,3 +118,15 @@ def idp(proxy, monkeypatch, tmp_path):
     oidc.register(transport=httpx2.MockTransport(fake.handle))
     proxy.idp = fake
     return proxy
+
+
+@pytest.fixture
+def stats_db(tmp_path, monkeypatch):
+    """La base de statistiques sur un fichier temporaire, son écrivain
+    lancé (stats.init), arrêté à la fin."""
+    from fakes import everywhere
+    from llm_proxy.storage import stats
+    everywhere(monkeypatch, stats, "DB_PATH", str(tmp_path / "stats.db"))
+    stats.init()
+    yield
+    stats.close()

@@ -76,6 +76,7 @@ from .usage import (  # noqa: F401
     parse_group_by,
     recent,
     recording_since,
+    slots,
     usage_completions,
     usage_tools,
 )

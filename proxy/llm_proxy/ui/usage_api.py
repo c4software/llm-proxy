@@ -12,8 +12,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from ..access import accounts
-from ..access.auth import account_owner, auth_required, request_user, ui_client
+from ..access import accounts, fairshare
+from ..access.auth import account_owner, auth_required, request_user
 from ..storage import stats
 
 
@@ -111,19 +111,26 @@ async def usage_page(request: Request, read=stats.usage_completions,
     return await run_in_threadpool(read, **params)
 
 
-async def own_keys(request: Request) -> list[str] | None:
-    """Les api_key_id que la page connectée peut voir ; None = tous (proxy
-    ouvert, ou un admin). Un compte voit ses clés, révoquées comprises, et
-    le chat de sa page."""
+async def client_keys() -> list[str] | None:
+    """Les api_key_id du client de la requête (posé par auth.identify) ;
+    None = tous (proxy ouvert). Un compte : toutes ses clés, révoquées et
+    rattachées comprises, et le chat de sa page ; une clé du TOML seule :
+    elle-même."""
     if not auth_required():
         return None
+    uid = fairshare.ACCOUNT.get()
+    if uid is None:
+        return [stats.CLIENT.get()]
+    return [account_owner(uid)] + await asyncio.to_thread(accounts.digests, uid)
+
+
+async def own_keys(request: Request) -> list[str] | None:
+    """Les api_key_id que la page connectée peut voir : ceux de son client
+    (client_keys), tous pour un admin."""
     user = request_user(request)
-    if user is None:
-        return [ui_client(request)]
-    if user["role"] == "admin":
+    if user is not None and user["role"] == "admin":
         return None
-    return [account_owner(user["id"])] + await asyncio.to_thread(
-        accounts.digests, user["id"])
+    return await client_keys()
 
 
 @router.get(USAGE_PATH)

@@ -112,8 +112,9 @@ réglage et outil.
   [Tableau de bord](tableau-de-bord.md), [Chat](chat.md)
 - **Statistiques persistantes** : une ligne SQLite par requête
   (`data/stats.db`), lues par l'Usage API d'OpenAI
-  (`/v1/organization/usage/completions`, `/v1/organization/usage/tools`).
-  [Statistiques](statistiques.md)
+  (`/v1/organization/usage/completions`, `/v1/organization/usage/tools`),
+  et l'usage d'un compte au format du panneau d'agents d'Omarchy
+  (`/v1/usage/agent`). [Statistiques](statistiques.md)
 - **Observabilité** : `GET /healthz` donne l'état de chaque backend
   (quotas restants, modèles vus, réglages) et de la surface Anthropic.
   Sans la clé, quand l'auth est active, seulement `{"status": "ok"}`. Un
