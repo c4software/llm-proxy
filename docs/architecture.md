@@ -172,7 +172,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 
 | Fichier | Rôle |
 |---|---|
-| `upstream/backends.py` | Backends, clients HTTP, routage au préfixe de modèle ; les backends des comptes (`refresh`, `visible` ; `served` : ceux du TOML et les partagés, pour les outils hébergés et le partage équitable ; `watch_quotas` : la tâche de fond d'un backend à quotas, du TOML comme d'un compte) et les modèles permis du compte (`permitted`, `no_route` : `403 model_not_allowed`) |
+| `upstream/backends.py` | Backends, clients HTTP, routage au préfixe de modèle ; les backends des comptes (`refresh`, `visible` ; `served` : ceux du TOML et les partagés, pour les outils hébergés et le partage équitable ; `watch_quotas` : la tâche de fond d'un backend à quotas, du TOML comme d'un compte) ; les modèles exposés d'un backend (`Backend.exposes`, réglage `models`), les modèles permis du compte (`permitted`, `no_route` : `404 model_not_found`, `403 model_not_allowed`) |
 | `upstream/quotas.py` | Le limiteur des backends à quotas : fenêtres minute et jour, buckets (compte, règles `limits`, en-têtes, familles, générique), `settle`, `observe` (plafonds annoncés ; restant : `Window.announce`) |
 | `upstream/albert.py` | Les limites du compte Albert : `/v1/limits`, un bucket par routeur, alias compris (`refresh`) |
 | `upstream/mistral.py` | Le forfait mensuel d'un compte Mistral : `/v1/billing/budget` (`refresh`), lu par `backends.read_for_page` pour *Configuration → Quotas* |
@@ -257,7 +257,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `ui/linux_relay.py` | Le relais réseau (Wisp) de la VM Linux : jeton signé, adresses publiques seulement, plafond d'octets et délai d'inactivité |
 | `ui/voice_routes.py` | Routes `/ui/voices` (voix clonées) |
 | `ui/repo_routes.py` | `/ui/repos` : les sources de dépôts du compte |
-| `ui/backend_routes.py` | `/ui/backends` : les backends du compte, et ceux que d'autres partagent |
+| `ui/backend_routes.py` | `/ui/backends` : les backends du compte, et ceux que d'autres partagent ; `/ui/backends/{id}/models`, son catalogue entier pour cocher ses modèles exposés |
 | `ui/runtime_routes.py` | `/ui/runtime` : les bacs de l'exécuteur (les siens ; tous pour un admin) et les caches du proxy, à détruire ou vider |
 | `ui/extension_routes.py` | `/ui/extensions` : les extensions chargées et écartées, l'interrupteur à chaud (admin) ; `/ui/extensions/<nom>/<nom>.js`, le module de la page d'une extension dont un outil du navigateur est actif |
 | `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |

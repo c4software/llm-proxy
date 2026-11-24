@@ -23,6 +23,7 @@ pour les deux ; seul un admin pose les quotas d'un backend de compte.
 """
 
 import asyncio
+import fnmatch
 import json
 import time
 
@@ -116,6 +117,9 @@ class Backend:
         self.cfg: dict | None = None
         # Dernier catalogue vu lors d'un GET /v1/models (informel, healthz).
         self.models: set[str] = set()
+        # alias (minuscule) → id (minuscule), du même catalogue : un alias
+        # suit son modèle pour `exposes`.
+        self.aliases: dict[str, str] = {}
         # id (minuscule) → type normalisé («image-text-to-text»…), rempli
         # avec le catalogue : c'est lui qui dit si UN modèle voit les
         # images — un backend llama.cpp en sert de toutes sortes, et
@@ -133,6 +137,21 @@ class Backend:
             str(k).strip().lower(): str(v).strip()
             for k, v in (overrides.items() if isinstance(overrides, dict) else ())
             if str(k).strip() and str(v).strip()}
+        # Les modèles qu'il expose, par motif sans préfixe (jokers shell,
+        # casse ignorée) : les autres ne sont ni listés ni routés, pour
+        # personne. Vide : tous.
+        self.exposed = model_patterns(cfg.get("models"), name)
+
+    def exposes(self, model: str) -> bool:
+        """Le modèle (préfixé par son nom, ou nu) est-il exposé ? Un alias
+        du catalogue lu l'est avec son modèle."""
+        if not self.exposed:
+            return True
+        name = model.lower()
+        if name.startswith(self.name + "/"):
+            name = name[len(self.name) + 1:]
+        return any(fnmatch.fnmatchcase(n, p) for n in {name, self.aliases.get(name, name)}
+                   for p in self.exposed)
 
     @staticmethod
     def _tool_choice(value) -> str | None:
@@ -151,6 +170,15 @@ class Backend:
         else:
             base = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         return merge_headers(base, self.headers)
+
+
+def model_patterns(value, name: str) -> tuple[str, ...]:
+    """Le réglage `models` d'un backend : une liste de motifs (minuscules)."""
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(p, str) for p in value):
+        raise SystemExit(f"backends.{name} : `models` attend une liste de motifs")
+    return tuple(dict.fromkeys(p.strip().lower() for p in value if p.strip()))
 
 
 def load_backends() -> dict[str, Backend]:
@@ -197,6 +225,12 @@ def visible() -> dict[str, Backend]:
     return out
 
 
+def of_account(bid: str, owner: str | None) -> Backend | None:
+    """Le backend actif `bid` du compte `owner` (None : de n'importe qui)."""
+    return next((b for (o, i), b in ACCOUNTS.items()
+                 if i == bid and (owner is None or o == owner)), None)
+
+
 def served() -> dict[str, Backend]:
     """Les backends de tous, sans compte : ceux du TOML puis les partagés.
     Pour le modèle qu'un outil hébergé tient de la configuration, et pour
@@ -210,10 +244,11 @@ def served() -> dict[str, Backend]:
 
 def permitted(b: Backend, model: str) -> bool:
     """Le client de la requête peut-il employer `model` (préfixé) de `b` ?
-    Toujours sur ses propres backends ; ailleurs, selon les modèles permis
-    de son compte."""
-    return (b.owner is not None and b.owner == (fairshare.CLIENT.get() or "")) \
-        or accounts.permitted(model)
+    Jamais un modèle que `b` n'expose pas ; sinon toujours sur ses propres
+    backends, ailleurs selon les modèles permis de son compte."""
+    return b.exposes(model) and (
+        (b.owner is not None and b.owner == (fairshare.CLIENT.get() or ""))
+        or accounts.permitted(model))
 
 
 def _find(model: str, table: dict[str, Backend]) -> Backend | None:
@@ -236,7 +271,7 @@ def route_backend(payload, *, limited: bool = True) -> Backend | None:
     table = visible() if limited else {
         n: b for n, b in served().items() if b.owner is None or b.admin}
     b = _find(model, table)
-    if b is None or (limited and not permitted(b, model)):
+    if b is None or not (permitted(b, model) if limited else b.exposes(model)):
         return None
     return b
 
@@ -251,13 +286,17 @@ def unknown_prefix_message(model: str) -> str:
 
 def no_route(dialect: str, model: str):
     """La réponse quand route_backend n'a rien rendu pour `model` : 400
-    `model_required` sans modèle, 403 `model_not_allowed` si son backend
-    existe mais que le compte ne peut pas l'employer, 400
-    `unknown_backend_prefix` sinon."""
+    `model_required` sans modèle, 404 `model_not_found` si son backend ne
+    l'expose pas, 403 `model_not_allowed` s'il existe mais que le compte ne
+    peut pas l'employer, 400 `unknown_backend_prefix` sinon."""
     if not model:
         return error_response(dialect, 400, "model_required",
                               "champ «model» attendu : «<backend>/<modèle>»")
-    if _find(model, visible()) is not None:
+    b = _find(model, visible())
+    if b is not None and not b.exposes(model):
+        return error_response(dialect, 404, "model_not_found",
+                              f"modèle «{model}» non exposé par le backend «{b.name}»")
+    if b is not None:
         log.warning("modèle %r non permis au compte → 403", model)
         return error_response(dialect, 403, "model_not_allowed",
                               f"modèle «{model}» non permis à ce compte")
@@ -432,7 +471,7 @@ def _cfg(row: dict) -> dict:
     cfg = {"url": row["url"], "api_key": row["api_key"], "api": row["api"],
            "tokenize_path": row["tokenize_path"], "connect_timeout": 15.0,
            "quotas": row["quotas"], "force_tool_choice": row["tool_choice"] or None,
-           "limits": row["limits"], "headers": row["headers"]}
+           "limits": row["limits"], "headers": row["headers"], "models": row["models"]}
     if row["images"] is not None:
         cfg["images"] = row["images"]
     return cfg
@@ -448,6 +487,7 @@ def _retune(b: Backend, name: str, cfg: dict) -> None:
     other = Backend(name, {**cfg, "quotas": False})
     b.name, b.cfg = name, cfg
     b.images, b.tokenize_path, b.tool_choice = other.images, other.tokenize_path, other.tool_choice
+    b.exposed = other.exposed
     headers_changed = b.headers != other.headers
     b.limits, b.headers = other.limits, other.headers
     if b.quota_state is not None:

@@ -99,6 +99,7 @@ url = "http://bigchuck:8009"
 | `images` | `false` (`true` avec `api = "anthropic"`) | Les modèles multimodaux du backend reçoivent les `image_url` d'un client Anthropic. Sinon, texte de remplacement |
 | `tokenize_path` | *(aucun)* | Endpoint de tokenisation pour un `count_tokens` exact. llama.cpp : `"/tokenize"` |
 | `fair_share` | `true` | Le backend relève du [partage équitable](tableau-de-bord.md#partage-équitable). `false` : ses requêtes ne comptent dans la part de personne et n'attendent jamais |
+| `models` | `[]` (tous) | Les modèles exposés : motifs de noms sans préfixe (`["qwen3-*", "gpt-oss-120b"]`, jokers shell, casse ignorée). Les autres ne figurent ni dans `/v1/models` ni dans `/ui/health` ; une requête qui les vise reçoit `404` `model_not_found`, et un outil hébergé réglé sur l'un d'eux est indisponible. Un alias du catalogue suit son modèle, une fois le catalogue du backend lu |
 | `model_types` | `{}` | Type imposé à des modèles, par motif (`"*-vision-*" = "image-text-to-text"`). Sinon : le catalogue du backend, ou, à défaut (llama-swap), le nom du modèle (`image`, `tts`, `asr`, `embed`…). Détermine les modèles proposés à un client de chat et ceux qui reçoivent les images. Chez Mistral, dont le `type` vaut `base` ou `fine-tuned`, le type vient des `capabilities` (`completion_chat`, `vision`, `ocr`, `audio_transcription`, `audio_speech`, `moderation`) ; sans aucune capacité, embeddings ; une capacité que le proxy ne sert pas (transcription temps réel) donne `other`, proposé nulle part |
 
 **Catalogue multi-protocoles.** Quand le catalogue d'un backend dit, par
@@ -160,9 +161,10 @@ outils hébergés du proxy actifs).
 
 **Tout modèle doit être préfixé.** Un préfixe inconnu donne `400
 unknown_backend_prefix`, un modèle que le compte ne peut pas employer
-`403 model_not_allowed` (voir [modèles permis](tableau-de-bord.md#comptes-oidc)).
-Une requête sans champ `model` (corps non JSON compris) n'a rien à
-router : `400 model_required`.
+`403 model_not_allowed` (voir [modèles permis](tableau-de-bord.md#comptes-oidc)),
+un modèle que son backend n'expose pas `404 model_not_found` (voir
+[`models`](#backendsnom)). Une requête sans champ `model` (corps non JSON
+compris) n'a rien à router : `400 model_required`.
 
 ## `[proxy]`
 

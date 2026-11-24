@@ -75,8 +75,12 @@ def env(idp, monkeypatch, tmp_path):
                     else httpx2.Response(200, text="[" * 100_000) if host == "profond.exemple.fr"
                     else httpx2.Response(500) if host == "panne.exemple.fr"
                     else httpx2.Response(404))
+        if request.method == "GET" and request.url.host == "panne.exemple.fr":
+            return httpx2.Response(500)
         if request.method == "GET":
-            return httpx2.Response(200, json={"data": [{"id": m} for m in MODELS]})
+            # « p1 » : un alias de « permis-1 ».
+            return httpx2.Response(200, json={"data": [
+                {"id": m, **({"aliases": ["p1"]} if m == "permis-1" else {})} for m in MODELS]})
         if request.url.path == "/tokenize":
             return httpx2.Response(200, json={"tokens": [1] * 42})
         idp.got.append((request.url.host, dict(request.headers), json.loads(request.content)))
@@ -606,6 +610,89 @@ def test_les_identifiants_du_client_ne_partent_pas_vers_un_backend_de_compte(env
         assert ("authorization" in headers) is sent, model
         if not sent:
             assert "cookie" not in headers, model
+
+
+# ── les modèles exposés d'un backend ────────────────────────────────────
+
+def test_un_backend_n_expose_que_ses_modeles_coches(env):
+    """`models` borne ce que le backend expose, à tous, son créateur
+    compris : ni listé, ni routé (404 `model_not_found`), ni pour un outil ;
+    un alias suit son modèle. Absent d'une modification, il reste ; vide,
+    tout est exposé (sans reconstruire le backend)."""
+    alice, bob, _ = admin_and_user(env)
+    bid = alice.post("/ui/backends", json={**MINE, "shared": True, "models": ["Permis-*"]}) \
+        .json()["backend"]["id"]
+    ids = lambda who: {m["id"] for m in who.get("/ui/models").json()["data"]
+                       if m["id"].startswith("perso/")}
+    for who in (alice, bob):
+        assert ids(who) == {"perso/permis-1"}
+        for model, status in (("perso/PERMIS-1", 200), ("perso/p1", 200), ("perso/autre", 404)):
+            r = ask(who, model)
+            assert r.status_code == status, (model, r.text)
+        assert r.json()["error"]["type"] == "model_not_found"
+    assert backends.route_backend({"model": "perso/autre"}, limited=False) is None
+    assert backends.route_backend({"model": "perso/permis-1"}, limited=False) is not None
+    health = alice.get("/ui/health").json()["backends"]["perso"]
+    assert health["last_seen_models"] == health["chat_models"] == ["perso/permis-1"]
+
+    base = {k: v for k, v in MINE.items() if k != "api_key"} | {"shared": True}
+    alice.put(f"/ui/backends/{bid}", json=base)
+    assert alice.get("/ui/backends").json()["backends"][0]["models"] == ["Permis-*"]
+    assert ask(bob, "perso/autre").status_code == 404
+    alice.put(f"/ui/backends/{bid}", json={**base, "models": ["autre"]})
+    assert ask(bob, "perso/p1").status_code == 404
+    alice.put(f"/ui/backends/{bid}", json={**base, "models": []})
+    assert ids(bob) == {"perso/permis-1", "perso/autre"}
+
+
+def test_le_catalogue_entier_d_un_backend_se_lit_pour_cocher(env):
+    """GET /ui/backends/{id}/models : tout le catalogue, et ce que le filtre
+    expose ; le sien seulement (l'admin : n'importe lequel, par ?all=1),
+    actif, 502 s'il ne répond pas."""
+    alice, bob, _ = admin_and_user(env)
+    bid = alice.post("/ui/backends", json={**MINE, "shared": True, "models": ["permis-*"]}) \
+        .json()["backend"]["id"]
+    bob_bid = bob.post("/ui/backends", json={**MINE, "name": "abob"}).json()["backend"]["id"]
+    assert alice.get(f"/ui/backends/{bid}/models").json() == {"models": [
+        {"id": "autre", "exposed": False}, {"id": "permis-1", "exposed": True}]}
+    for who, url, status in ((bob, f"/ui/backends/{bid}/models", 404),
+                             (bob, f"/ui/backends/{bid}/models?all=1", 403),
+                             (bob, f"/ui/backends/{bob_bid}/models", 200),
+                             (alice, f"/ui/backends/{bob_bid}/models", 404),
+                             (alice, f"/ui/backends/{bob_bid}/models?all=1", 200)):
+        assert who.get(url).status_code == status, url
+    down = bob.post("/ui/backends", json={**MINE, "name": "panne",
+                                         "url": "https://panne.exemple.fr"}).json()["backend"]["id"]
+    assert bob.get(f"/ui/backends/{down}/models").status_code == 502
+    base = {k: v for k, v in MINE.items() if k != "api_key"} | {"shared": True}
+    alice.put(f"/ui/backends/{bid}", json={**base, "enabled": False})
+    assert alice.get(f"/ui/backends/{bid}/models").status_code == 404
+
+
+def test_des_modeles_exposes_mal_formes_sont_refuses(env):
+    alice, _, _ = admin_and_user(env)
+    for bad in ("permis-*", [""], [3], ["x" * 201], [f"m{i}" for i in range(501)]):
+        r = alice.post("/ui/backends", json={**MINE, "models": bad})
+        assert r.status_code == 400, bad
+
+
+def test_un_backend_du_toml_borne_ses_modeles(env, monkeypatch):
+    """[backends.<nom>].models : la même borne pour un backend du TOML,
+    motifs sans casse ; une valeur qui n'est pas une liste arrête le
+    démarrage."""
+    alice, _, _ = admin_and_user(env)
+    monkeypatch.setattr(config, "CONFIG", {"backends": {"essai": {
+        "url": "http://backend.invalid", "models": ["AUTRE"]}}})
+    narrow = backends.load_backends()["essai"]
+    narrow.client = backends.open_client(narrow)
+    monkeypatch.setitem(backends.BACKENDS, "essai", narrow)
+    assert {m["id"] for m in alice.get("/ui/models").json()["data"]
+            if m["id"].startswith("essai/")} == {"essai/autre"}
+    assert ask(alice, "essai/permis-1").status_code == 404
+    monkeypatch.setattr(config, "CONFIG", {"backends": {"x": {"url": "http://x.invalid",
+                                                              "models": "autre"}}})
+    with pytest.raises(SystemExit):
+        backends.load_backends()
 
 
 # ── les modèles permis d'un compte ──────────────────────────────────────

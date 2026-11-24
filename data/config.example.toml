@@ -776,6 +776,8 @@ max_per_user = 10
 #   tokenize_path — count_tokens exact (llama.cpp : "/tokenize") ; absent =
 #     estimation à 4 caractères/token ;
 #   fair_share — compté au partage équitable (true) ;
+#   models — les modèles exposés : motifs sans préfixe, jokers, casse
+#     ignorée (["qwen3-*"]) ; les autres ni listés ni routés (absent = tous) ;
 #   model_types — type imposé par motif (jokers, casse ignorée) quand le
 #     catalogue ou le nom du modèle trompe :
 #   [backends.bigchuck.model_types]

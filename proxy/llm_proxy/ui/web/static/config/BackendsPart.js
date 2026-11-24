@@ -9,6 +9,11 @@
   clé, la page n'en reçoit que les noms ; « Nom: » sans valeur garde
   l'ancienne. L'admin ouvre aussi le backend d'un autre compte (PUT ?all=1) :
   en-têtes, limites, quotas… sans jamais voir sa clé ni ses valeurs.
+  Ses modèles exposés : « Lire les modèles » interroge son /v1/models
+  (/ui/backends/{id}/models), une case par modèle, cochée si le proxy
+  l'expose. Les cases touchées remplacent les motifs : tout coché, aucun
+  filtre (les nouveaux modèles viennent d'eux-mêmes), sinon les noms
+  cochés ; pas touchées, les motifs restent.
   Désactivé, il reste (clé comprise) sans être routé. La clé
   n'est jamais relue : vide à la modification, elle reste.
   En dessous, ceux que d'autres comptes partagent, en lecture, et pour
@@ -24,6 +29,8 @@ const API_LABELS = { openai: "OpenAI (chat/completions)", anthropic: "Anthropic 
 const blank = () => ({ id: null, name: "", api: "openai", url: "", api_key: "", shared: false,
                        images: null, tokenize_path: "", enabled: true, tool_choice: "", quotas: false,
                        limits: [], limitsText: "", headers: [], headersText: "",
+                       models: [], catalog: null, picked: [], touched: false, reading: false,
+                       saved_enabled: true,
                        anyone: false, by: "" });
 const KINDS = ["rpm", "tpm", "rpd", "tpd"];
 // Une règle par ligne : des motifs de noms, puis des plafonds « rpm=10 ».
@@ -52,6 +59,8 @@ function rulesOf(text) {
     return rule;
   });
 }
+// Un nom coché, en motif de `models` qui ne désigne que lui.
+const literal = (id) => id.replace(/[*?[]/g, "[$&]");
 const TOOL_CHOICES = [["", "aucune injection"], ["auto", "auto"], ["required", "required"], ["none", "none"]];
 const IMAGES = [[null, "selon le protocole"], [true, "oui"], [false, "non"]];
 
@@ -81,7 +90,7 @@ export const BackendsPart = {
     }
     // `anyone` : l'admin ouvre le backend d'un autre compte (PUT ?all=1).
     function open(b = null, anyone = false) {
-      Object.assign(form, blank(), b ? { ...b, api_key: "", limitsText: rulesText(b.limits),
+      Object.assign(form, blank(), b ? { ...b, api_key: "", saved_enabled: b.enabled, limitsText: rulesText(b.limits),
                                          headersText: (b.headers || []).map((n) => `${n}:`).join("\n"),
                                          anyone, by: anyone ? b.by : "" } : {});
       editing.value = true;
@@ -91,11 +100,36 @@ export const BackendsPart = {
                              images: b.images, tokenize_path: b.tokenize_path, enabled: b.enabled,
                              tool_choice: b.tool_choice, quotas: b.quotas, limits: b.limits || [],
                              headers: b.sentHeaders || keepHeaders(b.headers),
+                             models: b.models || [],
                              ...(b.api_key ? { api_key: b.api_key } : {}) });
+    // Le catalogue entier du backend enregistré, coché selon ses `models`.
+    async function readModels() {
+      error.value = "";
+      form.reading = true;
+      try {
+        const d = await call("GET", "/ui/backends/" + encodeURIComponent(form.id) + "/models"
+                             + (form.anyone ? "?all=1" : ""));
+        form.catalog = d.models.map((m) => m.id);
+        form.picked = d.models.filter((m) => m.exposed).map((m) => m.id);
+        form.touched = false;
+      } catch (e) { error.value = e.message; }
+      form.reading = false;
+    }
+    // Cases touchées : tout coché = aucun filtre, sinon les noms cochés ;
+    // pas touchées, les motifs restent tels quels.
+    function chosen() {
+      if (!form.touched) return form.models;
+      if (!form.picked.length) throw new Error("modèles : cochez-en au moins un");
+      return form.picked.length === form.catalog.length ? [] : form.picked.map(literal);
+    }
+    function pick(all) {
+      form.picked = all ? [...form.catalog] : [];
+      form.touched = true;
+    }
     async function save() {
       error.value = "";
       try {
-        const body = fields({ ...form, limits: rulesOf(form.limitsText),
+        const body = fields({ ...form, limits: rulesOf(form.limitsText), models: chosen(),
                               sentHeaders: headersOf(form.headersText) });
         if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id)
                                 + (form.anyone ? "?all=1" : ""), body);
@@ -134,6 +168,7 @@ export const BackendsPart = {
 
     onMounted(load);
     return { mine, shared, every, admin, reserved, error, form, editing, armed, open, save, toggle, quotas, remove, when,
+             readModels, pick,
              API_LABELS, IMAGES, TOOL_CHOICES };
   },
   template: `
@@ -194,6 +229,24 @@ export const BackendsPart = {
             <span class="dim">(une règle par ligne : motifs de noms puis plafonds, « claude-*, qwen-big rpm=10 tpd=5000000 » ; admin)</span>
             <textarea v-model="form.limitsText" rows="3" spellcheck="false" :readonly="!admin"
                       placeholder="claude-* rpm=50 tpm=200000 tpd=5000000"></textarea></label>
+          <fieldset class="backend-models" v-if="form.id">
+            <legend>Modèles exposés <span class="dim">(les autres ne sont ni listés ni routés, pour personne)</span></legend>
+            <p class="note" v-if="!form.catalog">{{ form.models.length ? form.models.join(", ") : "Tous." }}</p>
+            <template v-else>
+              <div class="item-actions">
+                <button type="button" class="btn ghost" @click="pick(true)">Tout cocher</button>
+                <button type="button" class="btn ghost" @click="pick(false)">Tout décocher</button>
+                <span class="dim">{{ form.picked.length }} / {{ form.catalog.length }}
+                  {{ form.picked.length === form.catalog.length ? "· les nouveaux modèles aussi" : "" }}</span></div>
+              <div class="model-picks">
+                <label class="check" v-for="m in form.catalog" :key="m">
+                  <input type="checkbox" :value="m" v-model="form.picked" @change="form.touched = true"> <code>{{ m }}</code></label></div>
+            </template>
+            <div class="item-actions" v-if="!form.catalog">
+              <button type="button" class="btn ghost" @click="readModels" :disabled="form.reading || !form.saved_enabled">
+                {{ form.reading ? "Lecture…" : "Lire les modèles" }}</button>
+              <span class="dim" v-if="!form.saved_enabled">(backend actif seulement)</span></div>
+          </fieldset>
           <div class="item-actions">
             <button type="submit" class="btn">{{ form.id ? "Enregistrer" : "Créer" }}</button>
             <button type="button" class="btn ghost" @click="editing = false">Annuler</button>

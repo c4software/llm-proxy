@@ -19,6 +19,7 @@ Un backend de compte a ces champs :
 | Tokenisation | Comme [`tokenize_path`](configuration.md#backendsnom) : un chemin sous l'adresse (`/tokenize` pour llama.cpp) qui rend `count_tokens` exact. Vide : estimation |
 | tool_choice | Comme [`force_tool_choice`](configuration.md#backendsnom) : `auto`, `required` ou `none`, injecté quand une requête a des outils sans `tool_choice`. Albert : `auto`. Vide : aucune injection |
 | Quotas | Comme [`quotas`](configuration.md#backendsnom) : le limiteur, avec ses règles *Limites*, les limites du compte quand le backend les publie (Albert) ou les annonce dans les en-têtes de ses réponses ([Mistral, OpenAI, Groq, Anthropic](configuration.md#limites-annoncées-par-les-en-têtes)) et les réglages de [`[quotas]`](configuration.md#quotas). Posé par un admin seulement, sur ses backends ou, depuis *Backends de tous les comptes*, sur ceux d'un autre compte ; un compte garde ou ôte celui de son backend |
+| Modèles exposés | Comme [`models`](configuration.md#backendsnom) : les modèles que le backend expose, à son compte comme aux autres. *Lire les modèles* (backend enregistré et actif, avec son adresse et sa clé enregistrées) interroge son `/v1/models` et affiche une case par modèle, cochée s'il est exposé. Des cases modifiées remplacent les motifs : tout coché, aucun filtre (les modèles que le backend ajoute plus tard apparaissent d'eux-mêmes) ; sinon, les seuls noms cochés. Cases inchangées : les motifs restent |
 | Limites | Comme [`limits`](configuration.md#backendsnom), avec *Quotas* : une règle par ligne, des motifs de noms puis des plafonds, `claude-*, qwen-big rpm=10 tpd=5000000`. Posées par un admin, comme les quotas ; un compte garde ou ôte celles de son backend |
 
 Ses modèles s'emploient comme les autres : dans le chat de la page, et
@@ -77,8 +78,9 @@ Par la session de la page, en JSON :
 | Route | Effet |
 |---|---|
 | `GET /ui/backends` | `{backends, shared, reserved}` : les siens, ceux que d'autres partagent et qui sont actifs (avec `by`, leur créateur), les noms de `[backends.<nom>]`. Admin, `?all=1` : `all`, ceux de tous les comptes |
-| `POST /ui/backends` | Crée `{name, api, url, api_key?, headers?, shared, images?, tokenize_path?, tool_choice?, quotas?, limits?, enabled?}` (`enabled` vrai par défaut ; `quotas` : admin, sinon `403`) |
-| `PUT /ui/backends/<id>` | Modifie (même corps ; `enabled` absent : état inchangé ; `headers` absent : inchangés ; présent, il remplace la liste, une valeur vide gardant l'ancienne). Admin, `?all=1` : celui de n'importe quel compte (même règle de clé). Un compte ordinaire garde les quotas posés par l'admin tant que l'adresse ne change pas d'origine |
+| `POST /ui/backends` | Crée `{name, api, url, api_key?, headers?, shared, images?, tokenize_path?, tool_choice?, quotas?, limits?, models?, enabled?}` (`enabled` vrai par défaut ; `quotas` : admin, sinon `403` ; `models` : 500 motifs au plus, de 200 caractères au plus, vide ou absent : tous) |
+| `PUT /ui/backends/<id>` | Modifie (même corps ; `enabled` absent : état inchangé ; `models` absent : inchangé ; `headers` absent : inchangés, présent, il remplace la liste, une valeur vide gardant l'ancienne). Admin, `?all=1` : celui de n'importe quel compte (même règle de clé). Un compte ordinaire garde les quotas posés par l'admin tant que l'adresse ne change pas d'origine |
+| `GET /ui/backends/<id>/models` | `{models: [{id, exposed}]}` : tout ce que son `/v1/models` annonce, sans préfixe, et si `models` l'expose. Backend actif seulement, sinon `404` ; `502` s'il ne répond pas. Admin, `?all=1` : celui de n'importe quel compte |
 | `DELETE /ui/backends/<id>` | Supprime → `{deleted}`. Admin, `?all=1` : celui de n'importe quel compte |
 
 Un compte ne voit ni ne modifie le backend d'un autre (`404`) ; sa

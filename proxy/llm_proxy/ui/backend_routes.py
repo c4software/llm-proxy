@@ -14,10 +14,17 @@ autre, sauf les partagés, en lecture ; la clé n'est jamais rendue.
                              (vide : selon le protocole), tokenize_path?,
                              enabled? (vrai par défaut ; faux : gardé, pas routé),
                              tool_choice? ("", auto, required, none),
-                             quotas?, limits? (le limiteur et ses règles : posés par un admin)}
+                             quotas?, limits? (le limiteur et ses règles : posés par un admin),
+                             models? (motifs exposés, sans préfixe ; vide : tous)}
   PUT    /ui/backends/{id}   modifie (api_key absente ou vide : inchangée,
                              sauf si l'adresse change d'origine) ; ?all=1
                              (admin) : celui de n'importe qui (ses quotas…)
+  GET    /ui/backends/{id}/models
+                             {models: [{id, exposed}]} : ce que son
+                             /v1/models annonce, sans préfixe, et si son
+                             filtre `models` l'expose (actif seulement :
+                             404 sinon, 502 s'il ne répond pas) ; ?all=1
+                             (admin) : celui de n'importe qui
   DELETE /ui/backends/{id}   le sien ; ?all=1 (admin) : celui de n'importe qui
   GET    /ui/quotas          (admin) le limiteur de chaque backend à quotas :
                              buckets, consommation, plafonds, restant annoncé
@@ -151,6 +158,26 @@ async def ui_backend_update(request: Request, bid: str):
     if bad is not None:
         return bad
     return await _write(request, user_backends.update, bid, anyone=anyone)
+
+
+@router.get("/ui/backends/{bid}/models")
+async def ui_backend_models(request: Request, bid: str):
+    """Pour choisir ses `models` : le catalogue du backend, entier."""
+    if (bad := _closed()) is not None:
+        return bad
+    anyone, bad = _anyone(request)
+    if bad is not None:
+        return bad
+    b = backends.of_account(bid, None if anyone else ui_client(request))
+    if b is None:
+        return error_response("openai", 404, "not_found", "backend inconnu ou inactif")
+    got = await catalog.fetch_models(b)
+    if got is None:
+        return error_response("openai", 502, "proxy_error",
+                              f"/v1/models de « {b.name} » sans réponse")
+    cut = len(b.name) + 1
+    return {"models": [{"id": i, "exposed": b.exposes(i)}
+                       for i in sorted({e["id"][cut:] for e in got})]}
 
 
 @router.delete("/ui/backends/{bid}")

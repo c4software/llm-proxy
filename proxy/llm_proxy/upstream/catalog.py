@@ -285,6 +285,8 @@ async def _read_models(b: Backend, headers: dict) -> list | None:
             ],
         })
     b.models = {str(m["id"]).lower() for m in served}
+    b.aliases = {a.lower(): str(m["id"]).lower() for m in served
+                 for a in m.get("aliases") or [] if isinstance(a, str)}
     b.model_types = types
     return entries
 

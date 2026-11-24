@@ -107,13 +107,13 @@ def health_detail() -> dict:
                 "timeout": b.timeout,
                 "meta_timeout": b.meta_timeout,
                 "connect_timeout": b.connect_timeout,
-                "last_seen_models": sorted(f"{name}/{m}" for m in b.models),
+                "last_seen_models": sorted(f"{name}/{m}" for m in b.models if b.exposes(m)),
                 # Ceux qu'on peut proposer à un client de chat (ni image,
                 # ni voix, ni embeddings) : le tableau de bord y prend ses
                 # exemples. Vide tant que le catalogue n'a pas été lu.
                 "chat_models": sorted(
-                    f"{name}/{m}" for m in b.models
-                    if b.model_types.get(m, "text-generation") in CHAT_TYPES),
+                    f"{name}/{m}" for m in b.models if b.exposes(m)
+                    and b.model_types.get(m, "text-generation") in CHAT_TYPES),
                 **(b.quota_state.snapshot() if b.quotas else {}),
             }
             for name, b in served().items()
