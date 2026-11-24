@@ -95,15 +95,17 @@ def cap_max_tokens(payload: dict, b: Backend) -> bool:
 
 # Les champs des seuls serveurs à gabarit (llama.cpp, vLLM) — `store`
 # compris, qu'y ajoutent pi et omp : une API stricte (Mistral) refuse la
-# requête qui les porte.
+# requête qui les porte. Dans l'historique, la réflexion rendue au modèle.
 TEMPLATE_FIELDS = ("chat_template_kwargs", "store")
+TEMPLATE_MESSAGE_FIELDS = ("reasoning_content", "reasoning")
 # Les niveaux de `chat_template_kwargs.reasoning_effort` qui ne coupent pas
 # la réflexion : ceux-là seuls passent en `reasoning_effort`.
 NO_EFFORT = ("", "none", "off")
 
 
 def fit_chat_template(payload: dict, b: Backend) -> bool:
-    """Sans [backends.<nom>].chat_template, retire TEMPLATE_FIELDS. Le
+    """Sans [backends.<nom>].chat_template, retire TEMPLATE_FIELDS, et
+    TEMPLATE_MESSAGE_FIELDS des messages de l'historique. Le
     niveau de réflexion qu'ils portaient (`reasoning_effort` du gabarit)
     devient `reasoning_effort` si le client n'en a pas mis ; « sans
     réflexion » n'a pas d'équivalent sûr (refusé par les modèles qui ne
@@ -112,6 +114,12 @@ def fit_chat_template(payload: dict, b: Backend) -> bool:
     if b.chat_template or b.api == "anthropic":
         return False
     found = {k: payload.pop(k) for k in TEMPLATE_FIELDS if k in payload}
+    messages = payload.get("messages")
+    for msg in messages if isinstance(messages, list) else ():
+        if isinstance(msg, dict):
+            for k in TEMPLATE_MESSAGE_FIELDS:
+                if k in msg:
+                    found.setdefault(k, msg.pop(k))
     effort = anthropic.template_effort(found.get("chat_template_kwargs"))
     if effort not in NO_EFFORT and payload.get("reasoning_effort") is None:
         payload["reasoning_effort"] = effort

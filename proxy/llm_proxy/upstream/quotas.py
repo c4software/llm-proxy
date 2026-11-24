@@ -165,8 +165,11 @@ class Window:
                     waits.append(ts + self.seconds - now)
                     break
             else:
-                if self.events:
-                    waits.append(self.events[-1][0] + self.seconds - now)
+                # Plus grosse que le plafond : une fenêtre sans tokens. Une
+                # place rendue (0 token, requête refusée) ne retient pas.
+                carrying = [ts for ts, tok, _ in self.events if tok]
+                if carrying:
+                    waits.append(carrying[-1] + self.seconds - now)
         return max(waits) if waits else 0.0
 
     def record(self, now: float, cost: int) -> list | None:

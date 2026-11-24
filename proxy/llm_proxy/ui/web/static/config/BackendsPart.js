@@ -216,7 +216,7 @@ export const BackendsPart = {
           <label>Tokenisation <span class="dim">(chemin d'un comptage exact, llama.cpp : /tokenize ; vide : estimation)</span>
             <input v-model="form.tokenize_path" maxlength="200" spellcheck="false" placeholder="/tokenize"></label>
           <label v-if="form.api !== 'anthropic'" class="check"><input type="checkbox" v-model="form.chat_template">
-            Gabarit <span class="dim">(llama.cpp, vLLM : reçoit chat_template_kwargs et store ;
+            Gabarit <span class="dim">(llama.cpp, vLLM : reçoit chat_template_kwargs, store, la réflexion de l'historique ;
             décoché, ils sont retirés et le niveau de réflexion passe en reasoning_effort)</span></label>
           <label>En-têtes <span class="dim">(un par ligne, « Nom: valeur », ajoutés à chaque requête ;
             jamais réaffichés : « Nom: » sans valeur garde l'ancienne)</span>

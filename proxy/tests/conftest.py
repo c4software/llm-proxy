@@ -60,8 +60,9 @@ def proxy(monkeypatch):
     """L'application entière, par le client de test de Starlette (`client`),
     les deux surfaces traduites actives ; seul l'envoi au backend
     (relaying.send_upstream) est remplacé : aucun réseau. Un backend «essai»
-    sans quota, les outils factices (`hosted`, dont `hosted.runs` dit ce
-    qui a été exécuté), et de quoi lire ce qui se passe :
+    à gabarit (comme llama.cpp : `chat_template`) sans quota, les outils
+    factices (`hosted`, dont `hosted.runs` dit ce qui a été exécuté), et de
+    quoi lire ce qui se passe :
       `replies` : ce que le backend répondra, tour après tour — un
                   FakeUpstream, ou (statut, type, message) s'il est
                   injoignable ;
@@ -88,7 +89,8 @@ def proxy(monkeypatch):
         return call.error(*reply) if isinstance(reply, tuple) else reply
 
     monkeypatch.setitem(backends.BACKENDS, "essai",
-                        Backend("essai", {"url": "http://backend.invalid"}))
+                        Backend("essai", {"url": "http://backend.invalid",
+                                          "chat_template": True}))
     monkeypatch.setattr(auth, "PROXY_API_KEYS", [])
     from fakes import everywhere
     everywhere(monkeypatch, anthropic_api, "ENABLED", True)

@@ -86,6 +86,17 @@ def test_a_request_refused_upstream_gives_its_place_back(proxy):
                          (500, 80_000)):
         assert run(tokens_left_after(status)) == left, status
 
+    # Plus grosse que tout le plafond, la suivante attend une fenêtre sans
+    # tokens : la place rendue (0 token) ne la retient plus.
+    async def oversized_waits_after_a_refusal():
+        lim = quotas.Limiter("l", "générique", rpm=10, tpm=100_000)
+        call = relaying.Call(backends.BACKENDS["essai"], "essai/qwen",
+                             "/v1/chat/completions")
+        await lim.acquire(50_000, ticket=call.tickets)
+        call.done(422)
+        return lim.minute.wait_needed(time.monotonic(), 300_000)
+    assert run(oversized_waits_after_a_refusal()) == 0
+
 
 def test_an_unlimited_window_keeps_no_ticket():
     async def scenario():

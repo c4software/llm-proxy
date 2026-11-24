@@ -307,7 +307,7 @@ export const ProxyPart = {
                 <label class="check"><input type="checkbox" v-model="b.key"> clé d'API</label>
                 <label class="check"><input type="checkbox" v-model="b.quotas"> quotas (Albert)</label>
                 <label class="check"><input type="checkbox" v-model="b.images"> images</label>
-                <label v-if="b.api !== 'anthropic'" class="check" title="llama.cpp, vLLM : reçoit chat_template_kwargs et store ; décoché, ils sont retirés (chat_template)">
+                <label v-if="b.api !== 'anthropic'" class="check" title="llama.cpp, vLLM : reçoit chat_template_kwargs, store, la réflexion de l'historique ; décoché, ils sont retirés (chat_template)">
                   <input type="checkbox" v-model="b.chatTemplate"> gabarit</label>
                 <span class="check">tool_choice
                   <select v-model="b.toolChoice" aria-label="tool_choice injecté">

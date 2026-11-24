@@ -313,8 +313,9 @@ def test_tool_choice_injecte_sur_un_backend_de_compte(env):
 
 
 def test_les_champs_du_gabarit_ne_partent_qu_a_un_backend_a_gabarit(env):
-    """`chat_template_kwargs` et `store` (pi, omp) font refuser la requête par
-    une API stricte (Mistral, 422) : retirés, sauf vers un backend
+    """`chat_template_kwargs`, `store` et le `reasoning_content` /
+    `reasoning` de l'historique (pi, omp) font refuser la requête par une
+    API stricte (Mistral, 422) : retirés, sauf vers un backend
     `chat_template` (llama.cpp, vLLM). Le niveau de réflexion qu'ils portaient
     passe en `reasoning_effort`, sans écraser celui du client ; « sans
     réflexion » n'en donne aucun."""
@@ -322,14 +323,21 @@ def test_les_champs_du_gabarit_ne_partent_qu_a_un_backend_a_gabarit(env):
     bid = alice.post("/ui/backends", json=MINE).json()["backend"]["id"]
     key = alice.post("/ui/keys", json={"label": "cli"}).json()["key"]
 
+    history = [{"role": "user", "content": "x"},
+               {"role": "assistant", "content": "y", "reasoning_content": "",
+                "reasoning": "z"},
+               {"role": "user", "content": "x"}]
+
     def sent(**extra):
         r = env.client.post("/v1/chat/completions", headers=bearer(key), json={
-            "model": "perso/m", "store": False,
-            "messages": [{"role": "user", "content": "x"}], **extra})
+            "model": "perso/m", "store": False, "messages": history, **extra})
         assert r.status_code == 200, r.text
         body = env.got[-1][2]
-        return {k: body[k] for k in ("store", "chat_template_kwargs", "reasoning_effort")
-                if k in body}
+        assert body["messages"][1]["content"] == "y"
+        out = {k: body[k] for k in ("store", "chat_template_kwargs", "reasoning_effort")
+               if k in body}
+        out.update({k: v for k, v in body["messages"][1].items() if k.startswith("reasoning")})
+        return out
     cases = (
         ({"thinking": True, "reasoning_effort": "high"}, {}, {"reasoning_effort": "high"}),
         ({"enable_thinking": True, "reasoning_effort": "low"}, {"reasoning_effort": "medium"},
@@ -341,7 +349,8 @@ def test_les_champs_du_gabarit_ne_partent_qu_a_un_backend_a_gabarit(env):
     alice.put(f"/ui/backends/{bid}", json={**MINE, "chat_template": True})
     assert alice.get("/ui/backends").json()["backends"][0]["chat_template"] is True
     kwargs = {"enable_thinking": False}
-    assert sent(chat_template_kwargs=kwargs) == {"store": False, "chat_template_kwargs": kwargs}
+    assert sent(chat_template_kwargs=kwargs) == {"store": False, "chat_template_kwargs": kwargs,
+                                                 "reasoning_content": "", "reasoning": "z"}
 
 
 def test_seul_un_admin_pose_les_quotas_d_un_backend(env):

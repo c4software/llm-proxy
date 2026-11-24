@@ -359,12 +359,11 @@ def test_chat_speaks_through_the_proxy(ui, monkeypatch):
     assert ui.client.get("/ui/audio/voices?model=essai/tts").status_code == 404
 
 
-def test_chat_passes_the_reasoning_level_through(ui, monkeypatch):
+def test_chat_passes_the_reasoning_level_through(ui):
     """Le niveau de réflexion du chat arrive au backend à gabarit
     (llama.cpp, vLLM : `chat_template`) tel quel, avec ou sans outil
     hébergé : `reasoning_effort`, ou `chat_template_kwargs.enable_thinking`
     pour la couper."""
-    monkeypatch.setattr(backends.BACKENDS["essai"], "chat_template", True)
     login(ui)
     for extra in ({"reasoning_effort": "high"},
                   {"chat_template_kwargs": {"enable_thinking": False}},
