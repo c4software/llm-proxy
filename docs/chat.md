@@ -82,7 +82,7 @@ conserve chaque catalogue pendant `[proxy].catalog_ttl`.
 | Choix | Envoyé au backend |
 |---|---|
 | *auto* | rien (comportement du modèle) |
-| *non* | `chat_template_kwargs: {"enable_thinking": false}` (coupe un modèle hybride comme Qwen3 ; gpt-oss réfléchit toujours un peu) |
+| *non* | `chat_template_kwargs: {"enable_thinking": false}` (coupe un modèle hybride comme Qwen3 ; gpt-oss réfléchit toujours un peu). Seulement vers un backend [`chat_template`](configuration.md#backendsnom) ; ailleurs, comportement du modèle |
 | *faible* / *moyenne* / *élevée* | `reasoning_effort` low / medium / high |
 
 Sur llama.cpp, `reasoning_effort` active la réflexion d'un Qwen3. Sur

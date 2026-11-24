@@ -178,7 +178,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `upstream/mistral.py` | Le forfait mensuel d'un compte Mistral : `/v1/billing/budget` (`refresh`), lu par `backends.read_for_page` pour *Configuration → Quotas* |
 | `upstream/rate_headers.py` | Les limites annoncées dans les en-têtes d'une réponse (Mistral, OpenAI, Groq, Anthropic) : `parse`, appliquées par `QuotaState.observe` depuis `send_upstream`, sur le bucket de la requête |
 | `upstream/anthropic.py` | Le backend Anthropic natif (`api = "anthropic"`) : chat/completions ↔ Messages, flux compris |
-| `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), `forward`, `relay`, `drain` |
+| `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), le corps ajusté au backend (`inject_tool_choice`, `cap_max_tokens`, `fit_chat_template`), `forward`, `relay`, `drain` |
 | `upstream/catalog.py` | Catalogue fusionné et préfixé (servi par `/v1/models`), type et contexte de chaque modèle |
 
 ### `surfaces/` : les API de conversation

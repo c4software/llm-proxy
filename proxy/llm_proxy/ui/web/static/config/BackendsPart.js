@@ -2,9 +2,9 @@
   Configuration → Backends : les BACKENDS du compte connecté (/ui/backends,
   backend_routes.py) — un nom (le préfixe de ses modèles), un protocole, une
   adresse, une clé, et pour qui : soi seul, ou tout le monde (avec la clé du
-  créateur), et deux réglages d'une table [backends.<nom>] : images et
-  tokenize_path, l'injection de tool_choice et (admin) le limiteur : quotas,
-  et ses règles `limits`, une par ligne (« claude-*, qwen-big rpm=10 tpd=5000 »).
+  créateur), et des réglages d'une table [backends.<nom>] : images,
+  tokenize_path, chat_template, l'injection de tool_choice et (admin) le
+  limiteur : quotas, et ses règles `limits`, une par ligne (« claude-*, qwen-big rpm=10 tpd=5000 »).
   Ses en-têtes propres (« Nom: valeur », un par ligne) : secrets comme la
   clé, la page n'en reçoit que les noms ; « Nom: » sans valeur garde
   l'ancienne. L'admin ouvre aussi le backend d'un autre compte (PUT ?all=1) :
@@ -27,7 +27,7 @@ const { ref, reactive, onMounted } = Vue;
 
 const API_LABELS = { openai: "OpenAI (chat/completions)", anthropic: "Anthropic (Messages)" };
 const blank = () => ({ id: null, name: "", api: "openai", url: "", api_key: "", shared: false,
-                       images: null, tokenize_path: "", enabled: true, tool_choice: "", quotas: false,
+                       images: null, tokenize_path: "", chat_template: false, enabled: true, tool_choice: "", quotas: false,
                        limits: [], limitsText: "", headers: [], headersText: "",
                        models: [], catalog: null, picked: [], touched: false, reading: false,
                        saved_enabled: true,
@@ -97,7 +97,8 @@ export const BackendsPart = {
       if (anyone) Vue.nextTick(() => document.querySelector(".backends-form")?.scrollIntoView({ block: "start" }));
     }
     const fields = (b) => ({ name: b.name, api: b.api, url: b.url, shared: b.shared,
-                             images: b.images, tokenize_path: b.tokenize_path, enabled: b.enabled,
+                             images: b.images, tokenize_path: b.tokenize_path,
+                             chat_template: !!b.chat_template, enabled: b.enabled,
                              tool_choice: b.tool_choice, quotas: b.quotas, limits: b.limits || [],
                              headers: b.sentHeaders || keepHeaders(b.headers),
                              models: b.models || [],
@@ -214,6 +215,9 @@ export const BackendsPart = {
             </select></label>
           <label>Tokenisation <span class="dim">(chemin d'un comptage exact, llama.cpp : /tokenize ; vide : estimation)</span>
             <input v-model="form.tokenize_path" maxlength="200" spellcheck="false" placeholder="/tokenize"></label>
+          <label v-if="form.api !== 'anthropic'" class="check"><input type="checkbox" v-model="form.chat_template">
+            Gabarit <span class="dim">(llama.cpp, vLLM : reçoit chat_template_kwargs et store ;
+            décoché, ils sont retirés et le niveau de réflexion passe en reasoning_effort)</span></label>
           <label>En-têtes <span class="dim">(un par ligne, « Nom: valeur », ajoutés à chaque requête ;
             jamais réaffichés : « Nom: » sans valeur garde l'ancienne)</span>
             <textarea v-model="form.headersText" rows="2" spellcheck="false" autocomplete="off"

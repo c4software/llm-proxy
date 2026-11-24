@@ -104,6 +104,7 @@ def health_detail() -> dict:
                 "images": b.images,
                 "fair_share": b.fair_share,
                 "tokenize_path": b.tokenize_path or None,
+                "chat_template": b.chat_template,
                 "timeout": b.timeout,
                 "meta_timeout": b.meta_timeout,
                 "connect_timeout": b.connect_timeout,

@@ -163,6 +163,7 @@ def test_noms_et_bornes_refuses(env, monkeypatch):
         "état ni vrai ni faux": (alice, {**MINE, "name": "x", "enabled": "non"}),
         "tool_choice inconnu": (alice, {**MINE, "name": "x", "tool_choice": "toujours"}),
         "quotas ni vrai ni faux": (alice, {**MINE, "name": "x", "quotas": 1}),
+        "gabarit ni vrai ni faux": (alice, {**MINE, "name": "x", "chat_template": "oui"}),
     }
     for case, (who, body) in cases.items():
         assert who.post("/ui/backends", json=body).status_code == 400, case
@@ -309,6 +310,38 @@ def test_tool_choice_injecte_sur_un_backend_de_compte(env):
             "messages": [{"role": "user", "content": "x"}]})
         assert r.status_code == 200, r.text
         assert env.got[-1][2]["tool_choice"] == expected, sent
+
+
+def test_les_champs_du_gabarit_ne_partent_qu_a_un_backend_a_gabarit(env):
+    """`chat_template_kwargs` et `store` (pi, omp) font refuser la requête par
+    une API stricte (Mistral, 422) : retirés, sauf vers un backend
+    `chat_template` (llama.cpp, vLLM). Le niveau de réflexion qu'ils portaient
+    passe en `reasoning_effort`, sans écraser celui du client ; « sans
+    réflexion » n'en donne aucun."""
+    alice, _, _ = admin_and_user(env)
+    bid = alice.post("/ui/backends", json=MINE).json()["backend"]["id"]
+    key = alice.post("/ui/keys", json={"label": "cli"}).json()["key"]
+
+    def sent(**extra):
+        r = env.client.post("/v1/chat/completions", headers=bearer(key), json={
+            "model": "perso/m", "store": False,
+            "messages": [{"role": "user", "content": "x"}], **extra})
+        assert r.status_code == 200, r.text
+        body = env.got[-1][2]
+        return {k: body[k] for k in ("store", "chat_template_kwargs", "reasoning_effort")
+                if k in body}
+    cases = (
+        ({"thinking": True, "reasoning_effort": "high"}, {}, {"reasoning_effort": "high"}),
+        ({"enable_thinking": True, "reasoning_effort": "low"}, {"reasoning_effort": "medium"},
+         {"reasoning_effort": "medium"}),
+        ({"enable_thinking": False}, {}, {}),
+    )
+    for kwargs, own, expected in cases:
+        assert sent(chat_template_kwargs=kwargs, **own) == expected, kwargs
+    alice.put(f"/ui/backends/{bid}", json={**MINE, "chat_template": True})
+    assert alice.get("/ui/backends").json()["backends"][0]["chat_template"] is True
+    kwargs = {"enable_thinking": False}
+    assert sent(chat_template_kwargs=kwargs) == {"store": False, "chat_template_kwargs": kwargs}
 
 
 def test_seul_un_admin_pose_les_quotas_d_un_backend(env):

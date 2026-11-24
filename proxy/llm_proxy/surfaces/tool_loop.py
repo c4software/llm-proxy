@@ -27,6 +27,7 @@ from ..upstream.relaying import (
     Call,
     ERROR_EXCERPT,
     cap_max_tokens,
+    fit_chat_template,
     gate,
     inject_tool_choice,
 )
@@ -332,6 +333,7 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
                 chat_payload["tool_choice"] = "auto"
             inject_tool_choice(chat_payload, call.backend)
             cap_max_tokens(chat_payload, call.backend)
+            fit_chat_template(chat_payload, call.backend)
             raw = strip_backend_prefix(chat_payload, call.backend)
             cost = quotas.estimate_chat_cost(raw)
             prompt_estimate += cost

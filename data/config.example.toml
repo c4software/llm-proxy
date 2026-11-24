@@ -775,6 +775,9 @@ max_per_user = 10
 #     "anthropic") ;
 #   tokenize_path — count_tokens exact (llama.cpp : "/tokenize") ; absent =
 #     estimation à 4 caractères/token ;
+#   chat_template — serveur à gabarit (llama.cpp, vLLM) : reçoit
+#     chat_template_kwargs et store (false : retirés, une API stricte comme
+#     Mistral les refuse ; leur reasoning_effort passe en reasoning_effort) ;
 #   fair_share — compté au partage équitable (true) ;
 #   models — les modèles exposés : motifs sans préfixe, jokers, casse
 #     ignorée (["qwen3-*"]) ; les autres ni listés ni routés (absent = tous) ;
@@ -805,5 +808,6 @@ force_tool_choice = "auto"
 # Backend local llama.cpp : sans quota, contacté à la demande seulement.
 [backends.bigchuck]
 url = "http://bigchuck:8009"
+chat_template = true
 # images = true
 # tokenize_path = "/tokenize"

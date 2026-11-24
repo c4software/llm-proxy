@@ -12,6 +12,7 @@ autre, sauf les partagés, en lecture ; la clé n'est jamais rendue.
   POST   /ui/backends        crée {name, api, url, api_key?, headers? (valeurs
                              jamais rendues, seulement les noms), shared, images?
                              (vide : selon le protocole), tokenize_path?,
+                             chat_template? (faux par défaut),
                              enabled? (vrai par défaut ; faux : gardé, pas routé),
                              tool_choice? ("", auto, required, none),
                              quotas?, limits? (le limiteur et ses règles : posés par un admin),

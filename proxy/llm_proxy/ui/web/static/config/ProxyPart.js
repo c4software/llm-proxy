@@ -86,7 +86,7 @@ export const ProxyPart = {
 
     const addBackend = () => px.backends.push({ name: "", url: "http://", key: false,
       api: "openai", quotas: false, images: false, toolChoice: "", maxTokens: "", fairShare: true,
-      headerNames: "", headerValues: {}, headersPlain: false });
+      chatTemplate: false, headerNames: "", headerValues: {}, headersPlain: false });
     // Un fournisseur connu : nom, URL et variable de la clé remplis. Le
     // menu revient à son libellé, prêt pour le suivant.
     const provider = ref("");
@@ -307,6 +307,8 @@ export const ProxyPart = {
                 <label class="check"><input type="checkbox" v-model="b.key"> clé d'API</label>
                 <label class="check"><input type="checkbox" v-model="b.quotas"> quotas (Albert)</label>
                 <label class="check"><input type="checkbox" v-model="b.images"> images</label>
+                <label v-if="b.api !== 'anthropic'" class="check" title="llama.cpp, vLLM : reçoit chat_template_kwargs et store ; décoché, ils sont retirés (chat_template)">
+                  <input type="checkbox" v-model="b.chatTemplate"> gabarit</label>
                 <span class="check">tool_choice
                   <select v-model="b.toolChoice" aria-label="tool_choice injecté">
                     <option value="">jamais</option><option value="auto">auto</option>

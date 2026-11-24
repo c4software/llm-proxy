@@ -93,6 +93,31 @@ def cap_max_tokens(payload: dict, b: Backend) -> bool:
     return changed
 
 
+# Les champs des seuls serveurs à gabarit (llama.cpp, vLLM) — `store`
+# compris, qu'y ajoutent pi et omp : une API stricte (Mistral) refuse la
+# requête qui les porte.
+TEMPLATE_FIELDS = ("chat_template_kwargs", "store")
+# Les niveaux de `chat_template_kwargs.reasoning_effort` qui ne coupent pas
+# la réflexion : ceux-là seuls passent en `reasoning_effort`.
+NO_EFFORT = ("", "none", "off")
+
+
+def fit_chat_template(payload: dict, b: Backend) -> bool:
+    """Sans [backends.<nom>].chat_template, retire TEMPLATE_FIELDS. Le
+    niveau de réflexion qu'ils portaient (`reasoning_effort` du gabarit)
+    devient `reasoning_effort` si le client n'en a pas mis ; « sans
+    réflexion » n'a pas d'équivalent sûr (refusé par les modèles qui ne
+    raisonnent pas) : le défaut du backend. Un backend Anthropic n'est pas
+    concerné : son adaptateur lit ces champs et bâtit son propre corps."""
+    if b.chat_template or b.api == "anthropic":
+        return False
+    found = {k: payload.pop(k) for k in TEMPLATE_FIELDS if k in payload}
+    effort = anthropic.template_effort(found.get("chat_template_kwargs"))
+    if effort not in NO_EFFORT and payload.get("reasoning_effort") is None:
+        payload["reasoning_effort"] = effort
+    return bool(found)
+
+
 # Convention nginx : le client a fermé la connexion avant la réponse.
 CLIENT_CLOSED = 499
 
@@ -142,6 +167,14 @@ class Call:
         self.status = status
         if status < 400 or partial:
             quotas.settle(self.tickets, prompt_tokens + completion_tokens)
+        elif 400 <= status < 500 and status not in (429, CLIENT_CLOSED):
+            # Refusée par l'amont (422 d'un champ inconnu…) : rien consommé,
+            # sa place (la dernière prise) est rendue, sinon la suivante
+            # attend la minute entière. Les tours d'avant de la boucle des
+            # outils, eux, sont partis. Un 429 garde la sienne (l'amont
+            # sature), comme un client parti ou une erreur 5xx (l'amont a pu
+            # générer).
+            quotas.settle(self.tickets[-1:], 0)
         # Erreur sans `usage` upstream (500, 429 local, client parti…) :
         # rien n'a été consommé de mesurable — des zéros exacts, pas le
         # corps envoyé compté en tokens estimés.

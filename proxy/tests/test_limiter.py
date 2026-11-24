@@ -14,7 +14,7 @@ import pytest
 from fakes import FakeUpstream, chunk, everywhere, quota_limited, sse, usage
 from llm_proxy.core import identity, limits
 from llm_proxy.access import auth, fairshare
-from llm_proxy.upstream import albert, backends, quotas
+from llm_proxy.upstream import albert, backends, quotas, relaying
 
 
 def run(coro):
@@ -66,6 +66,25 @@ def test_the_windows_are_settled_on_the_real_usage():
         lim.minute.adjust(ticket[0][1], 999)
         assert lim.minute.tokens == 0
     run(scenario())
+
+
+def test_a_request_refused_upstream_gives_its_place_back(proxy):
+    """Refusée par l'amont sans `usage` (422 d'un champ inconnu) : rien
+    consommé, sa place estimée quitte la fenêtre — sinon la suivante attend
+    la minute entière ; les tours d'avant de la boucle des outils, partis,
+    gardent la leur. Un 429 de l'amont (il sature), un client parti ou une
+    erreur 5xx (l'amont a pu générer) gardent tout."""
+    async def tokens_left_after(status):
+        lim = quotas.Limiter("l", "générique", rpm=10, tpm=100_000)
+        call = relaying.Call(backends.BACKENDS["essai"], "essai/qwen",
+                             "/v1/chat/completions")
+        await lim.acquire(30_000, ticket=call.tickets)      # un tour parti
+        await lim.acquire(50_000, ticket=call.tickets)      # le tour refusé
+        call.done(status)
+        return lim.snapshot()["minute"]["tokens"]
+    for status, left in ((422, 30_000), (429, 80_000), (relaying.CLIENT_CLOSED, 80_000),
+                         (500, 80_000)):
+        assert run(tokens_left_after(status)) == left, status
 
 
 def test_an_unlimited_window_keeps_no_ticket():

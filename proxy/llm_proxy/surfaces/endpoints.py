@@ -35,6 +35,7 @@ from ..upstream.relaying import (
     cap_max_tokens,
     client_gone,
     default_tap,
+    fit_chat_template,
     forward,
     gate,
     inject_tool_choice,
@@ -121,6 +122,7 @@ async def chat(request: Request, page: bool = False):
             len(payload["tools"]),
         )
     cap_max_tokens(payload, backend)
+    fit_chat_template(payload, backend)
     # Nom PRÉFIXÉ tel que demandé : c'est la clé des stats (le corps, lui,
     # est dé-préfixé juste après pour l'upstream).
     model_key = str(payload["model"])
@@ -262,6 +264,7 @@ async def messages(request: Request):
             len(openai_payload["tools"]),
         )
     cap_max_tokens(openai_payload, backend)
+    fit_chat_template(openai_payload, backend)
     raw = strip_backend_prefix(openai_payload, backend)
 
     call = Call(backend, resolved, "/v1/messages", dialect)
@@ -496,6 +499,7 @@ async def responses(request: Request):
             len(chat_payload["tools"]),
         )
     cap_max_tokens(chat_payload, backend)
+    fit_chat_template(chat_payload, backend)
     raw = strip_backend_prefix(chat_payload, backend)
 
     call = Call(backend, model_key, "/v1/responses")
@@ -540,6 +544,7 @@ async def forward_post(request: Request, normalized: str, dialect: str):
             return no_route(dialect, str(model or ""))
         model_key = str(payload["model"])
         cap_max_tokens(payload, backend)
+        fit_chat_template(payload, backend)
         raw = strip_backend_prefix(payload, backend)
 
     call = Call(backend, model_key, normalized, dialect)

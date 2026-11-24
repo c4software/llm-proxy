@@ -232,6 +232,19 @@ def _tool_choice(choice, parallel) -> dict | None:
     return out
 
 
+def template_effort(kwargs) -> str:
+    """Le niveau de réflexion que porte `chat_template_kwargs` (pi, omp ; la
+    page) : son `reasoning_effort`, « none » quand il coupe la réflexion
+    (`enable_thinking` ou `thinking` faux), sinon «»."""
+    if not isinstance(kwargs, dict):
+        return ""
+    effort = kwargs.get("reasoning_effort")
+    if isinstance(effort, str) and effort.strip():
+        return effort.strip().lower()
+    if kwargs.get("enable_thinking") is False or kwargs.get("thinking") is False:
+        return "none"
+    return ""
+
 def to_messages(payload: dict, caps: dict | None = None,
                 max_out: int | None = None) -> dict:
     """La requête Messages d'une requête chat/completions (modèle déjà
@@ -277,11 +290,8 @@ def to_messages(payload: dict, caps: dict | None = None,
     # passent au gabarit (`chat_template_kwargs` : pi, omp ; « non » de la
     # page). La réflexion ne se coupe pas sur les modèles récents :
     # « sans » devient l'effort le plus bas.
-    kwargs = payload.get("chat_template_kwargs")
-    kwargs = kwargs if isinstance(kwargs, dict) else {}
-    effort = str(payload.get("reasoning_effort") or kwargs.get("reasoning_effort") or "").lower()
-    if not effort and kwargs.get("enable_thinking") is False:
-        effort = "none"
+    effort = (str(payload.get("reasoning_effort") or "").lower()
+              or template_effort(payload.get("chat_template_kwargs")))
     effort = {"minimal": "low", "none": "low", "off": "low"}.get(effort, effort)
     supported = caps.get("effort") if isinstance(caps.get("effort"), dict) else {}
     if effort in EFFORTS and (supported.get(effort) or {}).get("supported"):

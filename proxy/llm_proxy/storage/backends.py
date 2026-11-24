@@ -2,10 +2,10 @@
 Les BACKENDS DES COMPTES : ceux qu'un compte déclare lui-même
 (Configuration → Backends), avec [user_backends].enabled. Un nom (le
 préfixe de routage, comme celui d'une table [backends.<nom>]), un
-protocole (`openai` ou `anthropic`), une adresse, une clé, et deux
+protocole (`openai` ou `anthropic`), une adresse, une clé, et des
 réglages d'une table [backends.<nom>] : `images` (vide : selon le
-protocole), `tokenize_path`, `tool_choice` (`force_tool_choice` : "",
-"auto", "required" ou "none"), `quotas` (le limiteur, upstream/quotas.py) et
+protocole), `tokenize_path`, `chat_template`, `tool_choice`
+(`force_tool_choice` : "", "auto", "required" ou "none"), `quotas` (le limiteur, upstream/quotas.py) et
 `limits` (ses règles, core/limits.py) : ces deux-là posés ou changés par un
 admin seulement, gardés ou ôtés par le compte. Ses `headers` (en-têtes
 propres, core/httputil.backend_headers) sont des secrets comme la clé : la
@@ -50,7 +50,7 @@ NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Un chemin sous l'adresse du backend (llama.cpp : « /tokenize »).
 TOKENIZE_PATH = re.compile(r"/[A-Za-z0-9._~/-]{0,199}\Z")
 _FIELDS = ("id, name, api, url, shared, created, owner, images, tokenize_path, disabled, "
-           "quotas, tool_choice, limits, headers, models")
+           "quotas, tool_choice, limits, headers, models, chat_template")
 
 BackendError = owned.OwnedError
 
@@ -68,7 +68,8 @@ def _table(c) -> None:
                                            "limits": "TEXT NOT NULL DEFAULT '[]'",
                                            "headers": "TEXT NOT NULL DEFAULT '{}'",
                                            "tool_choice": "TEXT NOT NULL DEFAULT ''",
-                                           "models": "TEXT NOT NULL DEFAULT '[]'"})
+                                           "models": "TEXT NOT NULL DEFAULT '[]'",
+                                           "chat_template": "INTEGER NOT NULL DEFAULT 0"})
 
 
 _run = owned.runner(_table)
@@ -78,14 +79,15 @@ def _meta(row) -> dict:
     """Une ligne pour la page, sans clé ; `owner` (le client du créateur)
     sert à le nommer, la route le retire."""
     (bid, name, api, url, shared, created, owner, images, tokenize_path, disabled,
-     quotas, tool_choice, rules, headers, models) = row
+     quotas, tool_choice, rules, headers, models, chat_template) = row
     return {"id": bid, "name": name, "api": api, "url": url, "shared": bool(shared),
             "enabled": not disabled, "quotas": bool(quotas), "tool_choice": tool_choice,
             "limits": json.loads(rules or "[]"), "models": json.loads(models or "[]"),
             # Les noms seuls : les valeurs sont des secrets, jamais rendues.
             "headers": sorted(json.loads(headers or "{}")),
             "images": None if images is None else bool(images),
-            "tokenize_path": tokenize_path, "created": owned.seconds(created),
+            "tokenize_path": tokenize_path, "chat_template": bool(chat_template),
+            "created": owned.seconds(created),
             "owner": owner}
 
 
@@ -117,6 +119,9 @@ def _fields(body, reserved) -> dict:
     if tokenize and (not TOKENIZE_PATH.match(tokenize) or ".." in tokenize
                      or "//" in tokenize):
         raise BackendError("`tokenize_path` : un chemin sous l'adresse, « /tokenize »")
+    chat_template = body.get("chat_template", False)
+    if not isinstance(chat_template, bool):
+        raise BackendError("`chat_template` : true ou false")
     tool_choice = body.get("tool_choice") or ""
     if tool_choice not in TOOL_CHOICES:
         raise BackendError("`tool_choice` : " + ", ".join(repr(t) for t in TOOL_CHOICES))
@@ -149,6 +154,7 @@ def _fields(body, reserved) -> dict:
     return {"name": name, "api": api, "url": url, "api_key": key,
             "shared": 1 if body.get("shared") else 0, "disabled": None if enabled is None else int(not enabled),
             "images": None if images is None else int(images), "tokenize_path": tokenize,
+            "chat_template": int(chat_template),
             "tool_choice": tool_choice, "quotas": int(quotas),
             "limits": json.dumps(rules, ensure_ascii=False), "headers": heads,
             "models": models}
@@ -229,11 +235,12 @@ def create(owner: str, body, reserved=frozenset(), admin: bool = False) -> dict:
         _clash(c, f, owner)
         c.execute("INSERT INTO user_backends (owner, id, name, api, url, api_key, shared, "
                   "created, images, tokenize_path, disabled, quotas, tool_choice, limits, "
-                  "headers, models) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "headers, models, chat_template) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   (owner, bid, f["name"], f["api"], f["url"], f["api_key"], f["shared"],
                    time.time(), f["images"], f["tokenize_path"], f["disabled"] or 0,
                    f["quotas"], f["tool_choice"], f["limits"], _headers(f["headers"] or {}, {}),
-                   f["models"] or "[]"))
+                   f["models"] or "[]", f["chat_template"]))
         return _one(c, owner, bid)
     return _meta(_run(q))
 
@@ -269,12 +276,13 @@ def update(owner: str | None, bid: str, body, reserved=frozenset(),
         _clash(c, f, owner, bid)
         c.execute("UPDATE user_backends SET name = ?, api = ?, url = ?, api_key = ?, "
                   "shared = ?, images = ?, tokenize_path = ?, disabled = ?, quotas = ?, "
-                  "tool_choice = ?, limits = ?, headers = ?, models = ? "
+                  "tool_choice = ?, limits = ?, headers = ?, models = ?, chat_template = ? "
                   "WHERE owner = ? AND id = ?",
                   (f["name"], f["api"], f["url"], key, f["shared"], f["images"],
                    f["tokenize_path"], old[2] if f["disabled"] is None else f["disabled"],
                    f["quotas"], f["tool_choice"], f["limits"], heads,
-                   old[6] if f["models"] is None else f["models"], owner, bid))
+                   old[6] if f["models"] is None else f["models"], f["chat_template"],
+                   owner, bid))
         return _one(c, owner, bid)
     return _meta(_run(q))
 
@@ -294,11 +302,12 @@ def rows() -> list[dict]:
     (upstream/backends.py) seulement. BLOQUANT."""
     got = _run(lambda c: c.execute(
         "SELECT owner, id, name, api, url, api_key, shared, images, tokenize_path, "
-        "quotas, tool_choice, limits, headers, models FROM user_backends WHERE disabled = 0 "
+        "quotas, tool_choice, limits, headers, models, chat_template FROM user_backends "
+        "WHERE disabled = 0 "
         "ORDER BY created, id").fetchall())
     return [{"owner": o, "id": i, "name": n, "api": a, "url": u, "api_key": k,
              "shared": bool(s), "images": None if im is None else bool(im),
-             "tokenize_path": t, "quotas": bool(q), "tool_choice": tc,
+             "tokenize_path": t, "chat_template": bool(ct), "quotas": bool(q), "tool_choice": tc,
              "limits": json.loads(lim or "[]"), "headers": json.loads(h or "{}"),
              "models": json.loads(m or "[]")}
-            for o, i, n, a, u, k, s, im, t, q, tc, lim, h, m in got]
+            for o, i, n, a, u, k, s, im, t, q, tc, lim, h, m, ct in got]

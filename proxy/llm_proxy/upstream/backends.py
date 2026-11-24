@@ -90,6 +90,10 @@ class Backend:
         # Chemin d'un endpoint de tokenisation (llama.cpp : "/tokenize")
         # pour un count_tokens EXACT ; vide = estimation locale.
         self.tokenize_path = str(cfg.get("tokenize_path", "") or "").strip()
+        # Serveur à gabarit (llama.cpp, vLLM) : il lit `chat_template_kwargs`
+        # (et tolère `store`). Faux : ces champs sont retirés avant l'envoi
+        # (relaying.fit_chat_template), une API stricte (Mistral) les refuse.
+        self.chat_template = bool(cfg.get("chat_template", False))
         # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
         # Albert avec des clés différentes ne partagent rien).
         try:
@@ -469,7 +473,8 @@ def _stop(b: Backend) -> None:
 def _cfg(row: dict) -> dict:
     """La table [backends.<nom>] d'une ligne du magasin."""
     cfg = {"url": row["url"], "api_key": row["api_key"], "api": row["api"],
-           "tokenize_path": row["tokenize_path"], "connect_timeout": 15.0,
+           "tokenize_path": row["tokenize_path"], "chat_template": row["chat_template"],
+           "connect_timeout": 15.0,
            "quotas": row["quotas"], "force_tool_choice": row["tool_choice"] or None,
            "limits": row["limits"], "headers": row["headers"], "models": row["models"]}
     if row["images"] is not None:
@@ -487,6 +492,7 @@ def _retune(b: Backend, name: str, cfg: dict) -> None:
     other = Backend(name, {**cfg, "quotas": False})
     b.name, b.cfg = name, cfg
     b.images, b.tokenize_path, b.tool_choice = other.images, other.tokenize_path, other.tool_choice
+    b.chat_template = other.chat_template
     b.exposed = other.exposed
     headers_changed = b.headers != other.headers
     b.limits, b.headers = other.limits, other.headers

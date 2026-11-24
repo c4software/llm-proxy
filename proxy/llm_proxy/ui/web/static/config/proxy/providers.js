@@ -37,7 +37,7 @@ export const PROVIDERS = [
 export const providerBackend = (p) => ({
   name: p.id, url: p.url, key: true, keyVar: p.keyVar, quotas: !!p.quotas,
   api: p.api || "openai", images: p.api === "anthropic",
-  toolChoice: p.toolChoice || "", maxTokens: "", fairShare: true,
+  toolChoice: p.toolChoice || "", maxTokens: "", fairShare: true, chatTemplate: false,
   headerNames: "", headerValues: {}, headersPlain: false,
 });
 

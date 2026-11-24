@@ -32,7 +32,8 @@ réglage et outil.
   attente). Un client qui raccroche quitte la file sans rien consommer
   (compté `499`), même avant son tour. L'entrée est estimée à la taille du
   corps, puis la fenêtre est recalée sur l'`usage` réel de la réponse
-  (sortie comprise). Deux backends à quotas ont des limiteurs indépendants.
+  (sortie comprise), ou [rendue](configuration.md#quotas) par une requête
+  que le backend refuse. Deux backends à quotas ont des limiteurs indépendants.
 - **Un seul processus par dossier de données** : quotas, partage
   équitable et mémoires vivent en mémoire du processus. Un second
   processus (`--workers`, `WEB_CONCURRENCY`) sur les mêmes données

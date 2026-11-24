@@ -25,7 +25,7 @@ export const TOOL_LIST = [
 export function newForm() {
   return {
     keys: [],                  // [{ name, value }] : name = variable d'env
-    backends: [],              // [{ name, url, key, quotas, images, toolChoice, maxTokens, fairShare,
+    backends: [],              // [{ name, url, key, quotas, images, toolChoice, maxTokens, fairShare, chatTemplate,
                                //    headerNames, headerValues, headersPlain }]
     anthropic: true, defaultModel: "", responses: true,
     hostedTools: true, always: "", alwaysExcept: "",
@@ -71,7 +71,7 @@ export function prefillForm(px, c) {
     name, url: b.url || "", key: !!b.api_key, keyVar: varOf(b.api_key), quotas: !!b.quotas,
     api: b.api === "anthropic" ? "anthropic" : "openai",
     images: b.images === undefined ? b.api === "anthropic" : !!b.images, toolChoice: typeof b.force_tool_choice === "string" ? b.force_tool_choice : "",
-    maxTokens: b.max_tokens || "", fairShare: b.fair_share !== false,
+    maxTokens: b.max_tokens || "", fairShare: b.fair_share !== false, chatTemplate: !!b.chat_template,
     // Ses en-têtes : les noms. Une valeur qui renvoie au .env (« ${VAR} »,
     // « Bearer ${VAR} »…) est gardée telle quelle ; une valeur écrite en
     // clair, masquée ici, devient un ${VAR}, comme une clé.
@@ -203,6 +203,7 @@ export function buildProxy(px) {
     if (b.toolChoice) L.push(`force_tool_choice = ${q(b.toolChoice)}`);
     if (Number(b.maxTokens) > 0) L.push(`max_tokens = ${Number(b.maxTokens)}`);
     if (!b.fairShare) L.push("fair_share = false");
+    if (b.chatTemplate) L.push("chat_template = true");
     const heads = [];
     for (const h of String(b.headerNames || "").split(",").map((x) => x.trim()).filter(Boolean)) {
       if (!HEADER_NAME.test(h) || RESERVED_HEADERS.has(h.toLowerCase()))
