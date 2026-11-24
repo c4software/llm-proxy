@@ -20,7 +20,7 @@ import { ChatPanel } from "./chat/ChatPanel.js";
 import { MemoryPanel } from "./memory/MemoryPanel.js";
 import { useTheme } from "./lib/theme.js";
 
-const { createApp, ref, reactive, watch, onMounted, onUnmounted, defineAsyncComponent } = Vue;
+const { createApp, ref, reactive, computed, watch, onMounted, onUnmounted, defineAsyncComponent } = Vue;
 
 // La configuration et les statistiques : lues à leur première ouverture
 // seulement (le chat, lui, est là dès l'entrée).
@@ -92,6 +92,15 @@ createApp({
 
     // ── session et entrée ───────────────────────────────────────────────
     const session = ref(null);       // /ui/session ; null tant qu'inconnu
+    // La version en bas du menu mène à son dépôt, à cet état : le tag
+    // d'une version publiée (vAAAA.MM.JJ…), le commit d'un sha-xxxxxxx,
+    // sinon la racine.
+    const versionLink = computed(() => {
+      const { version = "", source = "" } = session.value || {};
+      if (/^v\d/.test(version)) return `${source}/tree/${version}`;
+      if (/^sha-[0-9a-f]+$/.test(version)) return `${source}/commit/${version.slice(4)}`;
+      return source;
+    });
     const needLogin = ref(false);
     const loginKey = ref("");
     const loginError = ref("");
@@ -220,7 +229,7 @@ createApp({
     return { views, view, visited, setView, navOpen, navCompact, chats, chatState, chatList, moreRef, openChat,
              newChat, session, needLogin, loginKey, loginError,
              loginBusy, login, logout, onUnauthorized, authMode, authLabel,
-             inactive, setup, loadSession, health, theme, themeLabel, cycleTheme };
+             inactive, setup, loadSession, health, theme, themeLabel, cycleTheme, versionLink };
   },
 }).component("memory-panel", MemoryPanel)
   .component("chat-panel", ChatPanel)

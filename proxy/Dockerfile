@@ -97,11 +97,13 @@ COPY --from=linux /vendor/ llm_proxy/ui/web/static/vendor/
 # proxy démarre en mode installation (/ui la génère).
 COPY data/config.example.toml data/
 
-# La version de l'image (le tag, sinon sha-xxxxxxx ; la CI la passe en
-# --build-arg), affichée en bas du menu de /ui. En dernier : elle change
-# à chaque build sans invalider les couches au-dessus.
+# La version de l'image (le tag, sinon sha-xxxxxxx) et l'adresse de son
+# dépôt (la CI les passe en --build-arg), affichées en bas du menu de /ui,
+# la version en lien vers le dépôt. En dernier : la version change à
+# chaque build sans invalider les couches au-dessus.
 ARG VERSION=dev
-ENV LLM_PROXY_VERSION=$VERSION
+ARG SOURCE=""
+ENV LLM_PROXY_VERSION=$VERSION LLM_PROXY_SOURCE=$SOURCE
 
 RUN useradd --create-home --uid 10001 appuser \
  && chown -R appuser:appuser /app/data

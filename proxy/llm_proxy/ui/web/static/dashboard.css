@@ -387,6 +387,8 @@ html, .thread, .nav-chats ul, .memory-side { scrollbar-gutter: stable; }
   .nav-compact :is(.nav-item, .nav-new) { justify-content: center; padding: 9px; width: 44px; }
   .nav-compact .nav-chats { margin: 0; align-items: center; }
   .nav-compact .nav-bottom { align-items: center; width: 100%; }
+  .nav-compact .nav-icons { flex-direction: column; }
+  .nav-compact .nav-icons .nav-item { flex: none; width: 44px; }
 }
 @media (max-width: 760px) { .nav-collapse { display: none; } }
 .nav-items { display: flex; flex-direction: column; gap: 2px; }
@@ -544,6 +546,9 @@ body:has(> #app:not([v-cloak])) > .boot { display: none; }
   padding-top: 10px; border-top: 1px solid var(--line);
 }
 .nav-bottom .nav-foot { margin-top: 10px; }
+/* Les vues et le thème : une ligne d'icônes ; une colonne en mode compact. */
+.nav-icons { display: flex; gap: 2px; }
+.nav-icons .nav-item { width: auto; flex: 1; justify-content: center; padding: 9px; }
 
 .chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
 /* L'en-tête du chat et celui des panneaux (mémoire, artifacts, terminal) :
@@ -1670,3 +1675,5 @@ button.link.danger { color: var(--err); }
 /* La version de l'image, en bas du menu. */
 .nav-version { margin-top: 8px; padding: 0 10px; font: 11px ui-monospace, SFMono-Regular, monospace;
   color: var(--muted); opacity: .75; overflow-wrap: anywhere; }
+a.nav-version { text-decoration: none; }
+a.nav-version:hover { color: var(--accent); opacity: 1; text-decoration: underline; }

@@ -51,6 +51,13 @@ def chat_tool_groups() -> list[dict]:
     return out
 
 
+def _source() -> str:
+    """L'adresse du dépôt de l'image (LLM_PROXY_SOURCE), http(s) seulement :
+    la page en fait un lien."""
+    url = (os.environ.get("LLM_PROXY_SOURCE") or "").strip().rstrip("/")
+    return url if url.startswith(("https://", "http://")) else ""
+
+
 @router.get("/ui/session")
 async def ui_session(request: Request):
     """Ce que la page doit savoir de qui la regarde et de ce qui lui est
@@ -68,6 +75,8 @@ async def ui_session(request: Request):
         # La version de l'image (Dockerfile, LLM_PROXY_VERSION) ; hors
         # image, « dev ».
         "version": os.environ.get("LLM_PROXY_VERSION") or "dev",
+        # Son dépôt (LLM_PROXY_SOURCE, posé par la CI) : la version y mène.
+        "source": _source(),
         "auth_required": auth_required(),
         "login": ui_login_mode(),
         "account": user,

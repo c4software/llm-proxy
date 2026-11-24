@@ -58,9 +58,11 @@ jobs:
           pull: true
           push: true
           tags: ${{ steps.tags.outputs.list }}
-          # Affichée en bas du menu de /ui (LLM_PROXY_VERSION).
+          # Affichées en bas du menu de /ui (LLM_PROXY_VERSION, et le lien
+          # vers le dépôt : LLM_PROXY_SOURCE).
           build-args: |
             VERSION=${{ steps.tags.outputs.version }}
+            SOURCE=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: |

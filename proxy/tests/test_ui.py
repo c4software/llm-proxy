@@ -596,9 +596,17 @@ def test_premier_demarrage_sans_configuration(tmp_path, monkeypatch):
 
 def test_session_donne_la_version_de_l_image(ui, monkeypatch):
     """La version de l'image (LLM_PROXY_VERSION, posée par le Dockerfile)
-    pour le bas du menu ; hors image, « dev »."""
+    et son dépôt (LLM_PROXY_SOURCE) pour le bas du menu ; hors image,
+    « dev » et aucun dépôt."""
     assert login(ui).status_code == 200
     monkeypatch.delenv("LLM_PROXY_VERSION", raising=False)
-    assert ui.client.get("/ui/session").json()["version"] == "dev"
+    monkeypatch.delenv("LLM_PROXY_SOURCE", raising=False)
+    got = ui.client.get("/ui/session").json()
+    assert (got["version"], got["source"]) == ("dev", "")
     monkeypatch.setenv("LLM_PROXY_VERSION", "v2026.11.15.3")
-    assert ui.client.get("/ui/session").json()["version"] == "v2026.11.15.3"
+    monkeypatch.setenv("LLM_PROXY_SOURCE", "https://github.com/exemple/llm-proxy/")
+    got = ui.client.get("/ui/session").json()
+    assert (got["version"], got["source"]) == ("v2026.11.15.3", "https://github.com/exemple/llm-proxy")
+    # La page en fait un lien : http(s) seulement.
+    monkeypatch.setenv("LLM_PROXY_SOURCE", "javascript:alert(1)")
+    assert ui.client.get("/ui/session").json()["source"] == ""

@@ -12,11 +12,14 @@ Vue 3 est embarquée.
 ## Navigation
 
 Le **menu latéral** devient un tiroir ☰ sous 760 px de large. Il affiche
-en haut *Chat* et la liste des conversations, puis *Statistiques*,
-*Usage*, *Configuration*, la clé connectée, *Se déconnecter*, le thème (auto,
-clair, sombre) et la **version** de l'image. Cette version est le tag ou,
-à défaut, `sha-xxxxxxx` ; hors image, elle vaut `dev`. La CI la fournit
-au build via `LLM_PROXY_VERSION`. La génération du chat continue pendant
+en haut *Chat* et la liste des conversations ; en bas, une ligne d'icônes
+(*Statistiques*, *Usage*, *Configuration*, le thème : auto, clair,
+sombre), la clé connectée, *Se déconnecter* et la **version** de l'image.
+Cette version est le tag ou, à défaut, `sha-xxxxxxx` ; hors image, elle
+vaut `dev`. Quand `LLM_PROXY_SOURCE` est posé (une adresse http ou
+https), elle mène au dépôt de l'image : au tag d'une version publiée, au
+commit d'un `sha-…`. La CI fournit les deux au build via
+`LLM_PROXY_VERSION` et `LLM_PROXY_SOURCE`. La génération du chat continue pendant
 la consultation des statistiques.
 
 Le bouton à côté du logo active le **mode compact** : le menu devient un
