@@ -407,6 +407,24 @@ def test_l_admin_voit_l_etat_des_quotas(env):
     assert "sk-perso" not in alice.get("/ui/quotas").text
 
 
+def test_le_limiteur_d_un_backend_partage_compte_tous_les_comptes(env):
+    """Partagé, un backend n'a qu'un limiteur : la consommation que montre
+    Configuration → Quotas est celle de tous ses comptes, par la page comme
+    par une clé."""
+    alice, bob, _ = admin_and_user(env)
+    alice.post("/ui/backends", json={**MINE, "shared": True, "quotas": True,
+                                     "limits": [{"models": ["permis-*"], "rpm": 7}]})
+    key = bob.post("/ui/keys", json={"label": "cli"}).json()["key"]
+    assert ask(alice, "perso/permis-1").status_code == 200
+    assert ask(bob, "perso/permis-1").status_code == 200
+    r = env.client.post("/v1/chat/completions", headers=bearer(key), json={
+        "model": "perso/permis-1", "messages": [{"role": "user", "content": "x"}]})
+    assert r.status_code == 200, r.text
+    view = next(b for b in alice.get("/ui/quotas").json()["backends"] if b["name"] == "perso")
+    rule = next(x for x in view["buckets"] if x["key"] == "rule:0")
+    assert rule["minute"]["requests"] == 3
+
+
 def test_l_admin_voit_le_forfait_mensuel_d_un_compte_mistral(env, monkeypatch):
     """Configuration → Quotas : le forfait mensuel du compte d'un backend à
     quotas (Mistral : GET /v1/billing/budget, avec sa clé), lu à

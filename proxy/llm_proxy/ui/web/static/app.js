@@ -28,6 +28,7 @@ const Loading = { template: `<div class="boot" role="status"><span class="spinne
 const lazy = (load) => defineAsyncComponent({ loader: load, loadingComponent: Loading, delay: 150 });
 const ConfigPanel = lazy(() => import("./config/ConfigPanel.js").then((m) => m.ConfigPanel));
 const StatsView = lazy(() => import("./stats/StatsView.js").then((m) => m.StatsView));
+const UsageView = lazy(() => import("./stats/UsageView.js").then((m) => m.UsageView));
 const SetupPanel = lazy(() => import("./config/SetupPanel.js").then((m) => m.SetupPanel));
 const REFRESH = 5000;
 const STORE_VIEW = "llm-proxy-view";
@@ -35,8 +36,8 @@ const STORE_VIEW = "llm-proxy-view";
 createApp({
   setup() {
     // ── vues ────────────────────────────────────────────────────────────
-    const views = [{ id: "stats", label: "Statistiques" }, { id: "chat", label: "Chat" },
-                   { id: "config", label: "Configuration" }];
+    const views = [{ id: "stats", label: "Statistiques" }, { id: "usage", label: "Usage" },
+                   { id: "chat", label: "Chat" }, { id: "config", label: "Configuration" }];
     const known = (id) => views.some((v) => v.id === id);
     // L'adresse : #<vue>, et pour le chat #chat/<id de la conversation>,
     // qu'un rechargement rouvre.
@@ -225,5 +226,6 @@ createApp({
   .component("chat-panel", ChatPanel)
   .component("config-panel", ConfigPanel)
   .component("stats-view", StatsView)
+  .component("usage-view", UsageView)
   .component("setup-panel", SetupPanel)
   .mount("#app");

@@ -3,6 +3,8 @@
 */
 
 // Entier, espace comme séparateur de milliers.
+/** Le fuseau IANA du navigateur (les jours de /v1/usage/agent). */
+export const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 export const num = (v) => String(Math.round(v) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 
 // Taille d'un fichier : Ko (au moins 1), ou Mo avec une décimale.

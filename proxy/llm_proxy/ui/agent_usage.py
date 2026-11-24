@@ -1,8 +1,9 @@
 """
 L'USAGE D'UN COMPTE au format des enregistrements du panneau d'agents
 d'Omarchy (schemaVersion 1) : GET /v1/usage/agent avec une clé du proxy,
-déposé tel quel dans ~/.local/state/omarchy/agents/usage/ ; la même chose
-sous /ui pour la page (Configuration → Usage).
+déposé tel quel dans ~/.local/state/omarchy/agents/usage/ (le service que
+propose Configuration → Clients) ; la même chose sous /ui pour la vue Usage
+de la page.
 
 Ce que voit le client de la requête : son compte (toutes ses clés et sa
 page), sa clé seule pour une clé du TOML non rattachée, tout pour un

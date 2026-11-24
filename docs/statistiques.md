@@ -84,9 +84,10 @@ GET /v1/usage/agent?tz=Europe/Paris
 Rend l'usage et les limites du client de la clé au format des
 enregistrements du panneau d'agents d'Omarchy (`schemaVersion: 1`) : le
 corps se dépose tel quel dans `~/.local/state/omarchy/agents/usage/` sous
-le nom `llm-proxy.json`, que le panneau affiche. *Configuration → Usage*
-montre le même enregistrement et donne un service et un minuteur systemd
-de l'utilisateur qui le déposent toutes les 2 minutes.
+le nom `llm-proxy.json`, que le panneau affiche. La [vue
+Usage](tableau-de-bord.md#la-vue-usage) montre le même enregistrement ;
+*Configuration → Clients* donne un service et un minuteur systemd de
+l'utilisateur qui le déposent toutes les 2 minutes.
 
 - **Périmètre** : toutes les clés du compte et sa page ; la clé seule pour
   une clé du TOML non rattachée ; tout pour un proxy ouvert

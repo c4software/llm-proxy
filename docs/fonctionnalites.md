@@ -107,7 +107,8 @@ réglage et outil.
 
 ## Suivi et interface
 
-- **Tableau de bord** (`/ui`) : statistiques d'usage, chat si
+- **Tableau de bord** (`/ui`) : statistiques d'usage, usage et limites
+  de son compte, chat si
   `[ui] chat = true`, générateurs de configuration.
   [Tableau de bord](tableau-de-bord.md), [Chat](chat.md)
 - **Statistiques persistantes** : une ligne SQLite par requête

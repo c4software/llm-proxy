@@ -97,6 +97,10 @@
               @click="setView('stats')" title="Statistiques">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
         <span>Statistiques</span></button>
+      <button type="button" class="nav-item" :aria-current="view === 'usage' ? 'page' : null"
+              @click="setView('usage')" title="Usage">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/></svg>
+        <span>Usage</span></button>
       <button type="button" class="nav-item" :aria-current="view === 'config' ? 'page' : null"
               @click="setView('config')" title="Configuration">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M16 4v4M10 10v4M18 16v4"/></svg>
@@ -133,6 +137,7 @@
     <h1 v-if="setup">Installation</h1>
     <h1 v-else-if="needLogin || inactive">Connexion</h1>
     <h1 v-else-if="view === 'stats'">Statistiques d'usage</h1>
+    <h1 v-else-if="view === 'usage'">Usage et limites</h1>
     <h1 v-else-if="view === 'config'">Configuration</h1>
   </header>
 
@@ -186,6 +191,9 @@
 
   <stats-view v-if="session && visited.stats" v-show="view === 'stats'" :session="session" :health="health"
               :active="view === 'stats'" @unauthorized="onUnauthorized"></stats-view>
+
+  <usage-view v-if="session && visited.usage" v-show="view === 'usage'"
+              :active="view === 'usage'" @unauthorized="onUnauthorized"></usage-view>
 </div>
 </div>
 </div>

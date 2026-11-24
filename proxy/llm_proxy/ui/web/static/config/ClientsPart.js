@@ -1,6 +1,7 @@
 /*
   Configuration → Clients : on choisit le client (Claude Code, Codex CLI
-  ou application, pi / omp, OpenCode, SDK OpenAI, curl, Open WebUI, tout client OpenAI), le modèle du
+  ou application, pi / omp, OpenCode, SDK OpenAI, curl, Open WebUI, tout client OpenAI, le
+  panneau d'agents d'Omarchy), le modèle du
   catalogue (/ui/models), et s'il prend aussi les outils du proxy par son
   serveur MCP (/mcp). La page produit les fichiers à poser, avec leur
   chemin, et les étapes. La CLÉ n'y figure jamais : elle vit dans un
@@ -8,11 +9,31 @@
   exporte dans une variable (LLM_PROXY_API_KEY par défaut).
 */
 import { useCopy, download } from "../lib/files.js";
+import { TZ } from "../lib/format.js";
 import { q, envName, KEYFILE, KEY_SETUP, useAccount, useCatalog } from "./shared.js";
 import { catalogState } from "../lib/catalog.js";
 
 const { reactive, computed, watch, ref } = Vue;
 const origin = window.location.origin;
+// Le panneau d'agents d'Omarchy lit un enregistrement par fichier de ce
+// dossier : un service systemd de l'utilisateur y dépose /v1/usage/agent.
+const OMARCHY_UNIT = "llm-proxy-usage";
+const OMARCHY_DIR = "~/.local/state/omarchy/agents/usage";
+
+/** L'ExecStart du service : /v1/usage/agent dans le dossier d'Omarchy. */
+function omarchyRun(auth) {
+  // Dans une unité systemd, « % » ouvre un spécificateur et « $ » une de
+  // ses variables : doublés. Le fuseau va tel quel, son « + » en %%2B.
+  const url = `${origin}/v1/usage/agent?tz=${TZ.replace(/\+/g, "%%2B")}`;
+  const dir = OMARCHY_DIR.replace("~", () => "$$HOME");
+  // La clé passe à curl par son entrée (-H @-), jamais en argument : elle
+  // ne se lit pas dans la liste des processus.
+  const get = auth
+    ? `printf "Authorization: Bearer %%s" "$$(cat ${KEYFILE.replace("~", () => "$$HOME")})" | curl -fsS -H @- "${url}"`
+    : `curl -fsS "${url}"`;
+  return `d="${dir}"; mkdir -p "$$d" && ${get} -o "$$d/.llm-proxy.tmp" `
+    + `&& mv "$$d/.llm-proxy.tmp" "$$d/llm-proxy.json"`;
+}
 
 export const ClientsPart = {
   props: {
@@ -42,6 +63,8 @@ export const ClientsPart = {
       { id: "curl", label: "curl" },
       { id: "openwebui", label: "Open WebUI" },
       { id: "generic", label: "Autre client OpenAI" },
+      // Un service, pas un client de modèles : ni modèle ni variable de clé.
+      { id: "omarchy", label: "Panneau d'agents d'Omarchy", service: true },
     ];
     const form = reactive({
       client: "claude", model: "", small: "", mcp: true, env: "LLM_PROXY_API_KEY", catalog: true,
@@ -363,6 +386,19 @@ export const ClientsPart = {
             + "les nommer dans [chat].always du proxy (onglet Proxy ci-contre).");
           break;
         }
+        case "omarchy": {
+          const head = `[Unit]\nDescription=Usage du proxy LLM pour le panneau d'agents d'Omarchy\n\n`;
+          files.push({ name: `~/.config/systemd/user/${OMARCHY_UNIT}.service`, lang: "ini",
+            download: `${OMARCHY_UNIT}.service`,
+            content: head + `[Service]\nType=oneshot\nExecStart=/bin/sh -c '${omarchyRun(auth.value)}'\n` });
+          files.push({ name: `~/.config/systemd/user/${OMARCHY_UNIT}.timer`, lang: "ini",
+            download: `${OMARCHY_UNIT}.timer`,
+            content: head + `[Timer]\nOnBootSec=1min\nOnUnitActiveSec=2min\n\n[Install]\nWantedBy=timers.target\n` });
+          shell("Mise en route", `systemctl --user daemon-reload\nsystemctl --user enable --now ${OMARCHY_UNIT}.timer\n`,
+            "Toutes les 2 minutes, l'usage et les limites du compte de la clé.");
+          steps.push(`Le panneau affiche « LLM proxy » dès le premier dépôt de ${OMARCHY_DIR}/llm-proxy.json.`);
+          break;
+        }
         default: {
           files.push({ name: "Paramètres du client", lang: "text",
             content: `Base URL : ${origin}/v1\nClé       : ${auth.value ? "$" + env : "unused (le proxy est ouvert)"}\n`
@@ -373,6 +409,11 @@ export const ClientsPart = {
       }
       // Vérifier : le catalogue avec la clé, et les outils du serveur MCP.
       const authH = auth.value ? ` \\\n  -H "Authorization: Bearer $${env}"` : "";
+      if (form.client === "omarchy") {
+        shell("Vérifier", `systemctl --user status ${OMARCHY_UNIT}.service\n`
+          + `jq '{ready, limits}' ${OMARCHY_DIR}/llm-proxy.json\n`, "Le dernier dépôt et ce qu'il contient.");
+        return { files, steps, warn };
+      }
       let check = `curl -s ${origin}/v1/models${authH} | jq '.data[].id'\n`;
       if (mcp) {
         check += `\ncurl -s ${origin}/mcp \\\n  -H "Content-Type: application/json" \\\n`
@@ -397,7 +438,7 @@ export const ClientsPart = {
             <select v-model="form.client">
               <option v-for="c in clients" :key="c.id" :value="c.id">{{ c.label }}</option>
             </select></label>
-          <label class="field"><span>Modèle</span>
+          <label class="field" v-if="!client.service"><span>Modèle</span>
             <select v-if="models.length" v-model="form.model">
               <option v-for="m in models" :key="m" :value="m">{{ m }}</option></select>
             <input v-else v-model="form.model" placeholder="backend/modèle" spellcheck="false"></label>
@@ -413,9 +454,9 @@ export const ClientsPart = {
           <label class="check" v-if="['codex', 'codexapp'].includes(form.client)">
             <input type="checkbox" v-model="form.catalog">
             le catalogue des modèles du proxy (/model, contexte)</label>
-          <label class="field"><span>Variable de la clé</span>
+          <label class="field" v-if="!client.service"><span>Variable de la clé</span>
             <input v-model="form.env" spellcheck="false"></label>
-          <p class="note" v-if="!auth">Le proxy est ouvert : la clé est libre, la variable vaut
+          <p class="note" v-if="!auth && !client.service">Le proxy est ouvert : la clé est libre, la variable vaut
             <code>unused</code>.</p>
           <p class="note" v-else-if="account">La clé : créez-en une par client dans l'onglet
             <button type="button" class="link" @click="$emit('goto', 'keys')">Clés</button>.</p>

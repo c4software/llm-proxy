@@ -1,7 +1,8 @@
 # Tableau de bord
 
 La page web du proxy est accessible par `GET /ui` (ou `/`). Elle fournit
-trois vues : *Statistiques*, [*Chat*](chat.md) et *Configuration*. Le mode
+quatre vues : *Statistiques*, *Usage*, [*Chat*](chat.md) et
+*Configuration*. Le mode
 d'accès dépend de la configuration : accès sans clé si `proxy.api_keys`
 n'est pas défini, accès par une [clé](#connexion-par-clé) sinon, ou accès
 par des [comptes OIDC](#comptes-oidc) si `[oidc]` est configuré. La page
@@ -12,7 +13,7 @@ Vue 3 est embarquée.
 
 Le **menu latéral** devient un tiroir ☰ sous 760 px de large. Il affiche
 en haut *Chat* et la liste des conversations, puis *Statistiques*,
-*Configuration*, la clé connectée, *Se déconnecter*, le thème (auto,
+*Usage*, *Configuration*, la clé connectée, *Se déconnecter*, le thème (auto,
 clair, sombre) et la **version** de l'image. Cette version est le tag ou,
 à défaut, `sha-xxxxxxx` ; hors image, elle vaut `dev`. La CI la fournit
 au build via `LLM_PROXY_VERSION`. La génération du chat continue pendant
@@ -66,6 +67,18 @@ Les données proviennent de `/ui/usage` et `/ui/usage/tools`, équivalents
 (voir [Statistiques](statistiques.md)), mais authentifiés par le cookie
 de la page. La page ne consomme des tokens que lorsque le chat est ouvert
 (`[ui] chat = true`).
+
+## La vue Usage
+
+L'usage et les limites du client de la page, admin compris (le
+[périmètre](statistiques.md#usage-dun-compte-omarchy) de
+`/v1/usage/agent`, tout pour un proxy ouvert) : la part équitable et le
+forfait mensuel de ses backends à quotas en jauges, ses tokens des sept
+derniers jours et, par modèle, l'entrée, l'entrée servie du cache et la
+sortie, sur toute la base. Les jours sont ceux du fuseau du
+navigateur. La vue lit `/ui/usage/agent`, le même enregistrement que
+[`/v1/usage/agent`](statistiques.md#usage-dun-compte-omarchy), toutes les
+30 s, uniquement lorsqu'elle est affichée et l'onglet visible.
 
 ## Connexion par clé
 
@@ -266,13 +279,21 @@ demande alors la clé définie dans `.env`.
 L'onglet <kbd>#config</kbd> regroupe des **générateurs** exécutés dans
 le navigateur ; ils n'écrivent rien sur le proxy.
 
-**Clients** : sélectionner un client et un modèle (`GET /ui/models`,
-disponible même lorsque le chat est désactivé). La page génère les fichiers
+**Clients** : sélectionner un client et, sauf pour un service, un modèle
+(`GET /ui/models`, disponible même lorsque le chat est désactivé). La page génère les fichiers
 de configuration, y compris les outils du proxy via le [serveur MCP](outils-heberges.md#serveur-mcp--mcp),
 et fournit les commandes *Copier*, *Télécharger* et les étapes à suivre.
 Elle signale si la surface cible est désactivée. Les fichiers ne contiennent
 jamais la clé. Le bloc *Vérifier* teste `GET /v1/models` avec la clé, puis
 `tools/list` si le client utilise MCP pour les outils.
+
+*Panneau d'agents d'Omarchy* : un service et un minuteur systemd de
+l'utilisateur qui déposent toutes les 2 minutes
+[`/v1/usage/agent`](statistiques.md#usage-dun-compte-omarchy) dans
+`~/.local/state/omarchy/agents/usage/llm-proxy.json`. La clé est lue dans
+son fichier et passe à `curl` par son entrée, jamais en argument. Pas de
+modèle à choisir ; le bloc *Vérifier* donne l'état du service et le
+contenu du dernier dépôt.
 
 *Codex CLI* configure aussi la clé sous Windows en définissant une variable
 d'utilisateur avec PowerShell. Le générateur indique d'utiliser
@@ -347,12 +368,6 @@ ses sources (forge, adresse, jeton, projets autorisés) pour l'outil
 **Backends** : sauf `[user_backends].enabled = false`, chaque compte
 déclare ses propres backends, pour lui seul ou pour tous. Voir [Backends
 des comptes](backends.md).
-
-**Usage** : l'usage et les limites du compte (part équitable, forfait
-mensuel de ses backends à quotas), ses tokens des sept derniers jours et
-par modèle, relus toutes les 30 s, et de quoi les montrer dans le panneau
-d'agents d'Omarchy. Voir [Usage d'un
-compte](statistiques.md#usage-dun-compte-omarchy).
 
 **Quotas** (admin, ou proxy sans comptes) : l'état du limiteur de chaque
 backend à quotas, relu toutes les 10 s. Par bucket (règle du backend,
