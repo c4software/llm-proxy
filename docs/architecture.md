@@ -74,7 +74,10 @@ Le relais traite les requêtes selon les étapes suivantes.
    l'upstream interrompt le flux, leur méthode `fail` (ou un chunk d'erreur
    en relais direct) renvoie une erreur et compte `502`. Si le client ferme
    la connexion pendant la réponse, le code `499` est compté avec les tokens
-   déjà générés.
+   déjà générés. Certains clients ferment la connexion dès la fin de la
+   réponse, avant que l'upstream ait clos son flux : ce n'est pas compté
+   `499` (`complete` du robinet : `[DONE]` vu par `UsageCollector`, réponse
+   close par un traducteur).
 4. **Outils hébergés.** Les traducteurs partagent le contrat `pending`,
    `resolve`, `next_turn`, `finalize`, `fail`. `hosted_loop` exécute les
    outils et relance le backend pour les trois surfaces.

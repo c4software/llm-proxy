@@ -7,7 +7,8 @@ de la ligne de stats. Chaque robinet garde sa forme de sortie (`_data`)
 et peut redéfinir `_total` quand son usage cumulé a une forme propre.
 
 Attendu de la sous-classe : `sse`, `_buf` (bytearray), `usage` (l'usage du
-tour en cours), `_past` (ceux des tours faits), `out_chars`, `_data()`.
+tour en cours), `_past` (ceux des tours faits), `out_chars`, `_finished`
+(la réponse au client est close), `_data()`.
 """
 
 # Même approximation que le limiteur (quotas.CHARS_PER_TOKEN).
@@ -42,6 +43,12 @@ class Robinet:
     # Les sites connus de la conversation (provenance), que la boucle pose
     # et tient à jour ; le robinet du chat de la page les rend à la page.
     known: set | None = None
+
+    @property
+    def complete(self) -> bool:
+        """La réponse au client est close (fin normale ou erreur dans le
+        flux) : un client qui raccroche ensuite n'est pas compté 499."""
+        return self._finished
 
     def feed(self, chunk: bytes) -> bytes:
         """Les octets upstream ; en flux, chaque ligne `data:` complète

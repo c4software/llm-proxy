@@ -42,7 +42,9 @@ réglage et outil.
   client (chunk d'erreur puis `[DONE]`, `event: error`, `response.failed`)
   et compte `502` ; un client qui raccroche en cours de réponse compte
   `499`. Dans les deux cas ce qui a été généré est compté (quotas,
-  partage équitable, statistiques).
+  partage équitable, statistiques). Un client qui ferme la connexion après
+  la fin de la réponse (`[DONE]`, `message_stop`, `response.completed`)
+  compte le statut de l'upstream.
 - **Backends locaux à la demande** : jamais sondés, connexion coupée à
   1 s. Éteint, un backend répond 503 `backend_offline` avec `Retry-After`
   et disparaît de `/v1/models`.

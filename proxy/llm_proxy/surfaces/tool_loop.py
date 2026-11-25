@@ -367,8 +367,9 @@ async def hosted_loop(call: Call, request: Request, hosted, robinet, upstream,
             robinet.next_turn()
     except (asyncio.CancelledError, GeneratorExit):
         # Le client a raccroché en cours de réponse : 499, ce qui a été
-        # consommé jusque-là compté.
-        if status < 400:
+        # consommé jusque-là compté — pas après la fin de la réponse
+        # (relaying.relay).
+        if status < 400 and not robinet.complete:
             status, partial = CLIENT_CLOSED, True
         raise
     finally:

@@ -590,6 +590,32 @@ def test_a_client_gone_midstream_is_counted_499_with_what_it_used(proxy):
     assert line[4] == 499 and line[6] > 0
 
 
+def test_a_client_gone_after_done_is_counted_200(proxy):
+    """Un client qui ferme la connexion dès `[DONE]` reçu (omp), avant que
+    l'upstream ait fini de fermer son flux, a eu toute la réponse : 200,
+    pas 499."""
+    from llm_proxy.upstream import relaying
+    from llm_proxy.upstream.backends import BACKENDS
+
+    up = FakeUpstream(sse(chunk({"role": "assistant", "content": "x" * 400}),
+                          chunk({}, "stop", usage=usage(100, 50)))
+                      + b"data: [DONE]\n\n")
+    call = relaying.Call(BACKENDS["essai"], "essai/qwen",
+                         "/v1/chat/completions")
+
+    async def scenario():
+        gen = relaying.relay(call, up, relaying.default_tap(
+            200, "text/event-stream"), 30)
+        seen = b""
+        while b"[DONE]\n" not in seen:
+            seen += await gen.__anext__()
+        await gen.aclose()
+    asyncio.run(scenario())
+    assert up.closed
+    (line,) = proxy.lines
+    assert (line[4], line[6], line[7]) == (200, 100, 50)
+
+
 def test_direct_tool_calls_are_capped_per_client(monkeypatch):
     from llm_proxy.exposure import tool_routes as tr
     monkeypatch.setattr(tr, "DIRECT_PER_MINUTE", 2)

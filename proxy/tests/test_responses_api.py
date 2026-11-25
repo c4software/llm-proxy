@@ -1033,7 +1033,8 @@ def test_app_without_hosted_call_answers_in_one_turn(proxy):
 def test_app_loop_client_gone_closes_everything(proxy, monkeypatch):
     """Le client raccroche : le générateur est fermé, l'upstream aussi,
     l'outil en cours est annulé, et la ligne de stats est écrite une fois,
-    avec ce qui a été consommé."""
+    avec ce qui a été consommé — 499 en cours de réponse, le statut de
+    l'upstream après sa fin."""
     started, cancelled = [], []
 
     async def endless(args, call):
@@ -1048,8 +1049,8 @@ def test_app_loop_client_gone_closes_everything(proxy, monkeypatch):
     monkeypatch.setattr(settings, "PING_INTERVAL", 0.01)
     request = codex_request(model="essai/qwen")
 
-    async def hang_up(marker: bytes):
-        up = FakeUpstream(stream(*SEARCH_TURN))
+    async def hang_up(marker: bytes, turn=SEARCH_TURN):
+        up = FakeUpstream(stream(*turn))
         _, ctx = R.to_chat(request, hosted=proxy.hosted)
         robinet = R.Translator(200, "text/event-stream", ctx)
         call = relaying.Call(backends.BACKENDS["essai"], "essai/qwen", "/v1/responses")
@@ -1073,6 +1074,9 @@ def test_app_loop_client_gone_closes_everything(proxy, monkeypatch):
     # consommé : raccrocher ne fait pas passer outre les quotas.
     assert [(line[4], *line[6:8]) for line in proxy.lines] == [(499, 100, 10)] * 2
     assert not proxy.sent
+    # Après `response.completed`, le client a tout reçu : 200, pas 499.
+    up = asyncio.run(hang_up(b"response.completed", ANSWER_TURN))
+    assert up.closed and proxy.lines[-1][4] == 200
 
 
 def test_app_memory_is_scoped_by_proxy_key(proxy, monkeypatch):

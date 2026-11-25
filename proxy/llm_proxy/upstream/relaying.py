@@ -522,8 +522,10 @@ async def relay(call: Call, upstream: httpx2.Response, robinet,
             yield out
     except (asyncio.CancelledError, GeneratorExit):
         # Le client a raccroché en plein flux : 499, ce qui a été généré
-        # jusque-là compté.
-        if not failed:
+        # jusque-là compté. Après la fin de la réponse (un client qui ferme
+        # dès `[DONE]`, avant que l'upstream ait clos son flux), il a tout
+        # reçu : le statut reste celui de l'upstream.
+        if status < 400 and not robinet.complete:
             status, partial = CLIENT_CLOSED, True
         raise
     finally:

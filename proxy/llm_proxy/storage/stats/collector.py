@@ -41,6 +41,10 @@ _CONTENT_RE = re.compile(rb'"content"\s*:\s*"((?:[^"\\]|\\.)*)"')
 _USAGE_RE = re.compile(rb'"usage"\s*:\s*\{')
 
 
+# La fin d'un flux OpenAI, en début de ligne.
+_DONE_RE = re.compile(rb'(?m)^data:\s*\[DONE\]\s*$')
+
+
 _DECODER = json.JSONDecoder()
 
 
@@ -92,6 +96,9 @@ class UsageCollector:
         self._head = bytearray()  # JSON : tête du corps
         self.usage: dict | None = None
         self.out_chars = 0
+        # La fin du flux SSE (`[DONE]`) est passée au client : relaying.relay
+        # ne compte plus 499 ensuite.
+        self.complete = False
 
     def feed(self, chunk: bytes) -> bytes:
         """Inspecte `chunk` et le rend TEL QUEL : ce robinet est
@@ -135,6 +142,8 @@ class UsageCollector:
             usage = _usage_at(done, m.end() - 1)
             if usage is not None:
                 self.usage = usage
+        if _DONE_RE.search(done):
+            self.complete = True
 
     def finish(self) -> bytes:
         """Fin du flux : sur une réponse JSON, cherche `usage` dans la
