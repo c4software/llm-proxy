@@ -167,6 +167,13 @@ def test_noms_et_bornes_refuses(env, monkeypatch):
         "niveau de réflexion inconnu": (alice, {**MINE, "name": "x",
                                                  "effort_map": {"medium": "fort"}}),
         "table de niveaux mal formée": (alice, {**MINE, "name": "x", "effort_map": ["low"]}),
+        "niveau de modèle inconnu": (alice, {**MINE, "name": "x",
+                                             "model_efforts": {"qwen-*": ["fort"]}}),
+        "modèle sans niveaux": (alice, {**MINE, "name": "x", "model_efforts": {"qwen-*": []}}),
+        "niveaux des modèles mal formés": (alice, {**MINE, "name": "x",
+                                                   "model_efforts": ["low"]}),
+        "motif de modèle en double": (alice, {**MINE, "name": "x", "model_efforts": {
+            "Qwen*": ["low"], "qwen*": ["high"]}}),
     }
     for case, (who, body) in cases.items():
         assert who.post("/ui/backends", json=body).status_code == 400, case
@@ -374,6 +381,23 @@ def test_les_champs_du_gabarit_ne_partent_qu_a_un_backend_a_gabarit(env):
     # À gabarit, le niveau reste dans les kwargs : la table s'y applique.
     assert sent(chat_template_kwargs={"reasoning_effort": "xhigh"})["chat_template_kwargs"] \
         == {"reasoning_effort": "high"}
+
+
+def test_les_niveaux_proposes_par_les_modeles_d_un_backend_de_compte(env):
+    """`model_efforts` : les niveaux que proposent les modèles d'un backend
+    de compte, par motif, gardés tels quels et appliqués au backend routé
+    (le premier motif qui vise le modèle l'emporte, à la création comme à
+    la modification)."""
+    alice, _, _ = admin_and_user(env)
+    table = {"deepseek-*": ["none", "low", "high", "max"], "*": ["low", "medium", "high"]}
+    bid = alice.post("/ui/backends", json={**MINE, "model_efforts": table}).json()["backend"]["id"]
+    assert alice.get("/ui/backends").json()["backends"][0]["model_efforts"] == table
+    b = backends.of_account(bid, None)
+    assert b.efforts_of("DeepSeek-V4-Flash") == ["none", "low", "high", "max"]
+    assert b.efforts_of("qwen3") == ["low", "medium", "high"]
+    alice.put(f"/ui/backends/{bid}", json={**MINE, "model_efforts": {"qwen*": ["none", "xhigh"]}})
+    b = backends.of_account(bid, None)
+    assert (b.efforts_of("qwen3"), b.efforts_of("deepseek-v4")) == (["none", "xhigh"], None)
 
 
 def test_seul_un_admin_pose_les_quotas_d_un_backend(env):

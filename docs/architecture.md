@@ -164,7 +164,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `core/httputil.py` | Forme des erreurs (OpenAI ou Anthropic), lecture des corps JSON, en-têtes propres d'un backend (`backend_headers`, `merge_headers`) |
 | `core/identity.py` | Le client : condensé stable de sa clé (`owner`), secret `data/client.secret` |
 | `core/limits.py` | La forme des règles `limits` d'un backend à quotas, du TOML comme d'un compte |
-| `core/efforts.py` | Les niveaux de réflexion : celui de `chat_template_kwargs` (`template_effort`), la table `effort_map` d'un backend (`effort_map`, `remap`) |
+| `core/efforts.py` | Les niveaux de réflexion : celui de `chat_template_kwargs` (`template_effort`), la table `effort_map` d'un backend (`effort_map`, `remap`), celle de ses `model_efforts` (`model_efforts`) |
 | `core/reload.py` | Le rechargement à chaud : réglages rechargeables (`SAFE`), réévalués et propagés à leurs copies, tout ou rien |
 | `core/config_file.py` | L'écriture de `data/config.toml` par la page : `diff` (le fichier de la page contre le fichier brut, secrets masqués et défauts écartés), `update` (tomlkit, valeur par valeur, sous verrou, empreinte `base`, copie dans `config-history/`), `restore`, `migrate` (les anciens `prompts.json` et `extensions.json`, une fois) |
 | `core/atomic.py` | Écrire un fichier d'un coup (temporaire, puis `os.replace`) |

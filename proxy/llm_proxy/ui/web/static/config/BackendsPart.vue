@@ -5,7 +5,9 @@
   adresse, une clé, et pour qui : soi seul, ou tout le monde (avec la clé du
   créateur), et des réglages d'une table [backends.<nom>] : images,
   tokenize_path, chat_template, effort_map (« medium=high, none= », un
-  niveau vide n'est pas envoyé), l'injection de tool_choice et (admin) le
+  niveau vide n'est pas envoyé), model_efforts (les niveaux que proposent
+  ses modèles, au catalogue de Codex : « motif niveaux… » par ligne,
+  « qwen3.8-* none low high xhigh »), l'injection de tool_choice et (admin) le
   limiteur : quotas, et ses règles `limits`, une par ligne (« claude-*, qwen-big rpm=10 tpd=5000 »).
   Ses en-têtes propres (« Nom: valeur », un par ligne) : secrets comme la
   clé, la page n'en reçoit que les noms ; « Nom: » sans valeur garde
@@ -31,6 +33,7 @@ const { ref, reactive, onMounted } = Vue;
 const API_LABELS = { openai: "OpenAI (chat/completions)", anthropic: "Anthropic (Messages)" };
 const blank = () => ({ id: null, name: "", api: "openai", url: "", api_key: "", shared: false,
                        images: null, tokenize_path: "", chat_template: false, effort_map: {}, effortsText: "",
+                       model_efforts: {}, modelEffortsText: "",
                        enabled: true, tool_choice: "", quotas: false,
                        limits: [], limitsText: "", headers: [], headersText: "",
                        models: [], catalog: null, picked: [], touched: false, reading: false,
@@ -59,6 +62,17 @@ function effortsOf(text) {
     const [k, v] = word.split("=");
     if (v === undefined) throw new Error(`niveaux de réflexion : « ${word} » (attendu : medium=high)`);
     out[k] = v;
+  }
+  return out;
+}
+// Les niveaux des modèles : « motif niveau niveau… », un motif par ligne.
+const modelEffortsText = (map) => Object.entries(map || {}).map(([p, ls]) => [p, ...ls].join(" ")).join("\n");
+function modelEffortsOf(text) {
+  const out = {};
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const [pattern, ...levels] = line.split(/[\s,]+/);
+    if (!levels.length) throw new Error(`niveaux des modèles : « ${line} » (attendu : qwen3-* low medium high)`);
+    out[pattern] = levels;
   }
   return out;
 }
@@ -108,6 +122,7 @@ const BackendsPart = {
     function open(b = null, anyone = false) {
       Object.assign(form, blank(), b ? { ...b, api_key: "", saved_enabled: b.enabled, limitsText: rulesText(b.limits),
                                          effortsText: effortsText(b.effort_map),
+                                         modelEffortsText: modelEffortsText(b.model_efforts),
                                          headersText: (b.headers || []).map((n) => `${n}:`).join("\n"),
                                          anyone, by: anyone ? b.by : "" } : {});
       editing.value = true;
@@ -116,6 +131,7 @@ const BackendsPart = {
     const fields = (b) => ({ name: b.name, api: b.api, url: b.url, shared: b.shared,
                              images: b.images, tokenize_path: b.tokenize_path,
                              chat_template: !!b.chat_template, effort_map: b.effort_map || {},
+                             model_efforts: b.model_efforts || {},
                              enabled: b.enabled,
                              tool_choice: b.tool_choice, quotas: b.quotas, limits: b.limits || [],
                              headers: b.sentHeaders || keepHeaders(b.headers),
@@ -150,6 +166,7 @@ const BackendsPart = {
       try {
         const body = fields({ ...form, limits: rulesOf(form.limitsText), models: chosen(),
                               effort_map: effortsOf(form.effortsText),
+                              model_efforts: modelEffortsOf(form.modelEffortsText),
                               sentHeaders: headersOf(form.headersText) });
         if (form.id) await call("PUT", "/ui/backends/" + encodeURIComponent(form.id)
                                 + (form.anyone ? "?all=1" : ""), body);
@@ -246,6 +263,11 @@ export default BackendsPart;
             accepte : « demandé=envoyé », « medium=high, xhigh=high, none= » ; vide : tels quels)</span>
             <input v-model="form.effortsText" maxlength="300" spellcheck="false"
                    placeholder="minimal=low, medium=high, xhigh=high"></label>
+          <label>Niveaux des modèles <span class="dim">(ceux que propose le catalogue de Codex
+            (Clients) : un motif par ligne, puis ses niveaux ; le premier motif qui vise un modèle
+            l'emporte ; sans motif : low, medium, high)</span>
+            <textarea v-model="form.modelEffortsText" rows="2" spellcheck="false"
+                      placeholder="qwen3.8-* none low medium high xhigh"></textarea></label>
           <label>En-têtes <span class="dim">(un par ligne, « Nom: valeur », ajoutés à chaque requête ;
             jamais réaffichés : « Nom: » sans valeur garde l'ancienne)</span>
             <textarea v-model="form.headersText" rows="2" spellcheck="false" autocomplete="off"

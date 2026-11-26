@@ -167,6 +167,9 @@ async def ui_models(request: Request):
             data.append({"id": entry["id"], "type": kind,
                          # Pour le générateur de configuration.
                          "context": entry.get("max_context_length"),
+                         # Les niveaux de réflexion qu'il propose
+                         # ([backends.<nom>].model_efforts) ; None : non dits.
+                         "efforts": b.efforts_of(plain) if b else None,
                          "chat": kind in CHAT_TYPES,
                          "vision": kind == "image-text-to-text",
                          "image": kind == IMAGE_TYPE})

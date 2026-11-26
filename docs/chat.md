@@ -584,7 +584,7 @@ le proxy ne sert pas.
 
 | Route | Rôle |
 |---|---|
-| `GET /ui/models` | modèles de conversation (ni image, ni voix, ni embeddings), `vision` si le catalogue le dit ; `?images=1` ajoute les modèles d'images (`image`) |
+| `GET /ui/models` | modèles de conversation (ni image, ni voix, ni embeddings), `vision` si le catalogue le dit, `efforts` : les niveaux de réflexion de [`model_efforts`](configuration.md#backendsnom) (`null` : non dits) ; `?images=1` ajoute les modèles d'images (`image`) |
 | `POST /ui/chat/completions` | `/v1/chat/completions` |
 | `POST /ui/images/generations` | `/v1/images/generations` |
 | `POST /ui/images/edits` | corps JSON (`model`, `prompt`, `image` en data URL, `size`) converti en formulaire pour `/v1/images/edits` |

@@ -4,12 +4,15 @@
   ou application, pi / omp, OpenCode, SDK OpenAI, curl, Open WebUI, tout client OpenAI, le
   panneau d'agents d'Omarchy), le modèle du
   catalogue (/ui/models), et s'il prend aussi les outils du proxy par son
-  serveur MCP (/mcp). La page produit les fichiers à poser, avec leur
+  serveur MCP (/mcp). Pour Codex, les modèles de son catalogue se cochent
+  (les décochés restent retenus par le navigateur, un nouveau modèle du
+  proxy arrive coché). La page produit les fichiers à poser, avec leur
   chemin, et les étapes. La CLÉ n'y figure jamais : elle vit dans un
   fichier à part (KEYFILE, mode 600, posé une fois), que le profil du shell
   exporte dans une variable (LLM_PROXY_API_KEY par défaut).
 */
 import * as Vue from "vue";
+import * as VueUse from "@vueuse/core";
 import { useCopy, download } from "../lib/files.js";
 import { TZ } from "../lib/format.js";
 import { q, envName, KEYFILE, KEY_SETUP, useAccount, useCatalog } from "./shared.js";
@@ -106,18 +109,36 @@ const ClientsPart = {
         .then((t) => { baseInstructions.value = t; },
               (e) => { baseRead = null; baseError.value = "Instructions de base de Codex illisibles : " + e.message; });
     }, { immediate: true });
+    // Les modèles de conversation, et ceux que l'on retire du catalogue :
+    // les décochés, gardés par le navigateur (un modèle nouveau arrive
+    // coché). Le modèle de départ y reste toujours.
+    const chatIds = computed(() => catalogState.data.filter((m) => m.chat).map((m) => m.id).sort());
+    const codexSkip = VueUse.useLocalStorage("llm-proxy-codex-skip", []);
+    const skipped = () => (Array.isArray(codexSkip.value) ? codexSkip.value : []);
+    const codexPicked = computed({
+      get: () => chatIds.value.filter((id) => id === form.model || !skipped().includes(id)),
+      set: (ids) => {
+        // Ceux d'aujourd'hui décochés (jamais le modèle de départ, dont la
+        // case est figée) ; ceux qui ne sont plus au catalogue, gardés.
+        codexSkip.value = [...skipped().filter((id) => !chatIds.value.includes(id)),
+                           ...chatIds.value.filter((id) => id !== form.model && !ids.includes(id))];
+      },
+    });
+    const codexPick = (all) => { codexPicked.value = all ? chatIds.value : []; };
     const codexCatalog = (current) => {
       const chat = catalogState.data.filter((m) => m.chat);
-      const ids = chat.map((m) => m.id).sort();
+      const ids = [...codexPicked.value];
       if (current && !ids.includes(current)) ids.unshift(current);
       const by = Object.fromEntries(chat.map((m) => [m.id, m]));
       return { models: ids.map((id, i) => {
         const m = by[id] || {};
         return {
           slug: id, display_name: id, description: "Via llm-proxy",
-          // Sans niveau par défaut : rien n'est envoyé tant qu'on n'en
-          // choisit pas un (/model), le backend garde le sien.
-          supported_reasoning_levels: ["low", "medium", "high"]
+          // Ceux que déclare son backend ([backends.<nom>].model_efforts),
+          // sinon low, medium, high. Sans niveau par défaut : rien n'est
+          // envoyé tant qu'on n'en choisit pas un (/model), le backend
+          // garde le sien.
+          supported_reasoning_levels: (m.efforts || ["low", "medium", "high"])
             .map((e) => ({ effort: e, description: e })),
           shell_type: "unified_exec", visibility: "list", supported_in_api: true,
           priority: i + 1, support_verbosity: false,
@@ -232,7 +253,7 @@ const ClientsPart = {
             content: toml });
           if (cat) {
             files.push({ name: `~/.codex/${CATALOG_FILE}`, download: CATALOG_FILE, lang: "json", hide: true,
-              note: `Les ${codexCatalog(form.model).models.length} modèles de conversation du proxy, `
+              note: `Les ${codexCatalog(form.model).models.length} modèles de conversation cochés, `
                 + "complet : à télécharger dans ~/.codex (Windows : %USERPROFILE%\\.codex). "
                 + "Re-télécharger quand les modèles du proxy changent.",
               content: baseInstructions.value
@@ -416,7 +437,7 @@ const ClientsPart = {
 
 
     return { account, clients, form, client, models, clientOut, auth, mcpOn,
-             copied, copy, download };
+             chatIds, codexPicked, codexPick, copied, copy, download };
   },
 };
 
@@ -448,6 +469,17 @@ export default ClientsPart;
           <label class="check" v-if="['codex', 'codexapp'].includes(form.client)">
             <input type="checkbox" v-model="form.catalog">
             le catalogue des modèles du proxy (/model, contexte)</label>
+          <fieldset class="backend-models" v-if="['codex', 'codexapp'].includes(form.client) && form.catalog && chatIds.length">
+            <legend>Modèles du catalogue <span class="dim">(le modèle de départ y reste)</span></legend>
+            <div class="item-actions">
+              <button type="button" class="btn ghost" @click="codexPick(true)">Tout cocher</button>
+              <button type="button" class="btn ghost" @click="codexPick(false)">Tout décocher</button>
+              <span class="dim">{{ codexPicked.length }} / {{ chatIds.length }}</span></div>
+            <div class="model-picks">
+              <label class="check" v-for="m in chatIds" :key="m">
+                <input type="checkbox" :value="m" v-model="codexPicked" :disabled="m === form.model">
+                <code>{{ m }}</code></label></div>
+          </fieldset>
           <label class="field" v-if="!client.service"><span>Variable de la clé</span>
             <input v-model="form.env" spellcheck="false"></label>
           <p class="note" v-if="!auth && !client.service">Le proxy est ouvert : la clé est libre, la variable vaut

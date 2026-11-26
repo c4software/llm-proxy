@@ -95,9 +95,11 @@ class Backend:
         # (relaying.fit_fields), une API stricte (Mistral) les refuse.
         self.chat_template = bool(cfg.get("chat_template", False))
         # Niveau de réflexion demandé → niveau envoyé (core/efforts.py) :
-        # ceux que le backend accepte ; vide : tels quels.
+        # ceux que le backend accepte ; vide : tels quels. Et les niveaux
+        # que proposent ses modèles, par motif (efforts_of).
         try:
             self.effort_map = efforts.effort_map(cfg.get("effort_map"))
+            self.model_efforts = efforts.model_efforts(cfg.get("model_efforts"))
         except ValueError as exc:
             raise SystemExit(f"backends.{name} : {exc}")
         # Chaque backend à quotas a SES limiteurs/routeurs (deux comptes
@@ -162,6 +164,15 @@ class Backend:
             name = name[len(self.name) + 1:]
         return any(fnmatch.fnmatchcase(n, p) for n in {name, self.aliases.get(name, name)}
                    for p in self.exposed)
+
+    def efforts_of(self, model: str) -> list[str] | None:
+        """Les niveaux de réflexion que propose `model` (sans préfixe) : ceux
+        du premier motif de `model_efforts` qui le vise, lui ou le modèle
+        dont il est l'alias ; None : non dits."""
+        name = model.lower()
+        names = {name, self.aliases.get(name, name)}
+        return next((levels for p, levels in self.model_efforts.items()
+                     if any(fnmatch.fnmatchcase(n, p) for n in names)), None)
 
     @staticmethod
     def _tool_choice(value) -> str | None:
@@ -480,7 +491,7 @@ def _cfg(row: dict) -> dict:
     """La table [backends.<nom>] d'une ligne du magasin."""
     cfg = {"url": row["url"], "api_key": row["api_key"], "api": row["api"],
            "tokenize_path": row["tokenize_path"], "chat_template": row["chat_template"],
-           "effort_map": row["effort_map"],
+           "effort_map": row["effort_map"], "model_efforts": row["model_efforts"],
            "connect_timeout": 15.0,
            "quotas": row["quotas"], "force_tool_choice": row["tool_choice"] or None,
            "limits": row["limits"], "headers": row["headers"], "models": row["models"]}
@@ -500,6 +511,7 @@ def _retune(b: Backend, name: str, cfg: dict) -> None:
     b.name, b.cfg = name, cfg
     b.images, b.tokenize_path, b.tool_choice = other.images, other.tokenize_path, other.tool_choice
     b.chat_template, b.effort_map = other.chat_template, other.effort_map
+    b.model_efforts = other.model_efforts
     b.exposed = other.exposed
     headers_changed = b.headers != other.headers
     b.limits, b.headers = other.limits, other.headers

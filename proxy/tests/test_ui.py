@@ -298,6 +298,12 @@ def test_models_for_chat_or_the_whole_catalogue(ui, monkeypatch):
     # La fenêtre de contexte, quand le catalogue la dit (Codex la reçoit).
     assert [m["context"] for m in ui.client.get("/ui/models?all=1")
             .json()["data"]] == [262144, None, None]
+    # Les niveaux de réflexion que déclare le backend (model_efforts), par
+    # motif, casse ignorée ; None : non dits.
+    monkeypatch.setattr(backends.BACKENDS["essai"], "model_efforts",
+                        {"qwen-image*": ["none"], "qwen*": ["none", "low", "xhigh"]})
+    assert [m["efforts"] for m in ui.client.get("/ui/models?all=1").json()["data"]] \
+        == [["none", "low", "xhigh"], None, ["none"]]
 
 
 def test_chat_generates_an_image_with_an_image_model(ui, monkeypatch):

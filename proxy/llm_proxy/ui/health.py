@@ -106,6 +106,7 @@ def health_detail() -> dict:
                 "tokenize_path": b.tokenize_path or None,
                 "chat_template": b.chat_template,
                 "effort_map": b.effort_map,
+                "model_efforts": b.model_efforts,
                 "timeout": b.timeout,
                 "meta_timeout": b.meta_timeout,
                 "connect_timeout": b.connect_timeout,

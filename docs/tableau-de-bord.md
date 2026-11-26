@@ -317,10 +317,15 @@ modèles du proxy : `/model` ne les propose pas et Codex ne tient pas
 compte de leur contexte ni de leurs niveaux de raisonnement. Le fichier
 remplace le catalogue intégré de Codex. Les modèles et leur contexte
 proviennent du proxy ; leurs capacités d'image sont incluses si elles
-sont déclarées. Les niveaux de raisonnement low, medium et high sont
-proposés sans valeur par défaut ; aucun niveau n'est envoyé tant qu'il
-n'en est pas choisi un. Le fichier est complet et ne nécessite aucune
-commande. Il contient les instructions de base requises par Codex pour
+sont déclarées. Les modèles de conversation y sont tous, sauf ceux que
+l'on décoche sous la case ; le navigateur retient les modèles décochés,
+un modèle que le proxy ajoute ensuite arrive coché, et le modèle de
+départ y reste toujours. Les niveaux de raisonnement de chaque modèle
+sont ceux que déclare son backend
+([`model_efforts`](configuration.md#backendsnom)), à défaut low, medium et
+high ; ils sont proposés sans valeur par défaut, et aucun niveau n'est
+envoyé tant qu'il n'en est pas choisi un. Le fichier est complet et ne
+nécessite aucune commande. Il contient les instructions de base requises par Codex pour
 chaque modèle ; elles proviennent de Codex CLI 0.167.2 (Apache-2.0) et
 sont servies par la page (`config/codex-base-instructions.txt`). Télécharger
 de nouveau le fichier si les modèles du proxy changent.
