@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 
 const { apiContent, apiMessages, requestTools } = await import("../../llm_proxy/ui/web/static/chat/api.js");
 const { chipFor, recordCall, endStep, closeStep, timeline } = await import("../../llm_proxy/ui/web/static/chat/turn.js");
+const { take } = await import("../../llm_proxy/ui/web/static/chat/stream.js");
 const { prompt } = await import("../../llm_proxy/ui/web/static/lib/prompts.js");
 
 const user = (content, extra = {}) => ({ role: "user", content, ...extra });
@@ -51,7 +52,7 @@ test("requestTools : pas de mémoire en incognito, rien d'hébergé sans la capa
   const got = requestTools(conv, ctx, { caps: { hostedTools: true }, available: new Set(["web_search", "memory"]),
                                         families: [], groups });
   assert.deepEqual(got.hosted, ["web_search"]);
-  assert.deepEqual(ctx.hosted, ["web_search", "web_fetch"], "un programme d'outils ne joint que les outils présentés");
+  assert.deepEqual(ctx.hosted, ["web_search", "web_fetch"], "un programme du Code Mode ne joint que les outils présentés");
   assert.equal(ctx.ws, null, "sans la capacité folder, le dossier n'est pas présenté");
   assert.deepEqual(requestTools({ ...conv, incognito: false }, {}, { caps: {}, available: new Set(["memory"]), families: [] }).hosted, []);
 });
@@ -142,16 +143,19 @@ test("chronologie d'une réponse d'avant (tours sans positions) : réflexion en 
     { head: "", segments: [{ reasoning: "r", content: "c", tools: [], start: 0 }] });
 });
 
-test("chronologie : une puce d'outil hébergé reste à son tour ; des positions qui ne tiennent plus → repli", () => {
-  const m = { content: "", reasoning: "", tools: [] };
+// Un morceau du flux de /ui/chat/completions.
+const delta = (d) => ({ choices: [{ delta: d }] });
+
+test("chronologie : une puce d'outil hébergé garde sa place, avant le tour de la page qui la suit ; des positions qui ne tiennent plus → repli", () => {
+  const m = { content: "", reasoning: "", tools: [], sources: [] };
   m.reasoning += "je cherche. ";
   m.content += "Je cherche.";
-  m.tools.push({ id: "web", name: "web_search", status: "done" });   // x_hosted_tool, pendant le flux
+  take(delta({ x_hosted_tool: { id: "web", name: "web_search", status: "done" } }), m);
   m.step = { content: "Je cherche.", calls: [], queue: [{ id: "a", name: "read_artifact", arguments: "{}" }] };
   recordCall(m, chipFor(m, m.step.queue[0]), m.step.queue[0], "ok");
   endStep(m);
   turnOf(m, "fin. ", "Voilà.", "");
-  assert.deepEqual(timeline(m).segments.map((s) => s.tools.map((c) => c.id)), [["web", "a"], []]);
+  assert.deepEqual(timeline(m).segments.map((s) => s.tools.map((c) => c.id)), [["web"], ["a"], []]);
   // Une réflexion plus courte que ses positions : la découpe repart des
   // textes des tours, la réflexion en tête.
   const short = { ...m, reasoning: "r" };
@@ -159,9 +163,39 @@ test("chronologie : une puce d'outil hébergé reste à son tour ; des positions
   assert.equal(t.head, "r");
   assert.deepEqual(t.segments.map((s) => [s.content.trim(), s.tools.map((c) => c.id)]),
     [["Je cherche.", ["web", "a"]], ["Voilà.", []]]);
+  // Une coupure qui ne tient plus (texte remplacé, réflexion raccourcie) :
+  // les tours seuls découpent.
+  const stale = { ...m, cuts: [{ contentEnd: 99, reasoningEnd: 0, toolsEnd: 1 }] };
+  assert.deepEqual(timeline(stale).segments.map((s) => s.tools.map((c) => c.id)), [["web", "a"], []]);
   // Une réponse non diffusée remplace tout le texte : ni les positions ni
   // les textes des tours ne tiennent, le rendu d'un seul tenant.
   const replaced = { ...m, content: "Une réponse entièrement remplacée." };
   assert.deepEqual(timeline(replaced).segments.map((s) => [s.content, s.tools.length]),
     [["Une réponse entièrement remplacée.", 2]]);
+});
+
+test("chronologie : les outils hébergés d'un même tour de la page s'affichent entre la réflexion qui les appelle et ce qui suit", () => {
+  // Un tour de la page (device_context), puis le proxy enchaîne seul deux
+  // recherches et la réponse : tout arrive dans le dernier tour de la page.
+  const m = { content: "", reasoning: "", tools: [], sources: [] };
+  turnOf(m, "l'heure. ", "", "dev");
+  take(delta({ reasoning_content: "je cherche la version. " }), m);
+  take(delta({ x_hosted_tool: { id: "w1", name: "web_search", status: "running" } }), m);
+  take(delta({ x_hosted_tool: { id: "w2", name: "web_search", status: "running" } }), m);
+  take(delta({ x_hosted_tool: { id: "w1", status: "done" } }), m);
+  take(delta({ x_hosted_tool: { id: "w2", status: "done" } }), m);
+  take(delta({ reasoning_content: "je peux répondre. " }), m);
+  take(delta({ content: "Chrome 158 est à jour." }), m);
+  assert.deepEqual(timeline(m).segments.map((s) => [s.reasoning, s.content, s.tools.map((c) => c.id)]), [
+    ["l'heure. ", "", ["dev"]],
+    ["je cherche la version. ", "", ["w1", "w2"]],
+    ["je peux répondre. ", "Chrome 158 est à jour.", []],
+  ]);
+  // Sans tour de la page du tout, la coupure vaut aussi.
+  const solo = { content: "", reasoning: "", tools: [], sources: [] };
+  take(delta({ content: "Je cherche." }), solo);
+  take(delta({ x_hosted_tool: { id: "w", name: "web_search", status: "done" } }), solo);
+  take(delta({ content: " Trouvé." }), solo);
+  assert.deepEqual(timeline(solo).segments.map((s) => [s.content, s.tools.map((c) => c.id)]),
+    [["Je cherche.", ["w"]], [" Trouvé.", []]]);
 });

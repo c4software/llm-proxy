@@ -1,4 +1,4 @@
-// Les programmes d'outils (chat/tools/sandbox/programs.js) : le programme
+// Le Code Mode (chat/tools/sandbox/programs.js) : le programme
 // (driver, ici sous Node à la place du Worker du bac) et le pont de la
 // page vers les outils hébergés (bridge) — liste, budget, concurrence.
 import "./setup.mjs";

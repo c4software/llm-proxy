@@ -478,7 +478,7 @@ class Translator(Robinet):
         if self.ctx.progress and hidden:
             out += self._block({"x_hidden": {"chars": hidden}})
         # Les sites connus (Robinet.known), à la page qui a des appels à
-        # exécuter : un programme d'outils les porte (/ui/tools).
+        # exécuter : un programme du Code Mode les porte (/ui/tools).
         if self.ctx.progress and self.client_calls and self.known is not None:
             out += self._block({"x_known_sites": sorted(self.known)})
         last = self._last()

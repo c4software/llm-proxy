@@ -81,7 +81,7 @@ export function apiMessages(conv, upto, guidance = "") {
  * envoyé. Ceux de la page (tools/) : ceux des familles actives — le
  * dossier s'il est ouvert —, et leurs consignes au prompt système. Pose
  * `ctx.hosted` : les fonctions des outils hébergés présentés (`groups`,
- * ceux de /ui/session), ce qu'un programme d'outils peut appeler.
+ * ceux de /ui/session), ce qu'un programme du Code Mode peut appeler.
  * @param {any} conv @param {any} ctx
  * @param {{caps: any, available: Set<string>, families: string[],
  *   groups?: {type: string, tools: string[]}[]}} o */

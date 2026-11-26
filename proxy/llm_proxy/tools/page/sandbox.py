@@ -1,6 +1,6 @@
 """
 Les outils du NAVIGATEUR — les bacs de code : JavaScript et TypeScript, PHP,
-SQL, PostgreSQL, Linux, programmes d'outils.
+SQL, PostgreSQL, Linux, Code Mode.
 Leur DÉCLARATION (Runs.BROWSER) : le prompt, le schéma, la famille du
 menu Outils. Leur exécution est dans la page, chat/tools/sandbox/
 (docs/navigateur.md, « Écrire un outil de la page »).
@@ -288,7 +288,7 @@ LINUX_FAMILY = Family(
 )
 
 
-# ── Programmes d'outils ───────────────────────────────────────────────
+# ── Code Mode ─────────────────────────────────────────────────────────
 
 RUN_TOOLS_PROGRAM = BrowserTool(
     ToolName.RUN_TOOLS_PROGRAM,
@@ -299,7 +299,7 @@ RUN_TOOLS_PROGRAM = BrowserTool(
 
 PROGRAMS_FAMILY = Family(
     FamilyKey.PROGRAMS,
-    label="Programmes d'outils",
+    label='Code Mode',
     tools=(ToolName.RUN_TOOLS_PROGRAM,),
     hint='enchaîner les outils hébergés cochés dans un programme JavaScript, en une étape',
     authored=True,

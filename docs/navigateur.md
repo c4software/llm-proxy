@@ -440,9 +440,9 @@ les requêtes web passent alors par le navigateur.
 Voir [La VM Linux du navigateur](linux.md) pour les détails de construction,
 de protocole, de paquets et de limites.
 
-### Programmes d'outils — `run_tools_program`
+### Code Mode — `run_tools_program`
 
-La famille **Programmes d'outils**, désactivée par défaut, permet au modèle
+La famille **Code Mode**, désactivée par défaut, permet au modèle
 d'écrire un court programme JavaScript qui appelle les [outils hébergés](outils-heberges.md)
 activés dans la conversation et combine leurs résultats. Une recherche
 suivie de plusieurs lectures peut ainsi être exécutée dans un seul appel ;

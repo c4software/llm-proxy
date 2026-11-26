@@ -65,9 +65,9 @@ Le tableau de bord `/ui` inclut un chat connecté aux backends du proxy
   partagée avec un terminal ; le proxy peut lui ouvrir l'accès réseau par un
   relais Wisp ([VM Linux](docs/linux.md)). Seuls les résultats sont transmis
   au modèle.
-- **Programmes d'outils** : un programme JavaScript du bac enchaîne les outils
+- **Code Mode** : un programme JavaScript du bac enchaîne les outils
   hébergés sélectionnés (recherche, lecture, filtrage) dans un seul appel
-  ([Programmes d'outils](docs/navigateur.md#programmes-doutils--run_tools_program)).
+  ([Code Mode](docs/navigateur.md#code-mode--run_tools_program)).
 - **Gemini Nano** dans Chrome : modèle local exécuté sur l'appareil.
 
 Vidéo de démonstration (1 min 20, sans son) : synthèse, recherche web,

@@ -149,8 +149,8 @@ cache_ttl = 86400
 web_cache_ttl = 600
 web_cache_entries = 256
 web_cache_bytes = 64000000
-# Appels directs (/v1/tools/<nom>, tools/call de /mcp, /ui/tools/<nom> des
-# programmes d'outils de la page) par client et par
+# Appels directs (/v1/tools/<nom>, tools/call de /mcp, /ui/tools/<nom> du
+# Code Mode de la page) par client et par
 # minute glissante ; au-delà → 429 avec Retry-After. 0 = sans limite. La
 # boucle des surfaces n'est pas concernée (max_calls la borne déjà).
 direct_calls_per_minute = 120

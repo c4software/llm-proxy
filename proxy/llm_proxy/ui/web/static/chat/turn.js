@@ -7,6 +7,9 @@
     m.step    le tour en cours : {content, calls (faits), queue (à faire)}
     m.steps   les tours passés, rejoués au modèle (tools.stepMessages)
     m.waiting la carte d'un appel qui attend l'utilisateur
+    m.cuts    les coupures d'AFFICHAGE à l'arrivée des outils hébergés
+              (le proxy les exécute dans un même tour de la page) :
+              positions comme celles des tours, jamais rejouées
 
   chipFor(m, call)            la puce de l'appel (créée au besoin)
   recordCall(m, chip, call, result, image)  l'appel fait : sa puce, son
@@ -16,8 +19,13 @@
                               passés, avec où il s'arrête dans la réflexion
                               et le texte du message (reasoningEnd,
                               contentEnd) : de quoi l'afficher à sa place
+  hostedCut(m)                une puce d'outil hébergé vient d'être
+                              ajoutée : ce qui précède (réflexion, texte)
+                              s'affiche avant elle, ce qui suit après ; les
+                              puces arrivées d'affilée vont ensemble
   timeline(m)                 la réponse en CHRONOLOGIE pour l'affichage :
-                              par tour, sa réflexion, son texte, ses puces ;
+                              par tour (et par coupure d'outils hébergés),
+                              sa réflexion, son texte, ses puces ;
                               le tour en cours (ou le texte final) en dernier
   closeStep(m, reason)        un tour laissé en plan (arrêt, coupure, page
                               rechargée) : chaque appel sans résultat en
@@ -58,6 +66,18 @@ export function pushStep(m, st) {
 }
 
 /** @param {any} m */
+export function hostedCut(m) {
+  const here = { reasoningEnd: (m.reasoning || "").length, contentEnd: (m.content || "").length,
+                 toolsEnd: (m.tools || []).length };
+  const cuts = m.cuts || (m.cuts = []);
+  const last = cuts.at(-1);
+  // Rien d'écrit ni d'autre puce depuis la dernière coupure : la même.
+  if (last && last.reasoningEnd === here.reasoningEnd && last.contentEnd === here.contentEnd
+      && last.toolsEnd === here.toolsEnd - 1) last.toolsEnd = here.toolsEnd;
+  else cuts.push(here);
+}
+
+/** @param {any} m */
 export function endStep(m) {
   pushStep(m, m.step);
   if (m.content && !m.content.endsWith("\n")) m.content += "\n\n";
@@ -94,23 +114,28 @@ function locate(content, steps) {
   return ends;
 }
 
-// Les positions notées par pushStep, si elles tiennent encore : croissantes,
-// dans les bornes, et le texte de chaque tour à sa place (une réponse non
-// diffusée remplace tout le texte).
-/** @param {any[]} steps @param {string} content @param {number[]} sizes */
-function positioned(steps, content, sizes) {
-  const keys = ["contentEnd", "reasoningEnd", "toolsEnd"];
-  const inBounds = keys.every((key, j) => {
+// Des positions (tours, coupures) qui tiennent : croissantes et dans les
+// bornes.
+/** @param {any[]} marks @param {number[]} sizes */
+function ordered(marks, sizes) {
+  return ["contentEnd", "reasoningEnd", "toolsEnd"].every((key, j) => {
     let prev = 0;
-    return steps.every((st) => {
+    return marks.every((st) => {
       const v = st[key];
       if (typeof v !== "number" || v < prev || v > sizes[j]) return false;
       prev = v;
       return true;
     });
   });
+}
+
+// Les positions notées par pushStep, si elles tiennent encore : croissantes,
+// dans les bornes, et le texte de chaque tour à sa place (une réponse non
+// diffusée remplace tout le texte).
+/** @param {any[]} steps @param {string} content @param {number[]} sizes */
+function positioned(steps, content, sizes) {
   let c0 = 0;
-  return inBounds && steps.every((st) => {
+  return ordered(steps, sizes) && steps.every((st) => {
     const ok = content.slice(c0, st.contentEnd).trim() === (st.content || "").trim();
     c0 = st.contentEnd;
     return ok;
@@ -135,26 +160,36 @@ function owners(chips, steps) {
 }
 
 /** La réponse `m` en chronologie : `head`, une réflexion d'un seul tenant
- * (réponse d'avant les positions), et les segments — un par tour passé,
- * puis le dernier (le tour en cours, ou le texte final) — chacun avec sa
+ * (réponse d'avant les positions), et les segments — un par tour passé
+ * et par coupure d'outils hébergés, puis le dernier (le tour en cours, ou le texte final) — chacun avec sa
  * réflexion, son texte (et où il commence dans `m.content`) et ses puces.
  * @param {any} m
  * @returns {{head: string, segments: {reasoning: string, content: string, tools: any[], start: number}[]}} */
 export function timeline(m) {
   const reasoning = m.reasoning || "", content = m.content || "", chips = m.tools || [];
   const steps = m.steps || [];
+  const sizes = [content.length, reasoning.length, chips.length];
   const whole = { head: "", segments: [{ reasoning, content, tools: chips, start: 0 }] };
-  if (!steps.length) return whole;
-  if (positioned(steps, content, [content.length, reasoning.length, chips.length])) {
+  if (!steps.length && !(m.cuts || []).length) return whole;
+  if (positioned(steps, content, sizes)) {
+    // Les coupures des outils hébergés, entre les tours ; ignorées si elles
+    // ne tiennent plus avec eux.
+    const at = (/** @type {any} */ x) => [x.contentEnd, x.reasoningEnd, x.toolsEnd];
+    const before = (/** @type {any} */ a, /** @type {any} */ b) =>
+      at(a).reduce((d, v, j) => d || v - at(b)[j], 0);
+    const merged = [...steps, ...(m.cuts || [])].sort(before);
+    const marks = ordered(merged, sizes) ? merged : steps;
     const segments = [];
+    const ends = [...marks, { contentEnd: content.length, reasoningEnd: reasoning.length, toolsEnd: chips.length }];
     let c0 = 0, r0 = 0, t0 = 0;
-    for (const st of [...steps, { contentEnd: content.length, reasoningEnd: reasoning.length, toolsEnd: chips.length }]) {
+    for (const st of ends) {
       segments.push({ reasoning: reasoning.slice(r0, st.reasoningEnd), content: content.slice(c0, st.contentEnd),
                       tools: chips.slice(t0, st.toolsEnd), start: c0 });
       c0 = st.contentEnd; r0 = st.reasoningEnd; t0 = st.toolsEnd;
     }
     return { head: "", segments };
   }
+  if (!steps.length) return whole;
   const ends = locate(content, steps);
   if (!ends) return whole;
   const own = owners(chips, steps);

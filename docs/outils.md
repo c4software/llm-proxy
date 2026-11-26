@@ -587,7 +587,7 @@ au site.
   de `code_execution`, ce que `memory` relit (l'utilisateur peut y écrire
   aussi : une URL qu'il y range ne rend pas non plus son site connu), la
   sortie des bacs de code de la page (JavaScript, PHP, SQL, PostgreSQL,
-  Linux, programmes d'outils) et ses artifacts. Le dossier ouvert, lui,
+  Linux, Code Mode) et ses artifacts. Le dossier ouvert, lui,
   compte : il contient les fichiers de l'utilisateur.
   Une URL qu'un script tire d'un fichier joint n'est donc pas lisible :
   l'utilisateur la colle dans son message.
@@ -601,7 +601,7 @@ au site.
   Un hôte sorti de la mémoire du modèle est refusé, avec une consigne :
   chercher la page, ou demander l'adresse.
 - **Où elle s'applique** : là où le proxy voit la conversation, c'est-à-dire
-  les trois surfaces et le chat de la page, [programmes d'outils](navigateur.md#programmes-doutils--run_tools_program)
+  les trois surfaces et le chat de la page, [Code Mode](navigateur.md#code-mode--run_tools_program)
   compris : le proxy donne à la page, en fin de réponse, les sites connus
   (`x_known_sites`), que le programme porte à chaque appel. Pas sur
   `/v1/tools` ni `/mcp`, où l'appel arrive sans elle (`Call.hosts` vaut

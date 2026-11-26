@@ -111,7 +111,7 @@ l'utilisateur qui le déposent toutes les 2 minutes.
 Chaque exécution d'un [outil hébergé](outils-heberges.md) laisse une
 ligne dans la même base, sous la même purge. Cela vaut pour tous les
 chemins : boucle de `/v1/responses`, boucle de `/v1/messages`, appel
-direct `POST /v1/tools/<nom>`, programme d'outils de la page
+direct `POST /v1/tools/<nom>`, Code Mode de la page
 (`/ui/tools/<nom>`). Une réponse qui a utilisé des outils
 garde **une** ligne côté requêtes, avec ses tokens cumulés.
 

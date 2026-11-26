@@ -215,7 +215,7 @@ def test_chat_announces_hosted_tool_runs(ui):
 
 
 def test_chat_gives_the_page_its_known_sites_with_its_calls(ui):
-    """Une réponse qui rend des appels à la page (un programme d'outils)
+    """Une réponse qui rend des appels à la page (un programme du Code Mode)
     lui donne les sites connus de la conversation (`x_known_sites`) : ceux
     de ses messages, et ceux de la recherche faite par le proxy dans cette
     réponse, que la page n'a jamais vue. Sans appel à rendre, ou pour un

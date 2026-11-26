@@ -1,6 +1,6 @@
 // @ts-check
 /*
-  Programmes d'outils : le modèle écrit un court programme JavaScript qui
+  Code Mode : le modèle écrit un court programme JavaScript qui
   appelle les OUTILS HÉBERGÉS cochés dans la conversation (`await
   tools.web_search({...})`), combine et filtre leurs résultats, et ne
   rend que l'essentiel — en un seul appel, au lieu d'un tour par outil.

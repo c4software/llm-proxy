@@ -195,7 +195,7 @@ MAX_KNOWN_SITES = 10_000
 @router.post("/ui/tools/{name}")
 async def ui_tool(name: str, request: Request):
     """/v1/tools/<nom> sous /ui pour le cookie : un outil hébergé appelé
-    par la page elle-même — par un programme de `run_tools_program`
+    par la page elle-même — par un programme du Code Mode (`run_tools_program`)
     (chat/tools/sandbox/programs.js). Mêmes droits, même borne par minute
     ([tools].direct_calls_per_minute), même réponse. La provenance des URL
     porte sur les sites que la conversation a fait connaître (`hosts` du
@@ -209,7 +209,7 @@ async def ui_tool(name: str, request: Request):
     program = next(t for t in tools.PAGE if t.name == tools.ToolName.RUN_TOOLS_PROGRAM)
     if not (UI_CHAT and chat_api.ENABLED) or not page_tools.served(program):
         return error_response("openai", 404, "unknown_route",
-                              "programmes d'outils de la page désactivés "
+                              "Code Mode de la page désactivé "
                               "([ui].chat, [chat].hosted_tools, "
                               "[ui].page_tools_disabled)")
     if (bad := json_only(request)) is not None:

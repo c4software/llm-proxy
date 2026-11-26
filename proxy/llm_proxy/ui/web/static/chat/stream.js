@@ -14,6 +14,8 @@
   `[DONE]` (sinon il a été coupé en route) ; `finish`, le dernier
   finish_reason (« length » : la limite de tokens atteinte).
 */
+import { hostedCut } from "./turn.js";
+
 export async function readStream(stream, live, hooks = {}) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -67,13 +69,16 @@ export function take(doc, live, hooks = {}) {
     // (échanges d'outils hébergés réinsérés par le proxy), en caractères.
     if (d.x_hidden) live.hidden = d.x_hidden.chars || 0;
     // Les sites connus de la conversation, pour les appels que la page va
-    // exécuter (un programme d'outils les porte : provenance des URL).
+    // exécuter (un programme du Code Mode les porte : provenance des URL).
     if (Array.isArray(d.x_known_sites)) live.known = d.x_known_sites;
     if (d.x_hosted_tool) {
       const ev = d.x_hosted_tool;
       const known = live.tools.find((t) => t.id === ev.id);
       if (known) Object.assign(known, ev);
-      else live.tools.push({ ...ev });
+      else {
+        live.tools.push({ ...ev });
+        hostedCut(live);
+      }
       if (ev.name === "memory" && ev.status !== "running" && hooks.onMemory) hooks.onMemory();
     }
     for (const a of d.annotations || []) {

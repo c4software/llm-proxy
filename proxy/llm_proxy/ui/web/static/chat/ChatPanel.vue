@@ -1698,12 +1698,13 @@ const ChatPanel = {
     }
     // Un segment de la chronologie (turn.timeline, `t`) réfléchit encore :
     // le dernier — le tour en cours —, pendant le flux, tant qu'il n'a rien
-    // écrit et qu'aucun de ses outils ne tourne (sa puce le dit déjà).
-    const busyTool = (seg) => seg.tools.some((c) => c.status === "running" || c.status === "writing");
+    // écrit et qu'aucun outil de la réponse ne tourne (sa puce le dit déjà ;
+    // celle d'un outil hébergé est au segment d'avant).
+    const busyTool = (m) => (m.tools || []).some((c) => c.status === "running" || c.status === "writing");
     function thinking(m, i, t, k) {
       const seg = t.segments[k];
       return streaming.value && i === current.value.messages.length - 1
-        && k === t.segments.length - 1 && !seg.content.trim() && !busyTool(seg);
+        && k === t.segments.length - 1 && !seg.content.trim() && !busyTool(m);
     }
     function preview(m, i, t, k) {
       if (!thinking(m, i, t, k)) return { text: candidate(t.segments[k].reasoning), n: "fin" };
@@ -2165,7 +2166,7 @@ export default ChatPanel;
             <div class="typing" v-else-if="streaming && !m.error
                  && (m.image ? m.want > (m.attachments || []).length
                      : i === current.messages.length - 1 && [timeline(m).segments.at(-1)].every((seg) =>
-                       !seg.content.trim() && !busyTool(seg)))">
+                       !seg.content.trim() && !busyTool(m)))">
               <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ m.want > 1
                 ? " " + ((m.attachments || []).length + 1) + " / " + m.want : "" }}…</span>
               <span class="dim" v-else-if="m.voice">synthèse vocale{{ m.progress ? " · " + m.progress : "" }}…</span>

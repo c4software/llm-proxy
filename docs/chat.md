@@ -246,8 +246,11 @@ affichés sous la réponse.
 
 **Réponse en plusieurs tours d'outils** : elle s'affiche dans l'ordre où
 elle s'écrit. Pour chaque tour : son raisonnement, son texte, puis les
-appels d'outils qu'il a faits. Le tour en cours est en bas, et le fil le
-suit, y compris après la réponse à une carte (questions, permission).
+appels d'outils qu'il a faits. Les outils du proxy (recherche, lecture…)
+s'affichent à l'endroit où ils ont été appelés : après la réflexion et le
+texte qui les précèdent, avant ce qui suit. Le tour en cours est en bas, et
+le fil le suit, y compris après la réponse à une carte (questions,
+permission).
 
 **Voix** : *Écouter*, sous une réponse, la lit sans code ni Markdown
 (20 000 caractères au plus) ; *Arrêter la lecture* interrompt la
@@ -587,7 +590,7 @@ le proxy ne sert pas.
 | `POST /ui/images/edits` | corps JSON (`model`, `prompt`, `image` en data URL, `size`) converti en formulaire pour `/v1/images/edits` |
 | `POST /ui/audio/speech`, `GET /ui/audio/voices` | `/v1/audio/*` (voir [Voix](voix.md)) |
 | `POST /ui/audio/transcriptions` | JSON (`model`, `file` en data URL, `language`, `prompt`) relayé en formulaire à `/v1/audio/transcriptions` |
-| `POST /ui/tools/{nom}` | `/v1/tools/{nom}`, pour un [programme d'outils](navigateur.md#programmes-doutils--run_tools_program) : corps `{"arguments": {…}, "hosts": [sites connus]}`, réponse avec `hosts` (ces sites, et ceux que le résultat fait connaître) ; `404` sans `[ui].chat`, sans `[chat].hosted_tools`, ou si `run_tools_program` est dans `[ui].page_tools_disabled` ; `memory` refusé en incognito |
+| `POST /ui/tools/{nom}` | `/v1/tools/{nom}`, pour un programme du [Code Mode](navigateur.md#code-mode--run_tools_program) : corps `{"arguments": {…}, "hosts": [sites connus]}`, réponse avec `hosts` (ces sites, et ceux que le résultat fait connaître) ; `404` sans `[ui].chat`, sans `[chat].hosted_tools`, ou si `run_tools_program` est dans `[ui].page_tools_disabled` ; `memory` refusé en incognito |
 | `GET /ui/conversations` | conversations ; `?summary=1&limit=&offset=` : leurs résumés par pages (`next` : la page suivante) ; `?q=` : les résumés de celles qui contiennent chaque mot |
 | `GET` / `PUT` / `DELETE /ui/conversations/{id}` | une conversation |
 | `POST /ui/assets`, `GET /ui/assets/{id}` | images des conversations |
