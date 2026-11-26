@@ -475,6 +475,13 @@ panneau ; le double-clic rétablit sa largeur par défaut et les flèches du
 clavier permettent aussi de la régler. La largeur est conservée dans ce
 navigateur. Les artifacts sont conservés avec la conversation.
 
+Un artifact de type `code` est colorié par highlight.js, servi par le
+proxy, selon son `language` (alias compris : `py`, `js`, `sh`, `c#`…). Un
+langage absent ou hors du paquet courant de highlight.js est détecté sur
+le début du code. Le code arrive déjà colorié dans le cadre : rien n'y est
+chargé. Il s'affiche sans coloration au-delà de 100 000 caractères, ou si
+`vendor/` n'a pas été construit (`proxy/wasm`, `npm run build`).
+
 **Déboguer un artifact.** Le modèle peut tester un artifact dans le
 panneau, lire sa console et ses erreurs, exécuter du code dans la page
 (cliquer, saisir, lire un état) et en capturer une image. Le débogage est

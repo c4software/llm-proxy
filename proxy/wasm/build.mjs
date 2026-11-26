@@ -8,6 +8,8 @@
 //   sucrase.js          sucrase (MIT) : TypeScript exécuté, types retirés
 //   html-to-image.js    html-to-image (MIT) : la capture d'un artifact
 //                       (inspect_artifact), passée à son cadre par la page
+//   highlight.js        highlight.js (BSD-3-Clause) et son thème github :
+//                       la coloration d'un artifact de code
 //   typescript.js       le compilateur TypeScript 6 et ses lib.*.d.ts
 //                       (Apache-2.0) : la vérification des types
 //   xterm.js, xterm.css xterm.js (MIT) : le terminal du panneau Linux
@@ -40,11 +42,12 @@ const nodeStatic = { name: "node-statique", setup(b) {
   b.onLoad({ filter: /.*/, namespace: "vide" }, () => ({ contents: "export {}", loader: "js" }));
 } };
 
-for (const name of ["php", "sql", "pglite", "chart", "sucrase", "typescript", "xterm"]) {
+for (const name of ["php", "sql", "pglite", "chart", "sucrase", "typescript", "xterm", "highlight"]) {
   await build({
     entryPoints: [`${name}.js`], outfile: `${out}/${name}.js`,
     bundle: true, format: "esm", platform: "browser", minify: true, legalComments: "eof",
     plugins: [nodeStatic],
+    loader: { ".css": "text" },              // le thème de highlight.js
     // Les chemins de Node que le bundle ne prend jamais dans un navigateur.
     external: ["worker_threads", "events", "fs", "path", "crypto", "os", "inspector", "perf_hooks", "source-map-support", "module"],
     // Chargé depuis une URL blob:, sans base où résoudre un chemin
@@ -67,6 +70,7 @@ await copyFile("node_modules/sucrase/LICENSE", `${out}/LICENSE-sucrase`);
 await copyFile("node_modules/html-to-image/LICENSE", `${out}/LICENSE-html-to-image`);
 await copyFile("node_modules/typescript/LICENSE.txt", `${out}/LICENSE-typescript`);
 await copyFile("node_modules/@xterm/xterm/LICENSE", `${out}/LICENSE-xterm`);
+await copyFile("node_modules/highlight.js/LICENSE", `${out}/LICENSE-highlight.js`);
 const versions = {};
 for (const f of (await readdir(out)).sort()) {
   if (f === "versions.json" || !(await stat(`${out}/${f}`)).isFile()) continue;

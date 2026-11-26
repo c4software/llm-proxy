@@ -14,6 +14,7 @@
   isolé de la page.
 */
 import { Markdown } from "../lib/markdown.js";
+import { vendorUrl } from "./tools/sandbox/vendor.js";
 
 // ── le document d'un artifact, pour le cadre isolé ────────────────────
 const CDN = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com";
@@ -116,7 +117,8 @@ function bridge() {
       const hidden = css.display === "none" || css.visibility === "hidden";
       let line = "  ".repeat(depth) + tag + (el.id ? "#" + el.id : "")
         + [...el.classList].slice(0, 3).map((c) => "." + c).join("");
-      const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join(" ").trim();
+      // Du code colorié (highlight.js) : son texte, pas un span par jeton.
+      const own = el.classList.contains("hljs") ? el.textContent.trim() : [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join(" ").trim();
       if (own) line += " « " + own.slice(0, 80) + (own.length > 80 ? "…" : "") + " »";
       if ("value" in el && el.value !== undefined && el.value !== "" && tag !== "button") line += " [valeur : " + String(el.value).slice(0, 60) + "]";
       if (el.type && tag === "input") line += " [" + el.type + (el.checked ? ", coché" : "") + "]";
@@ -126,7 +128,7 @@ function bridge() {
       if (hidden) line += " (masqué)";
       out.push(line);
       chars += line.length;
-      if (hidden || tag === "svg") return;
+      if (hidden || tag === "svg" || el.classList.contains("hljs")) return;
       for (const c of el.children) walk(c, depth + 1);
     }
     if (document.body) walk(document.body, 0);
@@ -164,7 +166,37 @@ function bridge() {
 }
 const BRIDGE = `<script>(${bridge})();</script>`;
 
-export function artifactDoc(version, { network = false, debug = false } = {}) {
+// Le CODE, colorié par la page avec highlight.js (vendor/highlight.js,
+// `hl` : { hljs, css }, chargé par loadHighlighter) : le cadre reçoit du
+// HTML déjà colorié et son thème, sans script ni requête. Le `language`
+// de show_artifact s'il est dans le paquet courant (alias compris : py,
+// js, sh, c#, c++…), sinon détecté. Sans `hl` (pas encore chargé, absent
+// du serveur), le code brut. La coloration se fait sur le fil de la
+// page : au-delà de MAX_HIGHLIGHT caractères, le code brut ; la détection
+// ne lit que le début (essayer chaque langage sur tout figerait la page).
+export const MAX_HIGHLIGHT = 100000;
+const DETECT_CHARS = 5000;
+function codeBody(content, language, hl) {
+  const asked = String(language || "").toLowerCase();
+  const lang = !hl || content.length > MAX_HIGHLIGHT ? "" : hl.hljs.getLanguage(asked) ? asked
+    : hl.hljs.highlightAuto(content.slice(0, DETECT_CHARS)).language;
+  if (!lang) return `<pre><code>${esc(content)}</code></pre>`;
+  const { value } = hl.hljs.highlight(content, { language: lang, ignoreIllegals: true });
+  return `<style>${hl.css}</style><pre><code class="hljs">${value}</code></pre>`;
+}
+
+/** highlight.js et son thème (vendor/highlight.js), chargés une fois ;
+ * un échec est oublié. @type {Promise<{ hljs: any, css: string }> | null} */
+let highlighter = null;
+export function loadHighlighter() {
+  if (!highlighter) {
+    highlighter = vendorUrl("highlight.js").then((u) => import(u));
+    highlighter.catch(() => { highlighter = null; });
+  }
+  return highlighter;
+}
+
+export function artifactDoc(version, { network = false, debug = false, hl = null } = {}) {
   const { type, content } = version;
   const META = meta(network ? OPEN_CSP : CSP) + (debug ? BRIDGE : "");
   if (type === "html") {
@@ -182,7 +214,7 @@ export function artifactDoc(version, { network = false, debug = false } = {}) {
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
 <script>mermaid.initialize({ startOnLoad: true,
   theme: "default" });</script>`
-    : `<pre><code>${esc(content)}</code></pre>`;
+    : codeBody(content, version.language, hl);
   return `<!doctype html><html><head>${META}${BASE_CSS}</head><body>${body}</body></html>`;
 }
 

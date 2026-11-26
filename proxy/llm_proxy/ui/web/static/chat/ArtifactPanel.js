@@ -13,12 +13,12 @@
   Largeur, Large, Plein écran, Réseau et son avertissement : SidePanel.js,
   commun avec le terminal.
 */
-import { artifactDoc, artifactFile, debugOn } from "./artifacts.js";
+import { artifactDoc, artifactFile, debugOn, loadHighlighter } from "./artifacts.js";
 import { SidePanel } from "./SidePanel.js";
 import { useCopy, download } from "../lib/files.js";
 import * as bridge from "./artifact-bridge.js";
 
-const { ref, computed, watch, onUnmounted } = Vue;
+const { ref, shallowRef, computed, watch, onUnmounted } = Vue;
 
 export const ArtifactPanel = {
   components: { SidePanel },
@@ -39,8 +39,18 @@ export const ArtifactPanel = {
       const v = art.value.versions;
       return v[versionIndex.value < 0 ? v.length - 1 : versionIndex.value];
     });
-    const doc = computed(() => (version.value
-      ? artifactDoc(version.value, { network: !!art.value.network, debug: debugOn(art.value) }) : ""));
+    // highlight.js, chargé au premier artifact de code ; le cadre attend
+    // (un seul chargement, que le pont ne perde pas) ; s'il manque au
+    // serveur, le code brut — et un nouvel essai à la version suivante.
+    const hl = shallowRef(null);
+    const hlLoading = ref(false);
+    watch(version, (v) => {
+      if (!v || v.type !== "code" || hl.value || hlLoading.value) return;
+      hlLoading.value = true;
+      loadHighlighter().then((m) => { hl.value = m; }, () => {}).finally(() => { hlLoading.value = false; });
+    }, { immediate: true });
+    const doc = computed(() => (!version.value || (version.value.type === "code" && hlLoading.value) ? ""
+      : artifactDoc(version.value, { network: !!art.value.network, debug: debugOn(art.value), hl: hl.value })));
     // Le cadre affiché, inscrit au pont (artifact-bridge.js) à chaque
     // chargement : le modèle teste la version que l'utilisateur voit.
     const frame = ref(null);
