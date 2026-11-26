@@ -17,6 +17,15 @@
   Le chemin d'une retouche : grep_artifact (où ?), read_artifact sur la
   tranche (le texte exact), edit_artifact (le remplacer).
 
+  Un PROJET (type `project`) : plusieurs fichiers {path, content} dans une
+  version — chemins relatifs, sans doublon à la casse près, aucun fichier
+  qui soit aussi un dossier ; au plus `max_files` fichiers et `max_chars`
+  caractères en tout (settings, côté proxy). `path` y désigne le fichier
+  que lisent, cherchent ou retouchent les outils ; read_artifact sans
+  `path` en rend la liste, grep_artifact sans `path` cherche partout ;
+  edit_artifact avec `content` crée ou remplace un fichier entier, avec
+  `delete` le retire. Le débogage vise l'aperçu de son entrée (entryOf).
+
   Et pour DÉBOGUER la page affichée — celle que l'utilisateur voit, dans
   le panneau (chat/artifact-bridge.js). Actif par défaut ; l'utilisateur
   le coupe pour un artifact (bouton Débogage du panneau, `art.debug`
@@ -36,29 +45,80 @@
 import { TOOL, FAMILY, PageTool, defineFamily, failure, clip } from "../contract.js";
 import * as text from "../text.js";
 import * as bridge from "../../artifact-bridge.js";
-import { debugOn, shotImage } from "../../artifacts.js";
+import { debugOn, shotImage, entryOf } from "../../artifacts.js";
 import { prompt } from "../../../lib/prompts.js";
-
-const MAX_ARTIFACT = 5e5;      // caractères d'un artifact
 
 // L'identifiant d'un artifact : minuscules, sans accents, des tirets.
 const slug = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "artifact";
 
+// Les bornes (caractères au plus, fichiers au plus d'un projet) viennent
+// de la déclaration, côté proxy (tools/page/page.py : settings).
+const tooLong = (n) => failure(`artifact trop long (${n} caractères au plus, tous ses fichiers comptés).`);
+const size = (v) => (v.type === "project" ? v.files.reduce((n, f) => n + f.content.length, 0) : v.content.length);
+
+// Le chemin d'un fichier d'un PROJET : relatif, des segments de lettres,
+// chiffres, « . », « _ », « - », séparés par « / » ; ni « . » ni « .. ».
+const SEGMENT = /^[A-Za-z0-9._-]+$/;
+function badPath(path) {
+  if (typeof path !== "string" || !path) return "chemin vide";
+  const parts = path.split("/");
+  return parts.every((p) => SEGMENT.test(p) && p !== "." && p !== "..") ? ""
+    : `chemin « ${path} » invalide (relatif, segments [A-Za-z0-9._-] séparés par « / », ni « . » ni « .. »)`;
+}
+
+// Un chemin qui en heurte un autre du projet : le même à la casse près
+// (deux fichiers qu'un système de fichiers confondrait), ou un fichier qui
+// serait aussi un dossier (« a » et « a/b »). "" sinon.
+function clash(path, others) {
+  const low = path.toLowerCase();
+  for (const o of others) {
+    const l = o.toLowerCase();
+    if (l === low) return `fichier « ${path} » en double (avec « ${o} », à la casse près).`;
+    if (l.startsWith(low + "/") || low.startsWith(l + "/")) {
+      return `« ${path} » et « ${o} » : un fichier ne peut pas être aussi un dossier.`;
+    }
+  }
+  return "";
+}
+
+// Les fichiers d'un projet, vérifiés : [{path, content}] ou {error}.
+function projectFiles(files, { max_files }) {
+  if (!Array.isArray(files) || !files.length) return { error: "`files` : la liste des fichiers du projet ({path, content})." };
+  if (files.length > max_files) return { error: `trop de fichiers (${max_files} au plus).` };
+  const out = [];
+  for (const f of files) {
+    const path = f && f.path;
+    const bad = badPath(path) || clash(path, out.map((o) => o.path));
+    if (bad) return { error: bad.endsWith(".") ? bad : bad + "." };
+    if (typeof f.content !== "string") return { error: `fichier « ${path} » : \`content\` est un texte.` };
+    out.push({ path, content: f.content });
+  }
+  return { files: out };
+}
+
 // show_artifact : la version rejoint conv.artifacts ; rend l'id montré.
-function showArtifact(conv, args, types) {
-  const type = types.includes(args.type) ? args.type : "";
-  if (!type) return { result: failure(`\`type\` doit être l'un de ${types.join(", ")}.`) };
-  const content = String(args.content ?? "");
-  if (!content.trim()) return { result: "Error: `content` est vide." };
-  if (content.length > MAX_ARTIFACT) return { result: `Error: artifact trop long (${MAX_ARTIFACT} caractères au plus).` };
+function showArtifact(conv, args, settings) {
+  const type = settings.types.includes(args.type) ? args.type : "";
+  if (!type) return { result: failure(`\`type\` doit être l'un de ${settings.types.join(", ")}.`) };
+  let version;
+  if (type === "project") {
+    const got = projectFiles(args.files, settings);
+    if ("error" in got) return { result: failure(got.error) };
+    version = { type, files: got.files, at: Date.now() };
+  } else {
+    const content = String(args.content ?? "");
+    if (!content.trim()) return { result: failure("`content` est vide.") };
+    version = { type, content, language: args.language || "", at: Date.now() };
+  }
+  if (size(version) > settings.max_chars) return { result: tooLong(settings.max_chars) };
   const title = String(args.title || "Sans titre").trim().slice(0, 120);
   const id = slug(args.id || title);
   const list = conv.artifacts || (conv.artifacts = []);
   let art = list.find((a) => a.id === id);
   if (!art) { list.push({ id, title, versions: [] }); art = list[list.length - 1]; }
   art.title = title;
-  art.versions.push({ type, content, language: args.language || "", at: Date.now() });
+  art.versions.push(version);
   const n = art.versions.length;
   return { id, result: `Affiché dans le panneau : « ${title} » (id « ${id} »`
     + (n > 1 ? `, version ${n}).` : ").") + " Pour le modifier ensuite : edit_artifact." };
@@ -71,54 +131,117 @@ function findArtifact(conv, id) {
   return list.find((a) => a.id === String(id || "")) || list.find((a) => slug(a.id) === slug(id));
 }
 const known = (conv) => (conv.artifacts || []).map((a) => `« ${a.id} »`).join(", ") || "aucun";
+const latest = (art) => art.versions[art.versions.length - 1];
+const pathsOf = (v) => v.files.map((f) => `« ${f.path} »`).join(", ");
+
+// Le texte que lit ou retouche un outil : celui de l'artifact, ou, pour un
+// projet, celui du fichier `path` → {content, file?} ou {error}.
+function textOf(art, v, path) {
+  if (v.type !== "project") return { content: v.content };
+  if (path === undefined || path === "") return { error: `« ${art.id} » est un projet : \`path\` désigne le fichier (${pathsOf(v)}).` };
+  const file = v.files.find((f) => f.path === path);
+  return file ? { content: file.content, file } : { error: `fichier « ${path} » absent du projet « ${art.id} » (${pathsOf(v)}).` };
+}
 
 // edit_artifact : les remplacements, tous ou aucun → une nouvelle version.
-function editArtifact(conv, args) {
+// Pour un projet, dans le fichier `path` ; ou ce fichier créé / remplacé
+// entier (`content`), ou retiré (`delete`).
+function editArtifact(conv, args, settings) {
   const art = findArtifact(conv, args.id);
-  if (!art) return { result: `Error: artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).` };
-  const last = art.versions[art.versions.length - 1];
-  const edits = Array.isArray(args.edits) ? args.edits : [];
-  const done = text.applyEdits(last.content, edits,
-    { grep: "grep_artifact", read: "read_artifact", at: `dans la version ${art.versions.length}` });
-  if ("error" in done) return { result: done.error };
-  const { content, passages } = done;
-  if (content.length > MAX_ARTIFACT) return { result: `Error: artifact trop long (${MAX_ARTIFACT} caractères au plus).` };
+  if (!art) return { result: failure(`artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).`) };
+  const last = latest(art);
+  const project = last.type === "project";
+  if (!project && (args.path !== undefined || args.content !== undefined || args.delete)) {
+    return { result: failure(`« ${art.id} » n'est pas un projet : \`path\`, \`content\` et \`delete\` sont pour un projet ; `
+      + "ici, `edits`.") };
+  }
+  if (args.content !== undefined && args.edits !== undefined) {
+    return { result: failure("`content` (le fichier entier) ou `edits` (des passages), pas les deux.") };
+  }
+  if (args.content !== undefined && typeof args.content !== "string") return { result: failure("`content` est un texte.") };
+  let next, what;
+  if (project && (args.delete || args.content !== undefined)) {
+    const bad = badPath(args.path);
+    if (bad) return { result: failure(bad + ".") };
+    const others = last.files.filter((f) => f.path !== args.path);
+    if (args.delete) {
+      if (others.length === last.files.length) return { result: failure(`fichier « ${args.path} » absent du projet « ${art.id} » (${pathsOf(last)}).`) };
+      if (!others.length) return { result: failure("un projet garde au moins un fichier.") };
+      next = { ...last, files: others };
+      what = `fichier « ${args.path} » retiré`;
+    } else {
+      const added = others.length === last.files.length;
+      if (added && last.files.length >= settings.max_files) return { result: failure(`trop de fichiers (${settings.max_files} au plus).`) };
+      const hit = clash(args.path, others.map((f) => f.path));
+      if (hit) return { result: failure(hit) };
+      const file = { path: args.path, content: args.content };
+      next = { ...last, files: added ? [...last.files, file] : last.files.map((f) => (f.path === args.path ? file : f)) };
+      what = `fichier « ${args.path} » ${added ? "créé" : "remplacé"}`;
+    }
+  } else {
+    const t = textOf(art, last, args.path);
+    if ("error" in t) return { result: failure(t.error) };
+    const edits = Array.isArray(args.edits) ? args.edits : [];
+    const done = text.applyEdits(t.content, edits,
+      { grep: "grep_artifact", read: "read_artifact", at: `dans la version ${art.versions.length}` });
+    if ("error" in done) return { result: done.error };
+    next = t.file ? { ...last, files: last.files.map((f) => (f === t.file ? { ...f, content: done.content } : f)) }
+      : { ...last, content: done.content };
+    what = "retouché " + text.editCount(edits.length, done.passages) + (t.file ? ` dans « ${t.file.path} »` : "");
+  }
+  if (size(next) > settings.max_chars) return { result: tooLong(settings.max_chars) };
   if (args.title) art.title = String(args.title).trim().slice(0, 120);
-  art.versions.push({ ...last, content, at: Date.now() });
-  const n = art.versions.length;
-  return { id: art.id, result: `Artifact « ${art.id} » retouché ${text.editCount(edits.length, passages)} : `
-    + `version ${n}, affichée dans le panneau.` };
+  art.versions.push({ ...next, at: Date.now() });
+  return { id: art.id, result: `Artifact « ${art.id} » ${what} : version ${art.versions.length}, affichée dans le panneau.` };
 }
 
 // read_artifact : la dernière version, entière (telle quelle), ou une
-// tranche de lignes numérotées.
+// tranche de lignes numérotées. Un projet sans `path` : ses fichiers.
 function readArtifact(conv, args, settings) {
   const art = findArtifact(conv, args.id);
   if (!art) return failure(`artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).`);
-  const last = art.versions[art.versions.length - 1];
-  const head = `Artifact « ${art.id} », version ${art.versions.length} (${last.type}, `
-    + `${last.content.length} caractères`;
-  if (args.start_line === undefined && args.end_line === undefined) return `${head}) :\n${last.content}`;
-  const t = text.slice(last.content, args.start_line, args.end_line, settings);
-  if ("error" in t) return failure(`l'artifact ${t.error}`);
-  return `${head}, ${t.total} lignes) — lignes ${t.start} à ${t.end} (le numéro et « → » ne font pas `
-    + `partie du texte, pour old_string) :\n${t.body}`;
+  const last = latest(art);
+  if (last.type === "project" && !args.path) {
+    return `Projet « ${art.id} », version ${art.versions.length}, ${last.files.length} fichiers `
+      + "(read_artifact avec `path` pour en lire un) :\n"
+      + last.files.map((f) => `${f.path} — ${f.content.split("\n").length} lignes, ${f.content.length} caractères`).join("\n");
+  }
+  const t = textOf(art, last, args.path);
+  if ("error" in t) return failure(t.error);
+  const head = `Artifact « ${art.id} »${t.file ? `, fichier « ${t.file.path} »` : ""}, version ${art.versions.length} `
+    + `(${t.file ? "projet" : last.type}, ${t.content.length} caractères`;
+  if (args.start_line === undefined && args.end_line === undefined) return `${head}) :\n${t.content}`;
+  const s = text.slice(t.content, args.start_line, args.end_line, settings);
+  if ("error" in s) return failure(`l'artifact ${s.error}`);
+  return `${head}, ${s.total} lignes) — lignes ${s.start} à ${s.end} (le numéro et « → » ne font pas `
+    + `partie du texte, pour old_string) :\n${s.body}`;
 }
 
 // grep_artifact : les lignes trouvées, numérotées, avec leur contexte
-// (« → » : trouvée ; « · » : contexte ; « … » : saut).
+// (« → » : trouvée ; « · » : contexte ; « … » : saut). Un projet : dans
+// chacun de ses fichiers (ou `path`), chaque bloc précédé de son chemin.
 function grepArtifact(conv, args, settings) {
   const art = findArtifact(conv, args.id);
   if (!art) return failure(`artifact « ${args.id} » inconnu (artifacts : ${known(conv)}).`);
   const p = text.pattern(args);
   if ("error" in p) return failure(p.error);
-  const last = art.versions[art.versions.length - 1];
-  const g = text.grep(last.content, p.re, text.contextOf(args, settings));
-  if (!g.hits) {
-    return `Aucune ligne de « ${art.id} » (version ${art.versions.length}, ${g.total} lignes) ne contient « ${args.pattern} ».`;
+  const last = latest(art);
+  const at = `« ${art.id} », version ${art.versions.length}`;
+  if (last.type !== "project" || args.path) {
+    const t = textOf(art, last, args.path);
+    if ("error" in t) return failure(t.error);
+    const g = text.grep(t.content, p.re, text.contextOf(args, settings));
+    const where = t.file ? `${at}, fichier « ${t.file.path} »` : at;
+    if (!g.hits) return `Aucune ligne de ${where} (${g.total} lignes) ne contient « ${args.pattern} ».`;
+    return `${where} (${g.total} lignes) : ${text.found(g)}`
+      + ` (le numéro et la marque ne font pas partie du texte) :\n${g.lines.join("\n")}`;
   }
-  return `« ${art.id} », version ${art.versions.length} (${g.total} lignes) : ${text.found(g)}`
-    + ` (le numéro et la marque ne font pas partie du texte) :\n${g.lines.join("\n")}`;
+  const blocks = last.files.map((f) => ({ f, g: text.grep(f.content, p.re, text.contextOf(args, settings)) }))
+    .filter(({ g }) => g.hits);
+  if (!blocks.length) return `Aucune ligne de ${at} (${last.files.length} fichiers) ne contient « ${args.pattern} ».`;
+  return `${at} : trouvé dans ${blocks.length} fichier${blocks.length > 1 ? "s" : ""} sur ${last.files.length}`
+    + " (le numéro et la marque ne font pas partie du texte) :\n"
+    + blocks.map(({ f, g }) => `${f.path} — ${text.found(g)} :\n${g.lines.join("\n")}`).join("\n\n");
 }
 
 class ShowArtifact extends PageTool {
@@ -128,7 +251,7 @@ class ShowArtifact extends PageTool {
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
   run(args, ctx) {
-    const { id, result } = showArtifact(ctx.conv, args, this.settings.types);
+    const { id, result } = showArtifact(ctx.conv, args, this.settings);
     return id ? { result, artifact: id } : result;
   }
 
@@ -144,7 +267,7 @@ class EditArtifact extends PageTool {
 
   /** @override @param {any} args @param {import("../contract.js").Ctx} ctx */
   run(args, ctx) {
-    const { id, result } = editArtifact(ctx.conv, args);
+    const { id, result } = editArtifact(ctx.conv, args, this.settings);
     return id ? { result, artifact: id } : result;
   }
 
@@ -193,6 +316,10 @@ function target(conv, id) {
   if (!debugOn(art)) {
     throw new Error(`le débogage de l'artifact « ${art.id} » est coupé par l'utilisateur : `
       + "proposer de le rétablir avec request_artifact_debug.");
+  }
+  // Un projet : l'aperçu de son fichier HTML d'entrée (entryOf).
+  if (latest(art).type === "project" && !entryOf(latest(art))) {
+    throw new Error(`le projet « ${art.id} » n'a pas de fichier HTML à afficher : rien à inspecter.`);
   }
   return art;
 }
@@ -314,9 +441,12 @@ export const FAMILIES = [defineFamily({
     const arts = artifactsOf(ctx.conv);
     if (!arts.length) return "";
     return prompt("family.artifacts.state", { list: arts.map((a) => {
-      const v = a.versions[a.versions.length - 1];
-      return prompt("family.artifacts.state_item",
-        { id: a.id, type: v.type, version: a.versions.length, chars: v.content.length });
+      const v = latest(a);
+      return v.type === "project"
+        ? prompt("family.artifacts.state_item_project",
+                 { id: a.id, files: v.files.length, version: a.versions.length, chars: size(v) })
+        : prompt("family.artifacts.state_item",
+                 { id: a.id, type: v.type, version: a.versions.length, chars: size(v) });
     }).join(", ") });
   },
   tools: [new ShowArtifact(), new EditArtifact(), new ReadArtifact(), new GrepArtifact()],

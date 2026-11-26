@@ -32,14 +32,17 @@ description = '''Offers the user a file to download (CSV, JSON, script, Markdown
 # ── Artifacts ─────────────────────────────────────────────────────────
 
 [show_artifact]
-description = '''Shows in the chat's side panel an HTML page (scripts allowed, libraries from cdnjs, jsdelivr or unpkg; the rest of the network — fetch, remote images and tiles — is blocked until the user allows it for this artifact with the panel's Network button: plan a clear message if a request fails), a Markdown document, an SVG, a Mermaid diagram or code. Reuse the same `id` to publish a new version. For visualisations, mock-ups, small interactive tools, long documents — not for a short answer.'''
+description = '''Shows in the chat's side panel an HTML page (scripts allowed, libraries from cdnjs, jsdelivr or unpkg; the rest of the network — fetch, remote images and tiles — is blocked until the user allows it for this artifact with the panel's Network button: plan a clear message if a request fails), a Markdown document, an SVG, a Mermaid diagram, code, or a PROJECT of several files that belong together (`project`, with `files`: a server and its page, a script and its configuration) — one project artifact, not one artifact per file. Reuse the same `id` to publish a new version. For visualisations, mock-ups, small interactive tools, long documents — not for a short answer. At most {max_chars} characters in all, {max_files} files for a project.'''
 "param.id" = '''Stable identifier (e.g. "dashboard"); same id = new version.'''
 "param.title" = '''Short title.'''
-"param.content" = '''The full content (an entire HTML page for `html`).'''
+"param.content" = '''The full content (an entire HTML page for `html`); not for `project`.'''
 "param.language" = '''For `code`: the language.'''
+"param.files" = '''For `project` only: its files. An HTML file is previewed with the project's CSS and JS files it links to.'''
+"param.files.path" = '''Relative path (e.g. "server.py", "static/index.html"): letters, digits, ".", "_", "-", separated by "/".'''
+"param.files.content" = '''The full content of the file.'''
 
 [edit_artifact]
-description = '''Edits an artifact already shown WITHOUT rewriting it: each `old_string`, an exact and unique passage of its latest version (spaces and line breaks included, long enough to be unique), is replaced by `new_string` — or, with `regex`, a regular expression (a repetitive change: `replace_all`). Prefer it to show_artifact for any change that does not alter the essentials. Either all edits apply, or none. To find the passage: grep_artifact, then read_artifact on its lines.'''
+description = '''Edits an artifact already shown WITHOUT rewriting it: each `old_string`, an exact and unique passage of its latest version (spaces and line breaks included, long enough to be unique), is replaced by `new_string` — or, with `regex`, a regular expression (a repetitive change: `replace_all`). Prefer it to show_artifact for any change that does not alter the essentials. Either all edits apply, or none. To find the passage: grep_artifact, then read_artifact on its lines. For a project: `path` names the file the edits apply to; with `content` instead of `edits`, the file is created or replaced whole; with `delete`, it is removed.'''
 "param.id" = '''The artifact's identifier.'''
 "param.edits.old_string" = '''The exact passage to replace.'''
 "param.edits.new_string" = '''What replaces it (empty: delete it).'''
@@ -47,16 +50,21 @@ description = '''Edits an artifact already shown WITHOUT rewriting it: each `old
 "param.edits.regex" = '''`old_string` is a regular expression (JavaScript, multiline); `new_string` can refer to its groups ($1). For a repetitive change; otherwise, the exact text.'''
 "param.edits.ignore_case" = '''With `regex`: ignore case.'''
 "param.title" = '''A new title (optional).'''
+"param.path" = '''For a project: the file (required).'''
+"param.content" = '''For a project: the whole new content of the file `path`, created if absent (instead of `edits`).'''
+"param.delete" = '''For a project: remove the file `path`.'''
 
 [read_artifact]
-description = '''Returns the latest version of an artifact: whole, as is, or a slice of numbered lines (`start_line`, `end_line`) — preferred for a large artifact, after grep_artifact which says where to look. Use it before editing when its exact text is no longer certain.'''
+description = '''Returns the latest version of an artifact: whole, as is, or a slice of numbered lines (`start_line`, `end_line`) — preferred for a large artifact, after grep_artifact which says where to look. Use it before editing when its exact text is no longer certain. For a project: without `path`, the list of its files; with `path`, that file.'''
 "param.id" = '''The artifact's identifier.'''
+"param.path" = '''For a project: the file to read (without it: the list of files).'''
 "param.start_line" = '''First line (from 1); absent along with end_line: the whole artifact.'''
 "param.end_line" = '''Last line, inclusive (default: {slice_lines} lines; at most {max_slice}).'''
 
 [grep_artifact]
-description = '''Searches the latest version of an artifact without rereading it whole: returns the lines that contain `pattern` (text, or a regular expression with `regex`), numbered, with `context` lines around them. To find a passage before reading it (read_artifact on its lines) and then editing it (edit_artifact).'''
+description = '''Searches the latest version of an artifact without rereading it whole: returns the lines that contain `pattern` (text, or a regular expression with `regex`), numbered, with `context` lines around them. To find a passage before reading it (read_artifact on its lines) and then editing it (edit_artifact). For a project: in all its files, each line preceded by its file, or only in `path`.'''
 "param.id" = '''The artifact's identifier.'''
+"param.path" = '''For a project: search only this file.'''
 "param.pattern" = '''The text to look for (or a regular expression with `regex`).'''
 "param.regex" = '''`pattern` is a regular expression (JavaScript).'''
 "param.ignore_case" = '''Ignore case (default: yes).'''
@@ -65,7 +73,8 @@ description = '''Searches the latest version of an artifact without rereading it
 ["family.artifacts"]
 state = "Artifacts of the conversation: {list}."
 state_item = '"{id}" ({type}, version {version}, {chars} characters)'
-guidance = '''To change an artifact already shown: grep_artifact to find the passage, read_artifact on its lines (start_line, end_line) to get its exact text, then edit_artifact; do not reread it whole without need. Artifact content from earlier in the conversation may be stale: only the current version counts (read_artifact). show_artifact only for a new artifact, or a redesign the user asks for.'''
+state_item_project = '"{id}" (project of {files} files, version {version}, {chars} characters)'
+guidance = '''To change an artifact already shown: grep_artifact to find the passage, read_artifact on its lines (start_line, end_line) to get its exact text, then edit_artifact; do not reread it whole without need. Artifact content from earlier in the conversation may be stale: only the current version counts (read_artifact). show_artifact only for a new artifact, or a redesign the user asks for. Files that belong together (a server and its page) form ONE `project` artifact; in a project, read, search and edit a file by its `path`.'''
 
 # ── Proposer le débogage ──────────────────────────────────────────────
 

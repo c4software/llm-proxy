@@ -4,10 +4,14 @@
 // recevait sa <meta> CSP dans le corps, où elle est ignorée.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import hljs from "highlight.js/lib/common";
 import "./setup.mjs";
-import { artifactDoc, MAX_HIGHLIGHT } from "../../llm_proxy/ui/web/static/chat/artifacts.js";
+import { artifactDoc, artifactFile, entryOf, fileDoc, fileTree, MAX_HIGHLIGHT, projectDoc }
+  from "../../llm_proxy/ui/web/static/chat/artifacts.js";
 
 const PREFIX = /^<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none';/;
 
@@ -53,6 +57,74 @@ test("code : colorié par la page selon son langage, détecté sinon ; le cadre 
   assert.match(artifactDoc({ type: "code", language: "python", content: "x < 1" }), /<pre><code>x &lt; 1<\/code><\/pre>/);
   assert.doesNotMatch(artifactDoc({ type: "code", language: "python", content: python.repeat(MAX_HIGHLIGHT / python.length + 1) }, { hl }),
     /<code class="hljs">/);
+});
+
+// ── un projet ───────────────────────────────────────────────────────────
+
+const PROJECT = { type: "project", at: Date.UTC(2026, 10, 26, 10, 30), files: [
+  { path: "serveur.py", content: "import http.server\n" },
+  { path: "static/index.html", content: '<link rel="stylesheet" href="style.css"><script src="./app.js"></script>'
+    + '<link rel="stylesheet" href="https://cdn.example/x.css"><h1>Bonjour</h1>' },
+  { path: "static/style.css", content: "h1 { color: red }" },
+  { path: "static/app.js", content: "console.log('</script>')" },
+] };
+
+test("projet : l'aperçu d'un HTML met en ligne le CSS et le JS du projet, la politique en premier", () => {
+  assert.equal(entryOf(PROJECT).path, "static/index.html");
+  assert.equal(entryOf({ ...PROJECT, files: PROJECT.files.filter((f) => !f.path.endsWith(".html")) }), null);
+  const doc = projectDoc(PROJECT, "static/index.html", { debug: true });
+  assert.match(doc, PREFIX);
+  assert.match(doc, /<style>h1 \{ color: red \}<\/style>/);
+  assert.ok(doc.includes("<script>console.log('<\\/script>')</script>"), "un </script> du fichier ne ferme pas la balise");
+  assert.ok(doc.includes('href="https://cdn.example/x.css"'), "un lien hors du projet reste tel quel");
+  assert.ok(doc.indexOf("Content-Security-Policy") < doc.indexOf("<style>h1"));
+});
+
+test("projet : un script mis en ligne garde ses attributs, différé en fin de document ; rien ne s'échappe de sa balise", () => {
+  const files = [
+    { path: "index.html", content: '<head><script type="module" src="m.js"></script><script defer src="d.js"></script>'
+      + '<link rel="stylesheet" href="s.css"></head><body><p id="x">corps</p></body>' },
+    { path: "m.js", content: "import { a } from './a.js';" },
+    { path: "d.js", content: "if (a <!-- b) x();" },
+    { path: "s.css", content: "p { color: red } </STYLE><script>alert(1)</script>" },
+  ];
+  const doc = projectDoc({ type: "project", files }, "index.html");
+  assert.match(doc, /<script type="module">import \{ a \}/, "type=module gardé");
+  assert.ok(doc.indexOf("x();") > doc.indexOf('<p id="x">corps</p>'), "un script defer s'exécute après le corps");
+  assert.ok(!/<script defer>/.test(doc) && !/\sdefer/.test(doc.slice(doc.indexOf("x();") - 40)), "plus d'attente sur un script en ligne");
+  assert.ok(doc.includes("<\\/STYLE>") && !/<\/STYLE>/.test(doc), "la casse gardée, la balise ne se ferme pas");
+  assert.ok(doc.includes("a <\\!-- b"), "un <!-- dans un script en ligne est échappé");
+});
+
+test("projet : l'arborescence triée segment par segment, les dossiers d'abord", () => {
+  // « src-old » trié après « src » et TOUT son contenu (« - » vient avant
+  // « / » : comparer les chemins entiers les mélangerait).
+  const rows = fileTree([{ path: "src-old/x.js" }, { path: "src/a.js" }, { path: "README.md" }, { path: "src/b/c.js" }]);
+  assert.deepEqual(rows.map((r) => [r.key, r.depth, r.dir]), [
+    ["src", 0, true], ["src/b", 1, true], ["src/b/c.js", 2, false], ["src/a.js", 1, false],
+    ["src-old", 0, true], ["src-old/x.js", 1, false], ["README.md", 0, false]]);
+});
+
+test("projet : la source d'un fichier colorée selon son extension", () => {
+  const hl = { hljs, css: "" };
+  assert.match(fileDoc(PROJECT.files[0], hl), /<span class="hljs-keyword">import<\/span>/);
+  assert.match(fileDoc({ path: "a.txt", content: "<b>" }, null), /&lt;b&gt;/);
+});
+
+test("projet : téléchargé en .zip, que Python relit à l'identique, fichier vide compris", () => {
+  const project = { ...PROJECT, files: [...PROJECT.files, { path: "docs/vide.txt", content: "" },
+                                        { path: "docs/notes.md", content: "é à ü" }] };
+  const file = artifactFile({ id: "srv" }, project);
+  assert.equal(file.name, "srv.zip");
+  const dir = mkdtempSync(join(tmpdir(), "zip-"));
+  try {
+    writeFileSync(join(dir, "a.zip"), file.content);
+    const r = spawnSync("python3", ["-I", "-c", `import zipfile, json, sys
+z = zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None
+print(json.dumps({n: z.read(n).decode() for n in z.namelist()}))`, join(dir, "a.zip")], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), Object.fromEntries(project.files.map((f) => [f.path, f.content])));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("capture : seule une image JPEG ou PNG en base64, bornée, est gardée", async () => {

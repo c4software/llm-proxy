@@ -1281,6 +1281,21 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .art-btn.net[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .artifact-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; color-scheme: light; }
+/* Un projet : son arborescence à gauche, le fichier choisi à droite ; dans
+   un panneau étroit, l'arborescence au-dessus. */
+.art-project { flex: 1; min-height: 0; display: flex; container-type: inline-size; }
+.art-project-in { flex: 1; min-width: 0; display: flex; }
+.art-tree { flex: none; width: 190px; overflow: auto; border-right: 1px solid var(--line);
+  padding: 6px 0; display: flex; flex-direction: column; }
+.art-node { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 4px 8px; font: 12.5px ui-monospace, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; color: var(--ink); }
+.art-node.dir { color: var(--muted); }
+.art-node:hover, .art-node:focus-visible { background: var(--accent-soft); }
+.art-node[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+@container (max-width: 520px) {
+  .art-project-in { flex-direction: column; }
+  .art-tree { width: auto; max-height: 32%; border-right: 0; border-bottom: 1px solid var(--line); }
+}
 /* Les images générées de la conversation (chat/AssetPanel.js) : l'image
    en grand, Précédent et Suivant par-dessus, la planche des vignettes. */
 .artifact-head a.art-btn { color: inherit; text-decoration: none; }

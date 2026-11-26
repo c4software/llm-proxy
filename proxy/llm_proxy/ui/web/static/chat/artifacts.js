@@ -218,10 +218,149 @@ export function artifactDoc(version, { network = false, debug = false, hl = null
   return `<!doctype html><html><head>${META}${BASE_CSS}</head><body>${body}</body></html>`;
 }
 
-// Le nom d'un artifact téléchargé.
+// ── un PROJET : plusieurs fichiers ({path, content}) ──────────────────
+
+/** Le fichier HTML d'entrée d'un projet : `index.html` à la racine, sinon
+ * le premier `.html` ; null sans HTML. @param {any} version */
+export function entryOf(version) {
+  const html = version.files.filter((f) => /\.html?$/i.test(f.path));
+  return html.find((f) => f.path === "index.html") || html[0] || null;
+}
+
+// Le chemin d'un lien relatif d'un fichier du projet (« style.css »,
+// « ./app.js », « ../css/a.css », « /static/a.css » depuis la racine) ;
+// null s'il sort du projet ou désigne une URL.
+function resolveIn(from, href) {
+  if (/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(href)) return null;
+  const parts = href.startsWith("/") ? [] : from.split("/").slice(0, -1);
+  for (const seg of href.split(/[?#]/)[0].split("/")) {
+    if (seg === "..") { if (!parts.length) return null; parts.pop(); } else if (seg && seg !== ".") parts.push(seg);
+  }
+  return parts.join("/");
+}
+
+/** L'APERÇU d'un fichier HTML du projet : ses feuilles de style et scripts
+ * qui sont des fichiers du projet, mis en ligne ; le reste tel quel (une
+ * URL, un `import` de module, une image du projet ne sont pas résolus).
+ * Un script garde ses attributs sauf `src` ; un script classique `defer`
+ * ou `async` passe en fin de document (en ligne, il n'attendrait plus).
+ * Même document qu'un artifact HTML (politique en premier, pont).
+ * @param {any} version @param {string} path @param {object} [opts] */
+export function projectDoc(version, path, opts = {}) {
+  const files = new Map(version.files.map((f) => [f.path, f.content]));
+  const fileAt = (href) => { const p = resolveIn(path, href); return p === null ? undefined : files.get(p); };
+  const ATTR = /\s([^\s=>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+  const attrs = (tag) => [...tag.matchAll(ATTR)].map((m) => ({ name: m[1].toLowerCase(), raw: m[0], value: m[2] ?? m[3] ?? m[4] ?? "" }));
+  // Ce qui fermerait la balise (`</style`, `</script`, casse gardée) ou
+  // ouvrirait un commentaire dans un script, échappé.
+  const inStyle = (css) => css.replace(/<\/(style)/gi, "<\\/$1");
+  const inScript = (js) => js.replace(/<\/(script)/gi, "<\\/$1").replace(/<!--/g, "<\\!--");
+  const deferred = [];
+  let html = (files.get(path) || "")
+    .replace(/<link\b[^>]*>/gi, (tag) => {
+      const a = attrs(tag.slice(5));
+      const css = a.some((x) => x.name === "rel" && /\bstylesheet\b/i.test(x.value))
+        ? fileAt((a.find((x) => x.name === "href") || {}).value || "") : undefined;
+      return css === undefined ? tag : `<style>${inStyle(css)}</style>`;
+    })
+    .replace(/<script\b([^>]*)>\s*<\/script>/gi, (tag, inner) => {
+      const a = attrs(inner);
+      const js = fileAt((a.find((x) => x.name === "src") || {}).value || "");
+      if (js === undefined) return tag;
+      const module = a.some((x) => x.name === "type" && /^module$/i.test(x.value));
+      const later = !module && a.some((x) => x.name === "defer" || x.name === "async");
+      const kept = a.filter((x) => x.name !== "src" && (!later || (x.name !== "defer" && x.name !== "async")))
+        .map((x) => x.raw).join("");
+      const inline = `<script${kept}>${inScript(js)}</script>`;
+      if (!later) return inline;
+      deferred.push(inline);
+      return "";
+    });
+  if (deferred.length) html += deferred.join("");
+  return artifactDoc({ type: "html", content: html }, opts);
+}
+
+/** L'ARBORESCENCE d'un projet, pour l'explorateur : une ligne par dossier
+ * et par fichier ({key: chemin, name, depth, dir}).
+ * @param {{path: string}[]} files */
+export function fileTree(files) {
+  const rows = new Map();
+  for (const f of files) {
+    const parts = f.path.split("/");
+    parts.forEach((name, i) => {
+      const key = parts.slice(0, i + 1).join("/");
+      if (!rows.has(key)) rows.set(key, { key, name, depth: i, dir: i < parts.length - 1 });
+    });
+  }
+  // Segment par segment (comparer les chemins entiers mettrait « src-old »
+  // entre « src » et son contenu) ; dans un même dossier, les dossiers
+  // d'abord.
+  const segs = (r) => r.key.split("/").map((s, i, all) => [i < all.length - 1 || r.dir ? 0 : 1, s]);
+  const cmp = (a, b) => {
+    const x = segs(a), y = segs(b);
+    for (let i = 0; i < Math.min(x.length, y.length); i++) {
+      if (x[i][0] !== y[i][0]) return x[i][0] - y[i][0];
+      if (x[i][1] !== y[i][1]) return x[i][1] < y[i][1] ? -1 : 1;
+    }
+    return x.length - y.length;
+  };
+  return [...rows.values()].sort(cmp);
+}
+
+/** La SOURCE d'un fichier, colorée selon son extension (codeBody).
+ * @param {{path: string, content: string}} file @param {any} hl */
+export function fileDoc(file, hl) {
+  const ext = (/\.([A-Za-z0-9]+)$/.exec(file.path) || [])[1] || "";
+  return artifactDoc({ type: "code", content: file.content, language: ext }, { hl });
+}
+
+// Une archive ZIP sans compression (« stored »), noms en UTF-8 : de quoi
+// télécharger un projet d'un coup.
+const CRC = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc32 = (bytes) => { let c = 0xffffffff; for (const b of bytes) c = CRC[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+/** @param {{path: string, content: string}[]} files @param {number} at @returns {Uint8Array} */
+export function zip(files, at = Date.now()) {
+  const d = new Date(at);
+  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+  const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  const enc = new TextEncoder(), local = [], central = [];
+  let offset = 0;
+  /** @param {number} size @returns {[Uint8Array, DataView]} */
+  const header = (size) => { const b = new Uint8Array(size); return [b, new DataView(b.buffer)]; };
+  for (const f of files) {
+    const name = enc.encode(f.path), data = enc.encode(f.content), crc = crc32(data);
+    const [lh, l] = header(30);
+    l.setUint32(0, 0x04034b50, true); l.setUint16(4, 20, true); l.setUint16(6, 0x0800, true);
+    l.setUint16(10, time, true); l.setUint16(12, date, true); l.setUint32(14, crc, true);
+    l.setUint32(18, data.length, true); l.setUint32(22, data.length, true); l.setUint16(26, name.length, true);
+    const [ch, c] = header(46);
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
+    c.setUint16(12, time, true); c.setUint16(14, date, true); c.setUint32(16, crc, true);
+    c.setUint32(20, data.length, true); c.setUint32(24, data.length, true); c.setUint16(28, name.length, true);
+    c.setUint32(42, offset, true);
+    local.push(lh, name, data);
+    central.push(ch, name);
+    offset += 30 + name.length + data.length;
+  }
+  const size = central.reduce((n, b) => n + b.length, 0);
+  const [eh, e] = header(22);
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+  e.setUint32(12, size, true); e.setUint32(16, offset, true);
+  const out = new Uint8Array(offset + size + 22);
+  let at2 = 0;
+  for (const b of [...local, ...central, eh]) { out.set(b, at2); at2 += b.length; }
+  return out;
+}
+
+// Le fichier d'un artifact téléchargé ; un projet : son .zip.
 export function artifactFile(art, version) {
-  const extOf = { html: "html", markdown: "md", svg: "svg", mermaid: "mmd", code: "txt" };
   const base = art.id || "artifact";
+  if (version.type === "project") return { name: `${base}.zip`, content: zip(version.files, version.at) };
+  const extOf = { html: "html", markdown: "md", svg: "svg", mermaid: "mmd", code: "txt" };
   return { name: `${base}.${extOf[version.type] || "txt"}`, content: version.content };
 }
 

@@ -31,6 +31,12 @@ let waiting = [];
 let opener = () => {};
 
 export const busy = Vue.ref("");
+// La DEMANDE du pont en attente d'un cadre ({id, n}, un jeton neuf à
+// chaque demande, même pour le même artifact) : le panneau affiche alors
+// ce qu'il faut inscrire (pour un projet, l'aperçu de son entrée), et la
+// vide une fois traitée — ouvert avant ou après elle.
+export const wanted = Vue.ref(null);
+let asked = 0;
 
 // La bibliothèque de capture (vendor/html-to-image.js), lue une fois et
 // passée au cadre : il n'a pas le droit de la charger lui-même.
@@ -68,6 +74,7 @@ export function unregister(frame) {
 function ready(id, version) {
   const ok = () => shown && shown.id === id && shown.version >= version && shown.frame.contentWindow;
   if (ok()) return Promise.resolve({ frame: shown.frame, version: shown.version });
+  wanted.value = { id, n: ++asked };
   opener(id);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {

@@ -408,10 +408,10 @@ l'attente sans réponse.
 | Outil | Ce qu'il fait | Attend l'utilisateur |
 |---|---|---|
 | `ask_user` | 1 à 4 questions à choix (unique ou multiple), avec « Autre » libre | oui |
-| `show_artifact` | page HTML, Markdown, SVG, Mermaid ou code dans le panneau latéral ; même `id` = nouvelle version | non |
-| `edit_artifact` | remplace des passages exacts (uniques, ou `replace_all`) de la dernière version — ou, avec `regex`, une expression régulière (groupes `$1` dans le remplacement) ; tous ou aucun → nouvelle version | non |
-| `read_artifact` | relit la dernière version d'un artifact, entière ou par tranche de lignes numérotées (`start_line`, `end_line`) | non |
-| `grep_artifact` | cherche un texte (ou une expression régulière) dans la dernière version : les lignes trouvées, numérotées, avec leur contexte | non |
+| `show_artifact` | page HTML, Markdown, SVG, Mermaid, code, ou projet de plusieurs fichiers (`project`, `files`) dans le panneau latéral ; même `id` = nouvelle version | non |
+| `edit_artifact` | remplace des passages exacts (uniques, ou `replace_all`) de la dernière version — ou, avec `regex`, une expression régulière (groupes `$1` dans le remplacement) ; tous ou aucun → nouvelle version. Dans un projet : dans le fichier `path` ; ou ce fichier créé ou remplacé entier (`content`), ou retiré (`delete`) | non |
+| `read_artifact` | relit la dernière version d'un artifact, entière ou par tranche de lignes numérotées (`start_line`, `end_line`) ; un projet sans `path` : la liste de ses fichiers | non |
+| `grep_artifact` | cherche un texte (ou une expression régulière) dans la dernière version : les lignes trouvées, numérotées, avec leur contexte ; dans un projet, tous ses fichiers (ou `path`), chaque bloc précédé de son chemin | non |
 | `inspect_artifact`, `run_in_artifact` | console, erreurs, page, capture ; un script dans la page affichée (débogage actif par défaut) | non |
 | `request_artifact_debug` | propose de rétablir le débogage d'un artifact coupé par l'utilisateur | oui : *Activer le débogage* ou *Non merci* |
 | `save_file` | un fichier texte (CSV, script…) sous la réponse : un clic l'ouvre en aperçu (Markdown rendu), d'où il se copie ou se télécharge | non |
@@ -483,6 +483,23 @@ le début du code. Le code arrive déjà colorié dans le cadre : rien n'y est
 chargé. Il s'affiche sans coloration au-delà de 100 000 caractères, ou si
 `vendor/` n'a pas été construit (`proxy/wasm`, `npm run build`).
 
+**Un projet** regroupe plusieurs fichiers qui vont ensemble (un serveur et
+sa page, un script et sa configuration), dans un seul artifact. Le panneau
+affiche son arborescence à gauche (dossiers repliables) et le fichier choisi
+à droite : sa source colorée, ou, pour un fichier HTML, son aperçu, dans
+lequel les feuilles de style et scripts du projet qu'il désigne sont mis en
+ligne (un script garde ses attributs, `type="module"` compris ; un script
+`defer` ou `async` passe en fin de document). Les `import` d'un module et
+les images du projet (`<img src>`) ne sont pas résolus dans l'aperçu.
+*Source* bascule un HTML entre aperçu et source ; *Copier* copie le
+fichier affiché ; *Télécharger* donne le projet entier en `.zip`. Un
+artifact compte au plus 500 000 caractères (tous ses fichiers pour un
+projet) ; un projet, au plus 100 fichiers, aux chemins relatifs, sans
+doublon à la casse près ni fichier qui soit aussi un dossier (`a` et
+`a/b`). Le débogage vise l'aperçu de son
+fichier d'entrée : `index.html` à la racine, sinon le premier `.html`. Dans
+un panneau étroit, l'arborescence passe au-dessus du fichier.
+
 **Déboguer un artifact.** Le modèle peut tester un artifact dans le
 panneau, lire sa console et ses erreurs, exécuter du code dans la page
 (cliquer, saisir, lire un état) et en capturer une image. Le débogage est
@@ -498,16 +515,12 @@ panneau, lire sa console et ses erreurs, exécuter du code dans la page
 - l'artifact reste isolé : le modèle n'accède qu'à sa page, pas à la page
   de l'utilisateur ni à sa session.
 
-**Les anciens contenus ne sont pas rejoués dans l'historique.** Au
-message suivant, le modèle reçoit, à la place du texte complet d'un ancien
-`show_artifact` ou `read_artifact`, une mention (« N caractères, non
-rejoué »). Il travaille sur la version actuelle : `grep_artifact` permet
-de retrouver un passage, `read_artifact` d'en lire les lignes
-(`start_line`, `end_line`), puis `edit_artifact` de le modifier sans
-relire l'artifact entier. Une consigne fournit au modèle la liste des
-artifacts de la conversation, leur version et leur taille. Cette méthode
-divise par deux l'historique d'une conversation avec de gros artifacts
-et évite de réécrire l'ensemble faute de savoir quelle version est à jour.
+**L'historique est en ajout seul** ([détail](navigateur.md#lhistorique-en-ajout-seul)) :
+un ancien contenu d'artifact est rejoué tel quel, même périmé. L'état joint
+au message de l'utilisateur liste les artifacts avec leur version, leur
+taille et, pour un projet, son nombre de fichiers ; le modèle travaille sur
+la version actuelle avec `grep_artifact`, `read_artifact` (`start_line`,
+`end_line`) et `edit_artifact`.
 
 Le modèle peut inspecter l'artifact (`inspect_artifact` : console depuis
 le chargement, erreurs, page en texte, capture à la demande), le tester

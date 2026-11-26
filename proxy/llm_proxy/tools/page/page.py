@@ -11,7 +11,12 @@ from .common import GREP, SLICE
 
 # Les types d'un artifact (show_artifact) : le schéma les énumère, la page
 # les vérifie.
-TYPES = ('html', 'markdown', 'svg', 'mermaid', 'code')
+TYPES = ('html', 'markdown', 'svg', 'mermaid', 'code', 'project')
+# Un artifact : caractères au plus (tous ses fichiers, pour un projet), et
+# fichiers au plus d'un projet. La page les applique (settings).
+MAX_ARTIFACT = 500_000
+MAX_FILES = 100
+ARTIFACT = {'max_chars': MAX_ARTIFACT, 'max_files': MAX_FILES}
 
 
 # ── Questions ─────────────────────────────────────────────────────────
@@ -108,9 +113,21 @@ SHOW_ARTIFACT = BrowserTool(
             'description': prompts.ref("show_artifact.param.content"),
         },
         'language': {'type': 'string', 'description': prompts.ref("show_artifact.param.language")},
+        'files': {
+            'type': 'array',
+            'description': prompts.ref("show_artifact.param.files"),
+            'items': {
+                'type': 'object',
+                'required': ['path', 'content'],
+                'properties': {
+                    'path': {'type': 'string', 'description': prompts.ref("show_artifact.param.files.path")},
+                    'content': {'type': 'string', 'description': prompts.ref("show_artifact.param.files.content")},
+                },
+            },
+        },
     },
-    required=('title', 'type', 'content'),
-    settings={'types': list(TYPES)},
+    required=('title', 'type'),
+    settings={'types': list(TYPES), **ARTIFACT},
 )
 
 EDIT_ARTIFACT = BrowserTool(
@@ -148,14 +165,19 @@ EDIT_ARTIFACT = BrowserTool(
             },
         },
         'title': {'type': 'string', 'description': prompts.ref("edit_artifact.param.title")},
+        'path': {'type': 'string', 'description': prompts.ref("edit_artifact.param.path")},
+        'content': {'type': 'string', 'description': prompts.ref("edit_artifact.param.content")},
+        'delete': {'type': 'boolean', 'description': prompts.ref("edit_artifact.param.delete")},
     },
-    required=('id', 'edits'),
+    required=('id',),
+    settings=ARTIFACT,
 )
 
 READ_ARTIFACT = BrowserTool(
     ToolName.READ_ARTIFACT,
     params={
         'id': {'type': 'string', 'description': prompts.ref("read_artifact.param.id")},
+        'path': {'type': 'string', 'description': prompts.ref("read_artifact.param.path")},
         'start_line': {
             'type': 'integer',
             'description': prompts.ref("read_artifact.param.start_line"),
@@ -173,6 +195,7 @@ GREP_ARTIFACT = BrowserTool(
     ToolName.GREP_ARTIFACT,
     params={
         'id': {'type': 'string', 'description': prompts.ref("grep_artifact.param.id")},
+        'path': {'type': 'string', 'description': prompts.ref("grep_artifact.param.path")},
         'pattern': {
             'type': 'string',
             'description': prompts.ref("grep_artifact.param.pattern"),
