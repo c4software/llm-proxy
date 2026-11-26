@@ -47,6 +47,7 @@ import time
 
 import httpx2
 
+from .. import prompts
 from ..core import config
 from ..core.settings import is_exempt, log
 from ..storage import files, stats
@@ -136,20 +137,20 @@ if not isinstance(LORAS, dict) or not all(
 
 # « Agrandir » d'une image du chat de la page : une RETOUCHE
 # (/v1/images/edits) de l'image par `upscale_model`, avec une consigne
-# fixe et une taille plus grande. Pas un super-résolveur : le modèle
-# redessine l'image à la nouvelle taille (détails un peu changés, vraie
+# fixe (prompts : image_generation.upscale) et une taille plus grande.
+# Pas un super-résolveur : le modèle redessine l'image à la nouvelle taille (détails un peu changés, vraie
 # résolution). gufo n'a pas d'upscale (proposition gufo-org/gufo#1066,
 # Real-ESRGAN, ouverte). Vide : pas de bouton. Facteurs proposés (> 1),
 # et surface rendue au plus : 4 Mpx (2048²) pour Qwen-Image-2.1, côtés
 # en multiples de 32, 4096 au plus.
 UPSCALE_MODEL = config.text("tools.image_generation.upscale_model", "").strip()
+# La consigne était un réglage : il n'est plus lu (lu directement, il
+# n'est pas un réglage documenté).
+if "upscale_prompt" in config.CONFIG.get("tools", {}).get("image_generation", {}):
+    log.warning("[tools.image_generation].upscale_prompt n'est plus lu : reporter son texte dans "
+                "Configuration → Prompts (image_generation.upscale), puis retirer le réglage")
 UPSCALE_FACTORS = [float(f) for f in config.strings(
     "tools.image_generation.upscale_factors", ("1.5", "2"))]
-UPSCALE_PROMPT = config.text(
-    "tools.image_generation.upscale_prompt",
-    "The same image at a higher resolution. Keep the composition, the "
-    "subjects, their poses, the colours, the lighting and any text exactly "
-    "as they are; only add fine detail and sharpness.").strip()
 UPSCALE_MAX_PIXELS = config.integer("tools.image_generation.upscale_max_pixels",
                                     2048 * 2048)
 # Forces de la retouche proposées par la page (`strength`, image vers image
@@ -186,11 +187,11 @@ def _forces(value) -> list[dict]:
 UPSCALE_STRENGTHS = _forces(config.get("tools.image_generation.upscale_strengths",
                                        UPSCALE_STRENGTHS_DEFAUT))
 if UPSCALE_MODEL and (not UPSCALE_FACTORS or min(UPSCALE_FACTORS) <= 1
-                      or not UPSCALE_PROMPT or UPSCALE_MAX_PIXELS < 32 * 32
+                      or UPSCALE_MAX_PIXELS < 32 * 32
                       or not UPSCALE_STRENGTHS):
     raise SystemExit(
         f"{config.CONFIG_PATH} : tools.image_generation.upscale_factors doit "
-        f"lister des facteurs > 1, avec une consigne (upscale_prompt), une "
+        f"lister des facteurs > 1, avec une "
         f"surface (upscale_max_pixels) et des forces (upscale_strengths : "
         f"liste non vide de {{ label, value }}, value de 0,01 à 1) (reçu "
         f"{UPSCALE_FACTORS}, {UPSCALE_MAX_PIXELS}, "
@@ -413,36 +414,22 @@ class ImageGeneration(Tool):
         return MAX_CALLS
 
     def prompt(self, present) -> str:
-        return (
-            "Generate an image from a text description"
-            + (", or edit an existing image given by its URL" if EDITS
-               else "") + ". The image is delivered to the user "
-            "automatically, with your answer: you only get a short "
-            "confirmation, you cannot see the image, and you must not "
-            "write a link or a markdown image for it. Write a complete, "
-            "self-contained prompt. Generation is slow (it can take a "
-            "minute or more): call it once per image the user asked "
-            f"for, {MAX_CALLS} at most in one answer.")
+        return prompts.text(
+            "image_generation.description", max_calls=MAX_CALLS,
+            edit_hint=prompts.text("image_generation.edit_hint") if EDITS else "")
 
     def parameters(self, present) -> dict:
         properties = {
-            "prompt": {
-                "type": "string",
-                "description": "What the image must show: subject, style, "
-                               "composition, colours, any text to draw."},
-            "size": {
-                "type": "string", "enum": list(SIZES),
-                "description": f"Width x height in pixels (default {SIZE}). "
-                               f"Larger is much slower."},
+            "prompt": {"type": "string",
+                       "description": prompts.ref("image_generation.param.prompt")},
+            "size": {"type": "string", "enum": list(SIZES),
+                     "description": prompts.ref("image_generation.param.size")},
         }
         if EDITS:
             properties["image_url"] = {
-                "type": "string",
-                "description": "To EDIT an existing image instead of "
-                               "creating one: its public http(s) URL. "
-                               "`prompt` then describes the change."}
-        return {"type": "object", "properties": properties,
-                "required": ["prompt"]}
+                "type": "string", "description": prompts.ref("image_generation.param.image_url")}
+        return prompts.resolve({"type": "object", "properties": properties,
+                                "required": ["prompt"]}, size=SIZE)
 
     async def run(self, args: dict, call: Call, transport=None) -> Result:
         """`transport` : celui des TÉLÉCHARGEMENTS gardés (tests). Les

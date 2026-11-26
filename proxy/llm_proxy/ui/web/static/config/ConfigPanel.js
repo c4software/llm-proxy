@@ -14,6 +14,8 @@
                       proxy sans comptes)
     ExtensionsPart.js les extensions chargées, à éteindre ou rallumer
                       (admin, ou proxy sans comptes)
+    PromptsPart.js    les textes que le modèle lit, à modifier ou
+                      rétablir (admin, ou proxy sans comptes)
     AccountsPart.js   les comptes, leur part et leurs modèles permis, la
                       sauvegarde (admin)
     ProxyPart.js      toute la configuration du proxy (admin, ou proxy
@@ -21,7 +23,9 @@
     shared.js         ce qu'elles partagent : TOML, clé du poste,
                       catalogue des modèles, comptes
 
-  Rien n'est jamais écrit sur le proxy : la page produit des fichiers.
+  La configuration du proxy n'est jamais écrite par la page : elle
+  produit des fichiers. Seuls l'interrupteur des extensions et les prompts
+  modifiés sont gardés par le proxy (data/extensions.json, prompts.json).
   La partie choisie est gardée dans le navigateur.
 */
 import { ClientsPart } from "./ClientsPart.js";
@@ -31,6 +35,7 @@ import { ReposPart } from "./ReposPart.js";
 import { BackendsPart } from "./BackendsPart.js";
 import { RuntimePart } from "./RuntimePart.js";
 import { ExtensionsPart } from "./ExtensionsPart.js";
+import { PromptsPart } from "./PromptsPart.js";
 import { QuotasPart } from "./QuotasPart.js";
 import { AccountsPart } from "./AccountsPart.js";
 import { ProxyPart } from "./ProxyPart.js";
@@ -40,7 +45,7 @@ const { computed, onMounted, ref } = Vue;
 const STORE_PART = "llm-proxy-config-part";
 
 export const ConfigPanel = {
-  components: { ClientsPart, KeysPart, WebhooksPart, ReposPart, BackendsPart, RuntimePart, ExtensionsPart, QuotasPart, AccountsPart, ProxyPart },
+  components: { ClientsPart, KeysPart, WebhooksPart, ReposPart, BackendsPart, RuntimePart, ExtensionsPart, PromptsPart, QuotasPart, AccountsPart, ProxyPart },
   props: {
     session: { type: Object, required: true },
     health: { type: Object, default: null },
@@ -58,6 +63,7 @@ export const ConfigPanel = {
       ...(props.session.executor ? [{ id: "runtime", label: "Exécution" }] : []),
       ...(!account.value || isAdmin.value ? [{ id: "quotas", label: "Quotas" }] : []),
       ...(!account.value || isAdmin.value ? [{ id: "extensions", label: "Extensions" }] : []),
+      ...(!account.value || isAdmin.value ? [{ id: "prompts", label: "Prompts" }] : []),
       ...(isAdmin.value ? [{ id: "accounts", label: "Comptes" }] : []),
       ...(!account.value || isAdmin.value ? [{ id: "proxy", label: "Proxy" }] : []),
     ]);
@@ -106,6 +112,7 @@ export const ConfigPanel = {
     </div>
     <quotas-part v-else-if="part === 'quotas'"></quotas-part>
     <extensions-part v-else-if="part === 'extensions'"></extensions-part>
+    <prompts-part v-else-if="part === 'prompts'"></prompts-part>
     <accounts-part v-else-if="part === 'accounts'" :session="session"></accounts-part>
     <proxy-part v-else-if="part === 'proxy'" :session="session"></proxy-part>
   </div>`,

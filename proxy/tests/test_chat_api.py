@@ -12,6 +12,7 @@ from fakes import (
     FakeUpstream, chat_doc, chunk, hosted_chat, search_then_answer, stream, tool_call,
     usage,
 )
+from llm_proxy import prompts
 from llm_proxy.access import auth
 from llm_proxy.upstream import relaying
 from llm_proxy.surfaces import tool_loop
@@ -310,8 +311,8 @@ def test_exhausted_tools_are_withdrawn_for_a_final_answer(chat, monkeypatch):
     # Le dernier appel a RÉUSSI (aucun refus lu) : le modèle apprend que
     # ses outils sont partis, sinon il écrirait l'appel en texte.
     last = chat.sent[2]["messages"][-1]
-    assert last["role"] == "tool" and last["content"].endswith(tool_loop.BUDGET_SPENT)
-    assert tool_loop.BUDGET_SPENT not in chat.sent[1]["messages"][-1]["content"]
+    assert last["role"] == "tool" and last["content"].endswith(prompts.text("tool_loop.budget_spent"))
+    assert prompts.text("tool_loop.budget_spent") not in chat.sent[1]["messages"][-1]["content"]
     text = "".join(d.get("content") or "" for d in deltas(docs))
     assert text.endswith("Voilà.")
 

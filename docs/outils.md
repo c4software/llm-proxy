@@ -193,6 +193,12 @@ Le prompt décide si l'outil est appelé, quand, et avec quels arguments.
 | `prompt(present)` | `description` | Ce que l'outil fait, quand l'appeler, ce qu'il rend, ses bornes |
 | `parameters(present)` | `parameters` | Le schéma ; la `description` de chaque argument dit quoi y mettre |
 
+Leurs textes sont dans le catalogue `prompts/tools.toml`, une table par
+outil, lus à chaque appel par `prompts.text` (la description, avec ses
+variables) et `prompts.ref` (celle d'un paramètre, résolue par
+`prompts.resolve`) ; l'admin peut les modifier
+([Prompts](prompts.md)).
+
 L'outil n'écrit rien d'autre : ni le nom hors de `name`, ni l'enveloppe
 `{"type": "function", …}`. Le prompt est calculé **à chaque requête**, selon
 `present` et les réglages : `image_generation` n'annonce `image_url` que si
@@ -211,8 +217,8 @@ Liste complète, aussi en tête de `contract.py`. Tout est en anglais.
 
 | Texte | Écrit par | Où | Lu |
 |---|---|---|---|
-| Prompt (`description`) | l'outil | `Tool.prompt(present)` | À chaque requête où l'outil est présenté |
-| Descriptions de paramètres | l'outil | `Tool.parameters(present)` | Idem |
+| Prompt (`description`) | le catalogue (`prompts/tools.toml`) | `Tool.prompt(present)` | À chaque requête où l'outil est présenté |
+| Descriptions de paramètres | le catalogue | `Tool.parameters(present)` | Idem |
 | Texte d'un résultat | l'outil | `Result.text` | Après l'appel, et à chaque rejeu |
 | Texte d'une erreur | l'outil | `failure`, `ToolError` : `Error: <message>` | Idem |
 | Limite d'appels | l'exécuteur | `Hosted._refusal` (`tools/__init__.py`) : `Error: the limit of 8 web tool calls for one answer is reached. Answer now with what you already have.` | À la place de l'exécution |

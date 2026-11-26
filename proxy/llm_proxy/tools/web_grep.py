@@ -17,6 +17,7 @@ bornée par tools/pattern.py (délai, longueur), comme celle de
 import asyncio
 import bisect
 
+from .. import prompts
 from ..core import config
 from . import pattern as patterns
 from . import provenance, web_fetch
@@ -37,8 +38,6 @@ NAME = ToolName.WEB_GREP
 # La description renvoie à `web_fetch` pour lire la suite d'une
 # correspondance : vrai seulement là où il est présenté aussi.
 _FETCH = ToolName.WEB_FETCH
-_FETCH_HINT = (f" Pass a line's offset to {_FETCH} as `offset` to read the "
-               f"page from there.")
 
 
 def _bounded(value, default: int, low: int, high: int) -> int:
@@ -101,38 +100,26 @@ class WebGrep(Tool):
         return ENABLED
 
     def prompt(self, present) -> str:
-        return (
-            "Search a web page for a regular expression and return only the "
-            "matching lines, with a few lines of context (HTML and PDF are "
-            "converted to plain text first). Prefer it to reading a long "
-            "page in full: documentation, changelogs, specifications, "
-            "reference tables. Each line comes with its character offset in "
-            "the page." + (_FETCH_HINT if _FETCH in present else ""))
+        return prompts.text(
+            "web_grep.description",
+            fetch_hint=prompts.text("web_grep.fetch_hint", web_fetch=_FETCH)
+            if _FETCH in present else "")
 
     def parameters(self, present) -> dict:
-        return {
+        return prompts.resolve({
             "type": "object",
             "properties": {
-                "url": {"type": "string",
-                        "description": "The http(s) URL of the page."},
-                "pattern": {"type": "string",
-                            "description": "Regular expression to look for "
-                                           "(a plain word works too). Use "
-                                           "`|` for alternatives."},
+                "url": {"type": "string", "description": prompts.ref("web_grep.param.url")},
+                "pattern": {"type": "string", "description": prompts.ref("web_grep.param.pattern")},
                 "case_sensitive": {"type": "boolean",
-                                   "description": "Match case exactly "
-                                                  "(default false)."},
-                "context": {"type": "integer",
-                            "description": f"Lines shown before and after "
-                                           f"each match (default {CONTEXT}, "
-                                           f"at most {MAX_CONTEXT})."},
+                                   "description": prompts.ref("web_grep.param.case_sensitive")},
+                "context": {"type": "integer", "description": prompts.ref("web_grep.param.context")},
                 "max_matches": {"type": "integer",
-                                "description": f"Maximum number of matching "
-                                               f"lines (default {MAX_MATCHES}, "
-                                               f"at most {MAX_MATCHES_LIMIT})."},
+                                "description": prompts.ref("web_grep.param.max_matches")},
             },
             "required": ["url", "pattern"],
-        }
+        }, context=CONTEXT, max_context=MAX_CONTEXT, max_matches=MAX_MATCHES,
+            max_matches_limit=MAX_MATCHES_LIMIT)
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         return {"type": "find_in_page", "url": str(args.get("url") or ""),

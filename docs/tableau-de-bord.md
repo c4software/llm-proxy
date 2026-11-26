@@ -280,7 +280,8 @@ demande alors la clé définie dans `.env`.
 ## L'onglet Configuration
 
 L'onglet <kbd>#config</kbd> regroupe des **générateurs** exécutés dans
-le navigateur ; ils n'écrivent rien sur le proxy.
+le navigateur ; ils n'écrivent rien sur le proxy, sauf les sections
+*Extensions* et *Prompts*, qui gardent leur état dans `data/`.
 
 **Clients** : sélectionner un client et, sauf pour un service, un modèle
 (`GET /ui/models`, disponible même lorsque le chat est désactivé). La page génère les fichiers
@@ -413,6 +414,11 @@ extension déposée apparaît désactivée après le démarrage suivant. Le bout
 le navigateur) ; *Désactiver* le retire immédiatement de toutes les
 surfaces. L'état est conservé dans `data/extensions.json` et survit aux
 redémarrages. Voir [Extensions](extensions.md#activer-et-désactiver).
+
+**Prompts** : mêmes droits que *Extensions*. La section liste les textes
+que le modèle lit (descriptions des outils, consignes), par domaine, avec
+une recherche. *Modifier* puis *Enregistrer* remplace un texte pour tout
+le proxy ; *Rétablir* rend le texte par défaut. Voir [Prompts](prompts.md).
 
 **Proxy** : sections de configuration Accès, Backends, Surfaces, Outils,
 Partage équitable, Comptes, Divers, Avancé, Fichier complet, `.env` et

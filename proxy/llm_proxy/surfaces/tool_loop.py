@@ -13,7 +13,7 @@ import httpx2
 
 from fastapi import Request, Response
 
-from .. import tools
+from .. import prompts, tools
 from ..tools import provenance
 from ..access.auth import request_owner
 from ..core.httputil import parse_json
@@ -103,15 +103,6 @@ async def _settled(task: asyncio.Future, ping: bytes | None) -> bool:
     return bool(done)
 
 
-# Ce que lit le modèle quand ses outils lui sont retirés. Sans elle, un
-# budget épuisé par un appel RÉUSSI (aucun refus «Answer now» lu) laisse
-# le modèle chercher l'outil disparu : il écrit l'appel en texte
-# (`<tool_call>…`), que le backend, sans outils déclarés, ne reconnaît pas.
-BUDGET_SPENT = ("[No more tool calls are available for this answer: the "
-                "budget is used up. Do not call any tool. Write your final "
-                "answer now, with what you already have.]")
-
-
 def _drop_exhausted(chat_payload: dict, names) -> bool:
     """Retire du corps du tour suivant les fonctions hébergées `names`,
     dont le budget d'appels est épuisé : sinon le modèle les rappelle, ne
@@ -142,8 +133,12 @@ def _drop_exhausted(chat_payload: dict, names) -> bool:
 
 
 def _tell_budget_spent(chat_payload: dict) -> None:
-    """Plus AUCUN outil au tour suivant : BUDGET_SPENT à la suite du
-    DERNIER résultat d'outil du corps, s'il n'est pas déjà un refus — une
+    """Plus AUCUN outil au tour suivant : tool_loop.budget_spent (prompts)
+    — ce que lit le modèle quand ses outils lui sont retirés. Sans lui, un
+    budget épuisé par un appel RÉUSSI (aucun refus «Answer now» lu) laisse
+    le modèle chercher l'outil disparu : il écrit l'appel en texte
+    (`<tool_call>…`), que le backend, sans outils déclarés, ne reconnaît
+    pas. Ajouté à la suite du DERNIER résultat d'outil du corps, s'il n'est pas déjà un refus — une
     copie du message : celui de l'historique du robinet reste intact (la
     mémoire des échanges cachés le range tel quel). Le début de la
     conversation ne change pas : le cache de préfixe du backend sert."""
@@ -157,7 +152,8 @@ def _tell_budget_spent(chat_payload: dict) -> None:
             if isinstance(msg.get("content"), str) \
                     and "is reached. Answer now" not in msg["content"]:
                 messages[i] = {**msg, "content":
-                               msg["content"] + "\n\n" + BUDGET_SPENT}
+                               msg["content"] + "\n\n"
+                               + prompts.text("tool_loop.budget_spent")}
             return
 
 

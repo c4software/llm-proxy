@@ -221,6 +221,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `tools/webhook.py` | `webhook` : poste sur un webhook sortant du compte ; l'envoi (`post` : Apprise, sinon `send` en JSON par `net.post`) ; le format Slack dans les deux sens (`to_mrkdwn`, `from_slack`) |
 | `tools/provenance.py` | Les sites connus d'une conversation : ceux qu'un outil qui lit une URL peut ouvrir |
 | `tools/extensions.py` | Le chargement des extensions de `[extensions].path` (un sous-dossier chacune : `<nom>.py`, `<nom>.js`), appelé par `startup.lifespan` avant les serveurs MCP : dossiers et fichiers hors d'atteinte du proxy exigés, outils et familles tous vérifiés puis enregistrés (`register`, `register_family`), une extension en faute écartée entière au journal ; `active`, `listing`, `switch` : l'interrupteur de la page ; `module_url`, `script` : le `.js` servi |
+| `prompts/` | Le catalogue des prompts ([Prompts](prompts.md)) : `tools.toml`, `mcp.toml` (les textes par défaut, en anglais) ; `__init__.py` : `text(clé, **variables)`, `ref`/`resolve` pour les descriptions d'un schéma, `template`, le formatage restreint aux variables `{nom}`, la validation et les modifications de l'admin relues quand `prompts.json` change |
 | `tools/page/` | Les déclarations des outils natifs du navigateur (`BrowserTool`) et de leurs familles (`Family`) : `page.py`, `device.py`, `sandbox.py`, dans l'ordre du menu Outils ; leur exécution est dans `ui/web/static/chat/tools/` |
 | `tools/mcp/` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés. Paquet : `protocol`, `tool` (`McpTool`), `server`, `registry` |
 
@@ -245,6 +246,8 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `storage/webhooks.py` | Les webhooks entrants (jeton gardé, retrouvé par son condensé) et sortants (URL Apprise et son service, exposition à l'outil) de chaque compte (tables à part de `conversations.db`) |
 | `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
 | `storage/extension_state.py` | L'interrupteur des extensions (`data/extensions.json`) : par extension, `true` (tous ses outils actifs) ou la liste de ses outils actifs (absente : rien d'actif) ; une bascule ne réécrit que son entrée, écriture atomique, fichier illisible ignoré et jamais écrasé par une lecture |
+| `storage/jsonfile.py` | Un objet JSON gardé à côté de `config.toml` : lecture (illisible : `None`, jamais écrasé par une lecture), écriture atomique ; pour `extension_state.py` et `prompt_overrides.py` |
+| `storage/prompt_overrides.py` | Les prompts modifiés par l'admin (`data/prompts.json`) : clé → texte |
 | `storage/backup.py` | Sauvegarde et restauration de `data/` |
 
 ### `ui/` : le tableau de bord et le chat
@@ -265,6 +268,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `ui/backend_routes.py` | `/ui/backends` : les backends du compte, et ceux que d'autres partagent ; `/ui/backends/{id}/models`, son catalogue entier pour cocher ses modèles exposés |
 | `ui/runtime_routes.py` | `/ui/runtime` : les bacs de l'exécuteur (les siens ; tous pour un admin) et les caches du proxy, à détruire ou vider |
 | `ui/extension_routes.py` | `/ui/extensions` : les extensions chargées et écartées, l'interrupteur à chaud (admin) ; `/ui/extensions/<nom>/<nom>.js`, le module de la page d'une extension dont un outil du navigateur est actif |
+| `ui/prompt_routes.py` | `/ui/prompts` : le catalogue des prompts et les textes modifiés ; `PUT`/`DELETE /ui/prompts/{clé}` (admin) |
 | `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |
 | `ui/webhook_turn.py` | Le tour d'un message reçu, sans navigateur : la conversation, le seul message reçu et le prompt système envoyés au modèle, `/ui/chat/completions` appelé en interne au nom du créateur, les envois sortants |
 | `ui/dataurl.py` | Lecture des URL `data:` envoyées par la page (images, audio) |

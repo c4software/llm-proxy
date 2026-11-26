@@ -46,6 +46,7 @@ from .ui import (
     repo_routes,
     runtime_routes,
     extension_routes,
+    prompt_routes,
     voice_routes,
     webhook_routes,
 )
@@ -81,7 +82,7 @@ async def setup_gate(request: Request, call_next):
 for module in (endpoints, usage_api, agent_usage, static_files, dashboard,
                conversation_routes, voice_routes, config_view, health, tool_routes,
                linux_relay, webhook_routes, repo_routes, backend_routes,
-               runtime_routes, extension_routes):
+               runtime_routes, extension_routes, prompt_routes):
     app.include_router(module.router)
 
 

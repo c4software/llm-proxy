@@ -37,6 +37,7 @@ est exécuté par le CLIENT : la surface Messages n'a rien à remplacer.
 import asyncio
 import time
 
+from .. import prompts
 from ..core import config
 from ..storage import memories
 from .contract import Call, Result, Tool, ToolError, ToolName
@@ -218,56 +219,29 @@ class MemoryTool(Tool):
         return ENABLED
 
     def prompt(self, present) -> str:
-        return (
-            "Memory that survives across conversations: text files under "
-            "/memories, private to the user. Use it ONLY when the user asks: "
-            "to remember something (a preference, a fact, a decision), to "
-            "recall what was remembered, or to change or forget it. Never "
-            "write to it on your own initiative: no task progress, working "
-            "notes, summaries or intermediate results, even on a long task; "
-            "and do not read it unless the user refers to what was "
-            "remembered. Never store secrets. Each file is persistent unless "
-            "it has a lifetime: pass expires_in_days (create, str_replace, "
-            "insert) for something that only matters for a while, e.g. 7 "
-            "for this week's context; 0 makes the file persistent again, "
-            "omitting it keeps the current lifetime. Commands: view (a "
-            "directory or a file, with optional view_range [first, last]; "
-            "shows each file's expiry), create (path, file_text: creates or "
-            "overwrites), str_replace (path, old_str, new_str: old_str must "
-            "appear exactly once), insert (path, insert_line, insert_text: "
-            "after line N, 0 = at the top), delete (path: a file or a "
-            "directory), rename (old_path, new_path).")
+        return prompts.text("memory.description")
 
     def parameters(self, present) -> dict:
-        return {
+        return prompts.resolve({
             "type": "object",
             "properties": {
                 "command": {"type": "string", "enum": list(COMMANDS)},
-                "path": {"type": "string",
-                         "description": "A path under /memories, e.g. "
-                                        "/memories/project-notes.md."},
+                "path": {"type": "string", "description": prompts.ref("memory.param.path")},
                 "view_range": {"type": "array", "items": {"type": "integer"},
-                               "description": "view: [first, last] line, "
-                                              "1-based (last = -1 for the end)."},
-                "file_text": {"type": "string", "description": "create: the content."},
-                "old_str": {"type": "string",
-                            "description": "str_replace: the exact text to replace."},
-                "new_str": {"type": "string", "description": "str_replace: its replacement."},
-                "insert_line": {"type": "integer",
-                                "description": "insert: the line after which "
-                                               "to insert (0 = top)."},
-                "insert_text": {"type": "string", "description": "insert: the text to insert."},
-                "old_path": {"type": "string", "description": "rename: the current path."},
-                "new_path": {"type": "string", "description": "rename: the new path."},
+                               "description": prompts.ref("memory.param.view_range")},
+                "file_text": {"type": "string", "description": prompts.ref("memory.param.file_text")},
+                "old_str": {"type": "string", "description": prompts.ref("memory.param.old_str")},
+                "new_str": {"type": "string", "description": prompts.ref("memory.param.new_str")},
+                "insert_line": {"type": "integer", "description": prompts.ref("memory.param.insert_line")},
+                "insert_text": {"type": "string", "description": prompts.ref("memory.param.insert_text")},
+                "old_path": {"type": "string", "description": prompts.ref("memory.param.old_path")},
+                "new_path": {"type": "string", "description": prompts.ref("memory.param.new_path")},
                 "expires_in_days": {
                     "type": "number", "minimum": 0, "maximum": MAX_DAYS,
-                    "description": "create, str_replace, insert: the file's "
-                                   "lifetime in days from now (fractions "
-                                   "allowed); 0 = persistent; omit to keep "
-                                   "the current one (new files: persistent)."},
+                    "description": prompts.ref("memory.param.expires_in_days")},
             },
             "required": ["command"],
-        }
+        })
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         return {"type": NAME, "command": str(args.get("command") or ""),

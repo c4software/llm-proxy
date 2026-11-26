@@ -39,6 +39,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import apprise
 
+from .. import prompts
 from ..core import config
 from ..storage import webhooks
 from . import net
@@ -223,24 +224,13 @@ class WebhookTool(Tool):
         return ENABLED
 
     def prompt(self, present) -> str:
-        return (
-            "Post a message to one of the user's outgoing webhooks (a Slack, "
-            "Mattermost, Discord, Teams, Telegram, e-mail or other destination "
-            "the user set up). Use it ONLY when "
-            "the user asks to send, post, notify or share something there; "
-            "never on your own initiative. `text` is the message, in "
-            "Markdown, self-contained: the readers of the channel do not see "
-            "this conversation. `webhook` is the name of the webhook; omit it "
-            "when the user has only one. An unknown name returns the list of "
-            "available names.")
+        return prompts.text("webhook.description")
 
     def parameters(self, present) -> dict:
-        return {"type": "object", "properties": {
-            "text": {"type": "string", "description": "The message to post, in Markdown."},
-            "webhook": {"type": "string", "description": (
-                "The name of the outgoing webhook; optional when the user has "
-                "only one.")},
-        }, "required": ["text"]}
+        return prompts.resolve({"type": "object", "properties": {
+            "text": {"type": "string", "description": prompts.ref("webhook.param.text")},
+            "webhook": {"type": "string", "description": prompts.ref("webhook.param.webhook")},
+        }, "required": ["text"]})
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         return {"type": self.name, "webhook": str(args.get("webhook") or "")}

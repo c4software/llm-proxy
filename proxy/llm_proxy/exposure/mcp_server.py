@@ -39,6 +39,7 @@ statistiques porte la route `/mcp`, sans modèle.
 
 import json
 
+from .. import prompts
 from ..core import config
 from ..storage import files
 
@@ -56,13 +57,6 @@ ALLOWED_ORIGINS = config.strings("mcp_server.allowed_origins")
 VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "llm-proxy", "title": "llm-proxy",
                "version": "1.0.0"}
-INSTRUCTIONS = (
-    "Tools executed by the llm-proxy gateway on behalf of the model: web "
-    "search through the proxy's own search engine, reading web pages and "
-    "PDF documents, searching inside a page, and whatever else this proxy "
-    "has enabled (OCR, code execution, image generation, a persistent "
-    "memory private to the caller...). Each tool's description says when "
-    "to use it.")
 
 # Codes d'erreur JSON-RPC.
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS = \
@@ -142,7 +136,7 @@ async def handle(message, hosted, owner: str = "") -> dict | None:
             "protocolVersion": asked if asked in VERSIONS else VERSIONS[0],
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": SERVER_INFO,
-            "instructions": INSTRUCTIONS,
+            "instructions": prompts.text("mcp_server.instructions"),
         })
     if method == "ping":
         return result(id_, {})

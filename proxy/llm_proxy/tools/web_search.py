@@ -24,6 +24,7 @@ import re
 
 import httpx2
 
+from .. import prompts
 from ..core import config
 from . import webcache
 from .contract import (
@@ -53,7 +54,6 @@ NAME = ToolName.WEB_SEARCH
 # là où `web_fetch` lui est présenté aussi (`present` de prompt), pour
 # qu'il n'appelle pas une fonction qui n'existe pas.
 _FETCH = ToolName.WEB_FETCH
-_FETCH_HINT = f"Use {_FETCH} to read a result page. "
 
 
 def _limit(value) -> int:
@@ -138,28 +138,23 @@ class WebSearch(Tool):
         return ENABLED
 
     def prompt(self, present) -> str:
-        return (
-            "Search the web. Returns a numbered list of results (title, date, "
-            "URL, snippet). The query accepts the usual operators: site:, "
-            "-site:, \"exact phrase\", -term, OR. "
-            + (_FETCH_HINT if _FETCH in present else "")
-            + "Prefer primary sources and cite the URLs you rely on.")
+        return prompts.text(
+            "web_search.description",
+            fetch_hint=prompts.text("web_search.fetch_hint", web_fetch=_FETCH)
+            if _FETCH in present else "")
 
     def parameters(self, present) -> dict:
-        return {
+        return prompts.resolve({
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "The search query."},
+                "query": {"type": "string", "description": prompts.ref("web_search.param.query")},
                 "recency": {"type": "string",
                             "enum": ["day", "week", "month", "year"],
-                            "description": "Only results from the last day, "
-                                           "week, month or year."},
-                "limit": {"type": "integer",
-                          "description": f"Maximum number of results "
-                                         f"(default {LIMIT}, at most {MAX_LIMIT})."},
+                            "description": prompts.ref("web_search.param.recency")},
+                "limit": {"type": "integer", "description": prompts.ref("web_search.param.limit")},
             },
             "required": ["query"],
-        }
+        }, limit=LIMIT, max_limit=MAX_LIMIT)
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         return {"type": "search", "query": str(args.get("query") or "")}

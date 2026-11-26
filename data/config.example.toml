@@ -413,14 +413,14 @@ loras = {}
 # loras = { "*/Qwen-Image-2.1-heretic" = ["omni"] }
 # « Agrandir » une image dans le chat de la page : une RETOUCHE de l'image
 # par ce modèle PRÉFIXÉ (il doit servir /v1/images/edits), avec la
-# consigne `upscale_prompt`, à `upscale_factors` fois sa taille, surface
+# consigne `image_generation.upscale` (Configuration → Prompts,
+# docs/prompts.md), à `upscale_factors` fois sa taille, surface
 # rendue au plus `upscale_max_pixels`. Le modèle redessine l'image (ce
 # n'est pas un super-résolveur). Vide (défaut) : pas de bouton.
 upscale_model = ""
 # upscale_model = "silentchuck/Qwen-Image-2.1-Turbo-heretic"
 upscale_factors = [1.5, 2]
 upscale_max_pixels = 4194304
-# upscale_prompt = "The same image at a higher resolution. …"
 # Forces de la retouche proposées par le chat (`strength` de gufo 0.35.0),
 # affichées « libellé (valeur) », la première choisie par défaut ; value de
 # 0,01 à 1. Sous 1, le modèle part de l'image agrandie et ne joue que les

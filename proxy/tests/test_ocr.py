@@ -21,7 +21,7 @@ import pytest
 from fakes import (PUBLIC, FakeWeb, fake_backend, fake_dns, go, net_guard,
                    pdf_bytes, rendu, sans_liaison)
 from llm_proxy.upstream import backends, quotas
-from llm_proxy import tools
+from llm_proxy import prompts, tools
 from llm_proxy.tools import ocr, webcache
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"image png"
@@ -187,7 +187,7 @@ def test_ocr_image_envoyee_au_modele_de_vision_et_texte_rendu(env):
     assert doc["model"] == "lecteur" and doc["stream"] is False
     assert doc["temperature"] == 0 and doc["max_tokens"] == 1000
     assert doc["messages"][0]["content"][0] == {"type": "text",
-                                                "text": ocr.PROMPT}
+                                                "text": prompts.text("ocr.transcription", no_text=ocr.NO_TEXT)}
     assert env.headers[0]["authorization"] == "Bearer clef"
     # Et sa ligne de statistiques, avec l'usage rendu par le backend.
     (line,) = env.lines
@@ -583,7 +583,7 @@ def test_ocr_passe_par_le_limiteur_du_backend_a_quotas(env, monkeypatch):
     web = Web(default=fichier(scan([image_pdf(data=jpeg(1)),
                                     image_pdf(data=b"\xff\xd8\xff" * 100_000)])))
     assert web.ocr("http://site.test/a.pdf").endswith("texte lu")
-    cout = len(ocr.PROMPT) // 4 + 2 * ocr.IMAGE_TOKENS
+    cout = len(prompts.text("ocr.transcription", no_text=ocr.NO_TEXT)) // 4 + 2 * ocr.IMAGE_TOKENS
     assert pris == ["lecteur", cout] and len(env.seen) == 1
     limiteur.attente = 75.4
     assert web.ocr("http://site.test/b.pdf") == (

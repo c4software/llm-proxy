@@ -45,6 +45,7 @@ from urllib.parse import unquote, urlsplit
 
 import httpx2
 
+from .. import prompts
 from ..core import config
 from ..core.settings import log
 from ..storage import files
@@ -437,107 +438,48 @@ class CodeExecution(Tool):
 
     def prompt(self, present) -> str:
         readers = [name for name in _READERS if name in present]
-        return (
-            "Run a program in a private sandbox and get back its exit "
-            "code and its output (stdout and stderr). Use it to compute, "
-            "analyse data, or produce a file (a chart, a spreadsheet, a "
-            "document) instead of guessing a result. "
-            "Python 3 comes with numpy, pandas, scipy, sympy, "
-            "scikit-learn, networkx, matplotlib, seaborn, pillow, "
-            "openpyxl, python-docx, pypdf, reportlab; there are also "
-            "Node.js, PHP, and bash with the usual tools, jq and sqlite3. "
-            + ("There is NO network: a program cannot download anything "
-               "(requests, urllib, curl and wget all fail) and nothing can "
-               "be installed — no other Python package, no npm module. "
-               if not PACKAGES else
-               "Everything else is installed on demand, in bash, and kept "
-               "for the conversation: other Python packages with `pip "
-               "install <names>`, Node.js modules with `npm install -g "
-               "<name>` (`require` finds them), PHP packages with composer; "
-               "another language with `devbox dev-env <name>` (go, rust, "
-               "java, ruby, dotnet, deno, bun, zig, scala, clojure, or a "
-               "newer python or node; `devbox dev-env --list`). Go and Rust "
-               "programs are given as one source file, compiled then run, "
-               "once `devbox dev-env go` or `rust` has installed them. "
-               "Install in a SEPARATE call before the program that needs "
-               "it, only what you need — an install can take a minute — "
-               "and do not reinstall what is already there. The network is "
-               "open to package registries and language sources ONLY: any "
-               "other access (a website, an API, a download, with requests, "
-               "urllib, curl or wget) fails. ")
-            + ((
-                # Dit en ordre, pas en possibilité : un modèle à qui l'on
-                # disait seulement « list it in `files` » téléchargeait
-                # depuis le bac, puis recopiait le fichier lu par web_fetch.
-                "To work on a file that is at a URL (a CSV, a "
-                "spreadsheet, a PDF, an image, an archive), you MUST "
-                "list its URL in `files`: it is downloaded for you and "
-                "is in the working directory, under its file name, when "
-                "the program starts. Never download it in the program, "
-                "and never paste its content into the code. It stays "
-                "there for the later calls of the conversation: do not "
-                "list it again. "
-                + (f"To only READ a page or a document, use "
-                   f"{' or '.join(readers)} instead. " if readers else "")
-            ) if MAX_FILES > 0 else "") +
-            "Each call is a new process: variables and imports are not "
-            "kept, but the files of the working directory and of /tmp "
-            "are kept between the calls of a conversation. Print what "
-            "you want to read. Every file the program creates or changes "
-            "in the working directory is delivered to the user "
-            "automatically, with your answer: write there only what the "
-            "user should get (save a chart with matplotlib's savefig), "
-            "keep intermediate files in /tmp, and never write a link or "
-            "a path to a delivered file. "
-            f"A program is killed after {int(TIMEOUT)} s.")
+        # Les fichiers d'une URL : dit en ordre, pas en possibilité — un
+        # modèle à qui l'on disait seulement « list it in `files` »
+        # téléchargeait depuis le bac, puis recopiait le fichier lu par
+        # web_fetch.
+        files_hint = prompts.text(
+            "code_execution.files_hint",
+            readers_hint=prompts.text("code_execution.readers_hint", readers=" or ".join(readers))
+            if readers else "") if MAX_FILES > 0 else ""
+        return prompts.text(
+            "code_execution.description", files_hint=files_hint, timeout=int(TIMEOUT),
+            network=prompts.text("code_execution.network_packages") if PACKAGES
+            else prompts.text("code_execution.network_closed"))
 
     def parameters(self, present) -> dict:
-        return {
+        return prompts.resolve({
             "type": "object",
             "properties": {
                 "language": {
                     "type": "string",
                     "enum": list(OFFERED),
-                    "description": "The language of `code`. For a "
-                                   "compiled language, `code` is the "
-                                   "whole source file, with its main. "
-                                   "PHP code starts with <?php."},
+                    "description": prompts.ref("code_execution.param.language")},
                 "code": {
                     "type": "string",
-                    "description": "The complete program to run. "
-                                   + ("It has no network access."
-                                      if not PACKAGES else
-                                      "Its only network access is to "
-                                      "package registries (pip, npm, "
-                                      "cargo, Go modules).")},
+                    "description": prompts.ref("code_execution.param.code")},
                 **({"files": {
                     "type": "array",
-                    "description": (
-                        f"The files the program needs, by URL: they "
-                        f"are downloaded into the working directory "
-                        f"before the program runs. Up to "
-                        f"{MAX_FILES}, {_size(MAX_FILE_BYTES)} each."),
+                    "description": prompts.ref("code_execution.param.files"),
                     "items": {
                         "type": "object",
                         "properties": {
-                            "url": {
-                                "type": "string",
-                                "description": "The http(s) URL of the "
-                                               "file."},
-                            "name": {
-                                "type": "string",
-                                "description": (
-                                    "The file name to give it, e.g. "
-                                    "data.csv. Default: the last "
-                                    "segment of the URL. Give one when "
-                                    "the URL does not end with a file "
-                                    "name.")},
+                            "url": {"type": "string",
+                                    "description": prompts.ref("code_execution.param.files.url")},
+                            "name": {"type": "string",
+                                     "description": prompts.ref("code_execution.param.files.name")},
                         },
                         "required": ["url"],
                     }}} if MAX_FILES > 0 else {}),
             },
             "required": ["language", "code"],
-        }
+        }, max_files=MAX_FILES, max_file_size=_size(MAX_FILE_BYTES),
+            network=prompts.text("code_execution.param.code.network_packages")
+            if PACKAGES else prompts.text("code_execution.param.code.network_closed"))
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         return {"type": NAME, "language": str(args.get("language") or "")}

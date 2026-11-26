@@ -21,6 +21,7 @@ import io
 import logging
 import time
 
+from .. import prompts
 from ..core import config
 from . import net, provenance, webcache
 from .contract import (Anthropic, Call, Responses, Result, Source, Tool,
@@ -45,15 +46,11 @@ ACCEPT = ("text/html,application/xhtml+xml,application/json,"
 
 NAME = ToolName.WEB_FETCH
 
-# La description renvoie le modèle à `web_search` : seulement là où
-# `web_search` lui est présenté aussi (`present` de prompt).
+# La description renvoie le modèle à `web_search` et à `ocr` (pour ce
+# que cet outil-ci ne lit pas) : seulement là où ils lui sont présentés
+# aussi (`present` de prompt).
 _SEARCH = ToolName.WEB_SEARCH
-_SEARCH_HINT = f"Use it to read a page found with {_SEARCH}. "
-
-# Et à `ocr`, de même : pour ce que cet outil-ci ne lit pas.
 _OCR = ToolName.OCR
-_OCR_HINT = (f"For an image, or a PDF with no extractable text (a scan), "
-             f"use {_OCR} with the same URL. ")
 
 TEXT_TYPES = ("text/", "application/json", "application/xml",
               "application/xhtml+xml", "application/javascript",
@@ -193,27 +190,21 @@ class WebFetch(Tool):
         return ENABLED
 
     def prompt(self, present) -> str:
-        return (
-            "Fetch a web page by URL and return its content as text (HTML is "
-            "converted to plain text; JSON and text are returned as is; the "
-            "text of a PDF is extracted). "
-            + (_SEARCH_HINT if _SEARCH in present else "")
-            + (_OCR_HINT if _OCR in present else "")
-            + "Long pages are truncated: "
-            "pass `offset` to continue from a given character position.")
+        return prompts.text(
+            "web_fetch.description",
+            search_hint=prompts.text("web_fetch.search_hint", web_search=_SEARCH)
+            if _SEARCH in present else "",
+            ocr_hint=prompts.text("web_fetch.ocr_hint", ocr=_OCR) if _OCR in present else "")
 
     def parameters(self, present) -> dict:
-        return {
+        return prompts.resolve({
             "type": "object",
             "properties": {
-                "url": {"type": "string",
-                        "description": "The http(s) URL to fetch."},
-                "offset": {"type": "integer",
-                           "description": "Character position to start from, "
-                                          "to continue a truncated page."},
+                "url": {"type": "string", "description": prompts.ref("web_fetch.param.url")},
+                "offset": {"type": "integer", "description": prompts.ref("web_fetch.param.offset")},
             },
             "required": ["url"],
-        }
+        })
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         """Une page longue est lue en plusieurs morceaux (`offset`) : sans

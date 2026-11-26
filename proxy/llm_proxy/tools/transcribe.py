@@ -51,6 +51,7 @@ from urllib.parse import urlsplit
 
 import httpx2
 
+from .. import prompts
 from ..core import config
 from ..core.settings import is_exempt, log
 from ..storage import stats
@@ -504,33 +505,19 @@ class Transcribe(Tool):
         return DOWNLOAD_TIMEOUT + TIMEOUT + (CONVERT_TIMEOUT if FFMPEG else 0)
 
     def prompt(self, present) -> str:
-        return (
-            "Transcribe the speech of an audio file, given its URL, and "
-            "return the text (" + ", ".join(_offered()) + f"; up to "
-            f"{MAX_BYTES // 1_000_000} MB). The text has no timestamps "
-            "and no speaker names. Long transcripts are truncated: pass "
-            "`offset` to continue from a given character position (the "
-            "audio is not transcribed again).")
+        return prompts.text("transcribe.description", formats=", ".join(_offered()),
+                            max_mb=MAX_BYTES // 1_000_000)
 
     def parameters(self, present) -> dict:
-        return {
+        return prompts.resolve({
             "type": "object",
             "properties": {
-                "url": {"type": "string",
-                        "description": "The http(s) URL of the audio "
-                                       "file."},
-                "language": {"type": "string",
-                             "description": "Language spoken, as an "
-                                            "ISO 639-1 code (`en`, `fr`). "
-                                            "Omit it to let the model "
-                                            "detect it."},
-                "offset": {"type": "integer",
-                           "description": "Character position to start "
-                                          "from, to continue a truncated "
-                                          "transcript."},
+                "url": {"type": "string", "description": prompts.ref("transcribe.param.url")},
+                "language": {"type": "string", "description": prompts.ref("transcribe.param.language")},
+                "offset": {"type": "integer", "description": prompts.ref("transcribe.param.offset")},
             },
             "required": ["url"],
-        }
+        })
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         """L'URL, suivie de la plage rendue quand la transcription est lue

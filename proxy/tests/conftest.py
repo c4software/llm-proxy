@@ -27,6 +27,14 @@ def secret_client(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def prompt_overrides(monkeypatch, tmp_path):
+    """Les prompts modifiés par l'admin dans un dossier temporaire : un
+    test part des textes par défaut et ne crée jamais data/prompts.json."""
+    from llm_proxy.storage import prompt_overrides as store
+    monkeypatch.setattr(store, "PATH", str(tmp_path / "prompts.json"))
+
+
+@pytest.fixture(autouse=True)
 def conversations_db(monkeypatch, tmp_path):
     """La base des magasins par compte (historique, webhooks, dépôts,
     backends) dans un dossier temporaire : un changement de rôle relit les

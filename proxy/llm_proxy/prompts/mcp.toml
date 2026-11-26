@@ -1,0 +1,4 @@
+# Les prompts : mcp (voir tools.toml et docs/prompts.md).
+
+[mcp_server]
+instructions = "Tools executed by the llm-proxy gateway on behalf of the model: web search through the proxy's own search engine, reading web pages and PDF documents, searching inside a page, and whatever else this proxy has enabled (OCR, code execution, image generation, a persistent memory private to the caller...). Each tool's description says when to use it."

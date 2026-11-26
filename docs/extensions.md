@@ -97,6 +97,9 @@ quel (la première bascule le réécrit) ; aucune extension n'est alors
 activée. Après une mise à jour depuis une version où une extension était
 activée par défaut, réactiver dans la page celles qui servaient.
 
+Les textes des outils d'une extension restent dans son code : ils ne sont
+pas dans le catalogue des [prompts](prompts.md).
+
 `[extensions.<nom>].enabled = false` est l'arrêt de l'opérateur :
 l'extension n'est pas chargée, et la page ne peut pas la réactiver
 (`409`).

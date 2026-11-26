@@ -41,7 +41,7 @@ import tomllib
 from ..core import identity
 from ..access import accounts
 from ..core import config
-from . import conversations, extension_state, memories, stats
+from . import conversations, extension_state, memories, prompt_overrides, stats
 
 PREFIX = "llm-proxy-"
 
@@ -53,6 +53,7 @@ def sources() -> dict[str, str]:
             "conversations.db": conversations.DB_PATH,
             "client.secret": identity.SECRET_PATH,
             "extensions.json": extension_state.PATH,
+            "prompts.json": prompt_overrides.PATH,
             "config.toml": config.CONFIG_PATH}
 
 
@@ -152,6 +153,11 @@ def check(archive: str) -> bool:
                 ok &= state is not None
                 print(f"  extensions.json : " + (
                     "ILLISIBLE" if state is None else f"{extension_state.active_count(state)} extension(s) activée(s)"))
+            elif name == "prompts.json":
+                changed = prompt_overrides.load(path)
+                ok &= changed is not None
+                print("  prompts.json : " + (
+                    "ILLISIBLE" if changed is None else f"{len(changed)} prompt(s) modifié(s)"))
             elif name == "client.secret":
                 size = os.path.getsize(path)
                 ok &= size >= 16

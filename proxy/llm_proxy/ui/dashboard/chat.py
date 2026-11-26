@@ -7,7 +7,7 @@ import json
 import os
 import httpx2
 from fastapi import Request
-from ... import tools
+from ... import prompts, tools
 from ...access import accounts, fairshare
 from ...core import config
 from ...core.settings import INCOGNITO
@@ -101,7 +101,7 @@ async def ui_session(request: Request):
             "image_upscale": {
                 "model": tools.image_generation.UPSCALE_MODEL,
                 "factors": tools.image_generation.UPSCALE_FACTORS,
-                "prompt": tools.image_generation.UPSCALE_PROMPT,
+                "prompt": prompts.text("image_generation.upscale"),
                 "max_pixels": tools.image_generation.UPSCALE_MAX_PIXELS,
                 "strengths": tools.image_generation.UPSCALE_STRENGTHS,
             } if tools.image_generation.UPSCALE_MODEL else None,

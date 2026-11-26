@@ -132,6 +132,7 @@ configuration d'OpenCode comme client.
 | Backends déclarés par chaque compte, pour lui ou pour tous | [Backends des comptes](docs/backends.md) |
 | Contrat pour écrire un outil hébergé | [Outils hébergés : le contrat](docs/outils.md) |
 | Extensions Python du proxy et JavaScript du navigateur | [Extensions](docs/extensions.md) |
+| Textes lus par le modèle, modifiables par l'admin | [Prompts](docs/prompts.md) |
 | Vérifier un déploiement | [Vérification](docs/verification.md) |
 | Limites connues | [Limites connues](docs/limites.md) |
 | Bancs de validation avec clients réels | [bench/README.md](bench/README.md) |

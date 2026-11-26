@@ -8,17 +8,13 @@ démarrage suivant, et n'est en service qu'une fois activée. Le fichier ne
 fait que CHOISIR parmi du code déjà monté en lecture seule : il n'en
 ajoute pas (tools/extensions.py).
 
-Écriture atomique (fichier temporaire, puis os.replace). Un fichier
-illisible est dit au journal et n'est jamais écrasé par une lecture : load
-rend None, et l'appelant n'active rien.
+Lu et écrit par jsonfile.py (atomique ; un fichier illisible n'active
+rien et n'est jamais écrasé par une lecture).
 """
-
-import json
-import os
-import tempfile
 
 from ..core import config
 from ..core.settings import log
+from . import jsonfile
 
 PATH = config.resolve("extensions.json")
 
@@ -27,18 +23,9 @@ def load(path: str | None = None) -> dict[str, bool | list[str]] | None:
     """L'état gardé : extension → `True` (tous ses outils actifs) ou la
     liste de ses outils actifs (une autre valeur : aucun). `{}` sans
     fichier ; None s'il est illisible (dit au journal)."""
-    path = path or PATH
-    try:
-        with open(path, encoding="utf-8") as fh:
-            doc = json.load(fh)
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError) as exc:
-        log.warning("extensions : %s illisible (%s) — aucune extension activée, "
-                    "fichier laissé tel quel", path, exc)
-        return None
-    if not isinstance(doc, dict):
-        log.warning("extensions : %s n'est pas un objet JSON — ignoré", path)
+    doc = jsonfile.load(path or PATH, "extensions")
+    if doc is None:
+        log.warning("extensions : aucune extension activée")
         return None
     return {str(k): v if v is True else [str(n) for n in v]
             for k, v in doc.items()
@@ -56,16 +43,4 @@ def save(state: dict[str, bool | list[str]], path: str | None = None) -> None:
     path = path or PATH
     on = {k: (True if v is True else sorted(v)) for k, v in sorted(state.items())
           if v is True or (isinstance(v, list) and v)}
-    folder = os.path.dirname(os.path.abspath(path))
-    fd, tmp = tempfile.mkstemp(prefix=".extensions-", suffix=".json", dir=folder)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(on, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    jsonfile.save(path, on)

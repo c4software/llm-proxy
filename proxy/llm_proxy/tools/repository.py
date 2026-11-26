@@ -66,6 +66,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
+from .. import prompts
 from ..core import config
 from ..core.settings import INCOGNITO
 from ..storage import repos
@@ -358,39 +359,21 @@ class RepositoryTool(Tool):
         return ENABLED and bool(code_execution.URL and code_execution.TOKEN)
 
     def prompt(self, present) -> str:
-        return (
-            "Read a git repository the user configured access to (GitLab, GitHub, "
-            "Gitea or another git server): its file tree, a file, or a regex search "
-            "across its files. Nothing of the project is executed. Use it when the "
-            "task needs the actual source of a project (where a dependency is "
-            "pinned, how something is implemented, a config file). Commands: tree "
-            "(optional `path` to look inside a folder, `depth`, default 2), read "
-            "(`path` of a file; `offset` and `limit` in lines for long files), grep "
-            "(`pattern`, a Python regular expression, case-insensitive; optional "
-            "`path` folder and `include` file-name glob such as *.py or "
-            "requirements*.txt). `project` is the path on the forge "
-            "(group/subgroup/project, owner/repo). `source` names a configured "
-            "source, omitted when there is only one; an unknown name returns the "
-            "available ones. `ref`: branch, tag or commit; omit for the default "
-            "branch. The project is downloaded on first use and kept for a while: "
-            "later commands are fast.")
+        return prompts.text("repository.description")
 
     def parameters(self, present) -> dict:
-        return {"type": "object", "properties": {
+        return prompts.resolve({"type": "object", "properties": {
             "command": {"type": "string", "enum": list(COMMANDS)},
-            "project": {"type": "string", "description": (
-                "Path of the project on the forge: group/subgroup/project, owner/repo.")},
-            "source": {"type": "string", "description": (
-                "Name of the configured source; optional when there is only one.")},
-            "ref": {"type": "string", "description": "Branch, tag or commit; omit for the default branch."},
-            "path": {"type": "string", "description": (
-                "read: the file; tree and grep: a folder to limit to (optional).")},
-            "pattern": {"type": "string", "description": "grep: a Python regular expression."},
-            "include": {"type": "string", "description": "grep: a file-name glob, e.g. *.py."},
-            "depth": {"type": "integer", "description": "tree: levels shown (default 2)."},
-            "offset": {"type": "integer", "description": "read: first line (default 1)."},
-            "limit": {"type": "integer", "description": f"read: lines (default {READ_LINES})."},
-        }, "required": ["command", "project"]}
+            "project": {"type": "string", "description": prompts.ref("repository.param.project")},
+            "source": {"type": "string", "description": prompts.ref("repository.param.source")},
+            "ref": {"type": "string", "description": prompts.ref("repository.param.ref")},
+            "path": {"type": "string", "description": prompts.ref("repository.param.path")},
+            "pattern": {"type": "string", "description": prompts.ref("repository.param.pattern")},
+            "include": {"type": "string", "description": prompts.ref("repository.param.include")},
+            "depth": {"type": "integer", "description": prompts.ref("repository.param.depth")},
+            "offset": {"type": "integer", "description": prompts.ref("repository.param.offset")},
+            "limit": {"type": "integer", "description": prompts.ref("repository.param.limit")},
+        }, "required": ["command", "project"]}, read_lines=READ_LINES)
 
     def summary(self, args: dict, result: Result | None = None) -> dict:
         return {"type": self.name, "command": str(args.get("command") or ""),
