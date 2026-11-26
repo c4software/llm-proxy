@@ -27,11 +27,20 @@ def secret_client(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def prompt_overrides(monkeypatch, tmp_path):
-    """Les prompts modifiés par l'admin dans un dossier temporaire : un
-    test part des textes par défaut et ne crée jamais data/prompts.json."""
-    from llm_proxy.storage import prompt_overrides as store
-    monkeypatch.setattr(store, "PATH", str(tmp_path / "prompts.json"))
+def config_copy(monkeypatch, tmp_path):
+    """La configuration sur une COPIE de config.example.toml sous tmp_path,
+    et en mémoire une copie de la configuration chargée : ce que la page
+    enregistre (prompts, extensions, Configuration → Proxy) ne touche
+    jamais data/, et chaque test repart de l'état neuf."""
+    import copy
+    import shutil
+    from llm_proxy.core import config
+    path = tmp_path / "configuration" / "config.toml"
+    path.parent.mkdir()
+    shutil.copy(config.CONFIG_PATH, path)
+    monkeypatch.setattr(config, "CONFIG_PATH", str(path))
+    monkeypatch.setattr(config, "CONFIG", copy.deepcopy(config.CONFIG))
+    return path
 
 
 @pytest.fixture(autouse=True)
@@ -140,3 +149,35 @@ def stats_db(tmp_path, monkeypatch):
     stats.init()
     yield
     stats.close()
+
+
+@pytest.fixture
+def ui(proxy, monkeypatch):
+    """`proxy`, l'auth active (deux clés), le chat de la page ouvert, les
+    outils hébergés de chat/completions actifs ; `clients` note le client
+    de chaque ligne de statistiques (stats.CLIENT au moment d'écrire)."""
+    from fakes import KEY, everywhere, hosted_chat
+    from llm_proxy.access import auth
+    from llm_proxy.storage import stats
+    from llm_proxy.ui import dashboard
+    monkeypatch.setattr(auth, "PROXY_API_KEYS", [KEY, "sk-bob"])
+    everywhere(monkeypatch, dashboard, "UI_CHAT", True)
+    hosted_chat(monkeypatch)
+    proxy.clients = []
+    everywhere(monkeypatch, stats, "record",
+                        lambda *a: proxy.clients.append(stats.CLIENT.get()))
+    everywhere(monkeypatch, stats, "record_tool", lambda *a: None)
+    return proxy
+
+
+@pytest.fixture
+def conf(ui, tmp_path, monkeypatch):
+    """`ui` connecté, sur une configuration écrite à la main (CONFIG_TOML),
+    sous tmp_path."""
+    from fakes import CONFIG_TOML, login
+    from llm_proxy.core import config
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG_TOML)
+    monkeypatch.setattr(config, "CONFIG_PATH", str(path))
+    login(ui)
+    return ui

@@ -9,8 +9,11 @@
   ce qu'on y change s'y applique côté proxy (POST /ui/config/merge, avec
   les `overrides` d'Avancé) : sans changement, le fichier est identique.
   Modifié à la main, le fichier n'est plus écrasé (« Réappliquer les
-  sections »). Vérifié par le proxy (POST /ui/config/check), copié,
-  téléchargé — jamais écrit sur lui (config_view.py).
+  sections »). Vérifié par le proxy (POST /ui/config/check), puis
+  ENREGISTRÉ (POST /ui/config/save) : le proxy met à jour data/config.toml
+  valeur par valeur — commentaires, «${VAR}» et secrets masqués gardés —
+  et le recharge ; refusé si le fichier a changé depuis la lecture
+  (`base`). Copier et Télécharger restent possibles.
 */
 import { call } from "../lib/http.js";
 import { useCopy, download } from "../lib/files.js";
@@ -33,7 +36,7 @@ export const ProxyPart = {
     // `generated` : le fichier complet que donne le formulaire (POST
     // /ui/config/merge) ; `text` : ce qu'affiche la page — `generated`, tant
     // qu'on ne l'a pas modifié à la main.
-    const settings = reactive({ loaded: false, path: "", defaults: 0, values: null,
+    const settings = reactive({ loaded: false, path: "", base: "", writable: false, defaults: 0, values: null,
                                 defaultPaths: [], docs: {}, original: "",
                                 generated: "", text: "", error: "", check: null, checking: false });
     async function loadSettings() {
@@ -41,7 +44,8 @@ export const ProxyPart = {
       settings.check = null;
       try {
         const r = await call("GET", "/ui/config");
-        Object.assign(settings, { loaded: true, path: r.path, defaults: r.defaults,
+        Object.assign(settings, { loaded: true, path: r.path, base: r.base, writable: !!r.writable,
+                                  defaults: r.defaults,
                                   values: r.values, defaultPaths: r.default_paths || [],
                                   docs: r.docs || {},
                                   original: r.toml, generated: r.toml, text: r.toml });
@@ -61,17 +65,31 @@ export const ProxyPart = {
     // applique à chaud ce qui peut l'être (POST /ui/config/reload, comme un
     // SIGHUP) ; le reste attend un redémarrage. Puis la page relit la
     // configuration en vigueur.
-    const reloaded = reactive({ busy: false, result: null, error: "" });
-    async function reloadSettings() {
+    const reloaded = reactive({ busy: false, result: null, error: "", saved: false });
+    // Recharger (le fichier tel qu'il est) ou Enregistrer (le fichier de la
+    // page écrit, puis rechargé) : même compte rendu.
+    async function applySettings(save) {
       reloaded.busy = true;
       reloaded.result = null;
       reloaded.error = "";
+      reloaded.saved = save;
       try {
-        reloaded.result = await call("POST", "/ui/config/reload", {});
+        reloaded.result = save
+          ? await call("POST", "/ui/config/save", { toml: settings.text, base: settings.base })
+          : await call("POST", "/ui/config/reload", {});
         await resetProxy();
-      } catch (e) { reloaded.error = e.message; }
-      finally { reloaded.busy = false; }
+      } catch (e) {
+        reloaded.error = e.message;
+        // Modifié entre-temps (une autre page, à la main) : la page relit
+        // la configuration en vigueur ; les changements sont à refaire.
+        if (e.status === 409) {
+          await resetProxy();
+          reloaded.error += " — configuration relue : refaire les changements.";
+        }
+      } finally { reloaded.busy = false; }
     }
+    const reloadSettings = () => applySettings(false);
+    const saveSettings = () => applySettings(true);
     const settingsFile = computed(() => ({ name: "config.toml", download: "config.toml",
                                            content: settings.text }));
     const edited = computed(() => settings.text !== settings.generated);
@@ -212,7 +230,7 @@ export const ProxyPart = {
       prefilled.value = true;
     }
 
-    return { settings, checkSettings, reloaded, reloadSettings, settingsFile, edited, resetProxy, changes, showWarn,
+    return { settings, checkSettings, reloaded, reloadSettings, saveSettings, settingsFile, edited, resetProxy, changes, showWarn,
              advanced, advFilter, advGroups, advChanged, advError, SECTIONS, activeSection,
              goTo, TOOL_LIST, px, modelChoices, addBackend, addKey, randomKey, proxyOut,
              PROVIDERS, provider, usedNames, addProvider, hostFiles, doc, copied, copy, download };
@@ -243,19 +261,25 @@ export const ProxyPart = {
                     :disabled="!settings.loaded || settings.checking">Vérifier</button>
             <button type="button" class="btn ghost" @click="reloadSettings"
                     :disabled="!settings.loaded || reloaded.busy"
-                    title="Le proxy relit data/config.toml sur l'hôte et applique à chaud ce qui peut l'être">Recharger</button>
+                    title="Le proxy relit data/config.toml tel qu'il est et applique à chaud ce qui peut l'être">Recharger</button>
             <button type="button" class="btn ghost" @click="copy(settingsFile)"
                     :disabled="!settings.loaded">{{ copied === settingsFile.name ? "Copié" : "Copier" }}</button>
-            <button type="button" class="btn" @click="download(settingsFile)"
-                    :disabled="!settings.loaded">Télécharger config.toml</button>
+            <button type="button" class="btn ghost" @click="download(settingsFile)"
+                    :disabled="!settings.loaded">Télécharger</button>
+            <button type="button" class="btn" @click="saveSettings" v-if="settings.writable"
+                    :disabled="!settings.loaded || reloaded.busy"
+                    title="Met à jour data/config.toml (ce qui change seulement), puis le recharge">Enregistrer</button>
           </span>
           <ul class="proxy-warn" v-if="showWarn && proxyOut.warn.length">
             <li v-for="w in proxyOut.warn" :key="w">{{ w }}</li>
           </ul>
           <p class="err" v-if="settings.error" role="status">{{ settings.error }}</p>
         <div v-if="reloaded.result || reloaded.error" class="settings-check" role="status">
-          <p class="err" v-if="reloaded.error">Rechargement refusé, configuration inchangée : {{ reloaded.error }}</p>
+          <p class="err" v-if="reloaded.error">{{ reloaded.saved ? "Enregistrement refusé" : "Rechargement refusé" }},
+            configuration inchangée : {{ reloaded.error }}</p>
           <template v-else>
+            <p class="ok" v-if="reloaded.saved">Enregistré : {{ reloaded.result.changed }} valeur(s) mise(s) à jour
+              dans {{ settings.path }} (l'ancien fichier est gardé dans config-history/).</p>
             <p class="ok" v-if="reloaded.result.applied.length">Appliqué à chaud :
               <code v-for="k in reloaded.result.applied" :key="k">{{ k }}</code></p>
             <p class="dim" v-else>Aucun réglage rechargeable n'a changé.</p>
@@ -273,10 +297,13 @@ export const ProxyPart = {
         </div>
         </div>
         <p class="note proxy-intro">Tout part de la configuration en vigueur : ce qu'on change ici
-          s'applique au fichier complet (section « Fichier complet »). <strong>Rien n'est écrit sur le
-          proxy</strong> : télécharger le fichier, remplacer data/config.toml sur l'hôte (l'ancien en
-          .bak, valeurs masquées remises), puis « Recharger » — ou redémarrer si un réglage changé
-          n'est pas rechargeable.</p>
+          s'applique au fichier complet (section « Fichier complet »).
+          <template v-if="settings.writable"><strong>Enregistrer</strong> met à jour data/config.toml sur le
+          proxy, valeur par valeur : commentaires, <code>\${VAR}</code> et secrets masqués restent tels
+          quels, l'ancien fichier est gardé dans config-history/. Ce qui est rechargeable s'applique tout
+          de suite ; le reste attend un redémarrage.</template>
+          <template v-else>Sans comptes OIDC, la page n'écrit pas config.toml : télécharger le fichier,
+          remplacer data/config.toml sur l'hôte (valeurs masquées remises), puis « Recharger ».</template></p>
         <section class="panel proxy-section" id="px-acces" data-section="acces">
           <div class="panel-head"><h2>Accès</h2></div>
           <div class="config-fields">

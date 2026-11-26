@@ -24,9 +24,10 @@ démarrage ni les autres.
 L'INTERRUPTEUR : une extension chargée est DÉSACTIVÉE tant qu'un admin ne
 l'a pas activée dans la page (Configuration → Extensions) ; elle s'active
 et se désactive À CHAUD — en entier, ou outil par outil (l'outil du proxy
-sans celui du navigateur, par exemple) —, état gardé par
-storage/extension_state.py ; active() le lit, tools.active() avec, et le
-service de son .js aussi. `[extensions.<nom>].enabled = false` est l'arrêt
+sans celui du navigateur, par exemple) —, état gardé dans config.toml,
+`[extensions.<nom>].active` : `true` (tous ses outils) ou la liste de ses
+outils actifs, écrit par core/config_file.py ; active() le lit,
+tools.active() avec, et le service de son .js aussi. `[extensions.<nom>].enabled = false` est l'arrêt
 de l'opérateur : elle n'est pas importée, et la page ne peut pas la
 réactiver.
 
@@ -48,9 +49,8 @@ import threading
 import traceback
 from pathlib import Path
 
-from ..core import config
+from ..core import config, config_file
 from ..core.settings import log
-from ..storage import extension_state
 from .contract import Family, Runs, Tool, faults
 
 # La version du contrat public (llm_proxy/extension.py la réexporte).
@@ -84,9 +84,6 @@ _REFUSED: list[tuple[str, str]] = []
 # Remplacé d'un bloc (jamais vidé puis rempli : active() le lit sans
 # verrou) ; _SWITCH sérialise les bascules et leur écriture.
 _ACTIVE: frozenset[str] = frozenset()        # les outils actifs, par nom
-# L'état gardé tel que lu : une bascule ne réécrit que l'entrée de son
-# extension, celles des extensions non chargées (bloquées, écartées) restent.
-_STATE: dict = {}
 _SWITCH = threading.Lock()
 
 
@@ -162,7 +159,7 @@ def load(tools, path: str = PATH) -> tuple[list, list]:
     paquet tools/ : register, register_family, REGISTRY, FAMILIES), et
     relit l'interrupteur de la page. → (chargées [(nom, [outils])],
     écartées [(nom, raison)]), dites au journal. Sans `path`, rien."""
-    global _ACTIVE, _STATE
+    global _ACTIVE
     loaded, refused = [], []
     _OF.clear()
     _LOADED.clear()
@@ -195,11 +192,8 @@ def load(tools, path: str = PATH) -> tuple[list, list]:
                 _LOADED[ext.name] = ext
                 _OF.update({t.name: (ext.name, t) for t in ext.tools})
     _REFUSED.extend(refused)
-    # Une extension que l'admin n'a pas activée est désactivée. Un état
-    # illisible est dit au journal (extension_state.load), n'active rien et
-    # n'est pas réécrit.
-    _STATE = dict(extension_state.load() or {})
-    _ACTIVE = _resolve(_STATE)
+    # Une extension que l'admin n'a pas activée est désactivée.
+    _ACTIVE = _resolve(_state(config.CONFIG.get("extensions")))
     for name, why in refused:
         log.warning("extension %s écartée : %s", name, why)
     for name, names in loaded:
@@ -209,6 +203,17 @@ def load(tools, path: str = PATH) -> tuple[list, list]:
                  f" (actifs : {', '.join(on)})" if on else
                  " (désactivée : à activer dans Configuration → Extensions)")
     return loaded, refused
+
+
+def _state(tables) -> dict:
+    """[extensions.<nom>].active → {nom: true | [outils]} ; une autre
+    valeur : rien d'actif."""
+    out = {}
+    for name, table in (tables if isinstance(tables, dict) else {}).items():
+        on = table.get("active") if isinstance(table, dict) else None
+        if on is True or (isinstance(on, list) and all(isinstance(n, str) for n in on)):
+            out[name] = on
+    return out
 
 
 def _resolve(state: dict) -> frozenset:
@@ -268,7 +273,6 @@ def switch(name: str, on: bool, tool: str = "") -> None:
     seul `tool` —, à chaud, et le garde. KeyError : extension non chargée
     (inconnue, écartée, bloquée par la configuration), ou outil qui n'est
     pas le sien."""
-    global _ACTIVE, _STATE
     ext = _LOADED.get(name)
     if ext is None or (tool and tool not in {t.name for t in ext.tools}):
         raise KeyError(tool or name)
@@ -282,10 +286,20 @@ def switch(name: str, on: bool, tool: str = "") -> None:
             entry = sorted(mine)
         else:
             entry = True if on else []
-        state = {**_STATE, name: entry}
-        extension_state.save(state)
-        _STATE = {k: v for k, v in state.items() if v}
-        _ACTIVE = (_ACTIVE - names) | _resolve({name: entry})
+        def then():
+            # En mémoire, sous le verrou de l'écriture (qu'un rechargement
+            # prend aussi).
+            global _ACTIVE
+            tables = dict(config.CONFIG.get("extensions") or {})
+            table = {k: v for k, v in (tables.get(name) or {}).items() if k != "active"}
+            tables[name] = {**table, "active": entry} if entry else table
+            config.CONFIG["extensions"] = tables
+            _ACTIVE = (_ACTIVE - names) | _resolve({name: entry})
+        # Rien d'actif : la clé part (absente = désactivée).
+        if entry:
+            config_file.update({("extensions", name, "active"): entry}, then=then)
+        else:
+            config_file.update({}, [("extensions", name, "active")], then=then)
     log.info("extension %s%s %s dans la page", name, f" (outil {tool})" if tool else "",
              "activée" if on else "désactivée")
 

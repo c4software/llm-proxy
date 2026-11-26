@@ -34,6 +34,48 @@ déconnectait la page web.
 `data/config.toml` et `data/stats.db` sont dans `.gitignore`. Le dépôt
 ne garde que l'exemple.
 
+## Enregistrer depuis la page
+
+*Configuration → Proxy → Enregistrer* (`POST /ui/config/save`) **met à
+jour** `data/config.toml` sur le proxy, puis le recharge à chaud. Seul un
+**admin OIDC** écrit le fichier ; sans comptes OIDC, la page lit la
+configuration mais ne l'écrit pas (403) : *Copier* ou *Télécharger*, puis
+remplacer le fichier à la main.
+
+Seules les valeurs qui changent sont écrites : commentaires, ordre,
+`${VAR}` et secrets écrits en clair restent tels quels ; une valeur
+affichée « défaut » n'est pas ajoutée ; une valeur retirée du fichier de
+la page en est retirée. Un secret écrit en clair est montré masqué, par un
+condensé qui le désigne sans le révéler : déplacé ou réordonné dans la
+page, il garde sa valeur ; un masque qui ne désigne aucune valeur du
+fichier (la page ouverte avant un redémarrage) est refusé.
+*Prompts* et *Extensions* écrivent de la même façon, dans `[prompts]` et
+`[extensions.<nom>].active`.
+
+- L'ancien fichier est gardé dans `config-history/`, à côté de
+  `config.toml` (les 20 dernières versions).
+- Avant d'écrire, chaque réglage est évalué à blanc sur le fichier
+  proposé : une valeur que le proxy refuserait au démarrage (un entier qui
+  n'en est pas un), rechargeable ou non, est refusée.
+- Un TOML illisible, une clé que le proxy ne lit pas, une valeur refusée,
+  ou une valeur que le rechargement refuse (le fichier est alors remis,
+  s'il n'a pas changé entre-temps) : rien ne change (400).
+- Le fichier modifié depuis que la page l'a lu (une autre page, une
+  modification à la main) : refusé (409) ; la page relit la
+  configuration, les changements sont à refaire. Sans `config.toml` (mode
+  installation) : 409.
+- Le proxy doit pouvoir écrire le dossier de `config.toml` (`data/`, monté
+  en écriture).
+
+*Copier* et *Télécharger* donnent le fichier complet de la page, sans
+l'écrire.
+
+Au premier démarrage après la mise à jour, d'anciens `data/prompts.json`
+et `data/extensions.json` sont reportés dans `config.toml`, puis renommés
+`*.migre-AAAAMMJJ`. Sans comptes OIDC, une extension ne s'active plus
+depuis la page : `[extensions.<nom>].active` se règle à la main et prend
+effet au redémarrage (l'état existant est migré).
+
 ## Rechargement à chaud
 
 Le proxy relit `data/config.toml` sans redémarrer :
@@ -41,7 +83,8 @@ Le proxy relit `data/config.toml` sans redémarrer :
 - par **SIGHUP** : `docker compose kill -s HUP albert-proxy` (ou
   `kill -HUP <pid>` hors conteneur) ;
 - par la page : **Configuration → Proxy → Recharger**
-  (`POST /ui/config/reload`, admins seulement avec OIDC).
+  (`POST /ui/config/reload`, admins seulement avec OIDC), ou après
+  [*Enregistrer*](#enregistrer-depuis-la-page).
 
 Seuls ces réglages s'appliquent à chaud ; ils sont lus à chaque usage :
 
@@ -55,6 +98,7 @@ Seuls ces réglages s'appliquent à chaud ; ils sont lus à chaque usage :
 | `[tools]` | `max_calls`, `run_timeout`, `max_result_chars`, `direct_calls_per_minute` |
 | `[quotas]` | `max_queue_seconds` |
 | `[mcp_server]` | `allowed_origins` |
+| `[prompts]` | toute la table ([Prompts](prompts.md)) |
 | `[ui]` | `page_tools_disabled`, `chat_max_rounds` (la page la reçoit avec sa session suivante), `linux_relay_max_bytes`, `linux_relay_idle_seconds` |
 
 Tout autre changement (backends, outils activés, chemins, OIDC…) n'est
@@ -497,7 +541,16 @@ sous-dossier par extension, chargés au démarrage. Voir
 |---|---|---|
 | `path` | `""` | Le dossier des extensions, un sous-dossier chacune, hors d'atteinte du proxy (montage `:ro`). Vide : aucune extension |
 | `<nom>.enabled` | `true` | `false` : l'extension `<nom>/` n'est pas chargée, et la page ne peut pas la réactiver. Une extension chargée est désactivée jusqu'à ce qu'un admin l'active dans Configuration → Extensions |
-| `<nom>.*` | — | Les réglages de l'extension, lus par `ext.settings("<nom>")`. Ceux de l'extension d'exemple `pull_request` : voir [pull_request](extensions.md#pull_request--proposer-une-modification) |
+| `<nom>.active` | absent | Écrit par *Configuration → Extensions* : `true` (tous ses outils actifs) ou la liste de ses outils actifs ; absent, l'extension est désactivée. Modifié à la main, pris en compte au redémarrage. Voir [Activer et désactiver](extensions.md#activer-et-désactiver) |
+| `<nom>.*` | — | Les réglages de l'extension, lus par `ext.settings("<nom>")` (sans `active`). Ceux de l'extension d'exemple `pull_request` : voir [pull_request](extensions.md#pull_request--proposer-une-modification) |
+
+## `[prompts]`
+
+Les textes du [catalogue des prompts](prompts.md) modifiés par l'admin :
+clé du catalogue = texte (`"web_fetch.description" = "…"`). Écrite par
+*Configuration → Prompts* ; une clé absente garde son texte par défaut.
+Rechargeable à chaud. Les `${VAR}` n'y sont pas substitués, et un texte
+qui en contient est ignoré : un prompt ne lit pas l'environnement.
 
 ## `[fair_share]`
 

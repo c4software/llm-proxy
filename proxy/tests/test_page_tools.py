@@ -5,7 +5,7 @@ absents de la session et retirés de toute requête du chat de la page —
 pas des autres routes."""
 
 from fakes import FakeUpstream, chunk, stream
-from test_ui import chat, login, ui  # noqa: F401 — la fixture du chat de la page
+from fakes import chat, login
 from llm_proxy.ui import page_tools
 
 FN = lambda name: {"type": "function", "function": {"name": name, "parameters": {}}}  # noqa: E731

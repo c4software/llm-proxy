@@ -105,7 +105,8 @@ doit les déclarer dans `volumes:`.
 3. Définir les secrets comme variables d'environnement (`ALBERT_API_KEY`…).
 4. Exposer le service via Nginx Proxy Manager sur un sous-domaine interne.
 
-Les réglages se modifient ensuite dans `data/config.toml`, dans le volume.
+Les réglages se modifient ensuite dans `data/config.toml`, dans le volume,
+ou depuis la page ([Enregistrer depuis la page](configuration.md#enregistrer-depuis-la-page)).
 Certains s'appliquent sans redémarrage (`docker compose kill -s HUP albert-proxy`
 ou « Recharger » dans la page) : voir [Rechargement à chaud](configuration.md#rechargement-à-chaud).
 
@@ -123,9 +124,9 @@ Le Dockerfile seul ne livre pas :
 - les bases `stats.db`, `memory.db`, `accounts.db`, `conversations.db` ;
 - **`client.secret`** : sa perte ou son remplacement invalide toutes les
   mémoires, les clés gérées et les sessions ;
-- `config.toml` ;
-- `extensions.json` : les extensions et les outils activés dans la page ;
-- `prompts.json` : les [prompts](prompts.md) modifiés par l'admin.
+- `config.toml`, avec les extensions activées et les [prompts](prompts.md)
+  modifiés dans la page ; `config-history/` en garde les versions
+  précédentes, écrites par la page (hors sauvegarde).
 
 `conversations.db` libère l'espace disque occupé par les conversations et
 images supprimées (auto_vacuum incrémental). Pour les bases créées avant

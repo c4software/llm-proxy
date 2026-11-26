@@ -563,11 +563,13 @@ max_text_chars = 100000
 # Une extension (le nom de son sous-dossier) : ses réglages, lus par
 # ext.settings("<nom>"). Une extension déposée est DÉSACTIVÉE : un admin
 # l'active (et la désactive) à chaud dans la page, Configuration → Extensions,
-# après le redémarrage qui la charge ; `enabled = false` est
+# après le redémarrage qui la charge ; la page écrit alors `active` (true :
+# tous ses outils, ou la liste des outils actifs). `enabled = false` est
 # l'arrêt de l'opérateur : le fichier n'est pas chargé, et la page ne peut
 # pas le réactiver.
 # [extensions.horloge]
 # enabled = true
+# active = true
 #
 # L'extension d'exemple examples/extensions/pull_request/ : des PR en
 # brouillon au jeton d'un COMPTE DE SERVICE, pour tout compte qui a la page
@@ -626,6 +628,14 @@ cache_bytes = 200000000
 # token = "${GITLAB_TOKEN}"
 # projects = ["equipe/*"]
 
+
+# ── Prompts : les textes du catalogue modifiés par l'admin ──────────────
+# Clé du catalogue (llm_proxy/prompts/*.toml) = texte. Écrite par la page,
+# Configuration → Prompts ; une clé absente garde son texte par défaut. Un
+# texte n'utilise que les {variables} de son défaut. Rechargeable à chaud.
+# Voir docs/prompts.md.
+# [prompts]
+# "web_fetch.description" = "Fetch a web page by URL. {search_hint}{ocr_hint}"
 
 # ── Partage équitable ───────────────────────────────────────────────────
 # Pas un quota (jamais de 429) : au-delà de sa part de tokens sur une heure

@@ -159,6 +159,8 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `core/limits.py` | La forme des règles `limits` d'un backend à quotas, du TOML comme d'un compte |
 | `core/efforts.py` | Les niveaux de réflexion : celui de `chat_template_kwargs` (`template_effort`), la table `effort_map` d'un backend (`effort_map`, `remap`) |
 | `core/reload.py` | Le rechargement à chaud : réglages rechargeables (`SAFE`), réévalués et propagés à leurs copies, tout ou rien |
+| `core/config_file.py` | L'écriture de `data/config.toml` par la page : `diff` (le fichier de la page contre le fichier brut, secrets masqués et défauts écartés), `update` (tomlkit, valeur par valeur, sous verrou, empreinte `base`, copie dans `config-history/`), `restore`, `migrate` (les anciens `prompts.json` et `extensions.json`, une fois) |
+| `core/atomic.py` | Écrire un fichier d'un coup (temporaire, puis `os.replace`) |
 | `core/sqlite_store.py` | Une base de magasin (comptes, mémoire, conversations) : une connexion par processus, schéma posé une fois, opérations sous verrou |
 | `core/config_docs.py` | La description de chaque réglage, lue dans `config.example.toml` (montrée par Configuration → Proxy, exigée par un test) |
 | `core/multipart.py` | Champ `model` d'un corps multipart : lu pour router, préfixe retiré |
@@ -221,7 +223,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `tools/webhook.py` | `webhook` : poste sur un webhook sortant du compte ; l'envoi (`post` : Apprise, sinon `send` en JSON par `net.post`) ; le format Slack dans les deux sens (`to_mrkdwn`, `from_slack`) |
 | `tools/provenance.py` | Les sites connus d'une conversation : ceux qu'un outil qui lit une URL peut ouvrir |
 | `tools/extensions.py` | Le chargement des extensions de `[extensions].path` (un sous-dossier chacune : `<nom>.py`, `<nom>.js`), appelé par `startup.lifespan` avant les serveurs MCP : dossiers et fichiers hors d'atteinte du proxy exigés, outils et familles tous vérifiés puis enregistrés (`register`, `register_family`), une extension en faute écartée entière au journal ; `active`, `listing`, `switch` : l'interrupteur de la page ; `module_url`, `script` : le `.js` servi |
-| `prompts/` | Le catalogue des prompts ([Prompts](prompts.md)) : `tools.toml`, `page.toml`, `chat.toml`, `mcp.toml` (les textes par défaut, en anglais) ; `__init__.py` : `text(clé, **variables)`, `for_page` (les gabarits que la page remplit, `chat.prompts` de `/ui/session`), `ref`/`resolve` pour les descriptions d'un schéma, `template`, le formatage restreint aux variables `{nom}`, la validation et les modifications de l'admin relues quand `prompts.json` change |
+| `prompts/` | Le catalogue des prompts ([Prompts](prompts.md)) : `tools.toml`, `page.toml`, `chat.toml`, `mcp.toml` (les textes par défaut, en anglais) ; `__init__.py` : `text(clé, **variables)`, `for_page` (les gabarits que la page remplit, `chat.prompts` de `/ui/session`), `ref`/`resolve` pour les descriptions d'un schéma, `template`, le formatage restreint aux variables `{nom}`, la validation ; les modifications de l'admin dans `[prompts]` de `config.toml`, écrites par `core/config_file.py` |
 | `tools/page/` | Les déclarations des outils natifs du navigateur (`BrowserTool`) et de leurs familles (`Family`) : `page.py`, `device.py`, `sandbox.py`, dans l'ordre du menu Outils ; leur exécution est dans `ui/web/static/chat/tools/` |
 | `tools/mcp/` | Client MCP (Streamable HTTP) : outils des serveurs configurés enregistrés comme outils hébergés. Paquet : `protocol`, `tool` (`McpTool`), `server`, `registry` |
 
@@ -245,9 +247,6 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `storage/repos.py` | Les sources de dépôts de chaque compte (jeton gardé, jamais rendu ; table à part de `conversations.db`) et celles de `[repos.sources]` |
 | `storage/webhooks.py` | Les webhooks entrants (jeton gardé, retrouvé par son condensé) et sortants (URL Apprise et son service, exposition à l'outil) de chaque compte (tables à part de `conversations.db`) |
 | `storage/files.py` | Fichiers rendus par les outils : en mémoire, bornés, servis par `GET /v1/files/<jeton>/<nom>` sans clé |
-| `storage/extension_state.py` | L'interrupteur des extensions (`data/extensions.json`) : par extension, `true` (tous ses outils actifs) ou la liste de ses outils actifs (absente : rien d'actif) ; une bascule ne réécrit que son entrée, écriture atomique, fichier illisible ignoré et jamais écrasé par une lecture |
-| `storage/jsonfile.py` | Un objet JSON gardé à côté de `config.toml` : lecture (illisible : `None`, jamais écrasé par une lecture), écriture atomique ; pour `extension_state.py` et `prompt_overrides.py` |
-| `storage/prompt_overrides.py` | Les prompts modifiés par l'admin (`data/prompts.json`) : clé → texte |
 | `storage/backup.py` | Sauvegarde et restauration de `data/` |
 
 ### `ui/` : le tableau de bord et le chat
@@ -257,7 +256,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `ui/dashboard/` | Routes `/ui/*` : entrée, session, comptes et clés, chat, mémoire. Paquet : `page`, `accounts`, `chat`, `memory`, sur un routeur commun |
 | `ui/static_files.py` | Fichiers de la page sous un chemin versionné (`/ui/static/v/<empreinte>/…`, gardés un an) |
 | `ui/conversation_routes.py` | `/ui/conversations`, `/ui/assets` : l'historique du chat (`storage/conversations.py`) |
-| `ui/config_view.py` | La configuration effective pour la page (secrets masqués), le formulaire, la vérification d'un TOML modifié. N'écrit jamais |
+| `ui/config_view.py` | La configuration effective pour la page (secrets masqués), le formulaire, la vérification d'un TOML modifié, son enregistrement (`/ui/config/save`, par `core/config_file.py`) et le rechargement |
 | `ui/usage_api.py` | L'Usage API (`/v1/organization/usage/*`) et ce qu'une page connectée en voit |
 | `ui/agent_usage.py` | `/v1/usage/agent` et `/ui/usage/agent` (la vue Usage) : l'usage et les limites d'un compte au format du panneau d'agents d'Omarchy (`stats.slots`, part équitable, forfaits) |
 | `ui/health.py` | `/healthz` et `/ui/health` : état détaillé du déploiement |

@@ -489,4 +489,40 @@ def admin_and_user(env) -> tuple[TestClient, TestClient, int]:
     return alice, bob, bob_id
 
 
+# ── la page /ui par clé (fixture `ui` de conftest) ─────────────────────
 
+KEY = "sk-alice"
+
+
+def login(proxy, key=KEY):
+    return proxy.client.post("/ui/login", json={"key": key})
+
+
+def chat(proxy, **extra):
+    body = {"model": "essai/qwen", "stream": True,
+            "messages": [{"role": "user", "content": "Dernière version ?"}],
+            **extra}
+    return proxy.client.post("/ui/chat/completions", json=body)
+
+
+# Une configuration écrite à la main (fixture `conf` de conftest) : des
+# renvois à l'environnement, des secrets en clair à masquer.
+CONFIG_TOML = """\
+[proxy]
+api_keys = ["sk-en-clair", "${PROXY_API_KEY}"]
+log_level = "DEBUG"
+
+[backends.albert]
+url = "https://albert.example"
+api_key = "${ALBERT_API_KEY}"
+
+[backends.local]
+url = "http://local:8080"
+api_key = "sk-local-en-clair"
+timeout = 30
+headers = { "X-Equipe" = "valeur-en-clair" }
+
+[tools.mcp.notes]
+url = "http://notes/mcp"
+headers = { Authorization = "Bearer jeton-en-clair" }
+"""

@@ -1,19 +1,22 @@
 """
-Les EXTENSIONS, pour la page (Configuration → Extensions, admin ; sans
-comptes OIDC, la page connectée, comme la configuration du proxy) : ce qui
-est chargé de [extensions].path, ce qui est écarté et pourquoi, et
+Les EXTENSIONS, pour la page (Configuration → Extensions) : ce qui est
+chargé de [extensions].path, ce qui est écarté et pourquoi, et
 l'interrupteur À CHAUD de chaque extension chargée (tools/extensions.py,
-gardé par storage/extension_state.py). Et, pour le chat de toute page
-connectée, le .js qui exécute les outils du navigateur d'une extension.
+gardé dans config.toml, `[extensions.<nom>].active`). Les lire : comme la
+configuration du proxy (config_view.forbidden) ; basculer écrit
+config.toml : un admin OIDC seulement (config_view.write_forbidden). Et,
+pour le chat de toute page connectée, le .js qui exécute les outils du
+navigateur d'une extension.
 
-  GET  /ui/extensions               {path, extensions: [{name, enabled, tools:
-                                    [{name, runs, offered, configured, enabled}]} |
-                                    {name, refused, stopped}]}
+  GET  /ui/extensions               {path, writable, extensions: [{name, enabled,
+                                    tools: [{name, runs, offered, configured,
+                                    enabled}]} | {name, refused, stopped}]}
   POST /ui/extensions/{nom}         {"enabled": bool, "tool"?: un de ses outils}
                                     → l'entrée mise à jour : toute l'extension,
                                     ou ce seul outil ; 404 : extension non
                                     chargée, outil qui n'est pas le sien ;
-                                    409 : bloquée par [extensions.<nom>].enabled
+                                    409 : bloquée par [extensions.<nom>].enabled,
+                                    ou pas de config.toml
   GET  /ui/extensions/{nom}/{nom}.js  le module de la page (session.chat.page
                                     en donne l'adresse) ; 404 : aucun outil du
                                     navigateur actif, inconnue ou sans .js
@@ -26,7 +29,7 @@ from fastapi.responses import FileResponse
 
 from ..core.httputil import error_response, json_only, parse_json
 from ..tools import extensions
-from .config_view import forbidden
+from .config_view import WRITE_ERRORS, forbidden, writable, write_error, write_forbidden
 
 router = APIRouter()
 
@@ -35,12 +38,13 @@ router = APIRouter()
 async def ui_extensions(request: Request):
     if (bad := forbidden(request)) is not None:
         return bad
-    return {"path": extensions.PATH, "extensions": extensions.listing()}
+    return {"path": extensions.PATH, "writable": writable(request),
+            "extensions": extensions.listing()}
 
 
 @router.post("/ui/extensions/{name}")
 async def ui_extension_switch(request: Request, name: str):
-    if (bad := forbidden(request)) is not None:
+    if (bad := write_forbidden(request)) is not None:
         return bad
     if (bad := json_only(request)) is not None:
         return bad
@@ -57,6 +61,8 @@ async def ui_extension_switch(request: Request, name: str):
                               f"([extensions.{name}].enabled) : la page ne la réactive pas")
     try:
         await asyncio.to_thread(extensions.switch, name, on, tool)
+    except WRITE_ERRORS as exc:
+        return write_error(exc)
     except KeyError:
         loaded = entry is not None and "tools" in entry
         return error_response("openai", 404, "not_found",

@@ -7,9 +7,10 @@ d'erreur et les résultats des outils restent dans le code.
              par domaine (tools, page, chat, mcp) ; une table par sujet :
              [web_fetch] description = "…" donne la clé
              `web_fetch.description`
-  prompts.json   les textes MODIFIÉS par l'admin (Configuration →
-             Prompts ; storage/prompt_overrides.py), relus quand le
-             fichier change : effet à la requête suivante
+  [prompts]  les textes MODIFIÉS par l'admin, dans config.toml (clé du
+             catalogue = texte) : écrits par Configuration → Prompts
+             (core/config_file.py), effet à la requête suivante ; modifiés
+             à la main, rechargeables à chaud
 
 Un texte porte des VARIABLES `{nom}` que le code fournit (une borne, le
 nom d'un outil, un fragment présent ou non) ; `{{` et `}}` écrivent une
@@ -23,15 +24,13 @@ accolade. Un texte modifié n'utilise que les variables de son défaut.
   catalog(), set_override(), reset()   pour la page (ui/prompt_routes.py)
 """
 
-import os
 import re
 import string
-import threading
 import tomllib
 from pathlib import Path
 
+from ..core import config, config_file
 from ..core.settings import log
-from ..storage import prompt_overrides
 
 DOMAINS = ("tools", "page", "chat", "mcp")
 MAX_CHARS = 20_000
@@ -83,62 +82,46 @@ def _load_catalog() -> dict[str, tuple[str, str]]:
 
 CATALOG = _load_catalog()
 
-# Les modifications de l'admin, relues quand prompts.json change (une
-# restauration de sauvegarde, une autre instance) : ((chemin, date),
-# textes, lisible).
-_cache: tuple[tuple | None, dict[str, str], bool] = (None, {}, True)
-
-
-def _mtime() -> tuple:
-    """Ce qui dit que le fichier a changé : chemin, date, inode, taille (un
-    remplacement atomique dans le même tic d'horloge change l'inode)."""
-    try:
-        st = os.stat(prompt_overrides.PATH)
-        return prompt_overrides.PATH, (st.st_mtime_ns, st.st_ino, st.st_size)
-    except OSError:
-        return prompt_overrides.PATH, None
+# Les modifications valides de [prompts], refaites quand la table change
+# (écrite par la page, rechargée) : (la table lue, ses textes valides).
+_cache: tuple[object, dict[str, str]] = (None, {})
 
 
 def _overrides() -> dict[str, str]:
     global _cache
-    mtime = _mtime()
-    if mtime != _cache[0]:
-        loaded = prompt_overrides.load() if mtime[1] is not None else {}
-        if loaded is None:
-            log.warning("prompts : textes par défaut")
+    table = config.CONFIG.get("prompts")
+    if table is not _cache[0]:
         # Une modification devenue invalide (le défaut a changé de
-        # variables avec une mise à jour) : le défaut, dit au journal.
+        # variables avec une mise à jour, une clé retirée) : le défaut,
+        # dit au journal.
         valid = {}
-        for key, value in (loaded or {}).items():
+        for key, value in (table if isinstance(table, dict) else {}).items():
             try:
+                if not isinstance(value, str):
+                    raise PromptError("pas un texte")
                 _check(key, value)
                 valid[key] = value
             except (KeyError, PromptError) as exc:
-                log.warning("prompts : modification de « %s » ignorée (%s)", key, exc)
-        _cache = (mtime, valid, loaded is not None)
+                log.warning("prompts : [prompts].%s ignoré (%s)", key, exc)
+        _cache = (table, valid)
     return _cache[1]
 
 
-# Lire, modifier, écrire prompts.json : une écriture à la fois (les routes
-# écrivent depuis des fils), sinon deux modifications croisées s'écrasent.
-_WRITE = threading.Lock()
-
-
-class Unreadable(RuntimeError):
-    """prompts.json est illisible : la page ne l'écrase pas."""
-
-
-def _write(current: dict[str, str]) -> None:
-    global _cache
-    prompt_overrides.save(current)
-    _cache = (_mtime(), current, True)
-
-
-def _editable() -> dict[str, str]:
-    current = dict(_overrides())
-    if not _cache[2]:
-        raise Unreadable(f"{prompt_overrides.PATH} est illisible : le corriger ou le retirer à la main")
-    return current
+def _store(key: str, text_: str | None) -> None:
+    """Écrit (ou retire, None) la modification de `key` dans config.toml,
+    puis dans la configuration en mémoire — sous le verrou de l'écriture,
+    qu'un rechargement prend aussi : les deux ne se croisent pas."""
+    def then():
+        table = dict(config.CONFIG.get("prompts") or {})
+        if text_ is None:
+            table.pop(key, None)
+        else:
+            table[key] = text_
+        config.CONFIG["prompts"] = table
+    if text_ is None:
+        config_file.update({}, [("prompts", key)], then=then)
+    else:
+        config_file.update({("prompts", key): text_}, then=then)
 
 
 def _check(key: str, text_: str) -> None:
@@ -146,6 +129,10 @@ def _check(key: str, text_: str) -> None:
         raise KeyError(key)
     if not text_.strip():
         raise PromptError("texte vide : « Rétablir » rend le texte par défaut")
+    if "${" in text_:
+        # Ni substitué ni envoyé : une valeur d'environnement (un secret)
+        # n'a rien à faire dans un texte lu par le modèle et la page.
+        raise PromptError("« ${ » n'est pas permis : un prompt ne lit pas l'environnement")
     if len(text_) > MAX_CHARS:
         raise PromptError(f"texte trop long ({len(text_)} caractères ; {MAX_CHARS} au plus)")
     allowed = set(variables(CATALOG[key][1]))
@@ -213,24 +200,13 @@ def entry(key: str) -> dict:
 
 def set_override(key: str, text_: str) -> None:
     """Modifie le texte de `key`. KeyError : clé inconnue ; PromptError :
-    texte refusé ; Unreadable : prompts.json illisible. Un texte égal au
-    défaut retire la modification."""
+    texte refusé. Un texte égal au défaut retire la modification."""
     _check(key, text_)
-    with _WRITE:
-        current = _editable()
-        if text_ == CATALOG[key][1]:
-            current.pop(key, None)
-        else:
-            current[key] = text_
-        _write(current)
+    _store(key, None if text_ == CATALOG[key][1] else text_)
 
 
 def reset(key: str) -> None:
-    """Rend à `key` son texte par défaut. KeyError : clé inconnue ;
-    Unreadable : prompts.json illisible."""
+    """Rend à `key` son texte par défaut. KeyError : clé inconnue."""
     if key not in CATALOG:
         raise KeyError(key)
-    with _WRITE:
-        current = _editable()
-        if current.pop(key, None) is not None:
-            _write(current)
+    _store(key, None)

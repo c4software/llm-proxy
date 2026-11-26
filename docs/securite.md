@@ -109,11 +109,13 @@ en modifier les droits. Une extension n'est pas isolée. Pour un outil qui
 n'a pas besoin du proxy, un [serveur MCP](outils.md#serveurs-mcp) séparé
 est plus sûr.
 
-Le réglage Configuration → Extensions est réservé aux administrateurs.
-Sans comptes OIDC, il est accessible à toute personne qui ouvre la page,
-comme la configuration. Il permet uniquement de sélectionner les fichiers
-`[extensions.<nom>].enabled = false` désactive l'extension. La page ne peut
-pas réactiver une extension ainsi désactivée.
+**Écrire `config.toml` depuis la page** (*Enregistrer* de Configuration →
+Proxy, *Prompts*, l'interrupteur des *Extensions*) est réservé à un
+**admin OIDC**, comme la sauvegarde. Sans comptes OIDC, la page connectée
+lit la configuration mais ne l'écrit pas (403) : le fichier se modifie à
+la main. L'interrupteur des extensions ne fait que choisir parmi le code
+déjà monté ; `[extensions.<nom>].enabled = false` désactive l'extension,
+et la page ne peut pas la réactiver.
 
 `offered` (où un outil est offert, `api` ou `web`) détermine sa
 **présentation**, pas son autorisation. La page et les webhooks ne

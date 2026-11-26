@@ -6,11 +6,10 @@ la fixture `proxy` de conftest.py. Aucun réseau."""
 import base64
 import json
 
-import pytest
 from fastapi.testclient import TestClient
 
-from fakes import everywhere
-from fakes import (ANSWER_TURN, FakeUpstream, chunk, hosted_chat, search_then_answer,
+from fakes import KEY, chat, everywhere, login
+from fakes import (ANSWER_TURN, FakeUpstream, chunk, search_then_answer,
                    stream, tool_call)
 from llm_proxy.core import identity
 from llm_proxy.access import auth
@@ -19,38 +18,10 @@ from llm_proxy.ui import dashboard, page_tools, static_files, usage_api
 from llm_proxy.surfaces import chat_api as C
 from llm_proxy.upstream import backends
 from llm_proxy.access import oidc
-from llm_proxy.storage import stats
 from llm_proxy import app as A
 from llm_proxy import prompts, tools
 
-KEY = "sk-alice"
 JSON = {"content-type": "application/json"}
-
-
-@pytest.fixture
-def ui(proxy, monkeypatch):
-    """`proxy`, l'auth active (deux clés), le chat de la page ouvert, les
-    outils hébergés de chat/completions actifs ; `clients` note le client
-    de chaque ligne de statistiques (stats.CLIENT au moment d'écrire)."""
-    monkeypatch.setattr(auth, "PROXY_API_KEYS", [KEY, "sk-bob"])
-    everywhere(monkeypatch, dashboard, "UI_CHAT", True)
-    hosted_chat(monkeypatch)
-    proxy.clients = []
-    everywhere(monkeypatch, stats, "record",
-                        lambda *a: proxy.clients.append(stats.CLIENT.get()))
-    everywhere(monkeypatch, stats, "record_tool", lambda *a: None)
-    return proxy
-
-
-def login(proxy, key=KEY):
-    return proxy.client.post("/ui/login", json={"key": key})
-
-
-def chat(proxy, **extra):
-    body = {"model": "essai/qwen", "stream": True,
-            "messages": [{"role": "user", "content": "Dernière version ?"}],
-            **extra}
-    return proxy.client.post("/ui/chat/completions", json=body)
 
 
 def blocks(raw: bytes) -> list[dict]:

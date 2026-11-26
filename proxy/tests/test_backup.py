@@ -12,7 +12,7 @@ import pytest
 from fakes import everywhere
 
 from llm_proxy.access import accounts
-from llm_proxy.storage import backup, conversations, extension_state, memories, stats
+from llm_proxy.storage import backup, conversations, memories, stats
 from llm_proxy.core import config
 from llm_proxy.core import identity
 
@@ -32,10 +32,6 @@ def data(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "_cache", {})
     everywhere(monkeypatch, stats, "DB_PATH", str(d / "stats.db"))
     monkeypatch.setattr(conversations, "DB_PATH", str(d / "conversations.db"))
-    # L'interrupteur des extensions, à l'ancienne forme (désactivées : false)
-    # mêlée à la nouvelle (activées : true).
-    monkeypatch.setattr(extension_state, "PATH", str(d / "extensions.json"))
-    (d / "extensions.json").write_text('{"vieille": false, "horloge": true}')
     conversations.save("cle", "c1", {"id": "c1", "title": "à garder", "messages": []})
     memories.write("cle", "/memories/note.md", "à garder")
     accounts.login("https://idp", "alice", "a@x")
@@ -63,9 +59,9 @@ def test_backup_check_restore(data, tmp_path, capsys):
     with tarfile.open(archive) as tar:
         assert sorted(tar.getnames()) == ["accounts.db", "client.secret",
                                          "config.toml", "conversations.db",
-                                         "extensions.json", "memory.db", "stats.db"]
+                                         "memory.db", "stats.db"]
     assert backup.check(archive)
-    assert "extensions.json : 1 extension(s) activée(s)" in capsys.readouterr().out
+    assert "config.toml : TOML valide" in capsys.readouterr().out
 
     target = tmp_path / "restored"
     target.mkdir()
@@ -106,3 +102,25 @@ def test_a_damaged_archive_is_not_restored(data, tmp_path):
     assert not backup.check(str(bad))
     with pytest.raises(SystemExit):
         backup.restore(str(bad), str(tmp_path / "ailleurs"))
+
+
+def test_une_archive_d_avant_se_restaure(data, tmp_path):
+    """Une archive faite quand prompts.json et extensions.json étaient à
+    part : vérifiée et restaurée à côté de config.toml (le démarrage
+    suivant les reporte dedans), pas refusée."""
+    d, _ = data
+    old = tmp_path / "ancienne.tar.gz"
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "config.toml").write_text('[proxy]\nlog_level = "INFO"\n')
+    (src / "prompts.json").write_text('{"web_fetch.description": "Old."}')
+    (src / "extensions.json").write_text('{"horloge": true}')
+    with tarfile.open(old, "w:gz") as tar:
+        for name in ("config.toml", "prompts.json", "extensions.json"):
+            tar.add(src / name, arcname=name)
+    assert backup.check(str(old))
+    target = tmp_path / "restored"
+    target.mkdir()
+    backup.restore(str(old), str(target))
+    assert (target / "prompts.json").read_text() == '{"web_fetch.description": "Old."}'
+    assert (target / "extensions.json").read_text() == '{"horloge": true}'

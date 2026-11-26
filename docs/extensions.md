@@ -85,17 +85,20 @@ modèle, de `/v1/tools`, de `/mcp`, du menu Outils du chat et des webhooks.
 prochain chargement de la page. Le `.js` de l'extension n'est servi que si
 au moins un de ses outils du navigateur est actif.
 
-Dans `data/extensions.json`, `true` active tous les outils de l'extension,
+Basculer écrit `config.toml` : un **admin OIDC** seulement. Sans comptes
+OIDC, la page montre l'état sans les boutons, et une extension s'active à
+la main : `active = true` (ou la liste de ses outils) dans
+`[extensions.<nom>]`, puis redémarrage.
+
+L'état est écrit dans `config.toml`, `[extensions.<nom>].active`
+([Enregistrer depuis la page](configuration.md#enregistrer-depuis-la-page)),
+et survit aux redémarrages. `true` active tous les outils de l'extension,
 y compris ceux ajoutés ensuite. Une liste n'active que les outils qu'elle
 nomme ; les nouveaux outils restent alors désactivés jusqu'à leur activation
-dans la page. L'état est conservé dans `data/extensions.json` (dans la
-[sauvegarde](deploiement.md#sauvegarde-et-restauration)) et survit aux
-redémarrages. Une extension nouvellement déposée est **désactivée** : ses
-outils ne servent qu'après activation par un administrateur.
-Un fichier `extensions.json` illisible est dit au journal et laissé tel
-quel (la première bascule le réécrit) ; aucune extension n'est alors
-activée. Après une mise à jour depuis une version où une extension était
-activée par défaut, réactiver dans la page celles qui servaient.
+dans la page. Absent, ou une autre valeur : l'extension est désactivée. Une
+extension nouvellement déposée est **désactivée** : ses outils ne servent
+qu'après activation par un administrateur. Modifié à la main, `active` est
+pris en compte au redémarrage.
 
 Les textes des outils d'une extension restent dans son code : ils ne sont
 pas dans le catalogue des [prompts](prompts.md).

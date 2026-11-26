@@ -281,7 +281,9 @@ demande alors la clé définie dans `.env`.
 
 L'onglet <kbd>#config</kbd> regroupe des **générateurs** exécutés dans
 le navigateur ; ils n'écrivent rien sur le proxy, sauf les sections
-*Extensions* et *Prompts*, qui gardent leur état dans `data/`.
+*Proxy*, *Prompts* et *Extensions*, qui mettent à jour `data/config.toml`
+pour un admin OIDC
+([Enregistrer depuis la page](configuration.md#enregistrer-depuis-la-page)).
 
 **Clients** : sélectionner un client et, sauf pour un service, un modèle
 (`GET /ui/models`, disponible même lorsque le chat est désactivé). La page génère les fichiers
@@ -412,8 +414,10 @@ configuration, ainsi que les extensions rejetées et leur motif. Une
 extension déposée apparaît désactivée après le démarrage suivant. Le bouton
 *Activer* met l'outil en service (par exemple, côté proxy seulement, sans
 le navigateur) ; *Désactiver* le retire immédiatement de toutes les
-surfaces. L'état est conservé dans `data/extensions.json` et survit aux
-redémarrages. Voir [Extensions](extensions.md#activer-et-désactiver).
+surfaces. L'état est écrit dans `data/config.toml` et survit aux
+redémarrages. Les boutons n'existent que pour un admin OIDC : sans comptes
+OIDC, la page n'écrit pas `config.toml`. Voir
+[Extensions](extensions.md#activer-et-désactiver).
 
 **Prompts** : mêmes droits que *Extensions*. La section liste les textes
 que le modèle lit (descriptions des outils, consignes), par domaine, avec
@@ -465,9 +469,15 @@ OIDC sont activés.
 - **Vérifier** (`POST /ui/config/check`) : valide la syntaxe TOML et
   signale les clés inconnues, qu'une faute de frappe rendrait autrement
   inopérantes sans avertissement.
-- **Appliquer** remplace `data/config.toml` sur l'hôte, sauvegarde
-  l'ancienne version en `.bak` et rétablit les valeurs masquées. Puis
-  **Recharger** (`POST /ui/config/reload`) demande au proxy de relire le
-  fichier et d'appliquer à chaud les réglages rechargeables. La page
-  indique ceux appliqués et ceux qui nécessitent un redémarrage. Voir
+- **Enregistrer** (`POST /ui/config/save`, admin OIDC) met à jour
+  `data/config.toml` sur le proxy, valeur par valeur (commentaires,
+  `${VAR}` et secrets masqués gardés, ancienne version dans
+  `config-history/`), puis le recharge. La page indique les réglages
+  appliqués et ceux qui nécessitent un redémarrage ; si le fichier a changé
+  entre-temps, elle relit la configuration. Sans comptes OIDC, le bouton
+  est absent. Voir
+  [Enregistrer depuis la page](configuration.md#enregistrer-depuis-la-page).
+- **Recharger** (`POST /ui/config/reload`) relit le fichier tel qu'il est
+  (modifié à la main) ; **Copier** et **Télécharger** donnent le fichier
+  complet sans l'écrire. Voir
   [Rechargement à chaud](configuration.md#rechargement-à-chaud).

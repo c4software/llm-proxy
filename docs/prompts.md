@@ -49,25 +49,29 @@ et un filtre sur les textes modifiés. Pour chacun : *Modifier*, puis
 *Enregistrer* ; *Rétablir* rend le texte par défaut. Un texte enregistré
 égal au défaut n'est pas gardé comme modification.
 
-- **Droits** : un admin ; sans comptes OIDC, la page connectée, comme la
-  configuration du proxy.
+- **Droits** : les lire, comme la configuration du proxy (un admin ; sans
+  comptes OIDC, la page connectée) ; les modifier écrit `config.toml` : un
+  **admin OIDC** seulement. Sans comptes OIDC, *Modifier* et *Rétablir*
+  sont absents et les routes répondent 403 : un texte se modifie à la main
+  dans [`[prompts]`](configuration.md#prompts).
+- **Texte refusé** : vide, de plus de 20 000 caractères, avec une variable
+  que son défaut n'a pas, ou avec `${` (un prompt ne lit pas
+  l'environnement).
 - **Portée** : tout le proxy, tous les comptes et toutes les surfaces.
 - **Effet** : à la requête suivante ; pour les outils du navigateur et les
   textes de la page, au rechargement de la page du chat, qui les reçoit
   avec `/ui/session` (`chat.page`, et `chat.prompts` : les gabarits que la
   page remplit elle-même).
-- **Borne** : 20 000 caractères par texte.
 
-Les modifications sont gardées dans `data/prompts.json`, à côté de
-`config.toml` (écriture atomique), et incluses dans la
-[sauvegarde](deploiement.md#sauvegarde-et-restauration). Le fichier est
-relu quand il change : une restauration s'applique sans redémarrage.
+Les modifications sont gardées dans la table
+[`[prompts]`](configuration.md#prompts) de `config.toml` : clé du
+catalogue = texte. La page la met à jour
+([Enregistrer depuis la page](configuration.md#enregistrer-depuis-la-page)) ;
+modifiée à la main, elle s'applique au
+[rechargement à chaud](configuration.md#rechargement-à-chaud).
 
-- Un fichier illisible est dit au journal : les textes par défaut
-  s'appliquent, et la page refuse d'écrire (409) tant qu'il n'est pas
-  corrigé ou retiré.
-- Une modification devenue invalide après une mise à jour (clé retirée,
-  variable disparue du défaut) est ignorée et dite au journal.
+Une modification devenue invalide après une mise à jour (clé retirée,
+variable disparue du défaut) est ignorée et dite au journal.
 
 Un ancien réglage `[tools.image_generation].upscale_prompt` n'est plus lu :
 reporter son texte dans le prompt `image_generation.upscale`.
@@ -76,11 +80,12 @@ reporter son texte dans le prompt `image_generation.upscale`.
 
 | Route | Effet |
 |---|---|
-| `GET /ui/prompts` | `{max_chars, prompts: [{key, domain, default, override, variables}]}` ; `override` vaut `null` sans modification |
-| `PUT /ui/prompts/{clé}` | Corps `{"text": "…"}` ; rend l'entrée mise à jour. 404 `not_found` : clé inconnue ; 400 `invalid_prompt` : variable inconnue ou mal écrite, accolade seule, texte vide ou trop long ; 409 `conflict` : `prompts.json` illisible |
-| `DELETE /ui/prompts/{clé}` | Rend le texte par défaut ; mêmes erreurs 404 et 409 |
+| `GET /ui/prompts` | `{max_chars, writable, prompts: [{key, domain, default, override, variables}]}` ; `writable` : la page peut-elle écrire (admin OIDC) ; `override` vaut `null` sans modification |
+| `PUT /ui/prompts/{clé}` | Corps `{"text": "…"}` ; rend l'entrée mise à jour. 404 `not_found` : clé inconnue ; 400 `invalid_prompt` : variable inconnue ou mal écrite, accolade seule, `${`, texte vide ou trop long ; 409 `conflict` : pas de `config.toml` |
+| `DELETE /ui/prompts/{clé}` | Rend le texte par défaut ; 404 `not_found` : clé inconnue |
 
-Ces routes répondent 403 à un compte qui n'est pas admin.
+`GET` répond 403 à un compte qui n'est pas admin ; `PUT` et `DELETE`, à
+tout autre qu'un admin OIDC (sans comptes OIDC : à tous).
 
 ## Extensions
 

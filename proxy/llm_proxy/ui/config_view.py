@@ -1,17 +1,23 @@
 """
-La configuration EFFECTIVE, pour la page (Configuration → Paramètres) :
-tout ce que le proxy lit, avec la valeur du fichier ou, à défaut, celle
-qu'il prend d'office — marquée « défaut ». Lecture seule : la page peut
-modifier le texte, le vérifier, le copier ou le télécharger, jamais
-l'écrire sur le proxy (il faudrait un redémarrage, et les secrets vivent
-dans le .env de l'hôte).
+La configuration EFFECTIVE, pour la page (Configuration → Proxy) : tout ce
+que le proxy lit, avec la valeur du fichier ou, à défaut, celle qu'il
+prend d'office — marquée « défaut ». La page la modifie, la vérifie et
+l'ENREGISTRE : le fichier est mis à jour valeur par valeur
+(core/config_file.py), puis rechargé.
 
-  GET  /ui/config        le TOML effectif, secrets masqués, et ses valeurs
-                         (de quoi préremplir le formulaire de la page)
+  GET  /ui/config        le TOML effectif, secrets masqués, ses valeurs
+                         (de quoi préremplir le formulaire de la page) et
+                         l'empreinte du fichier (`base`)
   POST /ui/config/merge  le fichier partiel du formulaire appliqué sur la
                          configuration effective : le fichier complet
   POST /ui/config/check  un TOML modifié : syntaxe, clés inconnues du
                          proxy — rien n'est écrit
+  POST /ui/config/save   {toml, base} : ce qui change par rapport au
+                         fichier y est écrit, puis rechargé à chaud ;
+                         400 : TOML illisible, clé inconnue, valeur
+                         refusée au rechargement (le fichier est remis) ;
+                         409 : le fichier a changé depuis `base`
+  POST /ui/config/reload le fichier relu, comme un SIGHUP
 
 Les valeurs viennent du fichier tel qu'il est écrit : un «${VAR}» reste
 «${VAR}» (sa valeur est dans l'environnement, jamais montrée). Une valeur
@@ -19,6 +25,7 @@ secrète écrite en clair (clé, jeton, mot de passe, en-tête) est masquée.
 Avec les comptes OIDC, réservé aux admins ; sinon, à qui ouvre la page.
 """
 
+import asyncio
 import json
 import re
 import tomllib
@@ -26,16 +33,18 @@ import tomllib
 from fastapi import APIRouter, Request
 
 from ..access import oidc
-from ..core import config, config_docs, reload
+from ..core import config, config_docs, config_file, reload
 from ..core.httputil import error_response, json_only, parse_json
 from .dashboard import admin_only
 
 router = APIRouter()
 
-MASK = "••• masqué •••"
+MASK_FORM = config_file.MASK_FORM
+MASK_RE = config_file.MASK_RE
 # Les tables dont les clés sont libres : des noms (backends, familles,
-# serveurs MCP, alias de modèles), pas des réglages connus d'avance.
-FREE = ("backends", "anthropic.model_map", "quotas.family_limits")
+# serveurs MCP, alias de modèles, extensions et leurs réglages, clés du
+# catalogue des prompts), pas des réglages connus d'avance.
+FREE = ("backends", "anthropic.model_map", "quotas.family_limits", "extensions", "prompts")
 _SECRET = re.compile(r"(^|_)(api_keys?|secret|password|token)s?$|secret|password",
                      re.IGNORECASE)
 _VAR = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
@@ -52,14 +61,15 @@ def _secret(path: tuple[str, ...]) -> bool:
 
 
 def _mask(value, path: tuple[str, ...]):
-    """Une valeur secrète écrite en clair → MASK ; «${VAR}» gardé (ce
-    n'est qu'un renvoi à l'environnement)."""
+    """Une valeur secrète écrite en clair → son masque (un condensé qui la
+    désigne : config_file.mask) ; «${VAR}» gardé (ce n'est qu'un renvoi à
+    l'environnement)."""
     if isinstance(value, dict):
         return {k: _mask(v, path + (k,)) for k, v in value.items()}
     if isinstance(value, list):
         return [_mask(v, path) for v in value]
     if isinstance(value, str) and value and _secret(path) and not _VAR.search(value):
-        return MASK
+        return config_file.mask(value)
     return value
 
 
@@ -151,7 +161,27 @@ def unknown(tree: dict) -> list[str]:
 
 
 def forbidden(request: Request):
+    """LIRE la configuration : un admin avec les comptes OIDC ; sans
+    comptes, la page connectée."""
     return admin_only(request) if oidc.ENABLED else None
+
+
+NO_WRITE = ("sans comptes OIDC, la page n'écrit pas config.toml : le modifier à la main "
+            "(ou le télécharger depuis Configuration → Proxy), puis Recharger")
+
+
+def write_forbidden(request: Request):
+    """ÉCRIRE config.toml (Proxy, Prompts, Extensions) : un admin OIDC
+    seulement, comme la sauvegarde ; sans comptes, personne."""
+    if not oidc.ENABLED:
+        return error_response("openai", 403, "forbidden", NO_WRITE)
+    return admin_only(request)
+
+
+def writable(request: Request) -> bool:
+    """La page peut-elle écrire config.toml (de quoi montrer ou cacher
+    Enregistrer, Modifier, Activer) ?"""
+    return write_forbidden(request) is None
 
 
 # Ce que le formulaire de la page règle ET peut retirer : absent de son
@@ -265,7 +295,9 @@ async def ui_config(request: Request):
     if (bad := forbidden(request)) is not None:
         return bad
     tree, defaults = effective()
-    return {"path": config.CONFIG_PATH, "toml": dumps(tree, defaults),
+    _, base = config_file.read()
+    return {"path": config.CONFIG_PATH, "toml": dumps(tree, defaults), "base": base,
+            "writable": writable(request),
             "defaults": len(defaults), "values": tree,
             "default_paths": sorted(defaults),
             # Le rôle de chaque réglage, pour la section Avancé.
@@ -313,8 +345,78 @@ async def ui_config_check(request: Request):
         tree = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         return {"ok": False, "error": str(exc), "unknown": [], "masked": 0}
-    masked = text.count(MASK)
+    masked = len(MASK_RE.findall(text))
     return {"ok": True, "error": None, "unknown": unknown(tree), "masked": masked}
+
+
+def write_error(exc: Exception):
+    """L'erreur d'une écriture de config.toml, pour les trois écrivains."""
+    if isinstance(exc, config_file.Stale):
+        return error_response("openai", 409, "conflict", str(exc))
+    if isinstance(exc, config_file.Absent):
+        return error_response("openai", 409, "conflict", str(exc))
+    return error_response("openai", 400, "invalid_config", str(exc))
+
+
+WRITE_ERRORS = (config_file.Stale, config_file.Absent, config_file.Invalid)
+
+
+@router.post("/ui/config/save")
+async def ui_config_save(request: Request):
+    """Enregistre le TOML de la page : seules les valeurs qui changent
+    sont écrites (un masque redevient la valeur qu'il désigne, un défaut
+    affiché n'est pas ajouté), après une évaluation à blanc de chaque
+    réglage (une valeur que le proxy refuserait au démarrage : 400, rien
+    d'écrit), puis le fichier est rechargé. Une valeur que le rechargement
+    refuse : l'ancien fichier est remis, 400."""
+    if (bad := write_forbidden(request)) is not None:
+        return bad
+    if (bad := json_only(request)) is not None:
+        return bad
+    body = parse_json(await request.body())
+    text = body.get("toml") if isinstance(body, dict) else None
+    base = body.get("base") if isinstance(body, dict) else None
+    if not isinstance(text, str) or not isinstance(base, str):
+        return error_response("openai", 400, "invalid_request_error",
+                              'corps attendu : {"toml": "…", "base": "…"}')
+    try:
+        tree = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return error_response("openai", 400, "invalid_config", f"TOML invalide : {exc}")
+    if bad := unknown(tree):
+        return error_response("openai", 400, "invalid_config",
+                              f"clé(s) inconnue(s) du proxy : {', '.join(bad)}")
+
+    def check(new: str) -> None:
+        try:
+            reload.validate(new)
+        except reload.ReloadError as exc:
+            raise config_file.Invalid(f"refusé : {exc}") from None
+
+    def write():
+        try:
+            current = raw()
+        except FileNotFoundError:
+            raise config_file.Absent(f"{config.CONFIG_PATH} n'existe pas") from None
+        except tomllib.TOMLDecodeError as exc:
+            raise config_file.Invalid(f"{config.CONFIG_PATH} illisible : {exc}") from None
+        sets, deletes = config_file.diff(current, tree)
+        return len(sets) + len(deletes), config_file.update(sets, deletes, base, check=check)
+
+    try:
+        changed, (before, new_base) = await asyncio.to_thread(write)
+    except WRITE_ERRORS as exc:
+        return write_error(exc)
+    try:
+        result = reload.reload()
+    except reload.ReloadError as exc:
+        try:
+            await asyncio.to_thread(config_file.restore, before, new_base)
+            kept = "fichier remis tel quel"
+        except WRITE_ERRORS:
+            kept = "fichier modifié entre-temps, laissé tel quel"
+        return error_response("openai", 400, "invalid_config", f"{exc} — {kept}")
+    return {**result, "base": new_base, "changed": changed}
 
 
 @router.post("/ui/config/reload")
@@ -322,7 +424,7 @@ async def ui_config_reload(request: Request):
     """Relit data/config.toml et applique à chaud les réglages
     rechargeables (core/reload.py), comme un SIGHUP. Rend ce qui a été
     appliqué et ce qui attend un redémarrage ; un fichier invalide ne
-    change rien (400). Le fichier lui-même n'est jamais écrit."""
+    change rien (400)."""
     if (bad := forbidden(request)) is not None:
         return bad
     if (bad := json_only(request)) is not None:

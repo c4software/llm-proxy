@@ -69,6 +69,24 @@ def _expand(value):
 SETUP = False
 
 
+# Les tables dont les «${VAR}» ne sont PAS substitués : [prompts] va au
+# modèle et à la page, un secret d'environnement n'y entre pas.
+LITERAL = ("prompts",)
+
+
+def _expand_top(raw: dict) -> dict:
+    return {k: (v if k in LITERAL else _expand(v)) for k, v in raw.items()}
+
+
+def loads(text: str) -> dict:
+    """Un TOML lu comme le fichier : «${VAR}» substitués (hors LITERAL).
+    SystemExit s'il est invalide."""
+    try:
+        return _expand_top(tomllib.loads(text))
+    except tomllib.TOMLDecodeError as exc:
+        raise SystemExit(f"TOML invalide — {exc}")
+
+
 def load(path: str = CONFIG_PATH) -> dict:
     global SETUP
     if not os.path.exists(path):
@@ -84,7 +102,7 @@ def load(path: str = CONFIG_PATH) -> dict:
         raise SystemExit(f"{path} : TOML invalide — {exc}")
     except OSError as exc:
         raise SystemExit(f"{path} : illisible — {exc}")
-    return _expand(raw)
+    return _expand_top(raw)
 
 
 CONFIG: dict = load()

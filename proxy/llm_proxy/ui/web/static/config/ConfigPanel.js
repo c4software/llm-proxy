@@ -23,9 +23,8 @@
     shared.js         ce qu'elles partagent : TOML, clé du poste,
                       catalogue des modèles, comptes
 
-  La configuration du proxy n'est jamais écrite par la page : elle
-  produit des fichiers. Seuls l'interrupteur des extensions et les prompts
-  modifiés sont gardés par le proxy (data/extensions.json, prompts.json).
+  Proxy, Prompts et Extensions ENREGISTRENT dans data/config.toml : le
+  fichier est mis à jour valeur par valeur (core/config_file.py).
   La partie choisie est gardée dans le navigateur.
 */
 import { ClientsPart } from "./ClientsPart.js";

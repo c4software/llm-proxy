@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from . import tools
 from .access import accounts, auth, fairshare, oidc
 from .access.auth import account_owner
-from .core import config, reload
+from .core import config, config_file, reload
 from .core.settings import EXEMPT_SUFFIXES, is_exempt, log
 from .storage import files, stats, webhooks
 from .surfaces import anthropic_api, chat_api, responses_api
@@ -128,6 +128,9 @@ async def lifespan(app: FastAPI):
              "réglable par compte ; %d requête(s) de la dernière heure "
              "relue(s)", f"{fairshare.DEFAULT_SHARE} tokens"
              if fairshare.DEFAULT_SHARE else "aucune limite", seeded)
+    # Une fois : les anciens prompts.json et extensions.json reportés dans
+    # config.toml ([prompts], [extensions.<nom>].active), puis renommés.
+    await asyncio.to_thread(config_file.migrate)
     # Extensions ([extensions].path) : leurs outils entrent au registre
     # avant ceux des serveurs MCP. Au démarrage seulement.
     tools.extensions.load(tools)

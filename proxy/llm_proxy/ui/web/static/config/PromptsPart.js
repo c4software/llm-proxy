@@ -1,6 +1,7 @@
 /*
-  Configuration → Prompts (/ui/prompts, prompt_routes.py ; admin, ou proxy
-  sans comptes) : les textes que le modèle lit — descriptions des outils
+  Configuration → Prompts (/ui/prompts, prompt_routes.py ; lue par un
+  admin, ou la page d'un proxy sans comptes ; modifiée — écrite dans
+  config.toml — par un admin OIDC seulement, `writable`) : les textes que le modèle lit — descriptions des outils
   et de leurs paramètres, consignes —, par domaine. Chacun se modifie et
   se rétablit ici ; effet à la requête suivante (les outils du navigateur :
   au rechargement de la page du chat). Un texte modifié n'utilise que les variables de son
@@ -81,6 +82,9 @@ export const PromptsPart = {
           rechargement de la page du chat).
           Les <code>{variables}</code> sont remplies par le proxy ; <code v-text="'{{'"></code> et
           <code v-text="'}}'"></code> écrivent une accolade.</p>
+        <p class="note" v-if="!data.writable">Sans comptes OIDC, la page n'écrit pas config.toml : un texte
+          se modifie à la main dans sa table <code>[prompts]</code> (clé = texte), puis « Recharger »
+          (Configuration → Proxy).</p>
         <div class="item-form">
           <input type="search" v-model="query" placeholder="Chercher une clé ou un texte" aria-label="Chercher">
           <label class="check"><input type="checkbox" v-model="onlyChanged"> modifiés seulement</label>
@@ -100,7 +104,7 @@ export const PromptsPart = {
                     <button type="button" class="btn ghost" @click="cancel">Annuler</button></div>
                 </form></td>
               <td v-else class="prompt-text">{{ p.override ?? p.default }}</td>
-              <td><div class="row-actions">
+              <td><div class="row-actions" v-if="data.writable">
                 <button type="button" class="btn ghost" v-if="open !== p.key" @click="edit(p)">Modifier</button>
                 <button type="button" class="btn ghost" v-if="p.override !== null" :disabled="busy"
                         @click="reset(p)">Rétablir</button></div></td>

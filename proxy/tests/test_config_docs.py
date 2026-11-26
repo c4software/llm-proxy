@@ -4,9 +4,6 @@ data/config.example.toml et montré par Configuration → Proxy, Avancé."""
 from llm_proxy import app  # noqa: F401 — charge chaque module : config.READ complet
 from llm_proxy.core import config, config_docs as D
 
-import test_config_view
-from test_config_view import conf, ui  # noqa: F401 — les fixtures
-
 
 def test_chaque_reglage_lu_par_le_proxy_a_une_description():
     """Un réglage ajouté sans commentaire dans config.example.toml

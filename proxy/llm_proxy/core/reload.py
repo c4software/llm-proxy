@@ -28,8 +28,9 @@ import importlib.util
 import inspect
 import logging
 import sys
+import types
 
-from . import config
+from . import config, config_file
 
 log = logging.getLogger("albert-proxy")
 
@@ -57,6 +58,7 @@ SAFE = (
     "mcp_server.allowed_origins",
     "ui.page_tools_disabled",
     "ui.chat_max_rounds",
+    "prompts",
     "ui.linux_relay_max_bytes",
     "ui.linux_relay_idle_seconds",
 )
@@ -68,16 +70,33 @@ def _safe(key: str) -> bool:
 
 # ── Lecture du source ───────────────────────────────────────────────────
 
+def _is_read(n) -> bool:
+    return isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) \
+        and isinstance(n.func.value, ast.Name) and n.func.value.id == "config"
+
+
+def _reads(node: ast.AST) -> list[ast.Call]:
+    """Les appels `config.<lecteur>(…)` de `node`, les plus extérieurs (un
+    `config.resolve(config.text(…))` est un seul appel)."""
+    if _is_read(node):
+        return [node]
+    return [r for child in ast.iter_child_nodes(node) for r in _reads(child)]
+
+
 class _Site:
     """Une affectation de premier niveau : sa cible (un nom, ou plusieurs
     pour `A, B = …`), son expression compilée, les clés de configuration
-    qu'elle lit, les noms qu'elle cite."""
+    qu'elle lit, les noms qu'elle cite, et ses lectures de la
+    configuration seules, compilées à part (validate : la lecture sans
+    ce qui l'entoure, qui peut construire ou journaliser)."""
 
     def __init__(self, module: str, targets: list[str], node: ast.expr,
                  keys: set[str], refs: set[tuple[str, str]]):
         self.module, self.targets, self.keys, self.refs = \
             module, targets, keys, refs
         self.code = compile(ast.Expression(node), f"<reload {module}>", "eval")
+        self.reads = [compile(ast.Expression(r), f"<validate {module}>", "eval")
+                      for r in _reads(node)]
 
 
 def _targets(node) -> list[str] | None:
@@ -222,11 +241,54 @@ class ReloadError(Exception):
     pass
 
 
+def _reader(tree: dict) -> types.SimpleNamespace:
+    """Les lecteurs de `config` (integer, text, get…), liés à `tree` au
+    lieu de la configuration en vigueur, et à un READ à part : de quoi
+    évaluer une affectation sans rien toucher."""
+    scope = {**vars(config), "CONFIG": tree, "READ": {}}
+    # Chaque fonction du module, liée à cet espace : integer appelle _typed,
+    # qui appelle get — tous lisent `tree`.
+    for name, f in vars(config).items():
+        if isinstance(f, types.FunctionType) and f.__module__ == config.__name__:
+            scope[name] = types.FunctionType(f.__code__, scope, name, f.__defaults__, f.__closure__)
+    return types.SimpleNamespace(**{k: v for k, v in scope.items() if not k.startswith("__")})
+
+
+def validate(text: str) -> None:
+    """Un TOML proposé que le proxy lirait-il, au démarrage comme à
+    chaud ? Chaque lecture `config.<lecteur>(…)` d'une affectation de
+    premier niveau (son type, sa borne `minimum`) est évaluée à blanc sur
+    lui — la lecture seule : rien n'est construit, journalisé ni appliqué.
+    ReloadError : illisible, ou une valeur refusée (elle est nommée)."""
+    try:
+        tree = config.loads(text)
+    except SystemExit as exc:
+        raise ReloadError(str(exc)) from None
+    reader = _reader(tree)
+    sites, _ = _scan()
+    for site in sites:
+        if not site.reads:
+            continue
+        scope = {**vars(sys.modules[site.module]), "config": reader}
+        for code in site.reads:
+            try:
+                eval(code, scope)
+            except (SystemExit, Exception) as exc:
+                raise ReloadError(f"{', '.join(sorted(site.keys))} : {exc}") from None
+
+
 def reload(path: str | None = None) -> dict:
     """Relit la configuration et applique ce qui peut l'être. Rend
     {"applied": [clés], "restart": [clés changées non rechargeables]} ;
     lève ReloadError (rien n'a changé) si le fichier est illisible ou
-    une valeur invalide."""
+    une valeur invalide. Sous le verrou de l'écriture du fichier
+    (core/config_file.py) : une écriture de la page et sa mise à jour en
+    mémoire ne croisent pas un rechargement."""
+    with config_file.LOCK:
+        return _reload(path)
+
+
+def _reload(path: str | None = None) -> dict:
     path = path or config.CONFIG_PATH
     if config.SETUP:
         raise ReloadError("proxy en mode installation : redémarrer après "

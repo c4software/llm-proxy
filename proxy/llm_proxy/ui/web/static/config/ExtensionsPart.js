@@ -1,6 +1,7 @@
 /*
-  Configuration → Extensions (/ui/extensions, extension_routes.py ; admin,
-  ou proxy sans comptes) : les extensions de [extensions].path, un
+  Configuration → Extensions (/ui/extensions, extension_routes.py ; lue
+  par un admin, ou la page d'un proxy sans comptes ; basculée — écrite
+  dans config.toml — par un admin OIDC seulement, `writable`) : les extensions de [extensions].path, un
   sous-dossier chacune. Une extension déposée paraît ici, DÉSACTIVÉE, au
   démarrage suivant ; elle s'active et se désactive ici, À CHAUD ; ses outils, où chacun s'exécute (proxy, navigateur), où il est
   offert (api, web) et s'il est configuré. Chaque outil s'active et se
@@ -55,7 +56,10 @@ export const ExtensionsPart = {
         <template v-else>
           <p class="note">Sous-dossiers de <code>{{ data.path }}</code>, chargés au démarrage. Une extension déposée y paraît
             désactivée : l'activer met ses outils en service, la désactiver les retire tout de suite,
-            partout ; l'état est gardé.</p>
+            partout ; l'état est gardé dans config.toml.</p>
+          <p class="note" v-if="!data.writable">Sans comptes OIDC, la page n'écrit pas config.toml : une extension
+            s'active à la main, <code>[extensions.&lt;nom&gt;] active = true</code> (ou la liste de ses outils),
+            puis redémarrage.</p>
           <div class="scroll" v-if="data.extensions.length"><table>
             <thead><tr><th>Extension</th><th>Outils</th><th>État</th></tr></thead>
             <tbody>
@@ -64,8 +68,9 @@ export const ExtensionsPart = {
                 <td v-if="e.tools">
                   <div v-for="t in e.tools" :key="t.name"><code>{{ t.name }}</code> — {{ offered(t) }}<span
                        class="tag" v-if="!t.configured">non configuré</span>
-                    · <button type="button" class="btn" :class="t.enabled ? 'ghost' : ''" :disabled="busy === e.name"
-                              :aria-pressed="String(t.enabled)" @click="toggle(e, t)">{{ t.enabled ? "Désactiver" : "Activer" }}</button></div></td>
+                    <template v-if="data.writable">· <button type="button" class="btn" :class="t.enabled ? 'ghost' : ''"
+                              :disabled="busy === e.name" :aria-pressed="String(t.enabled)"
+                              @click="toggle(e, t)">{{ t.enabled ? "Désactiver" : "Activer" }}</button></template></div></td>
                 <td v-else class="err">{{ e.refused }}</td>
                 <td>{{ e.tools ? state(e) : (e.stopped ? "bloquée par la configuration" : "écartée") }}</td>
               </tr>

@@ -44,9 +44,10 @@ __all__ = ["API", "ERRORS", "Artifact", "BrowserTool", "Call", "Family", "Offer"
 
 def settings(name: str) -> dict:
     """La table [extensions.<name>] (vide si absente), ${VAR} résolus ;
-    aucune autre table de la configuration."""
+    aucune autre table de la configuration. Sans `active`, que le proxy
+    gère (l'interrupteur de la page)."""
     table = (config.get("extensions") or {}).get(name)
-    return dict(table) if isinstance(table, dict) else {}
+    return {k: v for k, v in table.items() if k != "active"} if isinstance(table, dict) else {}
 
 
 def logger(name: str) -> logging.Logger:

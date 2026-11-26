@@ -41,7 +41,7 @@ import tomllib
 from ..core import identity
 from ..access import accounts
 from ..core import config
-from . import conversations, extension_state, memories, prompt_overrides, stats
+from . import conversations, memories, stats
 
 PREFIX = "llm-proxy-"
 
@@ -52,9 +52,19 @@ def sources() -> dict[str, str]:
             "accounts.db": accounts.DB_PATH,
             "conversations.db": conversations.DB_PATH,
             "client.secret": identity.SECRET_PATH,
-            "extensions.json": extension_state.PATH,
-            "prompts.json": prompt_overrides.PATH,
             "config.toml": config.CONFIG_PATH}
+
+
+# Ce qu'une archive d'avant peut contenir en plus : restauré à côté de
+# config.toml, où le démarrage suivant le reporte dedans
+# (core/config_file.migrate).
+FORMER = ("prompts.json", "extensions.json")
+
+
+def _target(name: str) -> str:
+    if name in FORMER:
+        return os.path.join(os.path.dirname(os.path.abspath(config.CONFIG_PATH)), name)
+    return sources()[name]
 
 
 def _copy_db(src: str, dst: str) -> None:
@@ -110,7 +120,7 @@ def backup(dest: str, keep: int = 14) -> str:
 def _extract(archive: str, into: str) -> list[str]:
     with tarfile.open(archive, "r:gz") as tar:
         names = tar.getnames()
-        unknown = set(names) - set(sources())
+        unknown = set(names) - set(sources()) - set(FORMER)
         if unknown:
             raise SystemExit(f"{archive} : contenu inattendu {sorted(unknown)}")
         tar.extractall(into, filter="data")
@@ -148,16 +158,8 @@ def check(archive: str) -> bool:
                 except tomllib.TOMLDecodeError as exc:
                     ok = False
                     print(f"  config.toml : INVALIDE — {exc}")
-            elif name == "extensions.json":
-                state = extension_state.load(path)
-                ok &= state is not None
-                print(f"  extensions.json : " + (
-                    "ILLISIBLE" if state is None else f"{extension_state.active_count(state)} extension(s) activée(s)"))
-            elif name == "prompts.json":
-                changed = prompt_overrides.load(path)
-                ok &= changed is not None
-                print("  prompts.json : " + (
-                    "ILLISIBLE" if changed is None else f"{len(changed)} prompt(s) modifié(s)"))
+            elif name in FORMER:
+                print(f"  {name} : d'avant, reporté dans config.toml au démarrage suivant")
             elif name == "client.secret":
                 size = os.path.getsize(path)
                 ok &= size >= 16
@@ -177,7 +179,7 @@ def restore(archive: str, data: str | None = None) -> None:
     aside = os.path.join(home, "pre-restore-" + time.strftime("%Y%m%d-%H%M%S"))
     with tempfile.TemporaryDirectory() as tmp:
         for name in _extract(archive, tmp):
-            target = os.path.join(data, name) if data else sources()[name]
+            target = os.path.join(data, name) if data else _target(name)
             for extra in ("", "-wal", "-shm") if name.endswith(".db") else ("",):
                 if os.path.exists(target + extra):
                     os.makedirs(aside, exist_ok=True)
