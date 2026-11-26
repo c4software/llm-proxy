@@ -14,6 +14,7 @@ import time
 
 from fastapi import Request
 
+from ..core import efforts
 from ..core.settings import CATALOG_TTL, log
 from . import anthropic
 from .backends import Backend, permitted, visible
@@ -99,6 +100,22 @@ _TYPE_MODALITIES = {
     "text-embeddings-inference": (["text"], ["embeddings"]),
     "text-classification": (["text"], ["text"]),
 }
+
+
+def _announced_efforts(m: dict, b: Backend) -> list[str]:
+    """Les niveaux de réflexion qu'une entrée /v1/models annonce : ceux de
+    `meta.llamaswap.reasoning_efforts` (le bloc `metadata` d'un modèle de
+    llama-swap) ou, d'un backend Anthropic, de `reasoning_efforts` (tirés
+    de ses capabilities par anthropic.catalog_entry), parmi efforts.LEVELS ;
+    [] : aucun."""
+    meta = m.get("meta")
+    swap = meta.get("llamaswap") if isinstance(meta, dict) else None
+    got = (swap.get("reasoning_efforts") if isinstance(swap, dict) else None) \
+        or (m.get("reasoning_efforts") if b.api == "anthropic" else None)
+    if not isinstance(got, list):
+        return []
+    return list(dict.fromkeys(x.strip().lower() for x in got
+                              if isinstance(x, str) and x.strip().lower() in efforts.LEVELS))
 
 
 def _overridden(m: dict, b: Backend | None) -> bool:
@@ -207,8 +224,8 @@ async def fetch_models(b: Backend, request: Request | None = None) -> list | Non
     """Le catalogue d'UN backend, normalisé et préfixé ; None s'il ne
     répond pas. Gardé CATALOG_TTL secondes, sa réponse comme son silence,
     puis relu en arrière-plan au premier appel qui le trouve périmé (cet
-    appel-là a encore l'ancien). Met à jour b.models et b.model_types à
-    chaque lecture."""
+    appel-là a encore l'ancien). Met à jour b.models, b.model_types et
+    b.announced_efforts à chaque lecture."""
     # Sans clé, un backend du TOML lit son catalogue avec l'Authorization du
     # client (clean_headers, qui ajoute aussi ses en-têtes propres).
     headers = b.auth_headers() if b.api_key or b.api == "anthropic" or request is None \
@@ -260,12 +277,15 @@ async def _read_models(b: Backend, headers: dict) -> list | None:
     # llama.cpp) est écarté : à ne pas publier.
     entries = []
     types: dict[str, str] = {}
+    announced: dict[str, list[str]] = {}
     served = [m for m in data if isinstance(m, dict) and m.get("id") and (
         not isinstance(m.get("api"), dict) or _SERVED_APIS[b.api].intersection(m["api"]))]
     for m in served:
         costs = m.get("costs")
         kind = _model_type(m, b)
         types[str(m["id"]).lower()] = kind
+        if levels := _announced_efforts(m, b):
+            announced[str(m["id"]).lower()] = levels
         for a in m.get("aliases") or []:
             if isinstance(a, str):
                 types[a.lower()] = kind
@@ -288,6 +308,7 @@ async def _read_models(b: Backend, headers: dict) -> list | None:
     b.aliases = {a.lower(): str(m["id"]).lower() for m in served
                  for a in m.get("aliases") or [] if isinstance(a, str)}
     b.model_types = types
+    b.announced_efforts = announced
     return entries
 
 

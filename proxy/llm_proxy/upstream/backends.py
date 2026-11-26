@@ -140,6 +140,9 @@ class Backend:
         # Backend Anthropic : les `capabilities` (réflexion, effort) et la
         # sortie maximale de chaque modèle, lues avec le catalogue.
         self.model_caps: dict[str, dict] = {}
+        # id (minuscule) → niveaux de réflexion que son catalogue annonce
+        # (catalog._announced_efforts), rempli avec le catalogue.
+        self.announced_efforts: dict[str, list[str]] = {}
         self.model_max_out: dict[str, int] = {}
         # Type imposé pour des modèles de CE backend, par motif (jokers
         # shell, casse ignorée) : pour un catalogue qui ne dit pas ce que
@@ -168,11 +171,14 @@ class Backend:
     def efforts_of(self, model: str) -> list[str] | None:
         """Les niveaux de réflexion que propose `model` (sans préfixe) : ceux
         du premier motif de `model_efforts` qui le vise, lui ou le modèle
-        dont il est l'alias ; None : non dits."""
+        dont il est l'alias, sinon ceux que son catalogue annonce ; None :
+        non dits."""
         name = model.lower()
-        names = {name, self.aliases.get(name, name)}
+        real = self.aliases.get(name, name)
+        names = {name, real}
         return next((levels for p, levels in self.model_efforts.items()
-                     if any(fnmatch.fnmatchcase(n, p) for n in names)), None)
+                     if any(fnmatch.fnmatchcase(n, p) for n in names)),
+                    self.announced_efforts.get(real))
 
     @staticmethod
     def _tool_choice(value) -> str | None:

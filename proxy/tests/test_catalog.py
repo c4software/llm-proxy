@@ -68,6 +68,24 @@ def test_silence_kept_then_retried(monkeypatch):
     assert b.calls == 2
 
 
+def test_niveaux_de_reflexion_annonces_ou_declares():
+    """Les niveaux de réflexion d'un modèle : ceux que son catalogue
+    annonce (le bloc `metadata` de llama-swap, meta.llamaswap.
+    reasoning_efforts), filtrés aux niveaux connus ; un motif de
+    `model_efforts` l'emporte ; ni l'un ni l'autre : non dits. Un alias suit
+    son modèle."""
+    data = [
+        {"id": "qwen", "aliases": ["q"], "meta": {"llamaswap": {
+            "type": "model", "reasoning_efforts": ["none", "LOW", "fort", "xhigh"]}}},
+        {"id": "deepseek", "meta": {"llamaswap": {"reasoning_efforts": ["none", "max"]}}},
+        {"id": "brut"},
+    ]
+    b = serving(data, model_efforts={"deep*": ["low", "high"]})
+    asyncio.run(catalog.fetch_models(b))
+    assert [b.efforts_of(m) for m in ("qwen", "Q", "deepseek", "brut")] == [
+        ["none", "low", "xhigh"], ["none", "low", "xhigh"], ["low", "high"], None]
+
+
 def test_architecture_a_la_forme_d_openrouter():
     """Chaque entrée porte `architecture` (forme d'OpenRouter et de
     llama.cpp) : celle du backend telle quelle, sinon déduite du type —

@@ -265,7 +265,7 @@ export default BackendsPart;
                    placeholder="minimal=low, medium=high, xhigh=high"></label>
           <label>Niveaux des modèles <span class="dim">(ceux que propose le catalogue de Codex
             (Clients) : un motif par ligne, puis ses niveaux ; le premier motif qui vise un modèle
-            l'emporte ; sans motif : low, medium, high)</span>
+            l'emporte ; sans motif : ceux que son catalogue annonce, à défaut low, medium, high)</span>
             <textarea v-model="form.modelEffortsText" rows="2" spellcheck="false"
                       placeholder="qwen3.8-* none low medium high xhigh"></textarea></label>
           <label>En-têtes <span class="dim">(un par ligne, « Nom: valeur », ajoutés à chaque requête ;

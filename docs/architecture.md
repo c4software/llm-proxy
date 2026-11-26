@@ -193,7 +193,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `upstream/anthropic.py` | Le backend Anthropic natif (`api = "anthropic"`) : chat/completions ↔ Messages, flux compris |
 | `upstream/openai.py` | La réponse de chat d'un backend `openai` dont le `content` est une liste de morceaux (Mistral) ramenée à une chaîne et à `reasoning_content` (`normalize`, `Upstream`) ; l'enveloppe des adaptateurs de réponse (`Adapted`) |
 | `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), le corps ajusté au backend (`inject_tool_choice`, `cap_max_tokens`, `fit_fields`), `forward`, `relay`, `drain` |
-| `upstream/catalog.py` | Catalogue fusionné et préfixé (servi par `/v1/models`), type et contexte de chaque modèle |
+| `upstream/catalog.py` | Catalogue fusionné et préfixé (servi par `/v1/models`), type, contexte et niveaux de réflexion annoncés (`_announced_efforts`) de chaque modèle |
 
 ### `surfaces/` : les API de conversation
 

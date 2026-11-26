@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from llm_proxy import app
 from llm_proxy.access import auth
-from llm_proxy.upstream import anthropic, catalog
+from llm_proxy.upstream import anthropic, backends, catalog
 
 CAPS = {"image_input": {"supported": True},
         "thinking": {"supported": True, "types": {"adaptive": {"supported": True}}},
@@ -119,13 +119,18 @@ def test_requete_sans_capabilities():
 
 
 def test_catalogue(claude):
-    """Les modèles d'Anthropic préfixés, avec contexte et modalités."""
+    """Les modèles d'Anthropic préfixés, avec contexte et modalités ; les
+    efforts que chacun accepte (capabilities.effort) sont ses niveaux de
+    réflexion annoncés."""
     data = {m["id"]: m for m in claude.client.get("/v1/models").json()["data"]}
     opus = data["claude/claude-opus-5-5"]
     assert opus["max_context_length"] == 1000000
     assert opus["type"] == "image-text-to-text"
     assert opus["architecture"]["modality"] == "text+image->text"
     assert opus["owned_by"] == "anthropic"
+    b = backends.BACKENDS["claude"]
+    assert b.efforts_of("claude-opus-5-5") == ["low", "high", "max"]
+    assert b.efforts_of("claude-haiku-4-5") is None
 
 
 def test_reponse_et_reflexion_rejouee(claude):

@@ -803,8 +803,9 @@ max_per_user = 10
 #   none = ""
 #   model_efforts — les niveaux de réflexion que proposent ses modèles
 #     (catalogue de Codex de la page), par motif sans préfixe (jokers, casse
-#     ignorée), le premier qui vise un modèle l'emporte (absent : low,
-#     medium, high) :
+#     ignorée), le premier qui vise un modèle l'emporte ; absent : ceux que
+#     le catalogue annonce (metadata.reasoning_efforts de llama-swap, efforts
+#     acceptés d'un modèle Anthropic), sinon low, medium, high :
 #   [backends.bigchuck.model_efforts]
 #   "qwen3.8-*" = ["none", "low", "medium", "high", "xhigh"]
 #   "deepseek-*" = ["none", "low", "high", "max"]

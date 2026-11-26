@@ -505,12 +505,17 @@ def catalog_entry(m: dict) -> dict:
     OpenCode Zen) gardé, le catalogue y lit si Messages le sert."""
     caps = m.get("capabilities") if isinstance(m.get("capabilities"), dict) else {}
     images = bool((caps.get("image_input") or {}).get("supported", True))
+    # Les efforts que le modèle accepte (capabilities.effort) : ceux que
+    # le catalogue annonce (reasoning_efforts).
+    effort = caps.get("effort") if isinstance(caps.get("effort"), dict) else {}
+    efforts = [e for e in EFFORTS if (effort.get(e) or {}).get("supported")]
     return {"id": m.get("id"), "created": _created(m.get("created_at")),
             "owned_by": "anthropic",
             "type": "image-text-to-text" if images else "text-generation",
             "architecture": {"input_modalities": ["text", "image"] if images else ["text"],
                              "output_modalities": ["text"]},
             "max_context_length": m.get("max_input_tokens"),
+            **({"reasoning_efforts": efforts} if efforts else {}),
             **({"api": m["api"]} if isinstance(m.get("api"), dict) else {})}
 
 
