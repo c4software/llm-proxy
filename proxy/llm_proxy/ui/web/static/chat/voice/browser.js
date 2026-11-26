@@ -7,6 +7,8 @@
   longue énonciation est coupée au bout de quelques secondes par
   certaines voix (celles de Google, sous Chrome).
 */
+import * as Vue from "vue";
+import * as VueUse from "@vueuse/core";
 import { state } from "./state.js";
 import { sentences } from "./text.js";
 

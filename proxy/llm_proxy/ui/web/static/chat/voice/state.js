@@ -3,4 +3,5 @@
 // identifiant (« msg:<id> », « tool:<ref> », « try:… »), ou «» ;
 // `loading` pendant la synthèse du premier passage (moteur du proxy) ;
 // `error` : celle de la dernière lecture `errorId`.
+import * as Vue from "vue";
 export const state = Vue.reactive({ id: "", loading: false, error: "", errorId: "" });

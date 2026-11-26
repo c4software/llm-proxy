@@ -39,6 +39,7 @@
   la fermeture du panneau. Le reste du système repart propre à chaque
   démarrage : c'est l'état du build, repris en ≈ 1,5 s.
 */
+import * as Vue from "vue";
 import * as sqlbase from "./sqlbase.js";
 import { vendorFetch } from "./vendor.js";
 
@@ -58,8 +59,8 @@ const resize = (cols, rows) => vm && vm.exec("stty -F /dev/ttyS0 rows " + (rows 
 onmessage = async ({ data: d }) => {
   if (d.op === "start") {
     try {
-      const { V86 } = await import(blob(d.files.v86js));
-      const { createVM } = await import(blob(d.files.vmjs));
+      const { V86 } = await import(/* @vite-ignore */ blob(d.files.v86js));
+      const { createVM } = await import(/* @vite-ignore */ blob(d.files.vmjs));
       if (d.network && !d.relay) {
         // Les requêtes de l'invité (http://, port 80) partent en https : une
         // page https refuse le http, et la plupart des sites y redirigent.
@@ -119,7 +120,7 @@ onmessage = async (e) => {
     const style = document.createElement("style");
     style.textContent = d.xterm.css + "html, body { background: " + d.theme.background + "; }";
     document.head.append(style);
-    const X = await import(URL.createObjectURL(new Blob([d.xterm.js], { type: "text/javascript" })));
+    const X = await import(/* @vite-ignore */ URL.createObjectURL(new Blob([d.xterm.js], { type: "text/javascript" })));
     term = new X.Terminal({ fontFamily: d.font, fontSize: 13, theme: d.theme, cursorBlink: true, scrollback: 5000 });
     fit = new X.FitAddon();
     term.loadAddon(fit);

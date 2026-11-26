@@ -2,7 +2,7 @@
 // (driver, ici sous Node à la place du Worker du bac) et le pont de la
 // page vers les outils hébergés (bridge) — liste, budget, concurrence.
 import "./setup.mjs";
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 const { driver, bridge, send, statusCode, MAX_REFUSED } = await import("../../llm_proxy/ui/web/static/chat/tools/sandbox/programs.js");

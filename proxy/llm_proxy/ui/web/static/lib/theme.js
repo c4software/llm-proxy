@@ -8,6 +8,8 @@
   pose l'attribut avant le premier rendu (script en tête de page) : pas
   d'éclair de l'autre thème au chargement.
 */
+import * as Vue from "vue";
+import * as VueUse from "@vueuse/core";
 const { computed, watch } = Vue;
 
 const THEME_KEY = "llm-proxy-theme";

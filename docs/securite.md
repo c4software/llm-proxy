@@ -161,11 +161,11 @@ obtenir de privilèges supplémentaires.
 - **En-têtes** de `/ui` : `X-Frame-Options: SAMEORIGIN` (pas de cadrage
   par un autre site), `X-Content-Type-Options: nosniff` et
   `Referrer-Policy: same-origin`. Il n'y a pas de
-  `Content-Security-Policy` : Vue, en build global, compile ses gabarits
-  à la volée. De plus, les cadres `srcdoc` (artifacts, bacs, VM Linux)
-  héritent de la politique de la page. Une directive `script-src` stricte
-  bloquerait leur code en ligne. Chaque cadre définit sa propre politique
-  au début de son document.
+  `Content-Security-Policy` : la page compile à la volée le gabarit d'un
+  composant d'extension. De plus, les cadres `srcdoc` (artifacts, bacs,
+  VM Linux) héritent de la politique de la page. Une directive
+  `script-src` stricte bloquerait leur code en ligne. Chaque cadre définit
+  sa propre politique au début de son document.
 - **Markdown** : tout le texte est échappé avant l'analyse. Le caractère
   NUL, jeton interne du rendu, est retiré à l'entrée et refusé dans une
   URL. Les images d'un autre site ne sont chargées qu'au clic

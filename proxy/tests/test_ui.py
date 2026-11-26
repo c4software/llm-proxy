@@ -14,7 +14,7 @@ from fakes import (ANSWER_TURN, FakeUpstream, chunk, search_then_answer,
 from llm_proxy.core import identity
 from llm_proxy.access import auth
 from llm_proxy.upstream import catalog, relaying
-from llm_proxy.ui import dashboard, page_tools, static_files, usage_api
+from llm_proxy.ui import dashboard, page_tools, usage_api
 from llm_proxy.surfaces import chat_api as C
 from llm_proxy.upstream import backends
 from llm_proxy.access import oidc
@@ -33,7 +33,7 @@ def test_page_opens_without_key_and_session_asks_for_one(ui):
     """La page et ses fichiers se servent sans clé (c'est elle qui la
     demande) ; ce qu'elle lit, non."""
     assert ui.client.get("/ui").status_code == 200
-    assert ui.client.get("/ui/static/dashboard.css").status_code == 200
+    assert ui.client.get("/ui/static/assets/index-abc123.css").status_code == 200
     assert ui.client.get("/ui/session").status_code == 401
     assert ui.client.get("/ui/usage?start_time=0").status_code == 401
 
@@ -46,11 +46,15 @@ def test_page_refuses_framing_and_sniffing_without_a_csp(ui):
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["referrer-policy"] == "same-origin"
     assert "content-security-policy" not in r.headers
+    # L'application n'est servie que là, avec ses en-têtes : pas sous
+    # /ui/static (le index.html du build), où elle serait encadrable.
+    for path in ("/ui/static/index.html", "/ui/static/assets/%2e%2e/index.html"):
+        assert ui.client.get(path).status_code == 404, path
 
 
 def test_unchanged_static_file_is_revalidated_without_its_content(ui):
-    """Un fichier sans préfixe versionné (les runtimes WASM) : son ETag
-    inchangé rend 304, vide."""
+    """Un fichier sans empreinte dans son nom (icônes, manifeste, runtimes
+    WASM) : son ETag inchangé rend 304, vide."""
     r = ui.client.get("/ui/static/icon.svg")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
     again = ui.client.get("/ui/static/icon.svg",
@@ -60,34 +64,34 @@ def test_unchanged_static_file_is_revalidated_without_its_content(ui):
                          headers={"If-None-Match": '"autre"'}).status_code == 200
 
 
-def test_static_files_carry_a_version_in_their_url():
-    """Gabarit et script vont ensemble : leurs URL portent une empreinte,
-    pour qu'un navigateur ne marie pas le nouveau gabarit à l'ancien script
-    resté en cache (page blanche), et la page elle-même n'est pas gardée."""
-    r = TestClient(A.app).get("/ui")
-    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
-    for name in ("app.js", "dashboard.css", "vue.global.prod.js"):
-        assert f'/ui/static/v/{static_files.VERSION}/{name}"' in r.text, name
+def test_the_page_is_the_build_and_its_assets_are_kept_a_year(page_build):
+    """La page est le index.html du build, tel quel, jamais gardée : c'est
+    elle qui porte les noms à empreinte de ses fichiers (Vite), gardés un an.
+    Les runtimes de vendor/ sont servis à part ; rien hors des deux."""
+    (page_build.parent / "secret.txt").write_text("non", encoding="utf-8")
     c = TestClient(A.app)
-    got = c.get(f"/ui/static/v/{static_files.VERSION}/chat/ChatPanel.js")
+    r = c.get("/ui")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    assert r.text == (page_build / "index.html").read_text(encoding="utf-8")
+    got = c.get("/ui/static/assets/index-abc123.js")
     assert got.status_code == 200 and "immutable" in got.headers["cache-control"]
-    # Une empreinte périmée : servie, mais pas gardée ; hors de static : 404.
-    assert c.get("/ui/static/v/0/app.js").headers["cache-control"] == "no-cache"
-    assert c.get("/ui/static/icon.svg").headers["cache-control"] == "no-cache"
-    assert c.get("/ui/static/v/0/../../dashboard.py").status_code == 404
+    vendor = c.get("/ui/static/vendor/versions.json")
+    assert vendor.status_code == 200 and vendor.headers["cache-control"] == "no-cache"
+    # Gardé un an : ce qui est VRAIMENT sous assets/, pas ce que dit le chemin.
+    icon = c.get("/ui/static/assets/%2e%2e/icon.svg")
+    assert icon.status_code == 200 and icon.headers["cache-control"] == "no-cache"
+    for path in ("/ui/static/..%2Fsecret.txt", "/ui/static/vendor/..%2Fsecret.txt",
+                 "/ui/static/assets/absent.js"):
+        assert c.get(path).status_code == 404, path
 
 
-def test_the_page_preloads_the_modules_app_js_imports():
-    """Les modules qu'importe app.js, de proche en proche, sont annoncés
-    (modulepreload) avant lui ; la configuration et les statistiques, lues
-    à leur ouverture (import dynamique), n'en sont pas."""
-    html = TestClient(A.app).get("/ui").text
-    pre = f'<link rel="modulepreload" href="/ui/static/v/{static_files.VERSION}/'
-    for name in ("app.js", "chat/store.js", "chat/ChatPanel.js", "lib/http.js"):
-        assert pre + name + '">' in html, name
-    assert "config/ConfigPanel.js" not in static_files.MODULES
-    assert "stats/StatsView.js" not in static_files.MODULES
-    assert html.index(pre) < html.index('<script type="module"')
+def test_without_a_build_the_page_says_how_to_build_it(page_build):
+    """Installé depuis les sources sans `npm run build` : /ui le dit (503),
+    au lieu d'une page vide."""
+    (page_build / "index.html").unlink()
+    r = TestClient(A.app).get("/ui")
+    assert r.status_code == 503 and "npm run build" in r.text
+    assert r.headers["cache-control"] == "no-cache"
 
 
 def test_installable_app_is_served_without_key(ui):

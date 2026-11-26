@@ -1,5 +1,5 @@
 /*
-  Les fournisseurs connus : la page d'installation (SetupPanel.js) et
+  Les fournisseurs connus : la page d'installation (SetupPanel.vue) et
   Configuration → Proxy, section Backends. Un choix remplit le nom
   (préfixe des modèles), l'URL, la variable de la clé et le protocole
   (`api`, OpenAI par défaut) ;

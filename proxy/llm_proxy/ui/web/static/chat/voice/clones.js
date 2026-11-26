@@ -12,6 +12,7 @@
     wav(id)         la référence (Blob), lue une fois puis gardée en mémoire
     reference(id)   {audio: base64, text} pour /v1/audio/speech, gardé en mémoire
 */
+import * as Vue from "vue";
 import { base64 } from "./audio.js";
 import { call } from "../../lib/http.js";
 

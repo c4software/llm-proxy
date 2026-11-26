@@ -1,10 +1,12 @@
 // @ts-check
 /*
-  VueUse (vueuse.iife.min.js, chargé après Vue) pour les outils de
-  l'appareil : ses composables, créés UNE fois, dans une portée détachée
-  — ils vivent autant que la page, hors de tout composant. Chacun dit
-  s'il est pris en charge (`isSupported`), ce que lisent les familles.
+  VueUse (@vueuse/core) pour les outils de l'appareil : ses composables,
+  créés UNE fois, dans une portée détachée — ils vivent autant que la
+  page, hors de tout composant. Chacun dit s'il est pris en charge
+  (`isSupported`), ce que lisent les familles.
 */
+import * as Vue from "vue";
+import * as VueUse from "@vueuse/core";
 const scope = Vue.effectScope(true);
 
 /** Un composable créé dans la portée des outils.

@@ -4,6 +4,7 @@
   liste pour rattacher une clé du TOML, le sélecteur de parties le nombre
   de comptes en attente).
 */
+import * as Vue from "vue";
 import { call } from "../lib/http.js";
 import { catalog, catalogState } from "../lib/catalog.js";
 

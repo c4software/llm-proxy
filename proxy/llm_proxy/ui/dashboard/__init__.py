@@ -17,7 +17,6 @@ Rangé en parties :
 from .page import (  # noqa: F401
     UI_CHAT,
     UI_CHAT_MODEL,
-    UI_HTML,
     router,
 )
 from .accounts import (  # noqa: F401

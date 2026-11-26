@@ -2,7 +2,7 @@
 // d'outils (chat/turn.js) : la règle « ajout seul » — une requête commence
 // exactement comme la précédente.
 import "./setup.mjs";
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 const { apiContent, apiMessages, requestTools } = await import("../../llm_proxy/ui/web/static/chat/api.js");

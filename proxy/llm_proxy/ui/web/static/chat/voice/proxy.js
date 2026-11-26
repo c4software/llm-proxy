@@ -9,7 +9,7 @@
     custom    voix toutes faites (GET /ui/audio/voices), ton réglable
     clone     lit avec la voix d'un enregistrement (clones.js)
     design    invente une voix d'après une description : sert à FABRIQUER
-              une référence (VoiceStudio.js), pas à lire — il en
+              une référence (VoiceStudio.vue), pas à lire — il en
               inventerait une nouvelle à chaque passage
 
   La lecture se fait par passages (text.js) : le premier court, pour
@@ -18,6 +18,7 @@
   bascule de modèle répond `backend_offline` le temps du chargement :
   réessayé quelques fois.
 */
+import * as Vue from "vue";
 import { catalogState } from "../../lib/catalog.js";
 import { state } from "./state.js";
 import { sentences } from "./text.js";

@@ -6,8 +6,8 @@ quatre vues : *Statistiques*, *Usage*, [*Chat*](chat.md) et
 d'accès dépend de la configuration : accès sans clé si `proxy.api_keys`
 n'est pas défini, accès par une [clé](#connexion-par-clé) sinon, ou accès
 par des [comptes OIDC](#comptes-oidc) si `[oidc]` est configuré. La page
-n'utilise aucun CDN et ne nécessite pas de compilation : la bibliothèque
-Vue 3 est embarquée.
+n'utilise aucun CDN : elle est construite par Vite (Vue 3) et servie par le
+proxy, l'image la construit elle-même ([Architecture](architecture.md)).
 
 ## Navigation
 

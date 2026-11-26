@@ -1,6 +1,6 @@
 // Les prompts de la page (web/static/lib/prompts.js) : les gabarits du
 // catalogue du proxy, remplis par la page avec la même syntaxe que lui.
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { install, prompt } from "../../llm_proxy/ui/web/static/lib/prompts.js";
 import { PAGE_PROMPTS } from "./setup.mjs";

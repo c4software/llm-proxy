@@ -1,6 +1,6 @@
 // Le rendu Markdown du chat (web/static/lib/markdown.js) : sûr par
 // construction, même face à du texte conçu pour le tromper.
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { Markdown } from "../../llm_proxy/ui/web/static/lib/markdown.js";
 

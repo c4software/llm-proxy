@@ -14,6 +14,8 @@
                            la lecture
     refreshCatalog()       relit (le bouton de la liste)
 */
+import * as Vue from "vue";
+import * as VueUse from "@vueuse/core";
 import { call } from "./http.js";
 
 const { reactive } = Vue;

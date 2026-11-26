@@ -7,9 +7,19 @@
 FROM node:24-slim AS wasm
 WORKDIR /wasm
 COPY proxy/wasm/package.json proxy/wasm/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+# La libc de l'image (Debian : glibc) dite à npm : sa détection échoue par
+# moments dans un build, et npm saute alors les paquets natifs optionnels
+# (le binaire de rolldown, que Vite exige).
+RUN npm ci --no-audit --no-fund --libc=glibc
 COPY proxy/wasm/build.mjs proxy/wasm/php.js proxy/wasm/sql.js proxy/wasm/pglite.js proxy/wasm/chart.js proxy/wasm/sucrase.js proxy/wasm/typescript.js proxy/wasm/xterm.js proxy/wasm/highlight.js ./
 RUN node build.mjs /vendor
+
+# La PAGE (web/static, composants .vue) construite par Vite → /llm_proxy/ui/web/dist.
+# Une étape à part : changer la page ne reconstruit ni vendor/ ni la VM Linux.
+FROM wasm AS page
+COPY proxy/wasm/vite.config.mjs ./
+COPY proxy/llm_proxy/ui/web/static/ /llm_proxy/ui/web/static/
+RUN npx vite build
 
 # La VM LINUX du navigateur (run_shell, panneau Terminal ; docs/linux.md) :
 # Alpine i386 — v86 émule un PC x86 32 bits — dont tout le système tient
@@ -93,6 +103,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY proxy/main.py .
 COPY proxy/llm_proxy/ llm_proxy/
 COPY --from=linux /vendor/ llm_proxy/ui/web/static/vendor/
+COPY --from=page /llm_proxy/ui/web/dist/ llm_proxy/ui/web/dist/
 # Le modèle documenté seul : data/ est un volume ; sans config.toml, le
 # proxy démarre en mode installation (/ui la génère).
 COPY data/config.example.toml data/

@@ -17,7 +17,7 @@ llm-proxy/
 │               config.example.toml, le modèle
 ├── docs/       la documentation et ses captures
 ├── proxy/      le proxy : Dockerfile, requirements*.txt, main.py, llm_proxy/, tests/,
-│               wasm/ (l'outillage Node de la page : runtimes des bacs, vérification des types),
+│               wasm/ (l'outillage Node de la page : build Vite, tests, types, runtimes des bacs),
 │               linux/ (la VM Linux du navigateur : invité Alpine, pilote, état démarré)
 ├── services/   les services tiers de la pile
 │   ├── executor/   l'exécuteur de code : Dockerfile, executor/, sandbox/, tests/
@@ -28,12 +28,19 @@ llm-proxy/
 Commandes de développement :
 
 - `proxy/` : `pytest`, `uvicorn main:app` ;
-- `proxy/wasm/` : `npm ci && npm run build`, qui écrit les runtimes des
-  bacs dans `llm_proxy/ui/web/static/vendor/` (non versionné ; l'image le fait
-  elle-même), et `npm run check`, qui vérifie les types du code de la
-  page (fichiers en `// @ts-check`), le registre de ses outils et les
-  tests Node de sa logique (`wasm/tests/`, `node --test`) — aussi
-  lancés par pytest ;
+- `proxy/wasm/` :
+  - `npm ci && npm run build` écrit les runtimes des bacs dans
+    `llm_proxy/ui/web/static/vendor/`, puis construit la page (Vite) dans
+    `llm_proxy/ui/web/dist/`, que le proxy sert ; tous deux non versionnés,
+    l'image les construit elle-même ;
+  - `npm run dev` sert la page sur `http://localhost:5173/ui/static/`, avec
+    rechargement à chaud des `.vue`, et relaie le reste (`/ui/…`, `/v1/…`,
+    `/hooks/…`, `/healthz`) au proxy local (`LLM_PROXY_URL`,
+    `http://127.0.0.1:8000` par défaut) ;
+  - `npm run check` vérifie les types du code de la page (vue-tsc, fichiers
+    en `// @ts-check`), le registre de ses outils, ses tests (Vitest,
+    `wasm/tests/`) et son build, dans un dossier temporaire — aussi lancé
+    par pytest ;
 - `proxy/linux/build.sh` : la VM Linux du navigateur, par Docker, dans
   `vendor/linux/` (voir [La VM Linux](linux.md)) ;
 - `services/executor/` : `pytest` ;
@@ -254,7 +261,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | Fichier | Rôle |
 |---|---|
 | `ui/dashboard/` | Routes `/ui/*` : entrée, session, comptes et clés, chat, mémoire. Paquet : `page`, `accounts`, `chat`, `memory`, sur un routeur commun |
-| `ui/static_files.py` | Fichiers de la page sous un chemin versionné (`/ui/static/v/<empreinte>/…`, gardés un an) |
+| `ui/static_files.py` | Les fichiers de la page : le build de Vite (`web/dist/`, ses `assets/` à empreinte gardés un an) et `vendor/` sous `/ui/static/` ; `/ui` sert `dist/index.html`, une page d'erreur sans build |
 | `ui/conversation_routes.py` | `/ui/conversations`, `/ui/assets` : l'historique du chat (`storage/conversations.py`) |
 | `ui/config_view.py` | La configuration effective pour la page (secrets masqués), le formulaire, la vérification d'un TOML modifié, son enregistrement (`/ui/config/save`, par `core/config_file.py`) et le rechargement |
 | `ui/usage_api.py` | L'Usage API (`/v1/organization/usage/*`) et ce qu'une page connectée en voit |
@@ -271,8 +278,8 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |
 | `ui/webhook_turn.py` | Le tour d'un message reçu, sans navigateur : la conversation, le seul message reçu et le prompt système envoyés au modèle, `/ui/chat/completions` appelé en interne au nom du créateur, les envois sortants |
 | `ui/dataurl.py` | Lecture des URL `data:` envoyées par la page (images, audio) |
-| `ui/web/templates/index.html` | Squelette de la page |
-| `ui/web/static/` | Modules ES par domaine : `app.js` (session, vues, menu), `stats/` (Statistiques, Usage), `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, prompts, thème), plus `dashboard.css`, `vue.global.prod.js` et `vueuse.iife.min.js` (VueUse 15, ses modules `shared` et `core`) |
-| `ui/web/static/chat/` | `ChatPanel.js`, `api.js` (les messages envoyés au modèle, règle « ajout seul »), `turn.js` (les étapes d'un tour), `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage ; pour un projet, l'aperçu d'un HTML avec le CSS et le JS du projet mis en ligne, la source colorée d'un fichier, l'archive `.zip`), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.js`, `LinuxPanel.js` (le terminal de la VM Linux), `SidePanel.js` (leur panneau commun : largeur, Large, Réseau), `voice/` (la voix : moteurs navigateur et proxy, voix clonées et leur studio, normalisation de la référence, transcription des modèles ASR), `notify.js` |
+| `ui/web/static/` | Les sources de la page, racine de Vite (`proxy/wasm/vite.config.mjs`) : `index.html` (l'entrée), `main.js` (monte l'application, enregistre le chat et la mémoire), `App.vue` (session, vues, menu), composants `.vue` et modules ES par domaine — `stats/` (Statistiques, Usage), `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, prompts, thème) —, `dashboard.css`, `public/` (manifeste, icônes, copiés tels quels). Vue 3 (avec son compilateur de gabarits, pour les cartes des extensions) et VueUse 15 sont des imports (`vue`, `@vueuse/core`) |
+| `ui/web/dist/` | Le build de la page (`npm run build`), non versionné |
+| `ui/web/static/chat/` | `ChatPanel.vue`, `api.js` (les messages envoyés au modèle, règle « ajout seul »), `turn.js` (les étapes d'un tour), `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage ; pour un projet, l'aperçu d'un HTML avec le CSS et le JS du projet mis en ligne, la source colorée d'un fichier, l'archive `.zip`), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.vue`, `LinuxPanel.vue` (le terminal de la VM Linux), `SidePanel.vue` (leur panneau commun : largeur, Large, Réseau), `voice/` (la voix : moteurs navigateur et proxy, voix clonées et leur studio, normalisation de la référence, transcription des modèles ASR), `notify.js` |
 | `ui/web/static/chat/tools/` | L'exécution des outils du navigateur (leurs déclarations : `tools/page/` du proxy) : `contract.js` (les listes `TOOL` et `FAMILY`, l'interface `PageTool`), `index.js` (le registre, qui vérifie chaque outil au chargement et y installe les déclarations de `/ui/session`, et les modules des extensions), `page/` (questions, fichiers, artifacts, dossier), `device/` (l'appareil ; `vueuse.js`, les composables VueUse des outils ; `media.js`, les flux), `sandbox/` (`bac.js`, le bac commun ; `files.js` ; `javascript.js`, `typescript.js`, `php.js`, `sql.js`, `postgres.js`, `sqlbase.js`, `tables.js` ; `linux.js` et `linuxvm.js`, la VM Linux ; `programs.js`, les programmes d'outils, dont les `tools.x()` passent par la page et `/ui/tools`) ; `text.js`, lire, chercher et retoucher un texte (artifacts et fichiers de la VM). Voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page) |
 | `ui/web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js), `html-to-image.js` (la capture d'un artifact), `highlight.js` (la coloration d'un artifact de code), `sucrase.js`, `typescript.js` (le compilateur TypeScript 6 et ses `lib.*.d.ts`), `pglite.*` et `initdb.wasm` (PostgreSQL, PGlite), `xterm.*` (le terminal) ; `linux/`, la VM Linux, construite par `proxy/linux/build.sh` |

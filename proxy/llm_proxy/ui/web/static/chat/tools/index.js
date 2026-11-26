@@ -55,6 +55,7 @@
   `check-tools.mjs` (proxy/wasm, que pytest lance avec les déclarations du
   proxy) vérifie les deux côtés ensemble.
 */
+import * as Vue from "vue";
 import { TOOL, FAMILY, PageTool, MEMBERS, defineFamily, failure, refused, REFUSE, clip, oneLine,
          reasonOf } from "./contract.js";
 import * as ask from "./page/ask.js";
@@ -189,9 +190,11 @@ function check(families, into, native) {
 // ── l'installation : les déclarations du proxy sur l'exécution ──────────
 
 /** Ce que reçoit le module d'une extension : de quoi écrire ses outils
- * sans chemin d'import (les adresses de la page sont versionnées). */
+ * sans chemin d'import (les fichiers de la page ont une empreinte dans
+ * leur nom) ; `Vue`, le module, pour la réactivité et le composant d'une
+ * carte (son `template` texte est compilé dans la page). */
 export const EXT = Object.freeze({ PageTool, defineFamily, failure, refused, REFUSE, clip, oneLine,
-                                   reasonOf });
+                                   reasonOf, Vue });
 
 /**
  * Les déclarations de /ui/session (`chat.page`).
@@ -248,7 +251,7 @@ export function install(page, extra = []) {
  * @param {Declarations | null | undefined} page
  * @param {(url: string) => Promise<any>} [load] @returns {Promise<string[]>} */
 let generation = 0;
-export async function installAll(page, load = (url) => import(url)) {
+export async function installAll(page, load = (url) => import(/* @vite-ignore */ url)) {
   // Une installation plus récente gagne : celle-ci, si elle finit après,
   // n'installe rien (ses modules restent connus, KNOWN).
   const mine = ++generation;

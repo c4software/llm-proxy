@@ -4,7 +4,7 @@
 // (installAll). Les déclarations sont écrites ici à la main, à la forme de
 // ui/page_tools.py.
 import "./setup.mjs";
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 const tools = await import("../../llm_proxy/ui/web/static/chat/tools/index.js");

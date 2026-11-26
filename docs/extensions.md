@@ -216,7 +216,10 @@ export default function (ext) {
 ```
 
 - `ext` donne `PageTool`, `defineFamily`, `failure`, `refused`, `REFUSE`,
-  `clip`, `oneLine`, `reasonOf` : le module n'importe rien de la page.
+  `clip`, `oneLine`, `reasonOf` et `Vue` (le module de Vue 3, pour la
+  réactivité et le composant d'une carte, dont le `template` texte est
+  compilé dans la page) : le module n'importe rien de la page. La page n'a
+  pas de `Vue` global : une extension passe par `ext.Vue`.
 - Chaque outil suit l'interface des outils de la page
   ([`PageTool`](navigateur.md#lexécution--pagetool)) : `run`, ou une
   carte. Ses `settings` déclarés sont dans `this.settings`.

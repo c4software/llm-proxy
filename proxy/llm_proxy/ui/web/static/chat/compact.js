@@ -5,7 +5,7 @@
 
   Un résumé est un message de la conversation, `role: "summary"` : ce qui
   le précède reste affiché, mais ne part plus au modèle ; le résumé part à
-  sa place, à la suite du prompt système (apiMessages, ChatPanel.js). Le
+  sa place, à la suite du prompt système (apiMessages, ChatPanel.vue). Le
   retirer (« Annuler le résumé ») rend tout l'historique.
 
     start(conv, upto)      l'indice du premier message envoyé : après le

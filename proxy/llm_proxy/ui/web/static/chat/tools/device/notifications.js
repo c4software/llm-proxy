@@ -5,6 +5,7 @@
 // Chaque notification laisse une CARTE DURABLE : un rappel programmé
 // s'annule ; perdu par un rechargement, il se reprogramme ; passé, il se
 // renvoie.
+import * as Vue from "vue";
 import { TOOL, FAMILY, PageTool, defineFamily, refused, failure } from "../contract.js";
 import { show } from "../../notify.js";
 

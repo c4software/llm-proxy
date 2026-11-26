@@ -1,6 +1,7 @@
 /*
   Copier et télécharger un texte produit par la page.
 */
+import * as Vue from "vue";
 const { ref } = Vue;
 
 // `copied` : le nom du dernier fichier copié, le temps d'afficher « Copié ».

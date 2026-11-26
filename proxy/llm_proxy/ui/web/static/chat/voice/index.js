@@ -6,13 +6,15 @@
     browser.js    la synthèse du NAVIGATEUR : tout de suite, sans modèle
     proxy.js      un MODÈLE DE SYNTHÈSE du proxy (Qwen3-TTS) : ses voix
                   toutes faites, ou une voix CLONÉE du compte
-                  (clones.js), créée dans VoiceStudio.js — enregistrée au
+                  (clones.js), créée dans VoiceStudio.vue — enregistrée au
                   micro, d'un fichier, ou conçue d'après une description,
                   normalisée dans la page (audio.js)
 
   Une lecture à la fois (state.js) : en lancer une autre arrête la
   précédente. Les réglages (`prefs`) restent dans ce navigateur.
 */
+import * as Vue from "vue";
+import * as VueUse from "@vueuse/core";
 import * as browser from "./browser.js";
 import * as proxy from "./proxy.js";
 import * as clones from "./clones.js";

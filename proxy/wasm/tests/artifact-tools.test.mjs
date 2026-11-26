@@ -4,13 +4,14 @@
 // fichier. Les bornes viennent des `settings` de la déclaration (côté
 // proxy) : le test en donne de petites.
 import "./setup.mjs";
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
+import * as Vue from "vue";
 
 const { FAMILIES } = await import("../../llm_proxy/ui/web/static/chat/tools/page/artifacts.js");
 const bridge = await import("../../llm_proxy/ui/web/static/chat/artifact-bridge.js");
 const { entryOf } = await import("../../llm_proxy/ui/web/static/chat/artifacts.js");
-const { ArtifactPanel } = await import("../../llm_proxy/ui/web/static/chat/ArtifactPanel.js");
+const { default: ArtifactPanel } = await import("../../llm_proxy/ui/web/static/chat/ArtifactPanel.vue");
 
 const SETTINGS = { types: ["html", "markdown", "svg", "mermaid", "code", "project"],
                    max_chars: 200, max_files: 3, slice_lines: 50, max_slice: 200, context: 1, max_context: 5 };

@@ -12,6 +12,8 @@
     await rec.start((blob) => …);   // WebM ou Ogg : audio.js le lit
     rec.state.level, rec.state.seconds ; rec.stop() (ou MAX atteint)
 */
+import * as Vue from "vue";
+import * as VueUse from "@vueuse/core";
 const MAX = 30;
 
 /** @param {{max?: number}} [opts] */

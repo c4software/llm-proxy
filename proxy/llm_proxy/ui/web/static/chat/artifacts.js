@@ -1,7 +1,7 @@
 // @ts-check
 /*
   Le RENDU d'un artifact (tools/page/artifacts.js), pour le panneau
-  latéral (ArtifactPanel.js) : son document, et son nom de fichier.
+  latéral (ArtifactPanel.vue) : son document, et son nom de fichier.
 
   ISOLATION D'UN ARTIFACT : il est rendu dans un cadre `sandbox` sans
   `allow-same-origin` — une origine à lui, sans accès à la page, à sa
@@ -190,7 +190,7 @@ function codeBody(content, language, hl) {
 let highlighter = null;
 export function loadHighlighter() {
   if (!highlighter) {
-    highlighter = vendorUrl("highlight.js").then((u) => import(u));
+    highlighter = vendorUrl("highlight.js").then((u) => import(/* @vite-ignore */ u));
     highlighter.catch(() => { highlighter = null; });
   }
   return highlighter;

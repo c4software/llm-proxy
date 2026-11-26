@@ -19,7 +19,7 @@ import { TOOL, FAMILY, PageTool, defineFamily, clip, failure, oneLine } from "..
 import { exec } from "./bac.js";
 import { paths, inputs, deliver } from "./files.js";
 import { CheckTypescript } from "./typescript.js";
-import { ChartCard } from "./chart-card.js";
+import ChartCard from "./ChartCard.vue";
 
 const MAX_OUT = 20_000;
 

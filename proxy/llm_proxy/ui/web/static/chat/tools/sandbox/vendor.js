@@ -1,8 +1,8 @@
 // @ts-check
 /*
   Les fichiers de vendor/ (les runtimes des bacs, la VM Linux), demandés
-  par la page : hors du préfixe versionné (ui_static.py) — l'empreinte de
-  la page change à chaque mise à jour, un runtime presque jamais.
+  par la page : hors de son build (ui/static_files.py), dont les fichiers
+  changent de nom à chaque mise à jour — un runtime presque jamais.
 
   Chacun est demandé avec ?v=<son empreinte>, lue dans le versions.json
   de son dossier (écrit au build : proxy/wasm/build.mjs, proxy/linux/

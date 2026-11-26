@@ -8,6 +8,8 @@
   Les flux vivent ici, pas dans la carte : ils ne survivent pas à un
   rechargement, et la carte revient alors au début.
 */
+import * as Vue from "vue";
+import * as VueUse from "@vueuse/core";
 const MAX_SIDE = 1920;               // pixels du plus grand côté d'une image envoyée
 const QUALITY = 0.9;                 // JPEG
 

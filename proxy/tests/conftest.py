@@ -4,8 +4,10 @@ Posé AVANT tout import du paquet — config.py lit CONFIG_PATH à l'import.
 Aucun import du paquet en tête de ce fichier : la fixture importe le sien
 à l'usage, et fakes.py importe ce module en premier."""
 
+import copy
 import json
 import os
+import shutil
 import types
 
 import pytest
@@ -32,8 +34,6 @@ def config_copy(monkeypatch, tmp_path):
     et en mémoire une copie de la configuration chargée : ce que la page
     enregistre (prompts, extensions, Configuration → Proxy) ne touche
     jamais data/, et chaque test repart de l'état neuf."""
-    import copy
-    import shutil
     from llm_proxy.core import config
     path = tmp_path / "configuration" / "config.toml"
     path.parent.mkdir()
@@ -41,6 +41,32 @@ def config_copy(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "CONFIG_PATH", str(path))
     monkeypatch.setattr(config, "CONFIG", copy.deepcopy(config.CONFIG))
     return path
+
+
+@pytest.fixture(autouse=True)
+def page_build(monkeypatch, tmp_path):
+    """La page CONSTRUITE (web/dist, `npm run build`) : une doublure sous
+    tmp_path — sa page, un script et un style à empreinte, le manifeste et
+    les icônes de public/ — et vendor/ à côté : les tests du proxy
+    n'exigent pas de build. Rend le dossier de la doublure."""
+    from llm_proxy.ui import static_files
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text(
+        '<!doctype html><link rel="stylesheet" href="/ui/static/assets/index-abc123.css">'
+        '<script type="module" src="/ui/static/assets/index-abc123.js"></script><div id="app"></div>',
+        encoding="utf-8")
+    (dist / "assets" / "index-abc123.js").write_text("export {};\n", encoding="utf-8")
+    (dist / "assets" / "index-abc123.css").write_text("body{}\n", encoding="utf-8")
+    public = os.path.join(static_files.WEB_DIR, "static", "public")
+    for name in os.listdir(public):
+        shutil.copy(os.path.join(public, name), dist / name)
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    (vendor / "versions.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(static_files, "DIST_DIR", str(dist.resolve()))
+    monkeypatch.setattr(static_files, "VENDOR_DIR", str(vendor.resolve()))
+    return dist
 
 
 @pytest.fixture(autouse=True)

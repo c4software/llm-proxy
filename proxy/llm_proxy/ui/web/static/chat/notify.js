@@ -4,6 +4,8 @@
   le dit (« ● »), et, si vous l'avez permis (réglages du chat), une
   notification du navigateur. Rien quand l'onglet est au premier plan.
 */
+import * as Vue from "vue";
+import * as VueUse from "@vueuse/core";
 const KEY = "llm-proxy-chat-notify";
 const MARK = "● ";
 

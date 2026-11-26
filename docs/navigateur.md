@@ -57,7 +57,7 @@ page_tools_disabled = ["camera", "screen", "run_php"]
   Configuration → Extensions.
 
 Les API du navigateur passent par [VueUse](https://vueuse.org)
-(`static/vueuse.iife.min.js`, chargé avec Vue) : presse-papiers,
+(`@vueuse/core`, dans le build de la page) : presse-papiers,
 partage, pipette, verrou d'écran, caméra et écran, synthèse vocale,
 réseau, batterie.
 
@@ -480,7 +480,8 @@ return Promise.all(urls.map((url) =>
 
 L'image Docker construit les runtimes (PHP, SQLite, PostgreSQL, Chart.js,
 sucrase, TypeScript) dans l'étape `wasm` de `proxy/Dockerfile`. Hors Docker,
-exécuter une fois :
+exécuter une fois (la même commande construit aussi la page, dans
+`proxy/llm_proxy/ui/web/dist/`) :
 
 ```bash
 cd proxy/wasm && npm ci && npm run build   # → proxy/llm_proxy/ui/web/static/vendor/
@@ -510,7 +511,7 @@ La page reçoit les déclarations via `/ui/session` (`chat.page`), qui contient
 les familles et la fonction de chaque outil avec ses `settings`. Le registre
 associe chaque déclaration à l'exécution de même nom. Une déclaration ou une
 exécution sans correspondance est signalée dans la console et exclue du menu.
-`ChatPanel.js` ne nomme aucun outil : il passe toujours par le registre.
+`ChatPanel.vue` ne nomme aucun outil : il passe toujours par le registre.
 
 ### La déclaration (proxy)
 
@@ -660,19 +661,23 @@ Le contrat des outils est vérifié à plusieurs niveaux :
 - **Déclarations et exécution ensemble** : pytest donne les déclarations
   du proxy à `proxy/wasm/check-tools.mjs`, qui exige une exécution pour
   chacune et une déclaration pour chaque exécution native.
-- **TypeScript** vérifie les modules, tous en `// @ts-check`. Un
+- **TypeScript** (vue-tsc) vérifie les modules, tous en `// @ts-check`,
+  et le `<script>` des composants `.vue` qui le sont. Un
   `@override` sur une méthode que `PageTool` n'a pas, une clé inconnue
   dans `super({...})` ou une carte qui rend `{resultat}` au lieu de
   `{result}` sont des erreurs.
 - **Les tests de la logique pure** (`proxy/wasm/tests/*.test.mjs`,
-  `node --test`) : le rendu Markdown sûr, le document d'un artifact et
-  sa capture, l'enregistrement des conversations (avec le vrai Vue et un
+  Vitest) : le rendu Markdown sûr, le document d'un artifact et
+  sa capture, les fonctions envoyées en texte aux bacs (autonomes),
+  l'enregistrement des conversations (avec le vrai Vue et un
   proxy simulé), les messages d'une requête (chat/api.js, « ajout seul »),
   les tours d'outils (chat/turn.js) et l'installation des déclarations
   (tools/index.js). `npm test` les lance seuls.
-- **`npm run check`** lance TypeScript, l'exécution chargée par Node
-  (`check-tools.mjs`, sans les déclarations), puis les tests. pytest le
-  lance aussi, avec les déclarations ; le test est ignoré sans Node.
+- **`npm run check`** lance TypeScript, l'exécution chargée par Vite
+  dans Node (`check-tools.mjs`, sans les déclarations), puis les tests,
+  dont un build de la page dans un dossier temporaire, qui compile chaque
+  gabarit (`web/dist` n'est pas touché). pytest le lance aussi, et
+  `check-tools.mjs` avec les déclarations ; ignorés sans Node.
 
 ```bash
 cd proxy/wasm && npm ci && npm run check

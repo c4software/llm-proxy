@@ -1,11 +1,12 @@
 // @ts-check
+import * as Vue from "vue";
 import { when } from "../lib/format.js";
 import { download } from "../lib/files.js";
 import * as history from "./history.js";
 import { forget as forgetTools } from "./tools/index.js";
 
 // Les CONVERSATIONS : un magasin partagé, lu par le chat (ChatPanel) ET par
-// le menu latéral de la page (app.js), qui en affiche la liste. Gardées
+// le menu latéral de la page (App.vue), qui en affiche la liste. Gardées
 // par le proxy, une liste par compte connecté (chat/history.js).
 export const ChatStore = (() => {
   const { reactive, computed, watch, toRaw } = Vue;

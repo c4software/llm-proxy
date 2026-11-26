@@ -4,7 +4,6 @@ la connexion par clé et la déconnexion ; le routeur commun à toutes les
 routes /ui de ce paquet.
 """
 
-import os
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from ...core import identity
@@ -19,10 +18,6 @@ from ...core.httputil import error_response, json_only, parse_json
 router = APIRouter()
 
 
-# HTML statique, sans moteur de template : rempli par web/static/app.js.
-UI_HTML = os.path.join(static_files.WEB_DIR, "templates", "index.html")
-
-
 # Le chat du tableau de bord : le cookie de la page y DÉPENSE des tokens.
 # Inactif par défaut ; sans lui, le cookie ne sert qu'à lire.
 UI_CHAT = config.flag("ui.chat", False)
@@ -34,8 +29,8 @@ UI_CHAT_MODEL = config.text("ui.chat_model", "").strip()
 
 
 # Les en-têtes de sécurité de la page. Pas de Content-Security-Policy :
-# - la page charge Vue en build global, qui compile ses gabarits à la
-#   volée (il lui faudrait 'unsafe-eval') et a un script en ligne ;
+# - la page compile à la volée le gabarit d'un composant d'extension (il
+#   lui faudrait 'unsafe-eval') et a un script en ligne ;
 # - surtout, les cadres `srcdoc` (artifacts, bacs, VM Linux) HÉRITENT de
 #   la politique de la page : une script-src stricte casserait leur code,
 #   qui est en ligne par construction. Chacun pose la sienne dans son
@@ -50,14 +45,24 @@ SECURITY_HEADERS = {
 }
 
 
+# Sans build (web/dist absent : une installation depuis les sources sans
+# `npm run build`), la page le dit plutôt qu'un 404.
+NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>llm-proxy</title>
+<p style="font:16px system-ui,sans-serif;margin:40px">La page n'est pas construite :
+<code>cd proxy/wasm &amp;&amp; npm ci &amp;&amp; npm run build</code>, puis recharger.</p>"""
+
+
 @router.get("/ui", response_class=HTMLResponse)
 async def ui_page(request: Request):
-    """Tableau de bord : page statique. Les chiffres sont lus côté client
-    sur /ui/usage, toutes les 5 s, sans jamais recharger la page."""
-    with open(UI_HTML, encoding="utf-8") as fh:
-        html = static_files.preloads(static_files.versioned(fh.read()))
-    # La page elle-même n'est jamais gardée : c'est elle qui porte les URL
-    # versionnées de ses fichiers.
+    """Tableau de bord : la page construite par Vite (web/dist). Les
+    chiffres sont lus côté client sur /ui/usage, toutes les 5 s, sans
+    jamais recharger la page."""
+    html = static_files.page()
+    # La page elle-même n'est jamais gardée : c'est elle qui porte les noms
+    # à empreinte de ses fichiers.
+    if html is None:
+        return HTMLResponse(NOT_BUILT, status_code=503,
+                            headers={"Cache-Control": "no-cache", **SECURITY_HEADERS})
     return HTMLResponse(html, headers={"Cache-Control": "no-cache",
                                        **SECURITY_HEADERS})
 

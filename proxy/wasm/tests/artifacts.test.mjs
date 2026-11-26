@@ -2,7 +2,7 @@
 // de contenu passe AVANT tout ce que l'artifact contient. Vérifié dans
 // Chrome à l'écriture : un artifact sans <head> mais avec un <header>
 // recevait sa <meta> CSP dans le corps, où elle est ignorée.
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -39,7 +39,7 @@ test("débogage : le pont suit la politique, avant l'artifact", () => {
 });
 
 test("code : colorié par la page selon son langage, détecté sinon ; le cadre ne charge rien", () => {
-  const hl = { hljs, css: readFileSync(new URL("../node_modules/highlight.js/styles/github.css", import.meta.url), "utf8") };
+  const hl = { hljs, css: readFileSync(join(import.meta.dirname, "../node_modules/highlight.js/styles/github.css"), "utf8") };
   const python = "import os\n\ndef f(x):\n    if x is None:\n        return []\n    return [os.path.basename(y) for y in x]\n";
   for (const language of ["python", "PY", "langage-inconnu", "", 'x" onload="alert(1)']) {
     const doc = artifactDoc({ type: "code", language, content: python }, { hl });

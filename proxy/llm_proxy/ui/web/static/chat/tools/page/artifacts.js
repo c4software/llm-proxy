@@ -1,7 +1,7 @@
 // @ts-check
 /*
   Les ARTIFACTS : ce que le modèle montre dans le panneau latéral du chat
-  (ArtifactPanel.js) — une page, un document, un schéma, un SVG, du code.
+  (ArtifactPanel.vue) — une page, un document, un schéma, un SVG, du code.
 
     show_artifact  une nouvelle version (un même `id` : la suivante)
     edit_artifact  une RETOUCHE : des remplacements de passages exacts dans

@@ -295,7 +295,7 @@ footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
 }
 .panel.tools .scroll + .webcache { border-top: 1px solid var(--line); }
 
-/* ── Mémoire (memory/MemoryPanel.js) ────────────────────────────────── */
+/* ── Mémoire (memory/MemoryPanel.vue) ────────────────────────────────── */
 .memory { margin-top: 26px; }
 .memory-body {
   display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 0;
@@ -373,7 +373,7 @@ html, .thread, .nav-chats ul, .memory-side { scrollbar-gutter: stable; }
 .nav-collapse:hover { background: var(--track); color: var(--ink); }
 .nav-collapse .ico { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8;
   stroke-linecap: round; stroke-linejoin: round; }
-/* Le menu COMPACT (app.js, navCompact) : un rail d'icônes, les libellés en
+/* Le menu COMPACT (App.vue, navCompact) : un rail d'icônes, les libellés en
    bulles (title) ; la liste des conversations et le pied attendent qu'on
    le déplie. Grand écran seulement : sur mobile, le menu est un tiroir. */
 @media (min-width: 761px) {
@@ -468,7 +468,7 @@ button.icon:disabled { opacity: .4; cursor: default; }
 .login-bar { display: flex; align-items: center; gap: 12px; }
 .login-bar .err { font-size: 13px; }
 
-/* ── Chat (chat/ChatPanel.js) ───────────────────────────────────────── */
+/* ── Chat (chat/ChatPanel.vue) ───────────────────────────────────────── */
 /* Seul le fil défile. */
 .chat {
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr);
@@ -1212,7 +1212,7 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .device-card > .dim { margin: 0; }
 .device-url { display: block; overflow-wrap: anywhere; font-size: 12.5px; }
-/* Un graphique interactif (chart-card.js), dans le corps de la réponse. */
+/* Un graphique interactif (ChartCard.vue), dans le corps de la réponse. */
 .chart-card { margin: 10px 0; padding: 12px; max-width: 760px; background: var(--panel); }
 .chart-card canvas { max-width: 100%; }
 .chart-card .card-actions { margin-top: 8px; }
@@ -1227,7 +1227,7 @@ a.btn { display: inline-block; text-decoration: none; }
   background: #000; object-fit: contain;
 }
 
-/* ── Chat : panneau des artifacts (chat/ArtifactPanel.js) ── */
+/* ── Chat : panneau des artifacts (chat/ArtifactPanel.vue) ── */
 .chat.with-memory.side-wide { grid-template-columns: minmax(0, 1fr) minmax(360px, 46%); }
 /* Plein écran (useFullscreen) : le panneau occupe l'écran, sur le fond de la page. */
 /* Le modèle teste l'artifact (artifact-bridge.js). */
@@ -1296,7 +1296,7 @@ a.btn { display: inline-block; text-decoration: none; }
   .art-project-in { flex-direction: column; }
   .art-tree { width: auto; max-height: 32%; border-right: 0; border-bottom: 1px solid var(--line); }
 }
-/* Les images générées de la conversation (chat/AssetPanel.js) : l'image
+/* Les images générées de la conversation (chat/AssetPanel.vue) : l'image
    en grand, Précédent et Suivant par-dessus, la planche des vignettes. */
 .artifact-head a.art-btn { color: inherit; text-decoration: none; }
 .asset-view {
@@ -1371,7 +1371,7 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .artifact-source { flex: 1; min-height: 0; margin: 0; padding: 12px 14px; overflow: auto;
   font: 12.5px/1.5 ui-monospace, SFMono-Regular, monospace; white-space: pre-wrap; }
-/* Pleine page (SidePanel.js) : le panneau couvre toute la fenêtre — menu,
+/* Pleine page (SidePanel.vue) : le panneau couvre toute la fenêtre — menu,
    barre du haut et fil dessous ; son en-tête reste, de quoi en sortir.
    Le terminal (z-index 7, plus loin dans <body>) passe dessus. */
 .chat.with-memory .artifact-side.page {
@@ -1676,7 +1676,7 @@ button.link.danger { color: var(--err); }
 .part-other { background: repeating-linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 4px); }
 .part-hosted { background: #7cc36a; }
 
-/* ── installation (premier démarrage, config/SetupPanel.js) ─────────── */
+/* ── installation (premier démarrage, config/SetupPanel.vue) ─────────── */
 .setup { display: flex; flex-direction: column; gap: 16px; }
 .setup-intro { font-size: 13.5px; color: var(--muted); margin: 0; max-width: 80ch; }
 .setup-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }

@@ -2,7 +2,7 @@
 // vrai Vue et un proxy simulé (fetch) : ce qui est mémorisé comme
 // enregistré est ce qui est parti, et une révision dépassée suspend
 // l'enregistrement au lieu d'écraser l'autre onglet.
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { listeners } from "./setup.mjs";
 

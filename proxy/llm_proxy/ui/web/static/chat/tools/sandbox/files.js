@@ -12,7 +12,7 @@
                                   résultat pour le modèle s'il lit les
                                   images (la première seulement)
     graphique (chart() du bac)    une carte INTERACTIVE dans le corps de la
-                                  réponse (Chart.js, chart-card.js), son
+                                  réponse (Chart.js, ChartCard.vue), son
                                   PNG joint au résultat comme une image
 */
 import { saveFile } from "../page/save.js";

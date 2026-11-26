@@ -211,10 +211,11 @@ def test_chaque_cle_nommee_dans_le_code_est_au_catalogue_et_inversement():
     for path in SRC.rglob("*.py"):
         named |= set(re.findall(r'prompts\.(?:text|ref|template)\(\s*"([^"]+)"', path.read_text("utf-8")))
     assert named, "aucune clé trouvée : le motif ne correspond plus au code"
-    # La page : `prompt("…"` (lib/prompts.js), hors des bibliothèques tierces.
+    # La page : `prompt("…"` (lib/prompts.js) dans ses modules et ses
+    # composants, hors des bibliothèques tierces.
     page = set()
-    for path in (SRC / "ui" / "web" / "static").rglob("*.js"):
-        if "vendor" not in path.parts:
+    for path in (SRC / "ui" / "web" / "static").rglob("*"):
+        if path.suffix in (".js", ".vue") and "vendor" not in path.parts:
             page |= set(re.findall(r'\bprompt\(\s*"([^"]+)"', path.read_text("utf-8")))
     assert page, "aucune clé de la page trouvée : le motif ne correspond plus au code"
     assert page <= set(prompts.for_page()), "la page n'a que les gabarits que /ui/session lui donne"

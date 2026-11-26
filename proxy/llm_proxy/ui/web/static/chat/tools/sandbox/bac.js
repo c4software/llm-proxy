@@ -59,7 +59,7 @@ self.onmessage = async ({ data }) => {
   try {
     const mods = {};
     for (const r of runtimes) {
-      mods[r.name] = await import(URL.createObjectURL(new Blob([r.js], { type: "text/javascript" })));
+      mods[r.name] = await import(/* @vite-ignore */ URL.createObjectURL(new Blob([r.js], { type: "text/javascript" })));
     }
     const first = runtimes[0];
     const bins = first ? first.bins : {};

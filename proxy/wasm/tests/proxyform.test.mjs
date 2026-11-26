@@ -4,7 +4,7 @@
 // (masquée) devient un ${VAR} ; un nom que le proxy refuserait au démarrage
 // est écarté avec un avertissement.
 import "./setup.mjs";
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 const { newForm, prefillForm, buildProxy } =

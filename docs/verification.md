@@ -113,11 +113,16 @@ python -m venv .venv
 ```
 
 Lancer le proxy hors conteneur. Il lit `data/config.toml` à la racine, ou
-`CONFIG_PATH` :
+`CONFIG_PATH` ; sa page se construit d'abord (Node) :
 
 ```bash
+(cd proxy/wasm && npm ci && npm run build)
 cd proxy && ../.venv/bin/uvicorn main:app --port 8000
 ```
+
+Pour travailler sur la page, `npm run dev` (dans `proxy/wasm`) la sert sur
+`http://localhost:5173/ui/static/`, avec rechargement à chaud, et relaie le
+reste au proxy local ([Architecture](architecture.md)).
 
 Des bancs de vrais clients, en conteneurs, sont décrits dans
 [bench/README.md](../bench/README.md).
