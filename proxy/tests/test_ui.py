@@ -21,7 +21,7 @@ from llm_proxy.upstream import backends
 from llm_proxy.access import oidc
 from llm_proxy.storage import stats
 from llm_proxy import app as A
-from llm_proxy import tools
+from llm_proxy import prompts, tools
 
 KEY = "sk-alice"
 JSON = {"content-type": "application/json"}
@@ -197,7 +197,7 @@ def test_chat_is_closed_unless_enabled(ui, monkeypatch):
         "enabled": False, "model": None, "hosted_tools": False, "tools": [], "always": [],
         "image_sizes": ["512x512", "768x768", "1024x1024"],
         "image_size": "512x512", "image_steps": {}, "image_loras": {}, "image_upscale": None, "page": page_tools.declarations(),
-        "linux_relay": False}
+        "prompts": prompts.for_page(), "linux_relay": False}
     assert not ui.sent
 
 

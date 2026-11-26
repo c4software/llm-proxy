@@ -4,7 +4,7 @@ leurs paramètres, consignes, instructions — hors du code. Les messages
 d'erreur et les résultats des outils restent dans le code.
 
   *.toml     le CATALOGUE, les textes par défaut, en anglais, un fichier
-             par domaine (tools, page, mcp) ; une table par sujet :
+             par domaine (tools, page, chat, mcp) ; une table par sujet :
              [web_fetch] description = "…" donne la clé
              `web_fetch.description`
   prompts.json   les textes MODIFIÉS par l'admin (Configuration →
@@ -18,6 +18,8 @@ accolade. Un texte modifié n'utilise que les variables de son défaut.
   text(clé, **variables)   le texte, modifié ou par défaut, rempli
   ref(clé)                 un texte à résoudre plus tard, dans un schéma
                            (resolve) : la description d'un paramètre
+  for_page()                les gabarits que la PAGE remplit elle-même
+                           (/ui/session, `chat.prompts`)
   catalog(), set_override(), reset()   pour la page (ui/prompt_routes.py)
 """
 
@@ -31,7 +33,7 @@ from pathlib import Path
 from ..core.settings import log
 from ..storage import prompt_overrides
 
-DOMAINS = ("tools", "page", "mcp")
+DOMAINS = ("tools", "page", "chat", "mcp")
 MAX_CHARS = 20_000
 _NAME = re.compile(r"[a-z_][a-z0-9_]*\Z")
 _FORMATTER = string.Formatter()
@@ -155,6 +157,17 @@ def _check(key: str, text_: str) -> None:
 def template(key: str) -> str:
     """Le texte brut (modifié ou par défaut), variables non remplies."""
     return _overrides().get(key, CATALOG[key][1])
+
+
+_PAGE_STATE = re.compile(r"family\.[^.]+\.state")
+
+
+def for_page() -> dict[str, str]:
+    """Les gabarits, variables NON remplies, que la page du chat remplit
+    (lib/prompts.js) : le domaine `chat`, et l'état du moment des familles
+    (`family.<clé>.state…`)."""
+    return {k: template(k) for k, (domain, _) in CATALOG.items()
+            if domain == "chat" or _PAGE_STATE.match(k)}
 
 
 def text(key: str, **values) -> str:

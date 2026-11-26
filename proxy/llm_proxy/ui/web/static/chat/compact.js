@@ -22,6 +22,7 @@
                            demande, quand le contexte déborde déjà
     AUTO_AT                le seuil du résumé automatique (part du contexte)
 */
+import { prompt } from "../lib/prompts.js";
 export const AUTO_AT = 0.8;
 const CHARS_PER_TOKEN = 3.5;      // une estimation, en français comme en code
 const IMAGE_TOKENS = 1000;        // une image jointe, à peu près
@@ -46,8 +47,7 @@ export function lastSummary(conv, upto) {
 }
 
 /** @param {any} s */
-export const preamble = (s) => "RÉSUMÉ DE LA CONVERSATION JUSQU'ICI (les messages antérieurs ne te sont "
-  + "plus envoyés ; ce résumé les remplace, tu peux t'y fier) :\n\n" + s.content.trim();
+export const preamble = (s) => prompt("compact.preamble", { summary: s.content.trim() });
 
 // Les caractères d'un message tel qu'il part (à peu près).
 /** @param {any} m */
@@ -151,25 +151,12 @@ export function breakdown(conv, total, extra = {}) {
 /** Une estimation, en jetons, d'un texte. @param {string} text */
 export const estimate = (text) => Math.round((text || "").length / CHARS_PER_TOKEN);
 
-const INSTRUCTION = "Résume toute la conversation ci-dessus (y compris un éventuel résumé précédent "
-  + "du prompt système) : ce résumé va la REMPLACER, et la suite de l'échange s'appuiera dessus "
-  + "seul. Garde ce qui sert à continuer, de façon dense et factuelle :\n"
-  + "- le but de l'utilisateur, ses demandes et ses préférences exprimées ;\n"
-  + "- les décisions prises, les contraintes, ce qui a été écarté et pourquoi ;\n"
-  + "- les faits établis, exacts : chiffres, noms, chemins de fichiers, identifiants, extraits "
-  + "de code ou de commandes indispensables ;\n"
-  + "- le travail fait : artifacts (par leur identifiant), fichiers écrits, résultats d'outils "
-  + "qui comptent ;\n"
-  + "- les questions ouvertes et la prochaine étape.\n"
-  + "Écris dans la langue de la conversation, en Markdown sobre (titres courts, listes), sans "
-  + "préambule ni conclusion, 700 mots au plus. N'appelle aucun outil.";
-
 /** Les messages de la demande de résumé : l'échange, puis la consigne
  * (accolée au dernier message s'il est de l'utilisateur : certains
  * gabarits refusent deux messages de suite du même rôle).
  * @param {any[]} msgs @param {string} [focus] */
 export function request(msgs, focus = "") {
-  const ask = INSTRUCTION + (focus ? `\n\nEn priorité, selon l'utilisateur : ${focus}` : "");
+  const ask = prompt("compact.instruction") + (focus ? "\n\n" + prompt("compact.focus", { focus }) : "");
   const out = msgs.slice();
   const last = out[out.length - 1];
   if (last && last.role === "user" && typeof last.content === "string") {
@@ -183,14 +170,15 @@ export function request(msgs, focus = "") {
 // Le début et la fin d'un long texte.
 /** @param {string} t @param {number} n */
 const clipMiddle = (t, n) => (t.length <= n ? t
-  : t.slice(0, Math.ceil(n * 0.6)) + `\n[… ${t.length - n} caractères coupés …]\n` + t.slice(-Math.floor(n * 0.4)));
+  : t.slice(0, Math.ceil(n * 0.6)) + "\n" + prompt("compact.clipped", { count: t.length - n }) + "\n"
+    + t.slice(-Math.floor(n * 0.4)));
 
 /** @param {any[]} msgs */
 export function lighten(msgs) {
   return msgs.map((m) => {
     const cap = m.role === "tool" ? 600 : m.role === "system" ? 6000 : 2500;
     let c = m.content;
-    if (Array.isArray(c)) c = c.filter((p) => p.type === "text").map((p) => p.text).join("\n") + " [image retirée]";
+    if (Array.isArray(c)) c = c.filter((p) => p.type === "text").map((p) => p.text).join("\n") + " " + prompt("compact.image_removed");
     return { ...m, content: typeof c === "string" ? clipMiddle(c, cap) : c };
   });
 }

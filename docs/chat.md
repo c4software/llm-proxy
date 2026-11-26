@@ -321,7 +321,8 @@ par la conversation à la fenêtre de contexte annoncée dans le catalogue.
 également accessible par *Résumer maintenant* dans le menu de la jauge.
 La saisie de `/` propose la commande ; Tab la complète.
 
-- Le modèle de la conversation produit le résumé, sans outils ni réflexion.
+- Le modèle de la conversation produit le résumé, sans outils ni réflexion,
+  selon la consigne `compact.instruction` ([Prompts](prompts.md)).
 - Le résumé apparaît comme un message replié dans le fil.
 - Les messages précédents restent affichés, mais en estompé et exclus
   des requêtes au modèle. Le résumé les remplace après le prompt système.

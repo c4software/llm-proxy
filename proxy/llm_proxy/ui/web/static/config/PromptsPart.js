@@ -10,7 +10,7 @@ import { call } from "../lib/http.js";
 
 const { ref, computed, onMounted } = Vue;
 
-const DOMAINS = { tools: "Outils du proxy", page: "Outils du navigateur", mcp: "Serveur MCP" };
+const DOMAINS = { tools: "Outils du proxy", page: "Outils du navigateur", chat: "Chat", mcp: "Serveur MCP" };
 
 export const PromptsPart = {
   setup() {

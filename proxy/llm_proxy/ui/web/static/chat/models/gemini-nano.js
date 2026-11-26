@@ -12,6 +12,7 @@
   charger prend une vingtaine de secondes à la première réponse.
 */
 import { partialString as partial } from "../../lib/partialjson.js";
+import { prompt } from "../../lib/prompts.js";
 
 const OPTIONS = {
   expectedInputs: [{ type: "text", languages: ["fr", "en"] }, { type: "image" }],
@@ -23,14 +24,6 @@ const api = () => (typeof self !== "undefined" && self.LanguageModel) || null;
 async function blob(url) {
   return (await fetch(url)).blob();
 }
-
-const PROTOCOL = "Tu réponds toujours par un objet JSON. "
-  + "action « answer » : ta réponse complète, en Markdown, dans text. "
-  + "action « ask » : quand une décision revient à l'utilisateur ou qu'une précision "
-  + "indispensable manque, text l'introduit en une phrase et questions contient 1 à 3 "
-  + "questions à choix — header de 1 à 3 mots, 2 à 5 options courtes, chacune avec une "
-  + "description d'une phrase. Ne pose pas de question inutile ; une fois les réponses "
-  + "de l'utilisateur reçues, réponds (action « answer »).";
 
 const SCHEMA = { type: "object", required: ["action", "text"], properties: {
   action: { enum: ["answer", "ask"] },
@@ -44,6 +37,13 @@ const SCHEMA = { type: "object", required: ["action", "text"], properties: {
           label: { type: "string" }, description: { type: "string" } } } },
     } } },
 } };
+
+// Le protocole de réponse (JSON, answer ou ask), ses bornes lues dans
+// SCHEMA.
+const QUESTIONS = SCHEMA.properties.questions;
+const CHOICES = QUESTIONS.items.properties.options;
+const protocol = () => prompt("gemini_nano.protocol", { max_questions: QUESTIONS.maxItems,
+  min_options: CHOICES.minItems, max_options: CHOICES.maxItems });
 
 // Le contenu d'un message de l'API → celui de l'API Prompt.
 async function content(c) {
@@ -81,12 +81,12 @@ function plain(messages) {
         if (c.function && c.function.name === "ask_user") {
           let qs = [];
           try { qs = JSON.parse(c.function.arguments).questions || []; } catch { /* illisible */ }
-          t += (t ? "\n\n" : "") + qs.map((q) => "Question : " + q.question).join("\n");
+          t += (t ? "\n\n" : "") + qs.map((q) => prompt("gemini_nano.question", { question: q.question })).join("\n");
         }
       }
       if (t.trim()) push("assistant", t);
     } else if (m.role === "tool" && (m.content || "").trim()) {
-      push("user", "Mes réponses à tes questions :\n" + m.content);
+      push("user", prompt("gemini_nano.answers", { answers: m.content }));
     }
   }
   return out;
@@ -102,8 +102,8 @@ async function nanoAnswer(messages, live, signal, onStatus = () => {}) {
   if (!last || last.role !== "user") throw new Error("Rien à demander.");
   const initialPrompts = [];
   if (usable[0] && usable[0].role === "system") {
-    initialPrompts.push({ role: "system", content: textOf(usable.shift().content) + "\n\n" + PROTOCOL });
-  } else initialPrompts.push({ role: "system", content: PROTOCOL });
+    initialPrompts.push({ role: "system", content: textOf(usable.shift().content) + "\n\n" + protocol() });
+  } else initialPrompts.push({ role: "system", content: protocol() });
   for (const m of usable) {
     initialPrompts.push({ role: m.role, content: m.role === "user" ? await content(m.content) : m.content });
   }

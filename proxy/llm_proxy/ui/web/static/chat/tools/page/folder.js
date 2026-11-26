@@ -14,6 +14,7 @@
   ne coûte que ce qu'il en ouvre.
 */
 import { TOOL, FAMILY, PageTool, defineFamily, failure } from "../contract.js";
+import { prompt } from "../../../lib/prompts.js";
 import * as workspace from "../../workspace.js";
 import { lineDiff, counts } from "../../diff.js";
 
@@ -150,6 +151,6 @@ export const FAMILIES = [defineFamily({
   // alors. Son nom et son nombre de fichiers (qui change à chaque
   // écriture) : l'état, joint au tour.
   enabled: (ctx) => !!ctx.ws,
-  state: (ctx) => `Dossier ouvert : « ${ctx.ws.name} » (${ctx.ws.count} fichiers).`,
+  state: (ctx) => prompt("family.folder.state", { name: ctx.ws.name, count: ctx.ws.count }),
   tools: [new FolderList(), new FolderRead(), new FolderSearch(), new FolderWrite(), new FolderEdit()],
 })];

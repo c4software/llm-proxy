@@ -1,0 +1,33 @@
+# Les prompts de la PAGE DU CHAT (ui/web/static/chat/) : ce qu'elle ajoute
+# aux messages qu'elle envoie — le résumé d'une conversation compactée,
+# l'état du moment des outils, le protocole de Gemini Nano. Une table par
+# sujet. La page les reçoit avec /ui/session (`chat.prompts`) et remplit
+# elle-même les variables {nom} (lib/prompts.js). Modifiables par l'admin
+# dans Configuration → Prompts (docs/prompts.md).
+
+[compact]
+preamble = '''SUMMARY OF THE CONVERSATION SO FAR (the earlier messages are no longer sent to you; this summary replaces them, you can rely on it):
+
+{summary}'''
+instruction = '''Summarize the whole conversation above (including any previous summary in the system prompt): this summary will REPLACE it, and the rest of the exchange will rely on it alone. Keep what is needed to continue, densely and factually:
+- the user's goal, requests and stated preferences;
+- the decisions made, the constraints, what was ruled out and why;
+- the established facts, exactly: figures, names, file paths, identifiers, essential code or command excerpts;
+- the work done: artifacts (by their identifier), files written, tool results that matter;
+- the open questions and the next step.
+Write in the language of the conversation, in plain Markdown (short headings, lists), with no preamble or conclusion, 700 words at most. Do not call any tool.'''
+focus = "As a priority, according to the user: {focus}"
+clipped = "[… {count} characters cut …]"
+image_removed = "[image removed]"
+
+[messages]
+state = '''[Current state, added by the page]
+{state}'''
+nothing = "Nothing in particular (no more artifact, open folder…)."
+generated_image = "(image generated: {names})"
+
+[gemini_nano]
+protocol = '''You always answer with a JSON object. action "answer": your complete answer, in Markdown, in text. action "ask": when a decision belongs to the user or an indispensable detail is missing, text introduces it in one sentence and questions contains 1 to {max_questions} multiple-choice questions — header of 1 to 3 words, {min_options} to {max_options} short options, each with a one-sentence description. Do not ask unnecessary questions; once the user's answers are received, answer (action "answer").'''
+answers = '''My answers to your questions:
+{answers}'''
+question = "Question: {question}"

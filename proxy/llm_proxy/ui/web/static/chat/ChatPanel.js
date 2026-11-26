@@ -83,6 +83,7 @@ import { clones as voiceClones, load as loadClones } from "./voice/clones.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
+import * as prompts from "../lib/prompts.js";
 import * as api from "./api.js";
 import { apiMessages } from "./api.js";
 import { chipFor, recordCall, endStep, closeStep } from "./turn.js";
@@ -134,6 +135,10 @@ export const ChatPanel = {
     // les natives sont installées tout de suite, celles des extensions
     // une fois leurs modules importés.
     const installTick = ref(0);
+    // Les textes que la page ajoute aux messages (lib/prompts.js), du
+    // catalogue du proxy.
+    watch(() => props.session.chat && props.session.chat.prompts, (given) => { prompts.install(given); },
+          { immediate: true });
     watch(() => props.session.chat && props.session.chat.page, (page) => {
       tools.install(page);
       installTick.value++;

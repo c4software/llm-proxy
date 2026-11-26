@@ -627,8 +627,8 @@ préfixe identique.
   toujours déclarés et répondent même lorsqu'ils n'ont rien à faire.
 - L'état des outils (`state`) est fixé au moment où le message de
   l'utilisateur est envoyé (`state` dans la conversation). Il est joint au
-  message s'il diffère du précédent (« [État du moment, ajouté par la
-  page] »), puis rejoué à l'identique.
+  message s'il diffère du précédent, sous un en-tête (le prompt
+  `messages.state`, [Prompts](prompts.md)), puis rejoué à l'identique.
 - Un appel passé est rejoué tel qu'il a été enregistré, même si son contenu
   est périmé (artifact retouché, fichier réécrit). La consigne précise que
   seule la version actuelle compte (`read_artifact`, `shell_read`). Le

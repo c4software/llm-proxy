@@ -37,6 +37,7 @@ import { TOOL, FAMILY, PageTool, defineFamily, failure, clip } from "../contract
 import * as text from "../text.js";
 import * as bridge from "../../artifact-bridge.js";
 import { debugOn, shotImage } from "../../artifacts.js";
+import { prompt } from "../../../lib/prompts.js";
 
 const MAX_ARTIFACT = 5e5;      // caractères d'un artifact
 
@@ -312,10 +313,11 @@ export const FAMILIES = [defineFamily({
   state: (ctx) => {
     const arts = artifactsOf(ctx.conv);
     if (!arts.length) return "";
-    return "Artifacts de la conversation : " + arts.map((a) => {
+    return prompt("family.artifacts.state", { list: arts.map((a) => {
       const v = a.versions[a.versions.length - 1];
-      return `« ${a.id} » (${v.type}, version ${a.versions.length}, ${v.content.length} caractères)`;
-    }).join(", ") + ".";
+      return prompt("family.artifacts.state_item",
+        { id: a.id, type: v.type, version: a.versions.length, chars: v.content.length });
+    }).join(", ") });
   },
   tools: [new ShowArtifact(), new EditArtifact(), new ReadArtifact(), new GrepArtifact()],
 }), defineFamily({
@@ -324,7 +326,8 @@ export const FAMILIES = [defineFamily({
   // request_artifact_debug répond lui-même si le débogage est déjà actif.
   state: (ctx) => {
     const off = artifactsOf(ctx.conv).filter((a) => !debugOn(a));
-    return off.length ? `Débogage coupé par l'utilisateur pour : ${off.map((a) => `« ${a.id} »`).join(", ")}.` : "";
+    return off.length ? prompt("family.artifact_debug_offer.state",
+      { list: off.map((a) => prompt("family.artifact_debug_offer.state_item", { id: a.id })).join(", ") }) : "";
   },
   tools: [new RequestArtifactDebug()],
 }), defineFamily({

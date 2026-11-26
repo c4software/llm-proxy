@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 
 const { apiContent, apiMessages, requestTools } = await import("../../llm_proxy/ui/web/static/chat/api.js");
 const { chipFor, recordCall, endStep, closeStep } = await import("../../llm_proxy/ui/web/static/chat/turn.js");
+const { prompt } = await import("../../llm_proxy/ui/web/static/lib/prompts.js");
 
 const user = (content, extra = {}) => ({ role: "user", content, ...extra });
 const answer = (content, extra = {}) => ({ role: "assistant", content, ...extra });
@@ -28,7 +29,7 @@ test("ajout seul : un tour de plus ne change rien à ce qui précède", () => {
   assert.deepEqual(after.slice(0, before.length), before);
   assert.equal(after[0].content, "Sois bref.\n\nconsignes");
   // L'état n'est joint que quand il change ; la réponse en erreur n'est pas rejouée.
-  assert.match(after[1].content, /\[État du moment, ajouté par la page\]\nartifact A/);
+  assert.ok(after[1].content.endsWith("\n\n" + prompt("messages.state", { state: "artifact A" })));
   assert.equal(after[3].content, "deux");
   assert.equal(after[4].role, "user");
   assert.match(after[4].content, /artifact B/);

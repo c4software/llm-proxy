@@ -2,12 +2,15 @@
 // avec le VRAI Vue, compilateur du navigateur compris : une expression
 // qu'il refuse (un `if` dans un @change, que Vue enveloppe en
 // `$event => (…)`) laissait sinon une vue entière blanche, sans qu'aucun
-// test ne le voie.
+// test ne le voie. Et chaque module de la page est du JavaScript valide :
+// une constante déclarée deux fois empêchait un module de se charger, que
+// ni tsc (checkJs coupé) ni un test qui ne l'importe pas ne voyaient.
 import "./setup.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 
 // Le compilateur décode les entités par un <div> : de quoi lui répondre.
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
@@ -47,6 +50,13 @@ for (const path of files(STATIC)) {
 }
 
 test("des gabarits sont trouvés", () => assert.ok(templates.length >= 10));
+
+test("chaque module de la page est du JavaScript valide", () => {
+  const broken = [...files(STATIC)].map((path) => [path.slice(STATIC.length),
+    spawnSync(process.execPath, ["--check", path], { encoding: "utf8" })])
+    .filter(([, r]) => r.status !== 0).map(([file, r]) => `${file} : ${r.stderr.split("\n").find((l) => /Error/.test(l))}`);
+  assert.deepEqual(broken, []);
+});
 
 for (const [file, line, template] of templates) {
   test(`${file}:${line} se compile`, () => {

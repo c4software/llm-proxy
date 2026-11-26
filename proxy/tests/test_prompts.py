@@ -81,6 +81,24 @@ def test_un_prompt_modifie_d_un_outil_du_navigateur_part_avec_la_session(idp):
     assert page() == before
 
 
+def test_un_texte_de_la_page_modifie_part_avec_la_session_sans_etre_rempli(idp):
+    """Les textes que la page ajoute aux messages (le résumé, l'état des
+    familles) : /ui/session les donne en gabarits, variables NON remplies
+    (la page les remplit), modifiés puis rétablis."""
+    alice, _, _ = admin_and_user(idp)
+
+    def given():
+        return alice.get("/ui/session").json()["chat"]["prompts"]
+
+    before = given()
+    assert before["compact.preamble"] == prompts.CATALOG["compact.preamble"][1]
+    assert "{summary}" in before["compact.preamble"] and "family.folder.state" in before
+    assert alice.put("/ui/prompts/compact.preamble", json={"text": "Summary:\n{summary}"}).status_code == 200
+    assert given()["compact.preamble"] == "Summary:\n{summary}"
+    assert alice.delete("/ui/prompts/compact.preamble").status_code == 200
+    assert given() == before
+
+
 def test_un_prompt_refuse_ne_change_rien(idp):
     alice, _, _ = admin_and_user(idp)
     cases = {
@@ -155,14 +173,23 @@ def test_deux_modifications_simultanees_sont_gardees_toutes_les_deux(idp, monkey
 # ── le catalogue et le code ───────────────────────────────────────────
 
 def test_chaque_cle_nommee_dans_le_code_est_au_catalogue_et_inversement():
-    """Les clés écrites dans le code, et celles qu'il DÉRIVE : la description
-    de chaque outil natif du navigateur (`<nom>.description`, exigée), la
-    consigne d'une famille native (`family.<clé>.guidance`, si elle en a
-    une)."""
+    """Les clés écrites dans le code — du proxy, et de la page (qui n'a que
+    celles que /ui/session lui donne) —, et celles qu'il DÉRIVE : la
+    description de chaque outil natif du navigateur (`<nom>.description`,
+    exigée), la consigne d'une famille native (`family.<clé>.guidance`, si
+    elle en a une)."""
     named = set()
     for path in SRC.rglob("*.py"):
         named |= set(re.findall(r'prompts\.(?:text|ref|template)\(\s*"([^"]+)"', path.read_text("utf-8")))
     assert named, "aucune clé trouvée : le motif ne correspond plus au code"
+    # La page : `prompt("…"` (lib/prompts.js), hors des bibliothèques tierces.
+    page = set()
+    for path in (SRC / "ui" / "web" / "static").rglob("*.js"):
+        if "vendor" not in path.parts:
+            page |= set(re.findall(r'\bprompt\(\s*"([^"]+)"', path.read_text("utf-8")))
+    assert page, "aucune clé de la page trouvée : le motif ne correspond plus au code"
+    assert page <= set(prompts.for_page()), "la page n'a que les gabarits que /ui/session lui donne"
+    named |= page
     named |= {f"{t.name}.description" for t in tools.PAGE if t.name in NATIVE}
     families = {f"family.{f.key}.guidance" for f in tools.FAMILIES}
     assert named - set(prompts.CATALOG) == set()

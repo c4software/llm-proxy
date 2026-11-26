@@ -3,7 +3,9 @@
 Les **prompts** sont les textes que le modèle lit et que le proxy fournit :
 descriptions des outils du proxy et du navigateur et de leurs paramètres,
 consignes des familles d'outils du navigateur (ajoutées au prompt
-système), consigne de fin de budget d'outils, instructions du serveur MCP,
+système), textes que la page du chat ajoute aux messages (résumé d'une
+conversation compactée, état du moment des outils, protocole de Gemini
+Nano), consigne de fin de budget d'outils, instructions du serveur MCP,
 consigne d'agrandissement d'une image.
 Ils sont définis dans un catalogue et modifiables par l'admin depuis
 *Configuration → Prompts*, sans reconstruire l'image.
@@ -19,7 +21,8 @@ fichier TOML par domaine :
 | Fichier | Contenu |
 |---|---|
 | `tools.toml` | Outils du proxy (`web_fetch`, `ocr`, `code_execution`…), consigne de fin de budget d'outils, agrandissement d'image |
-| `page.toml` | Outils du navigateur (`<outil>.description`, `<outil>.param.<chemin>`) et consignes de leurs familles (`family.<clé>.guidance`) ; variables : les `settings` de l'outil |
+| `page.toml` | Outils du navigateur (`<outil>.description`, `<outil>.param.<chemin>`), consignes de leurs familles (`family.<clé>.guidance`) et état du moment d'une famille, joint au message de l'utilisateur (`family.<clé>.state…`) ; variables : les `settings` de l'outil, et pour l'état, ce que la page connaît (identifiants, noms, nombres) |
+| `chat.toml` | Textes que la page du chat ajoute aux messages : résumé d'une conversation compactée (`compact.*`), état du moment (`messages.*`), protocole de Gemini Nano (`gemini_nano.*`) |
 | `mcp.toml` | Instructions du serveur MCP exposé |
 
 Une table par sujet, une clé par texte : `[web_fetch]` puis
@@ -28,8 +31,9 @@ d'un paramètre s'écrit `"param.<nom>"`.
 
 ### Variables
 
-Un texte peut contenir des **variables** `{nom}`, remplies par le proxy à
-chaque usage : une borne (`{max_pages}`), le nom d'un outil
+Un texte peut contenir des **variables** `{nom}`, remplies à chaque usage
+par le proxy, ou par la page pour les textes qu'elle ajoute (`chat.toml`,
+`family.<clé>.state…`) : une borne (`{max_pages}`), le nom d'un outil
 (`{web_search}`), ou un fragment qui n'est présent que si un autre outil est
 proposé au modèle en même temps (`{search_hint}`, vide sinon). `{{` et `}}`
 écrivent une accolade.
@@ -48,9 +52,10 @@ et un filtre sur les textes modifiés. Pour chacun : *Modifier*, puis
 - **Droits** : un admin ; sans comptes OIDC, la page connectée, comme la
   configuration du proxy.
 - **Portée** : tout le proxy, tous les comptes et toutes les surfaces.
-- **Effet** : à la requête suivante ; pour les outils du navigateur, au
-  rechargement de la page du chat, qui reçoit leurs textes avec
-  `/ui/session`.
+- **Effet** : à la requête suivante ; pour les outils du navigateur et les
+  textes de la page, au rechargement de la page du chat, qui les reçoit
+  avec `/ui/session` (`chat.page`, et `chat.prompts` : les gabarits que la
+  page remplit elle-même).
 - **Borne** : 20 000 caractères par texte.
 
 Les modifications sont gardées dans `data/prompts.json`, à côté de

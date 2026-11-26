@@ -28,6 +28,7 @@ import { TOOL, FAMILY, PageTool, defineFamily, failure, oneLine } from "../contr
 import { paths as pathsOf, inputs, deliver } from "./files.js";
 import * as linux from "./linuxvm.js";
 import * as text from "../text.js";
+import { prompt } from "../../../lib/prompts.js";
 
 const HEAD = 6_000, TAIL = 14_000;   // caractères de sortie gardés : le début, et surtout la fin
 
@@ -207,18 +208,8 @@ export const FAMILIES = [defineFamily({
   // Le réseau, que l'utilisateur ouvre ou ferme dans le panneau Terminal :
   // l'état, joint au tour (le prompt système reste figé).
   state: (ctx) => (ctx && ctx.conv && ctx.conv.linuxNetwork
-    ? linux.vm.relay
-      ? "Réseau de la VM Linux OUVERT par l'utilisateur : un vrai accès à Internet (https, apk add, "
-        + "pip install, git clone, ssh), sauf vers les réseaux privés."
-      : "Réseau de la VM Linux OUVERT par l'utilisateur : des requêtes web seulement, en écrivant les "
-        + "adresses en http:// (le navigateur les fait en https), vers les sites qui permettent CORS "
-        + "(API publiques, pypi.org/pypi/<paquet>/json, raw.githubusercontent.com, api.github.com…) ; "
-        + "pas de https:// direct, ni ssh, ni apk, ni pip install."
-    : "La VM Linux n'a pas de réseau (l'utilisateur peut l'ouvrir dans le panneau Terminal).")
-    + (ctx && ctx.conv && linux.visible(ctx.conv)
-      ? " Le panneau Terminal est OUVERT : ce que run_shell exécute y est tapé, sous les yeux de "
-        + "l'utilisateur. Pour un programme qui ne s'arrête pas seul (serveur, boucle), donner un "
-        + "`timeout` court : il continue dans le terminal."
-      : ""),
+    ? linux.vm.relay ? prompt("family.linux.state_network_relay") : prompt("family.linux.state_network_web")
+    : prompt("family.linux.state_no_network"))
+    + (ctx && ctx.conv && linux.visible(ctx.conv) ? " " + prompt("family.linux.state_terminal") : ""),
   tools: [new RunShell(), new ShellRead(), new ShellGrep(), new ShellEdit(), new ShellWrite()],
 })];

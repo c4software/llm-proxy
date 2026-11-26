@@ -16,6 +16,7 @@
   il diffère du précédent : rejoué à l'identique ensuite.
 */
 import * as Compact from "./compact.js";
+import { prompt } from "../lib/prompts.js";
 import * as tools from "./tools/index.js";
 
 /** Le message tel que l'API le veut : texte seul, ou parties (texte,
@@ -30,7 +31,7 @@ export function apiContent(m, state = "") {
   for (const f of files) {
     text += `\n\n<file name="${f.name.replace(/"/g, "'")}">\n${f.data}\n</file>`;
   }
-  if (state) text += `\n\n[État du moment, ajouté par la page]\n${state}`;
+  if (state) text += "\n\n" + prompt("messages.state", { state });
   if (!images.length) return text;
   return [
     ...(text ? [{ type: "text", text }] : []),
@@ -54,7 +55,7 @@ export function apiMessages(conv, upto, guidance = "") {
     if (m.role === "summary") continue;
     if (m.role === "user") {
       const now = typeof m.state === "string" ? m.state : shown;
-      const joined = now === shown ? "" : now || "Rien de particulier (plus d'artifact, de dossier ouvert…).";
+      const joined = now === shown ? "" : now || prompt("messages.nothing");
       shown = now;
       out.push({ role: "user", content: apiContent(m, joined) });
     }
@@ -68,8 +69,8 @@ export function apiMessages(conv, upto, guidance = "") {
     }
     else if (m.content) out.push({ role: "assistant", content: m.content });
     else if ((m.attachments || []).length) {
-      out.push({ role: "assistant", content: "(image générée : "
-        + m.attachments.map((/** @type {any} */ a) => a.name).join(", ") + ")" });
+      out.push({ role: "assistant", content: prompt("messages.generated_image",
+        { names: m.attachments.map((/** @type {any} */ a) => a.name).join(", ") }) });
     }
   }
   return out;

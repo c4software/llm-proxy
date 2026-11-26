@@ -23,6 +23,7 @@
     "v86": "0.5.470"
   },
   "devDependencies": {
-    "esbuild": "0.25.10"
+    "esbuild": "0.25.10",
+    "smol-toml": "1.9.1"
   }
 }

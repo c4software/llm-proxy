@@ -109,6 +109,9 @@ async def ui_session(request: Request):
             # ceux qui sont refusés ([ui].page_tools_disabled) ni ceux d'une
             # extension désactivée (ui/page_tools.py).
             "page": page_tools.declarations(),
+            # Les textes que la page ajoute aux messages (le résumé, l'état
+            # du moment…), qu'elle remplit elle-même (prompts.for_page).
+            "prompts": prompts.for_page(),
             # Le relais réseau de la VM Linux ([ui].linux_relay).
             "linux_relay": linux_relay.allowed(user),
         },

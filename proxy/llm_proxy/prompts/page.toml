@@ -1,10 +1,12 @@
 # Les prompts des OUTILS DU NAVIGATEUR (tools/page/*.py) : leur description,
 # celle de leurs paramètres (`param.<chemin>`), et la consigne de leur
 # famille (`family.<clé>.guidance`, ajoutée au prompt système quand elle est
-# active).
-# Les variables {nom} sont les `settings` de l'outil (une borne, un délai),
-# que la page applique aussi. Modifiables par l'admin dans
-# Configuration → Prompts (docs/prompts.md).
+# active) ; l'état du moment d'une famille (`family.<clé>.state…`), que la
+# page remplit et joint au message de l'utilisateur (`chat.prompts`).
+# Les variables {nom} : pour une description, les `settings` de l'outil
+# (une borne, un délai), que la page applique aussi ; pour un état
+# (`state…`), ce que la page connaît (un nom, un nombre). Modifiables par
+# l'admin dans Configuration → Prompts (docs/prompts.md).
 
 [common]
 "param.reason" = '''Why, in one sentence, shown to the user.'''
@@ -61,6 +63,8 @@ description = '''Searches the latest version of an artifact without rereading it
 "param.context" = '''Lines of context before and after (default {context}, at most {max_context}).'''
 
 ["family.artifacts"]
+state = "Artifacts of the conversation: {list}."
+state_item = '"{id}" ({type}, version {version}, {chars} characters)'
 guidance = '''To change an artifact already shown: grep_artifact to find the passage, read_artifact on its lines (start_line, end_line) to get its exact text, then edit_artifact; do not reread it whole without need. Artifact content from earlier in the conversation may be stale: only the current version counts (read_artifact). show_artifact only for a new artifact, or a redesign the user asks for.'''
 
 # ── Proposer le débogage ──────────────────────────────────────────────
@@ -71,6 +75,8 @@ description = '''Offers the user, on a card they accept or decline, to turn back
 "param.reason" = '''What does not work, in one sentence, shown to the user.'''
 
 ["family.artifact_debug_offer"]
+state = "Debugging turned off by the user for: {list}."
+state_item = '"{id}"'
 guidance = '''If the user reports that an artifact with debugging turned off does not work (a button with no effect, a blank page, an error): offer to turn debugging back on with request_artifact_debug rather than guessing the cause.'''
 
 # ── Déboguer un artifact ──────────────────────────────────────────────
@@ -120,6 +126,7 @@ description = '''Replaces an EXACT passage of a file of the open folder (read th
 "param.replace_all" = '''Replace all occurrences.'''
 
 ["family.folder"]
+state = 'Open folder: "{name}" ({count} files).'
 guidance = '''A folder of the user is open in the chat. Browse it with folder_list, folder_read and folder_search rather than assuming its content; any write (folder_write, folder_edit) requires the user's approval.'''
 
 # ── Date et heure ─────────────────────────────────────────────────────
@@ -290,6 +297,10 @@ description = '''Writes a whole text file in the Linux VM: creates it (folders i
 "param.content" = '''The full content of the file.'''
 
 ["family.linux"]
+state_network_relay = "Linux VM network OPENED by the user: real Internet access (https, apk add, pip install, git clone, ssh), except to private networks."
+state_network_web = "Linux VM network OPENED by the user: web requests only, writing addresses as http:// (the browser makes them over https), to sites that allow CORS (public APIs, pypi.org/pypi/<package>/json, raw.githubusercontent.com, api.github.com…); no direct https://, nor ssh, nor apk, nor pip install."
+state_no_network = "The Linux VM has no network (the user can open it in the Terminal panel)."
+state_terminal = "The Terminal panel is OPEN: what run_shell executes is typed there, in front of the user. For a program that does not stop by itself (server, loop), give a short `timeout`: it keeps running in the terminal."
 guidance = '''run_shell runs bash in a Linux VM of the browser. Only use it if the request requires running something: launching or testing a shell or Python script (standard library only), processing files already in the VM. Not to write an answer, notes, a table or a document: answer directly, or use an artifact. /work is kept with the conversation; the user sees the same machine in the Terminal panel. To change a file of the VM: shell_grep (where?), shell_read on its lines, shell_edit — rather than sed or a heredoc in run_shell; shell_write for a new file. File content from earlier in the conversation may be stale: shell_read returns the current file.'''
 
 # ── Programmes d'outils ───────────────────────────────────────────────
