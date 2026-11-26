@@ -395,10 +395,10 @@ résultats](outils-heberges.md#mémoire-des-résultats).
 
 La page déclare également des outils qu'**elle exécute elle-même**. Le
 proxy lui transmet ces appels en `tool_calls` ; la page les exécute et
-relance le modèle, jusqu'à 25 tours par réponse. Les appels restent dans
-l'historique : le modèle retrouve au message suivant les données lues ou
-produites. Ces outils nécessitent un modèle qui prend en charge les
-appels d'outils.
+relance le modèle, jusqu'à `[ui].chat_max_rounds` tours par réponse (50 par
+défaut). Les appels restent dans l'historique : le modèle retrouve au
+message suivant les données lues ou produites. Ces outils nécessitent un
+modèle qui prend en charge les appels d'outils.
 
 Certains outils **attendent l'utilisateur** : une feuille en bas du chat
 pour une question, ou une carte dans le fil pour une écriture. L'attente

@@ -194,7 +194,7 @@ def test_chat_is_closed_unless_enabled(ui, monkeypatch):
     everywhere(monkeypatch, dashboard, "UI_CHAT", False)
     assert chat(ui).status_code == 404
     assert ui.client.get("/ui/session").json()["chat"] == {
-        "enabled": False, "model": None, "hosted_tools": False, "tools": [], "always": [],
+        "enabled": False, "model": None, "max_rounds": 50, "hosted_tools": False, "tools": [], "always": [],
         "image_sizes": ["512x512", "768x768", "1024x1024"],
         "image_size": "512x512", "image_steps": {}, "image_loras": {}, "image_upscale": None, "page": page_tools.declarations(),
         "prompts": prompts.for_page(), "linux_relay": False}

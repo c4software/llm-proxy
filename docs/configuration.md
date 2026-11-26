@@ -55,7 +55,7 @@ Seuls ces réglages s'appliquent à chaud ; ils sont lus à chaque usage :
 | `[tools]` | `max_calls`, `run_timeout`, `max_result_chars`, `direct_calls_per_minute` |
 | `[quotas]` | `max_queue_seconds` |
 | `[mcp_server]` | `allowed_origins` |
-| `[ui]` | `page_tools_disabled`, `linux_relay_max_bytes`, `linux_relay_idle_seconds` |
+| `[ui]` | `page_tools_disabled`, `chat_max_rounds` (la page la reçoit avec sa session suivante), `linux_relay_max_bytes`, `linux_relay_idle_seconds` |
 
 Tout autre changement (backends, outils activés, chemins, OIDC…) n'est
 pris en compte qu'après redémarrage. Le journal et la page indiquent
@@ -443,6 +443,7 @@ aussi).
 |---|---|---|
 | `chat` | `false` | Ouvre l'onglet *Chat* du tableau de bord (`POST /ui/chat/completions`). Le cookie de `/ui` y dépense des tokens, comptés pour la clé connectée. Voir [Le chat](chat.md) |
 | `chat_model` | `""` | Modèle présélectionné (`<backend>/<modèle>`) pour chaque nouvelle conversation, s'il est au catalogue. Vide : le dernier choisi dans le navigateur, sinon le premier du catalogue |
+| `chat_max_rounds` | `50` | Tours d'outils au plus par réponse du chat de la page, et questions à l'utilisateur au plus ; au-delà, la page arrête la réponse. 1 au moins. Modifiable dans *Configuration → Proxy*, section *Avancé* |
 | `conversations_database` | `"conversations.db"` | Base SQLite de l'historique du chat (conversations et images, par compte). Relatif = à côté de `config.toml` |
 | `conversation_max_bytes` | `20000000` | Taille maximale d'une conversation (texte, artifacts, fichiers produits) |
 | `asset_max_bytes` | `20000000` | Taille maximale d'une image gardée |

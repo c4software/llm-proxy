@@ -58,6 +58,20 @@ def test_safe_settings_apply_everywhere_they_are_copied(edited):
     assert auth.PROXY_API_KEYS is not None
 
 
+def test_la_limite_de_tours_du_chat_rechargee_part_avec_la_session(edited, proxy):
+    """[ui].chat_max_rounds : la page la reçoit avec /ui/session (pas de
+    borne en dur côté page) ; rechargée à chaud, la session suivante donne
+    la nouvelle ; une valeur sous 1 est refusée."""
+    assert proxy.client.get("/ui/session").json()["chat"]["max_rounds"] == 50
+    result = reload.reload(edited(("chat_max_rounds = 50", "chat_max_rounds = 7")))
+    assert result["applied"] == ["ui.chat_max_rounds"] and result["restart"] == []
+    assert proxy.client.get("/ui/session").json()["chat"]["max_rounds"] == 7
+    # Sous 1 : refusée au rechargement comme au démarrage, rien ne change.
+    with pytest.raises(reload.ReloadError):
+        reload.reload(edited(("chat_max_rounds = 50", "chat_max_rounds = 0"), name="zero.toml"))
+    assert proxy.client.get("/ui/session").json()["chat"]["max_rounds"] == 7
+
+
 def test_an_invalid_value_changes_nothing(edited):
     from llm_proxy import tools
     from llm_proxy.surfaces import tool_loop

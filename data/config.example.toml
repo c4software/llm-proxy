@@ -482,6 +482,10 @@ chat = false
 # Modèle présélectionné (<backend>/<modèle>) ; vide = dernier choisi, sinon
 # premier du catalogue.
 chat_model = ""
+# Tours d'outils de la page au plus par réponse du chat (et questions à
+# l'utilisateur au plus) : au-delà, la page s'arrête. 1 au moins ;
+# rechargeable à chaud (la page la reçoit avec sa session suivante).
+chat_max_rounds = 50
 # Voix clonées gardées par compte (ou par clé), et taille max (octets) d'un
 # échantillon WAV de voix.
 voices_max = 100

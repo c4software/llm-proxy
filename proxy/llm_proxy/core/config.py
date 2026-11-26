@@ -127,8 +127,13 @@ def num(path: str, default: float) -> float:
     return _typed(path, default, float, "un nombre")
 
 
-def integer(path: str, default: int) -> int:
-    return _typed(path, default, int, "un entier")
+def integer(path: str, default: int, minimum: int | None = None) -> int:
+    """Un entier ; sous `minimum` (s'il est donné), le démarrage — ou le
+    rechargement à chaud — est refusé."""
+    value = _typed(path, default, int, "un entier")
+    if minimum is not None and value < minimum:
+        raise SystemExit(f"{CONFIG_PATH} : {path} doit valoir {minimum} au moins (reçu {value})")
+    return value
 
 
 def text(path: str, default: str = "") -> str:

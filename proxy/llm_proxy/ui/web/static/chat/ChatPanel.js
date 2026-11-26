@@ -95,8 +95,6 @@ export const ChatPanel = {
   setup(props, { emit }) {
     const { ref, reactive, computed, watch, nextTick, onMounted, onUpdated, onUnmounted, toRaw } = Vue;
     const API = "/ui/chat/completions";
-    // Tours d'outils de la page au plus, par réponse.
-    const MAX_ROUNDS = 25;
     // Une réponse du proxy (webhook) encore « en cours » passé ce délai :
     // le proxy a redémarré pendant le tour, elle ne viendra plus.
     const SERVER_STALE = 30 * 60 * 1000;
@@ -111,6 +109,9 @@ export const ChatPanel = {
     };
 
     const chat = computed(() => props.session.chat || {});
+    // Tours d'outils de la page au plus, par réponse ([ui].chat_max_rounds) ;
+    // sans elle (session absente), aucun tour plutôt qu'une boucle sans fin.
+    const maxRounds = () => chat.value.max_rounds ?? 0;
     const toolGroups = computed(() => (chat.value.tools || []).map((g) => ({
       ...g,
       label: TOOL_LABELS[g.type] || (g.type.startsWith("mcp:")
@@ -720,8 +721,8 @@ export const ChatPanel = {
         for (;;) {
           // Un tour à demander au modèle — sauf à la reprise d'une pause.
           if (!(live.step && live.step.queue.length)) {
-            if ((live.steps || []).length >= MAX_ROUNDS) {
-              live.error = `Arrêté après ${MAX_ROUNDS} tours d'outils.`;
+            if ((live.steps || []).length >= maxRounds()) {
+              live.error = `Arrêté après ${maxRounds()} tours d'outils.`;
               break;
             }
             const start = live.content.length;
@@ -814,8 +815,8 @@ export const ChatPanel = {
     async function deviceTurns(conv, live, upto, ctrl, answer) {
       for (;;) {
         if (!(live.step && live.step.queue.length)) {
-          if ((live.steps || []).length >= MAX_ROUNDS) {
-            live.error = `Arrêté après ${MAX_ROUNDS} questions.`;
+          if ((live.steps || []).length >= maxRounds()) {
+            live.error = `Arrêté après ${maxRounds()} questions.`;
             return false;
           }
           const start = live.content.length;

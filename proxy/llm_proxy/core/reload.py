@@ -6,7 +6,8 @@ secrets, outils activés…) attend un redémarrage, et le rapport le dit.
 
 Chaque réglage est une constante de module lue à l'import :
 `NOM = config.integer("tools.max_calls", 8)`. Pour la recharger, le
-module relit le SOURCE des modules du proxy (ast) une fois et y trouve :
+module relit le SOURCE des modules du proxy (ast), à nouveau quand d'autres
+modules du proxy ont été chargés, et y trouve :
   * les affectations de premier niveau dont l'expression appelle
     `config.<lecteur>("<clé>", …)` : elles sont réévaluées telles quelles,
     dans l'espace du module, sur la configuration relue ;
@@ -55,6 +56,7 @@ SAFE = (
     "quotas.max_queue_seconds",
     "mcp_server.allowed_origins",
     "ui.page_tools_disabled",
+    "ui.chat_max_rounds",
     "ui.linux_relay_max_bytes",
     "ui.linux_relay_idle_seconds",
 )
@@ -111,20 +113,28 @@ def _refs(expr: ast.expr) -> set[tuple[str, str]]:
     return out
 
 
-_SCAN: tuple[list[_Site], dict] | None = None
+# La lecture des sources, gardée tant que les modules du proxy chargés
+# restent les mêmes : un module importé plus tard (à la demande) est lu au
+# rechargement suivant.
+_SCAN: tuple[frozenset, list[_Site], dict] | None = None
+
+
+def _loaded() -> frozenset:
+    return frozenset(name for name, module in list(sys.modules.items())
+                     if module is not None and (name == PACKAGE or name.startswith(PACKAGE + ".")))
 
 
 def _scan() -> tuple[list[_Site], dict]:
     """(sites, copies) des modules du proxy chargés ; copies :
     (module source, NOM) → [(module qui l'importe, son nom local)]."""
     global _SCAN
-    if _SCAN is not None:
-        return _SCAN
+    loaded = _loaded()
+    if _SCAN is not None and _SCAN[0] == loaded:
+        return _SCAN[1], _SCAN[2]
     sites: list[_Site] = []
     copies: dict[tuple[str, str], list[tuple[str, str]]] = {}
-    for name, module in list(sys.modules.items()):
-        if module is None or not (name == PACKAGE or name.startswith(PACKAGE + ".")):
-            continue
+    for name in sorted(loaded):
+        module = sys.modules[name]
         try:
             tree = ast.parse(inspect.getsource(module))
         except (OSError, TypeError, SyntaxError):
@@ -151,12 +161,12 @@ def _scan() -> tuple[list[_Site], dict]:
             if names:
                 sites.append(_Site(name, names, value, _config_keys(value),
                                    _refs(value)))
-    _SCAN = sites, copies
-    return _SCAN
+    _SCAN = loaded, sites, copies
+    return sites, copies
 
 
 def prepare() -> None:
-    """Lit le source des modules une fois (au démarrage, hors de la boucle)."""
+    """Lit le source des modules chargés (au démarrage, hors de la boucle)."""
     _scan()
 
 

@@ -27,6 +27,10 @@ from .accounts import ui_login_mode
 from .. import dataurl, linux_relay, page_tools
 from .page import UI_CHAT, UI_CHAT_MODEL, router
 
+# Tours d'outils de la page au plus, par réponse du chat (et questions à
+# l'utilisateur au plus) : la page s'arrête au-delà.
+MAX_ROUNDS = config.integer("ui.chat_max_rounds", 50, minimum=1)
+
 
 def chat_tool_groups() -> list[dict]:
     """Ce que le chat de la page peut déclarer : un type par groupe
@@ -86,6 +90,7 @@ async def ui_session(request: Request):
         "chat": {
             "enabled": UI_CHAT,
             "model": UI_CHAT_MODEL or None,
+            "max_rounds": MAX_ROUNDS,
             "hosted_tools": chat_tools,
             "tools": chat_tool_groups() if chat_tools else [],
             "always": chat_api.always_shown() if chat_tools else [],
