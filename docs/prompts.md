@@ -44,10 +44,28 @@ variables permises sont affichées dans l'édition et rendues par
 
 ## Modifier un prompt
 
-*Configuration → Prompts* liste les textes par domaine, avec une recherche
-et un filtre sur les textes modifiés. Pour chacun : *Modifier*, puis
-*Enregistrer* ; *Rétablir* rend le texte par défaut. Un texte enregistré
-égal au défaut n'est pas gardé comme modification.
+*Configuration → Prompts* liste les textes par catégorie, avec une
+recherche et un filtre sur les textes modifiés. Pour chacun : *Modifier*,
+puis *Enregistrer* ; *Rétablir* rend le texte par défaut. Un texte
+enregistré égal au défaut n'est pas gardé comme modification.
+
+Par défaut, la page ne montre que les catégories qui règlent le
+comportement du chat :
+
+| Catégorie | Textes |
+|---|---|
+| Compactage d'une conversation | `compact.*` |
+| État du moment | `messages.*`, `family.<clé>.state…` |
+| Consignes des familles d'outils | `family.<clé>.guidance` |
+| Gemini Nano | `gemini_nano.*` |
+| Agrandir une image | `image_generation.upscale` |
+
+*Tous les textes* ajoute les catégories *Outils du proxy*, *Outils du
+navigateur* et *Serveur MCP* : les descriptions des outils, de leurs
+paramètres et les instructions MCP. Le modèle s'en sert pour appeler les
+outils ; une description modifiée peut dégrader ces appels sans erreur
+visible. La recherche et *modifiés seulement* portent sur tous les textes,
+quelle que soit la case.
 
 - **Droits** : les lire, comme la configuration du proxy (un admin ; sans
   comptes OIDC, la page connectée) ; les modifier écrit `config.toml` : un
@@ -80,7 +98,7 @@ reporter son texte dans le prompt `image_generation.upscale`.
 
 | Route | Effet |
 |---|---|
-| `GET /ui/prompts` | `{max_chars, writable, prompts: [{key, domain, default, override, variables}]}` ; `writable` : la page peut-elle écrire (admin OIDC) ; `override` vaut `null` sans modification |
+| `GET /ui/prompts` | `{max_chars, writable, categories: [{label, essential}], prompts: [{key, domain, category, essential, default, override, variables}]}` ; `writable` : la page peut-elle écrire (admin OIDC) ; `categories` : dans l'ordre d'affichage, `essential` pour celles montrées par défaut ; `override` vaut `null` sans modification |
 | `PUT /ui/prompts/{clé}` | Corps `{"text": "…"}` ; rend l'entrée mise à jour. 404 `not_found` : clé inconnue ; 400 `invalid_prompt` : variable inconnue ou mal écrite, accolade seule, `${`, texte vide ou trop long ; 409 `conflict` : pas de `config.toml` |
 | `DELETE /ui/prompts/{clé}` | Rend le texte par défaut ; 404 `not_found` : clé inconnue |
 

@@ -22,6 +22,9 @@ accolade. Un texte modifié n'utilise que les variables de son défaut.
   for_page()                les gabarits que la PAGE remplit elle-même
                            (/ui/session, `chat.prompts`)
   catalog(), set_override(), reset()   pour la page (ui/prompt_routes.py)
+  CATEGORIES               les catégories de la page, dans l'ordre ; les
+                           premières, `essential`, sont la prose qui règle
+                           le chat, la seule montrée par défaut
 """
 
 import re
@@ -186,12 +189,45 @@ def resolve(value, **values):
     return value
 
 
+# Les CATÉGORIES de Configuration → Prompts, dans l'ordre d'affichage :
+# (libellé, essentielle ?, la clé et son domaine en sont-ils ?). La
+# première qui convient l'emporte. Les ESSENTIELLES sont la prose qui règle
+# le comportement du chat (résumé, état, consignes des familles), la seule
+# que la page montre par défaut ; les descriptions des outils et de leurs
+# paramètres font partie du contrat de leurs schémas : une modification y
+# apporte peu et peut dégrader les appels sans erreur visible. Elles restent
+# modifiables, derrière « tous les textes ».
+CATEGORIES = (
+    ("Compactage d'une conversation", True, lambda k, d: d == "chat" and k.startswith("compact.")),
+    ("État du moment", True, lambda k, d: (d == "chat" and k.startswith("messages."))
+                                          or bool(_PAGE_STATE.match(k))),
+    ("Consignes des familles d'outils", True, lambda k, d: k.startswith("family.") and k.endswith(".guidance")),
+    ("Gemini Nano", True, lambda k, d: d == "chat" and k.startswith("gemini_nano.")),
+    ("Agrandir une image", True, lambda k, d: k == "image_generation.upscale"),
+    ("Outils du proxy", False, lambda k, d: d == "tools"),
+    ("Outils du navigateur", False, lambda k, d: d == "page"),
+    ("Serveur MCP", False, lambda k, d: d == "mcp"),
+)
+
+
+def _category(key: str, domain: str) -> tuple[str, bool]:
+    found = next(((label, essential) for label, essential, match in CATEGORIES if match(key, domain)), None)
+    if found is None:
+        raise RuntimeError(f"prompts/{domain}.toml : clé « {key} » sans catégorie (CATEGORIES)")
+    return found
+
+
+# Une clé sans catégorie : au démarrage, pas à l'ouverture de la page.
+_CATEGORY = {k: _category(k, d) for k, (d, _) in CATALOG.items()}
+
+
 def catalog() -> list[dict]:
-    """Chaque texte, pour la page : clé, domaine, défaut, modification
-    (None sans), variables permises."""
+    """Chaque texte, pour la page : clé, domaine, catégorie, essentiel ou
+    non, défaut, modification (None sans), variables permises."""
     changed = _overrides()
-    return [{"key": k, "domain": d, "default": v, "override": changed.get(k),
-             "variables": variables(v)} for k, (d, v) in CATALOG.items()]
+    return [{"key": k, "domain": d, "category": _CATEGORY[k][0], "essential": _CATEGORY[k][1],
+             "default": v, "override": changed.get(k), "variables": variables(v)}
+            for k, (d, v) in CATALOG.items()]
 
 
 def entry(key: str) -> dict:

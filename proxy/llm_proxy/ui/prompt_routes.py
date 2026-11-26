@@ -5,8 +5,9 @@ suivante. Les lire : comme la configuration du proxy (config_view.forbidden) ;
 les modifier écrit config.toml : un admin OIDC seulement
 (config_view.write_forbidden).
 
-  GET    /ui/prompts          {max_chars, writable, prompts: [{key, domain,
-                              default, override, variables}]}
+  GET    /ui/prompts          {max_chars, writable, categories: [{label,
+                              essential}], prompts: [{key, domain, category,
+                              essential, default, override, variables}]}
   PUT    /ui/prompts/{clé}    {"text": "…"} → l'entrée mise à jour, écrite
                               dans [prompts] de config.toml ; 404 : clé
                               inconnue ; 400 : variable inconnue ou mal
@@ -35,6 +36,8 @@ async def ui_prompts(request: Request):
     if (bad := forbidden(request)) is not None:
         return bad
     return {"max_chars": prompts.MAX_CHARS, "writable": writable(request),
+            "categories": [{"label": label, "essential": essential}
+                           for label, essential, _ in prompts.CATEGORIES],
             "prompts": prompts.catalog()}
 
 

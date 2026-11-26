@@ -40,8 +40,9 @@ def test_un_utilisateur_ne_voit_ni_ne_modifie_les_prompts(idp):
     listing = alice.get("/ui/prompts").json()
     assert listing["max_chars"] == prompts.MAX_CHARS
     entry = next(p for p in listing["prompts"] if p["key"] == "web_fetch.description")
-    assert entry == {"key": "web_fetch.description", "domain": "tools", "default": DEFAULT,
-                     "override": None, "variables": ["search_hint", "ocr_hint"]}
+    assert entry == {"key": "web_fetch.description", "domain": "tools", "category": "Outils du proxy",
+                     "essential": False, "default": DEFAULT, "override": None,
+                     "variables": ["search_hint", "ocr_hint"]}
 
 
 # ── modifier, rétablir ────────────────────────────────────────────────
@@ -200,6 +201,35 @@ def test_deux_modifications_simultanees_sont_gardees_toutes_les_deux(idp, monkey
 
 
 # ── le catalogue et le code ───────────────────────────────────────────
+
+def test_chaque_texte_a_une_categorie_et_seule_la_prose_du_chat_est_essentielle(idp):
+    """GET /ui/prompts annonce les catégories dans l'ordre d'affichage, les
+    essentielles (montrées par défaut) d'abord ; chaque texte en a une. Sont
+    essentiels les textes qui règlent le chat, pas les descriptions des
+    outils ni de leurs paramètres."""
+    alice, _, _ = admin_and_user(idp)
+    listing = alice.get("/ui/prompts").json()
+    labels = [c["label"] for c in listing["categories"]]
+    assert labels == [label for label, _, _ in prompts.CATEGORIES]
+    flags = [c["essential"] for c in listing["categories"]]
+    assert flags == sorted(flags, reverse=True), "les essentielles d'abord"
+    assert {p["category"] for p in listing["prompts"]} <= set(labels)
+    by_key = {p["key"]: p for p in listing["prompts"]}
+    for key, category in (("compact.preamble", "Compactage d'une conversation"),
+                          ("messages.state", "État du moment"),
+                          ("family.folder.state", "État du moment"),
+                          ("family.linux.state_terminal", "État du moment"),
+                          ("family.sql.guidance", "Consignes des familles d'outils"),
+                          ("gemini_nano.protocol", "Gemini Nano"),
+                          ("image_generation.upscale", "Agrandir une image"),
+                          ("web_fetch.description", "Outils du proxy"),
+                          ("run_sql.description", "Outils du navigateur"),
+                          ("run_sql.param.sql", "Outils du navigateur"),
+                          ("mcp_server.instructions", "Serveur MCP")):
+        entry = by_key[key]
+        essential = listing["categories"][labels.index(category)]["essential"]
+        assert (entry["category"], entry["essential"]) == (category, essential), key
+
 
 def test_chaque_cle_nommee_dans_le_code_est_au_catalogue_et_inversement():
     """Les clés écrites dans le code — du proxy, et de la page (qui n'a que

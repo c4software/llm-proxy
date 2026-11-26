@@ -425,9 +425,11 @@ OIDC, la page n'écrit pas `config.toml`. Voir
 [Extensions](extensions.md#activer-et-désactiver).
 
 **Prompts** : mêmes droits que *Extensions*. La section liste les textes
-que le modèle lit (descriptions des outils, consignes), par domaine, avec
-une recherche. *Modifier* puis *Enregistrer* remplace un texte pour tout
-le proxy ; *Rétablir* rend le texte par défaut. Voir [Prompts](prompts.md).
+que le modèle lit, par catégorie, avec une recherche : par défaut ceux
+qui règlent le chat, *tous les textes* ajoute les descriptions des outils
+et de leurs paramètres. *Modifier* puis *Enregistrer* remplace un texte
+pour tout le proxy ; *Rétablir* rend le texte par défaut. Voir
+[Prompts](prompts.md).
 
 **Proxy** : sections de configuration Accès, Backends, Surfaces, Outils,
 Partage équitable, Comptes, Divers, Avancé, Fichier complet, `.env` et

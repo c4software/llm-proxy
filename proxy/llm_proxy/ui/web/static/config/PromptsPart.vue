@@ -3,7 +3,11 @@
   Configuration → Prompts (/ui/prompts, prompt_routes.py ; lue par un
   admin, ou la page d'un proxy sans comptes ; modifiée — écrite dans
   config.toml — par un admin OIDC seulement, `writable`) : les textes que le modèle lit — descriptions des outils
-  et de leurs paramètres, consignes —, par domaine. Chacun se modifie et
+  et de leurs paramètres, consignes —, par catégorie (`categories`, dans
+  l'ordre du proxy). Par défaut, les seules catégories ESSENTIELLES (la
+  prose qui règle le chat) ; « tous les textes » montre le reste. La
+  recherche et « modifiés seulement » portent sur tous les textes : une
+  modification faite à la main n'est jamais cachée. Chacun se modifie et
   se rétablit ici ; effet à la requête suivante (les outils du navigateur :
   au rechargement de la page du chat). Un texte modifié n'utilise que les variables de son
   défaut, que le proxy remplit (une borne, le nom d'un outil).
@@ -13,14 +17,13 @@ import { call } from "../lib/http.js";
 
 const { ref, computed, onMounted } = Vue;
 
-const DOMAINS = { tools: "Outils du proxy", page: "Outils du navigateur", chat: "Chat", mcp: "Serveur MCP" };
-
 const PromptsPart = {
   setup() {
     const data = ref(null);
     const error = ref("");
     const query = ref("");
     const onlyChanged = ref(false);
+    const showAll = ref(false);
     const open = ref("");             // la clé en cours d'édition
     const draft = ref("");
     const busy = ref(false);
@@ -34,10 +37,12 @@ const PromptsPart = {
     const groups = computed(() => {
       if (!data.value) return [];
       const q = query.value.trim().toLowerCase();
-      const keep = (p) => (!onlyChanged.value || p.override !== null)
-        && (!q || p.key.toLowerCase().includes(q) || (p.override ?? p.default).toLowerCase().includes(q));
-      return Object.entries(DOMAINS).map(([id, label]) => ({
-        id, label, prompts: data.value.prompts.filter((p) => p.domain === id && keep(p)) }))
+      const all = showAll.value || onlyChanged.value || q;
+      // Le texte en cours d'édition reste affiché, même si le filtre change.
+      const keep = (p) => p.key === open.value || ((all || p.essential) && (!onlyChanged.value || p.override !== null)
+        && (!q || p.key.toLowerCase().includes(q) || (p.override ?? p.default).toLowerCase().includes(q)));
+      return data.value.categories.map(({ label }) => ({
+        label, prompts: data.value.prompts.filter((p) => p.category === label && keep(p)) }))
         .filter((g) => g.prompts.length);
     });
     function edit(p) {
@@ -70,7 +75,7 @@ const PromptsPart = {
     const changedCount = computed(() => (data.value ? data.value.prompts.filter((p) => p.override !== null).length : 0));
 
     onMounted(load);
-    return { data, error, query, onlyChanged, open, draft, busy, groups, changedCount, edit, save, reset,
+    return { data, error, query, onlyChanged, showAll, open, draft, busy, groups, changedCount, edit, save, reset,
              cancel: () => { open.value = ""; } };
   },
 };
@@ -84,9 +89,12 @@ export default PromptsPart;
       <section class="panel" v-if="data">
         <div class="panel-head"><h2>Prompts</h2>
           <div class="item-actions"><span class="tag" v-if="changedCount">{{ changedCount }} modifié(s)</span></div></div>
-        <p class="note">Les textes que le modèle lit : descriptions des outils et de leurs paramètres, consignes.
-          Une modification vaut pour tout le proxy, dès la requête suivante (les outils du navigateur : après
-          rechargement de la page du chat).
+        <p class="note">Les textes que le modèle lit, par catégorie. Par défaut, ceux qui règlent le chat
+          (résumé, état du moment, consignes) ; « tous les textes » ajoute les descriptions des outils et de
+          leurs paramètres, à ne modifier qu'en connaissance de cause : le modèle s'en sert pour appeler les
+          outils. La recherche et « modifiés seulement » portent sur tous les textes. Une modification vaut
+          pour tout le proxy, dès la requête suivante (les outils du navigateur : après rechargement de la
+          page du chat).
           Les <code>{variables}</code> sont remplies par le proxy ; <code v-text="'{{'"></code> et
           <code v-text="'}}'"></code> écrivent une accolade.</p>
         <p class="note" v-if="!data.writable">Sans comptes OIDC, la page n'écrit pas config.toml : un texte
@@ -95,8 +103,9 @@ export default PromptsPart;
         <div class="item-form">
           <input type="search" v-model="query" placeholder="Chercher une clé ou un texte" aria-label="Chercher">
           <label class="check"><input type="checkbox" v-model="onlyChanged"> modifiés seulement</label>
+          <label class="check"><input type="checkbox" v-model="showAll"> tous les textes</label>
         </div>
-        <div class="scroll" v-for="g in groups" :key="g.id"><table>
+        <div class="scroll" v-for="g in groups" :key="g.label"><table>
           <thead><tr><th>{{ g.label }}</th><th>Texte</th><th></th></tr></thead>
           <tbody>
             <tr v-for="p in g.prompts" :key="p.key">
