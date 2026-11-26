@@ -1,0 +1,302 @@
+# Les prompts des OUTILS DU NAVIGATEUR (tools/page/*.py) : leur description,
+# celle de leurs paramètres (`param.<chemin>`), et la consigne de leur
+# famille (`family.<clé>.guidance`, ajoutée au prompt système quand elle est
+# active).
+# Les variables {nom} sont les `settings` de l'outil (une borne, un délai),
+# que la page applique aussi. Modifiables par l'admin dans
+# Configuration → Prompts (docs/prompts.md).
+
+[common]
+"param.reason" = '''Why, in one sentence, shown to the user.'''
+
+# ── Questions ─────────────────────────────────────────────────────────
+
+[ask_user]
+description = '''Asks the user 1 to 4 multiple-choice questions, in the chat, and waits for the answer before going on. Use it when a decision belongs to the user or when a detail is missing to answer well — not for needless confirmations. Each question has 2 to 6 short options, each with a brief description of what it implies; the user can also answer freely.'''
+"param.questions.question" = '''The question, in full.'''
+"param.questions.header" = '''A very short title (1 to 3 words), the question's tab: "Budget", "Hosting".'''
+"param.questions.options.label" = '''The answer, short.'''
+"param.questions.options.description" = '''What it implies, in one sentence.'''
+"param.questions.multiple" = '''Several options can be chosen.'''
+
+# ── Fichiers ──────────────────────────────────────────────────────────
+
+[save_file]
+description = '''Offers the user a file to download (CSV, JSON, script, Markdown, configuration…), shown below your answer. The content is text.'''
+"param.name" = '''File name, with its extension.'''
+"param.content" = '''The full content of the file.'''
+"param.mime" = '''MIME type (optional, inferred from the extension).'''
+
+# ── Artifacts ─────────────────────────────────────────────────────────
+
+[show_artifact]
+description = '''Shows in the chat's side panel an HTML page (scripts allowed, libraries from cdnjs, jsdelivr or unpkg; the rest of the network — fetch, remote images and tiles — is blocked until the user allows it for this artifact with the panel's Network button: plan a clear message if a request fails), a Markdown document, an SVG, a Mermaid diagram or code. Reuse the same `id` to publish a new version. For visualisations, mock-ups, small interactive tools, long documents — not for a short answer.'''
+"param.id" = '''Stable identifier (e.g. "dashboard"); same id = new version.'''
+"param.title" = '''Short title.'''
+"param.content" = '''The full content (an entire HTML page for `html`).'''
+"param.language" = '''For `code`: the language.'''
+
+[edit_artifact]
+description = '''Edits an artifact already shown WITHOUT rewriting it: each `old_string`, an exact and unique passage of its latest version (spaces and line breaks included, long enough to be unique), is replaced by `new_string` — or, with `regex`, a regular expression (a repetitive change: `replace_all`). Prefer it to show_artifact for any change that does not alter the essentials. Either all edits apply, or none. To find the passage: grep_artifact, then read_artifact on its lines.'''
+"param.id" = '''The artifact's identifier.'''
+"param.edits.old_string" = '''The exact passage to replace.'''
+"param.edits.new_string" = '''What replaces it (empty: delete it).'''
+"param.edits.replace_all" = '''Replace all its occurrences (otherwise it must be unique).'''
+"param.edits.regex" = '''`old_string` is a regular expression (JavaScript, multiline); `new_string` can refer to its groups ($1). For a repetitive change; otherwise, the exact text.'''
+"param.edits.ignore_case" = '''With `regex`: ignore case.'''
+"param.title" = '''A new title (optional).'''
+
+[read_artifact]
+description = '''Returns the latest version of an artifact: whole, as is, or a slice of numbered lines (`start_line`, `end_line`) — preferred for a large artifact, after grep_artifact which says where to look. Use it before editing when its exact text is no longer certain.'''
+"param.id" = '''The artifact's identifier.'''
+"param.start_line" = '''First line (from 1); absent along with end_line: the whole artifact.'''
+"param.end_line" = '''Last line, inclusive (default: {slice_lines} lines; at most {max_slice}).'''
+
+[grep_artifact]
+description = '''Searches the latest version of an artifact without rereading it whole: returns the lines that contain `pattern` (text, or a regular expression with `regex`), numbered, with `context` lines around them. To find a passage before reading it (read_artifact on its lines) and then editing it (edit_artifact).'''
+"param.id" = '''The artifact's identifier.'''
+"param.pattern" = '''The text to look for (or a regular expression with `regex`).'''
+"param.regex" = '''`pattern` is a regular expression (JavaScript).'''
+"param.ignore_case" = '''Ignore case (default: yes).'''
+"param.context" = '''Lines of context before and after (default {context}, at most {max_context}).'''
+
+["family.artifacts"]
+guidance = '''To change an artifact already shown: grep_artifact to find the passage, read_artifact on its lines (start_line, end_line) to get its exact text, then edit_artifact; do not reread it whole without need. Artifact content from earlier in the conversation may be stale: only the current version counts (read_artifact). show_artifact only for a new artifact, or a redesign the user asks for.'''
+
+# ── Proposer le débogage ──────────────────────────────────────────────
+
+[request_artifact_debug]
+description = '''Offers the user, on a card they accept or decline, to turn back on the DEBUGGING of an artifact they turned off: the model will then be able to read its console and errors, run code in it and capture it (inspect_artifact, run_in_artifact). Offer it when the user says this artifact does not work, rather than guessing the cause.'''
+"param.id" = '''The artifact's identifier.'''
+"param.reason" = '''What does not work, in one sentence, shown to the user.'''
+
+["family.artifact_debug_offer"]
+guidance = '''If the user reports that an artifact with debugging turned off does not work (a button with no effect, a blank page, an error): offer to turn debugging back on with request_artifact_debug rather than guessing the cause.'''
+
+# ── Déboguer un artifact ──────────────────────────────────────────────
+
+[inspect_artifact]
+description = '''Inspects an artifact as it runs in the panel, before the user's eyes: its console and errors since loading (scripts, blocked resources, rejected promises), and its page as text (one element per line: tag, id, classes, text, values). `screenshot`: a capture of the page, attached if the model reads images. Use it when the user reports that an artifact does not work, before fixing it, and afterwards to check.'''
+"param.id" = '''The artifact's identifier.'''
+"param.screenshot" = '''Attach a capture of the page (optional).'''
+
+[run_in_artifact]
+description = '''Runs JavaScript INSIDE an artifact as it runs in the panel (the state the user sees), to reproduce a bug or read a state: the body of an async function, `return` the value you want. Helpers: click(selector), type(selector, text), key(selector, key), wait(ms), text(selector), all(selector); the page's DOM and global variables are accessible. Returns the value, and the console output and errors that occurred during the run. It fixes nothing: to fix, edit_artifact, then check again.'''
+"param.id" = '''The artifact's identifier.'''
+"param.code" = '''The body of the async function (with `return`).'''
+
+["family.artifact_debug"]
+guidance = '''When an artifact does not work, do not guess: inspect it (inspect_artifact: console, errors, page), reproduce the problem (run_in_artifact), fix it (edit_artifact), then check again the same way. Debugging is on by default; the user can turn it off for an artifact.'''
+
+# ── Dossier ouvert ────────────────────────────────────────────────────
+
+[folder_list]
+description = '''Lists the content of the folder the user opened in the chat. Without `path`: its root. Subfolders end with "/", with their number of files; files have their size. `recursive`: all files under `path`.'''
+"param.path" = '''Subfolder relative to the root; empty = the root.'''
+"param.recursive" = '''List all files under `path`.'''
+
+[folder_read]
+description = '''Reads a text file of the open folder, with numbered lines. A long file is read in slices: `start_line` and `end_line` (inclusive, from 1).'''
+"param.path" = '''Path of the file, relative to the folder's root.'''
+"param.start_line" = '''First line (default: 1).'''
+"param.end_line" = '''Last line (default: up to the limit of one read).'''
+
+[folder_search]
+description = '''Searches for a text in the text files of the open folder; returns "path:line: text" for each line found.'''
+"param.pattern" = '''The text to look for (or a regular expression with `regex`).'''
+"param.path" = '''Only search under this subfolder.'''
+"param.regex" = '''`pattern` is a regular expression (JavaScript).'''
+"param.ignore_case" = '''Ignore case (default: yes).'''
+
+[folder_write]
+description = '''Creates or entirely replaces a text file of the open folder. The user sees the diff and accepts or declines; the result says which. For a localised change, prefer folder_edit.'''
+"param.path" = '''Path relative to the folder's root.'''
+"param.content" = '''The full content of the file.'''
+
+[folder_edit]
+description = '''Replaces an EXACT passage of a file of the open folder (read the file first). `old_text` must appear in it only once, unless `replace_all`. The user sees the diff and accepts or declines.'''
+"param.old_text" = '''The current passage, identical (spaces included).'''
+"param.new_text" = '''What replaces it.'''
+"param.replace_all" = '''Replace all occurrences.'''
+
+["family.folder"]
+guidance = '''A folder of the user is open in the chat. Browse it with folder_list, folder_read and folder_search rather than assuming its content; any write (folder_write, folder_edit) requires the user's approval.'''
+
+# ── Date et heure ─────────────────────────────────────────────────────
+
+[device_context]
+description = '''Gives the user's local date and time, time zone and languages, and what their browser says about the device (online, connection, battery, theme, screen size). Use it before speaking of "today", "tomorrow" or a time, or to adapt an answer to the device.'''
+
+# ── Position ──────────────────────────────────────────────────────────
+
+[get_location]
+description = '''Asks the user for their position (latitude, longitude), which they accept or decline on a card in the chat. Only when the answer truly depends on it (weather, route, nearby places); say why in `reason`.'''
+"param.reason" = '''Why the position is useful, in one sentence, shown to the user.'''
+
+# ── Notifications ─────────────────────────────────────────────────────
+
+[notify]
+description = '''Sends the user a browser notification, right away or after a delay (a reminder: "remind me in 20 minutes"). The reminder only arrives if the page stays open; for an appointment, prefer add_to_calendar.'''
+"param.title" = '''The title, short.'''
+"param.body" = '''The text (optional).'''
+"param.delay_minutes" = '''In how many minutes (0 to {max_delay}); 0 or absent: right away.'''
+
+# ── Presse-papiers ────────────────────────────────────────────────────
+
+[clipboard_write]
+description = '''Copies a text to the user's clipboard (a command, an address, a message to paste elsewhere).'''
+"param.text" = '''The text to copy.'''
+
+[clipboard_read]
+description = '''Asks the user for the content of their clipboard, which they accept or decline on a card: when they speak of "what I copied".'''
+
+# ── Agenda ────────────────────────────────────────────────────────────
+
+[add_to_calendar]
+description = '''Offers the user an event to add to their calendar (an .ics file below the answer, which they open in their calendar). Times are local to the user (call device_context if today's date is useful).'''
+"param.title" = '''The title of the event.'''
+"param.start" = '''Start, local time: "2026-10-18T09:30", or "2026-10-18" for a whole day.'''
+"param.end" = '''End, same format (optional: 1 h after the start, or the whole day).'''
+"param.location" = '''The place (optional).'''
+"param.description" = '''The details (optional).'''
+"param.alarm_minutes" = '''An alert N minutes before (optional).'''
+
+# ── Liens ─────────────────────────────────────────────────────────────
+
+[open_link]
+description = '''Offers the user to open a web address (a route, a search, a documentation page): a card below the answer, where they read the address and open it in a new tab when they want. The result does not say whether they opened it.'''
+"param.url" = '''The full address, http or https.'''
+"param.reason" = '''Why open it, in one sentence (optional).'''
+
+# ── Partage ───────────────────────────────────────────────────────────
+
+[share]
+description = '''Offers the user to share a text (and an address) to another application — messaging, mail, notes — through the system's share sheet: a card below the answer, with a Share… button they use when they want (and as many times as they want). The result does not say whether they shared.'''
+"param.title" = '''A title (optional).'''
+"param.text" = '''The text to share.'''
+"param.url" = '''An address (optional).'''
+
+# ── Capture d'écran, caméra, codes, pipette ───────────────────────────
+
+[capture_screen]
+description = '''Asks the user for a capture of their screen (a tab, a window or the whole screen, which they choose and check before sending it): to see an error, an interface, a document. Requires a model that reads images.'''
+
+[take_photo]
+description = '''Asks the user for a photo taken with their camera (a label, a document, an object), which they check before sending it. Requires a model that reads images.'''
+
+[scan_code]
+description = '''Asks the user to read a QR code or a barcode, with the camera or on their screen; returns the text read (no image).'''
+
+[pick_color]
+description = '''Asks the user to pick a colour anywhere on their screen (eyedropper); returns its hexadecimal code.'''
+"param.reason" = '''Why, in one sentence (optional).'''
+
+# ── Écran allumé ──────────────────────────────────────────────────────
+
+[keep_screen_on]
+description = '''Keeps the user's screen from going to sleep (a recipe, a step-by-step guide, a presentation), or returns it to normal. As long as the page is visible; a card below the answer lets the user toggle it themselves.'''
+"param.on" = '''true: screen on; false: normal sleep.'''
+
+# ── Lecture à voix haute ──────────────────────────────────────────────
+
+[speak]
+description = '''Reads a text aloud on the user's device (the browser's speech synthesis): a step of a hands-free guide, a summary to listen to. A short, spoken-style text, without Markdown; a card below the answer lets the user replay it.'''
+"param.text" = '''The text to read (at most {max_text} characters).'''
+"param.lang" = '''The language, in BCP 47 format ("fr-FR", "en-US"); default: the browser's.'''
+
+# ── JavaScript, TypeScript ────────────────────────────────────────────
+
+[run_javascript]
+description = '''Runs JavaScript in an isolated sandbox of the browser (a Worker: no network, no access to the page or the DOM), to compute exactly, transform data, produce a file or a chart. The code is the body of an async function: `return` the value you want; console.log is returned too. Provided functions: readText(path) and readBytes(path) read the files passed in `files` (open folder or attachments, which stay on the device); output(name, data) produces a file below the answer (text, Uint8Array, Blob, OffscreenCanvas as PNG); chart(config, {{width, height, name}}) draws a Chart.js 4 chart (config: {{type, data, options}}, no functions), shown INTERACTIVE in the answer (hover, legend) and attached as PNG to the result if the model reads images; the result says how to place it in the text. An image produced by output is shown below the answer. `language: "typescript"` accepts TypeScript (types stripped, not checked: check_typescript checks them). {timeout} s at most.'''
+"param.code" = '''The body of the function (with `return`).'''
+"param.language" = '''The language of the code (default: javascript).'''
+"param.files" = '''Files to provide to the code: paths in the open folder, or attachment names.'''
+
+[check_typescript]
+description = '''Checks the types of TypeScript files of the open folder (or of attachments) with the TypeScript 6 compiler, in an isolated sandbox of the browser, without running anything. The tsconfig.json at the folder's root is applied (otherwise: strict, ES2022, ESNext modules); relative imports are resolved in the folder; packages (no node_modules) are `any`. Returns the errors "file(line,column): error TSxxxx: message" (100 at most). `code` alone: check a snippet (the one from the conversation, without a folder); `code` + `path`: a modified version of a file, before writing it. {timeout} s at most (the first call loads the compiler).'''
+"param.files" = '''Files or subfolders to check ("." : the whole folder).'''
+"param.code" = '''A TypeScript text to check: alone (without an open folder, a snippet from the conversation), or in place of the file `path`.'''
+"param.path" = '''The path of this text in the project (default: snippet.ts).'''
+
+["family.compute"]
+guidance = '''For an exact computation, processing of the user's data or a chart, run code with run_javascript (chart() for a chart) rather than computing in your head; not to format an answer. Before proposing a change to a TypeScript file of the folder, check it with check_typescript (`code` and `path`).'''
+
+# ── PHP ───────────────────────────────────────────────────────────────
+
+[run_php]
+description = '''Runs a PHP 8.3 script (CLI, no web server) in an isolated sandbox of the browser, without network: to test a function, show what PHP code prints, compute, transform a file. The files of `files` (open folder or attachments, which stay on the device) are copied under /data, the current directory, with their paths (include and file_get_contents find them); what the script writes under /out (text, or a png/jpeg image, GD is available) is returned below the answer. Returns the output (echo, print_r, var_dump), the errors and the exit code. Each call starts from scratch. {timeout} s at most.'''
+"param.code" = '''The script, `<?php` at the start (added if missing).'''
+"param.files" = '''Files to provide to the code: paths in the open folder, or attachment names.'''
+
+# ── SQL ───────────────────────────────────────────────────────────────
+
+[run_sql]
+description = '''Runs an SQL script (SQLite 3 dialect) in an isolated sandbox of the browser, on the conversation's database: its tables persist from one call to the next (`reset` starts from an empty database). `files` first imports files as tables, from the open folder or the attachments: CSV/TSV (header, separator and types guessed), JSON (array of objects), JSONL, or a .sqlite/.db database — their data stays on the device, only the query results come back. An imported table is named after the file, its columns after the header (lowercase, no accents, "_"); the import returns its schema. To review the tables: SELECT name, sql FROM sqlite_schema. Returns each result as a table ({max_rows} rows at most): aggregate in SQL rather than reading everything.'''
+"param.sql" = '''The script: one or more statements separated by `;` (empty: import only).'''
+"param.files" = '''Files to import before the script: paths in the open folder, or attachment names.'''
+"param.reset" = '''Empty the conversation's database first (default: no).'''
+"param.download" = '''Offer the user to download the database (.sqlite) below the answer.'''
+
+["family.sql"]
+guidance = '''To analyse the user's data (CSV, JSON, SQLite database, in the open folder or as an attachment), prefer run_sql with `files` to reading them: the data stays on the device, only the query results come back. The conversation's tables persist from one message to the next.'''
+
+# ── PostgreSQL ────────────────────────────────────────────────────────
+
+[run_postgres]
+description = '''Runs a PostgreSQL SQL script (PGlite: full PostgreSQL in WASM, PL/pgSQL, JSONB, CTEs, window functions, types…) in an isolated sandbox of the browser, on the conversation's PostgreSQL database: its tables persist from one call to the next (`reset` starts from an empty database). `files` first imports files from the open folder or the attachments: CSV/TSV, JSON, JSONL as tables (file name; header columns in lowercase without accents; bigint, double precision or text inferred), or a .sql script run as is — their data stays on the device, only the results come back. The script is an implicit transaction: an error rolls it back (unless an explicit COMMIT). Returns each result as a table ({max_rows} rows at most) and the RAISE NOTICE messages. To review the tables: SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'.'''
+"param.sql" = '''The script: one or more statements separated by `;` (empty: import only).'''
+"param.files" = '''Files to import before the script: paths in the open folder, or attachment names.'''
+"param.reset" = '''Empty the conversation's PostgreSQL database first (default: no).'''
+
+["family.postgres"]
+guidance = '''run_postgres has its own PostgreSQL database per conversation, separate from run_sql's (SQLite): use it when the user wants PostgreSQL (its dialect, PL/pgSQL, JSONB, a schema to test before deploying it).'''
+
+# ── Linux ─────────────────────────────────────────────────────────────
+
+[run_shell]
+description = '''Runs a bash script in a Linux VM of the browser (Alpine, 32-bit x86, emulated in WASM), without network unless the user opens it: bash, the GNU tools (coreutils, findutils, grep, sed, diff, patch), python3 and its standard library, git, jq, sqlite3, make, bc, curl, htop, less, tree, xz, and busybox. Nothing can be installed (neither apk nor pip). The current directory is /work, kept with the conversation from one call to the next; the user sees and uses the same machine in the Terminal panel. The files of `files` (open folder or attachments, which stay on the device) are copied under /work at their path; the files the script writes under /out during the call (text, or a png/jpeg/webp/gif image) are returned below the answer, and stay in the VM (/out is /work/out, kept with /work). Returns the output (stdout and stderr mixed) and the exit code. When the user has opened the Terminal panel, the command is typed there before their eyes ("run …", "show me …") — a multi-line script as one block ( … ), a subshell: they see it run; a command that lasts beyond the timeout (a server, an interactive program) then stays in their terminal. Being emulated, the machine is slow: a few seconds for a heavy Python computation.'''
+"param.script" = '''The bash script, run in /work.'''
+"param.files" = '''Files to provide to the code: paths in the open folder, or attachment names.'''
+"param.timeout" = '''Timeout in seconds (default {timeout}, at most {max_timeout}); the script is killed beyond it.'''
+"param.reset" = '''Start from a fresh machine and an empty /work (default: no).'''
+"param.terminal" = '''Type the command in the user's terminal if it is open (default: yes); false: run it without showing it.'''
+
+[shell_read]
+description = '''Reads a text file of the Linux VM: whole, or a slice of numbered lines (`start_line`, `end_line`) — preferred for a large file, after shell_grep which says where to look. Use it before shell_edit when the exact text is no longer certain.'''
+"param.path" = '''The path of the file: absolute, or relative to /work.'''
+"param.start_line" = '''First line (from 1); absent along with end_line: the whole file.'''
+"param.end_line" = '''Last line, inclusive (default: {slice_lines} lines; at most {max_slice}).'''
+
+[shell_grep]
+description = '''Searches the text files of the Linux VM without rereading them whole: returns the lines that contain `pattern` (text, or a JavaScript regular expression with `regex`), numbered, with `context` lines around them, file by file. `path`: a file, or a folder (recursive, hidden files and folders excluded; default /work). To find a passage before reading it (shell_read on its lines) and then editing it (shell_edit).'''
+"param.pattern" = '''The text to look for (or a regular expression with `regex`).'''
+"param.path" = '''A file or a folder: absolute, or relative to /work (default: /work).'''
+"param.regex" = '''`pattern` is a regular expression (JavaScript).'''
+"param.ignore_case" = '''Ignore case (default: yes).'''
+"param.context" = '''Lines of context before and after (default {context}, at most {max_context}).'''
+
+[shell_edit]
+description = '''Edits a text file of the Linux VM WITHOUT rewriting it: each `old_string`, an exact and unique passage of the file (spaces and line breaks included, long enough to be unique), is replaced by `new_string` — or, with `regex`, a regular expression (a repetitive change: `replace_all`). Either all edits apply, or none. To find the passage: shell_grep, then shell_read on its lines. Rather than sed in run_shell.'''
+"param.path" = '''The path of the file: absolute, or relative to /work.'''
+"param.edits.old_string" = '''The exact passage to replace.'''
+"param.edits.new_string" = '''What replaces it (empty: delete it).'''
+"param.edits.replace_all" = '''Replace all its occurrences (otherwise it must be unique).'''
+"param.edits.regex" = '''`old_string` is a regular expression (JavaScript, multiline); `new_string` can refer to its groups ($1). For a repetitive change; otherwise, the exact text.'''
+"param.edits.ignore_case" = '''With `regex`: ignore case.'''
+
+[shell_write]
+description = '''Writes a whole text file in the Linux VM: creates it (folders included), or replaces it. For a new file, or a complete rewrite; for a change, shell_edit. Without the quoting and escaping of a heredoc in run_shell.'''
+"param.path" = '''The path of the file: absolute, or relative to /work.'''
+"param.content" = '''The full content of the file.'''
+
+["family.linux"]
+guidance = '''run_shell runs bash in a Linux VM of the browser. Only use it if the request requires running something: launching or testing a shell or Python script (standard library only), processing files already in the VM. Not to write an answer, notes, a table or a document: answer directly, or use an artifact. /work is kept with the conversation; the user sees the same machine in the Terminal panel. To change a file of the VM: shell_grep (where?), shell_read on its lines, shell_edit — rather than sed or a heredoc in run_shell; shell_write for a new file. File content from earlier in the conversation may be stale: shell_read returns the current file.'''
+
+# ── Programmes d'outils ───────────────────────────────────────────────
+
+[run_tools_program]
+description = '''Runs a short JavaScript program that calls the hosted tools of this conversation (web search, page reading, memory…) and combines their results, in ONE step: only what the program returns or writes to the console comes back to you, not each intermediate result. For a task of several calls (search then read several pages, filter long results); for a single call, call the tool directly. The code is the body of an async function: `await tools.<name>(args)` calls the hosted tool <name> with the SAME arguments as its function (an object), and returns its text; a failure throws an Error whose `code` is the error code (not_allowed, limit…), to catch to go on. `Promise.all` for independent calls; `return` the value you want. {max_calls} calls per program, {concurrency} at a time, {timeout} s at most; await each call before returning: those still running at the end of the program are cut off. No network or browser API: only these tools.'''
+"param.code" = '''The body of the function (with `return`).'''
+
+["family.programs"]
+guidance = '''For a task that needs several calls to the hosted tools (search then read several pages, compare, filter), write a run_tools_program program that chains them, rather than one call per turn. Do not guess URLs: search first, then read those the search returned.'''

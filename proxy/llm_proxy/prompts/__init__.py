@@ -4,7 +4,7 @@ leurs paramètres, consignes, instructions — hors du code. Les messages
 d'erreur et les résultats des outils restent dans le code.
 
   *.toml     le CATALOGUE, les textes par défaut, en anglais, un fichier
-             par domaine (tools, mcp) ; une table par sujet :
+             par domaine (tools, page, mcp) ; une table par sujet :
              [web_fetch] description = "…" donne la clé
              `web_fetch.description`
   prompts.json   les textes MODIFIÉS par l'admin (Configuration →
@@ -31,7 +31,7 @@ from pathlib import Path
 from ..core.settings import log
 from ..storage import prompt_overrides
 
-DOMAINS = ("tools", "mcp")
+DOMAINS = ("tools", "page", "mcp")
 MAX_CHARS = 20_000
 _NAME = re.compile(r"[a-z_][a-z0-9_]*\Z")
 _FORMATTER = string.Formatter()

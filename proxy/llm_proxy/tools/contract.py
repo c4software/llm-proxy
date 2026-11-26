@@ -23,12 +23,13 @@ illisibles, «[truncated]», EXPIRED). Ce qui est en vigueur se relit par
 GET /v1/tools.
 """
 
-import copy
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Mapping
+
+from .. import prompts
 
 
 class ToolName(StrEnum):
@@ -363,14 +364,18 @@ class Tool:
 
 class BrowserTool(Tool):
     """Un outil que le NAVIGATEUR exécute : sa déclaration, rien d'autre.
-    `description` : son prompt ; `params` : {nom: schéma JSON} ;
-    `required` : les paramètres obligatoires ; `settings` : voir Tool.
+    `params` : {nom: schéma JSON} ; `required` : les paramètres
+    obligatoires ; `settings` : voir Tool, et les variables de ses textes.
+    Son prompt est au catalogue (prompts/page.toml : `<nom>.description`,
+    et `<nom>.param.<chemin>`, nommé dans `params` par prompts.ref), lu à chaque
+    appel. `description` : un texte littéral HORS catalogue, pour une
+    extension seulement (elle n'écrit pas dans le catalogue).
     Sa fonction est la même que celle d'un outil du proxy (Tool.spec)."""
     runs = Runs.BROWSER
     offered = frozenset({Offer.WEB})
 
-    def __init__(self, name: str, description: str, params: Mapping | None = None,
-                 required=(), settings: Mapping | None = None):
+    def __init__(self, name: str, params: Mapping | None = None, required=(),
+                 settings: Mapping | None = None, description: str | None = None):
         self.name = name
         self._description = description
         self._params = dict(params or {})
@@ -378,10 +383,12 @@ class BrowserTool(Tool):
         self.settings = MappingProxyType(dict(settings or {}))
 
     def prompt(self, present) -> str:
-        return self._description
+        if self._description is not None:
+            return self._description
+        return prompts.text(f"{self.name}.description", **self.settings)
 
     def parameters(self, present) -> dict:
-        out = {"type": "object", "properties": copy.deepcopy(self._params)}
+        out = {"type": "object", "properties": prompts.resolve(self._params, **self.settings)}
         if self._required:
             out["required"] = list(self._required)
         return out
@@ -394,9 +401,11 @@ class Family:
     hors du menu. `tools` : les noms de ses outils (BrowserTool) ;
     `on` : cochée d'office dans une conversation neuve ; `authored` : ses
     résultats sont écrits par le MODÈLE ou son code (un bac, un artifact),
-    ils ne font connaître aucun site (provenance) ; `guidance` : une
-    consigne ajoutée au prompt système quand elle est active, FIGÉE (le
-    prompt système ne change pas d'un tour à l'autre). Son comportement
+    ils ne font connaître aucun site (provenance). Sa CONSIGNE, ajoutée au
+    prompt système quand elle est active, FIGÉE (le prompt système ne
+    change pas d'un tour à l'autre) : `family.<clé>.guidance` au catalogue
+    (prompts/page.toml), s'il y est — `guidance` : un texte littéral HORS
+    catalogue, pour une extension seulement. Son comportement
     (`available`, `enabled`, `state`) est en JS, à côté de ses outils."""
     key: str
     label: str
@@ -468,6 +477,17 @@ def faults(tool, provider: str = "") -> list[str]:
                 or tool.max_calls is not None or tool.extra:
             out.append(f"{where} : un outil du navigateur n'a ni liaison, ni timeout, "
                        f"ni max_calls, ni extra")
+        # Sa description : au catalogue pour un outil natif ; écrite par
+        # l'extension, qui n'écrit pas dans le catalogue.
+        text = getattr(tool, "_description", None)
+        if provider and not (isinstance(text, str) and text.strip()):
+            out.append(f"{where} : un outil du navigateur fourni écrit sa description "
+                       f"(description=\"…\")")
+        elif not provider and text is not None:
+            out.append(f"{where} : un outil natif a sa description au catalogue "
+                       f"(prompts/page.toml), pas en argument")
+        elif not provider and f"{tool.name}.description" not in prompts.CATALOG:
+            out.append(f"{where} : {tool.name}.description absent du catalogue")
     # Les liaisons aux protocoles.
     if tool.responses is not None and not (
             isinstance(tool.responses, Responses) and tool.responses.kinds):

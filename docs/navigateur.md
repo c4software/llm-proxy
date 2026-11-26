@@ -501,7 +501,7 @@ sa **déclaration** est dans le proxy et son **exécution** dans la page.
 
 | Où | Contenu |
 |---|---|
-| `llm_proxy/tools/page/` (proxy) | les déclarations : un `BrowserTool` par outil (nom, prompt, paramètres, `settings`), une `Family` par famille du menu. `page.py` (questions, fichiers, artifacts, dossier), `device.py` (l'appareil), `sandbox.py` (les bacs de code), dans l'ordre du menu |
+| `llm_proxy/tools/page/` (proxy) | les déclarations : un `BrowserTool` par outil (nom, paramètres, `settings`), une `Family` par famille du menu ; leurs textes sont dans `llm_proxy/prompts/page.toml`. `page.py` (questions, fichiers, artifacts, dossier), `device.py` (l'appareil), `sandbox.py` (les bacs de code), dans l'ordre du menu |
 | `chat/tools/contract.js` | le contrat de l'exécution : les listes `TOOL` et `FAMILY`, les types, l'interface `PageTool`, `defineFamily` |
 | `chat/tools/index.js` | le registre : l'inscription des modules, leur vérification, l'installation des déclarations (`install`), ce que le chat appelle |
 | `chat/tools/page/`, `device/`, `sandbox/` | l'exécution, un module par famille ; `media.js`, les flux caméra et écran ; `bac.js`, le bac commun ; `files.js`, les fichiers fournis et produits ; `tables.js`, un CSV ou un JSON lu en table |
@@ -517,8 +517,8 @@ exécution sans correspondance est signalée dans la console et exclue du menu.
 ```python
 GET_LOCATION = BrowserTool(
     ToolName.GET_LOCATION,                       # de la liste fermée ToolName
-    description="Demande à l'utilisateur sa position…",
-    params={"reason": REASON},
+    params={"reason": {"type": "string",
+                       "description": prompts.ref("get_location.param.reason")}},
     required=("reason",),
 )
 
@@ -528,10 +528,17 @@ LOCATION_FAMILY = Family(
 )
 ```
 
+Les textes que le modèle lit sont au catalogue des [prompts](prompts.md),
+`prompts/page.toml`, en anglais : `<outil>.description` pour le prompt,
+`<outil>.param.<chemin>` pour la description d'un paramètre (nommée dans
+`params` par `prompts.ref`), `family.<clé>.guidance` pour la consigne d'une
+famille. Les `label` et `hint` d'une famille sont des textes du menu, en
+français, dans la déclaration.
+
 Déclarer dans `settings` les valeurs citées dans le prompt et appliquées par
-l'exécution (par exemple une limite ou un délai). Définies une fois côté
-proxy, elles sont transmises à la page avec la déclaration (`this.settings`
-de l'outil). Les textes des outils de la page sont en français.
+l'exécution (par exemple une limite ou un délai) : ce sont les variables
+des textes (`{max_slice}`). Définies une fois côté proxy, elles sont
+transmises à la page avec la déclaration (`this.settings` de l'outil).
 
 | `Family` | Rôle |
 |---|---|
@@ -541,7 +548,7 @@ de l'outil). Les textes des outils de la page sont en français.
 | `on` | cochée d'office dans une conversation neuve |
 | `fixed` | toujours active, hors du menu (questions, fichiers, artifacts, dossier) |
 | `authored` | ses résultats sont écrits par le modèle ou son code (les bacs, les artifacts) : ils ne font connaître aucun site au proxy ([provenance](outils.md#la-provenance-des-url-toolsnetprovenance)) |
-| `guidance` | une consigne ajoutée au **prompt système** quand la famille est active ; **figée**, elle ne dépend pas de l'état |
+| `guidance` | une consigne ajoutée au **prompt système** quand la famille est active ; **figée**, elle ne dépend pas de l'état. Extension seulement : une famille native a la sienne au catalogue, `family.<clé>.guidance` ([Prompts](prompts.md)) |
 
 ### L'exécution : `PageTool`
 

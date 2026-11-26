@@ -1,9 +1,10 @@
 # Prompts
 
 Les **prompts** sont les textes que le modèle lit et que le proxy fournit :
-descriptions des outils du proxy et de leurs paramètres, consigne de fin de
-budget d'outils, instructions du serveur MCP, consigne d'agrandissement
-d'une image.
+descriptions des outils du proxy et du navigateur et de leurs paramètres,
+consignes des familles d'outils du navigateur (ajoutées au prompt
+système), consigne de fin de budget d'outils, instructions du serveur MCP,
+consigne d'agrandissement d'une image.
 Ils sont définis dans un catalogue et modifiables par l'admin depuis
 *Configuration → Prompts*, sans reconstruire l'image.
 
@@ -18,6 +19,7 @@ fichier TOML par domaine :
 | Fichier | Contenu |
 |---|---|
 | `tools.toml` | Outils du proxy (`web_fetch`, `ocr`, `code_execution`…), consigne de fin de budget d'outils, agrandissement d'image |
+| `page.toml` | Outils du navigateur (`<outil>.description`, `<outil>.param.<chemin>`) et consignes de leurs familles (`family.<clé>.guidance`) ; variables : les `settings` de l'outil |
 | `mcp.toml` | Instructions du serveur MCP exposé |
 
 Une table par sujet, une clé par texte : `[web_fetch]` puis
@@ -46,7 +48,9 @@ et un filtre sur les textes modifiés. Pour chacun : *Modifier*, puis
 - **Droits** : un admin ; sans comptes OIDC, la page connectée, comme la
   configuration du proxy.
 - **Portée** : tout le proxy, tous les comptes et toutes les surfaces.
-- **Effet** : à la requête suivante.
+- **Effet** : à la requête suivante ; pour les outils du navigateur, au
+  rechargement de la page du chat, qui reçoit leurs textes avec
+  `/ui/session`.
 - **Borne** : 20 000 caractères par texte.
 
 Les modifications sont gardées dans `data/prompts.json`, à côté de

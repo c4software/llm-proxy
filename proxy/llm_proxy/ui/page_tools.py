@@ -18,7 +18,7 @@ résultat écrit par le modèle : ils ne font connaître aucun site
 (provenance.hosts_in_messages, que le chat de la page appelle avec eux).
 """
 
-from .. import tools
+from .. import prompts, tools
 from ..core import config
 from ..core.settings import log
 from ..tools import extensions
@@ -55,6 +55,16 @@ def served(tool) -> bool:
     return tool.name not in DISABLED_TOOLS and tools.active(tool, tools.Offer.WEB)
 
 
+def guidance(family) -> str:
+    """La consigne d'une famille : pour une famille native, celle du
+    catalogue (prompts/page.toml, `family.<clé>.guidance`, ou aucune) ;
+    pour celle d'une extension, son texte littéral."""
+    if family.key not in set(tools.FamilyKey):
+        return family.guidance
+    key = f"family.{family.key}.guidance"
+    return prompts.text(key) if key in prompts.CATALOG else ""
+
+
 def declarations() -> dict:
     """Ce que /ui/session donne à la page : les familles (dans l'ordre du
     menu) et la fonction de chaque outil, ses `settings`, et pour celui
@@ -67,7 +77,7 @@ def declarations() -> dict:
         if f.key in DISABLED_FAMILIES or not names:
             continue
         families.append({"key": f.key, "label": f.label, "hint": f.hint, "on": f.on,
-                         "fixed": f.fixed, "authored": f.authored, "guidance": f.guidance,
+                         "fixed": f.fixed, "authored": f.authored, "guidance": guidance(f),
                          "tools": names})
         present = frozenset(names)
         for n in names:

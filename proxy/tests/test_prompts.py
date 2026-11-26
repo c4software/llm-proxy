@@ -11,6 +11,7 @@ from pathlib import Path
 from fakes import admin_and_user
 from llm_proxy import prompts, tools
 from llm_proxy.storage import prompt_overrides
+from llm_proxy.tools.contract import NATIVE
 
 SRC = Path(prompts.__file__).resolve().parents[1]
 DEFAULT = prompts.CATALOG["web_fetch.description"][1]
@@ -56,6 +57,28 @@ def test_un_prompt_modifie_change_ce_que_le_modele_lit_puis_se_retablit(idp):
     # Un texte égal au défaut n'est pas gardé comme modification.
     alice.put("/ui/prompts/web_fetch.description", json={"text": DEFAULT})
     assert prompt_overrides.load() == {}
+
+
+def test_un_prompt_modifie_d_un_outil_du_navigateur_part_avec_la_session(idp):
+    """La description d'un outil du navigateur (ses variables, les
+    `settings`, toujours remplies) et la consigne de sa famille : la page les
+    reçoit modifiées avec /ui/session, puis rétablies."""
+    alice, _, _ = admin_and_user(idp)
+
+    def page():
+        got = alice.get("/ui/session").json()["chat"]["page"]
+        tool = next(t for t in got["tools"] if t["name"] == "run_sql")
+        family = next(f for f in got["families"] if f["key"] == "sql")
+        return tool["spec"]["function"]["description"], family["guidance"]
+
+    before = page()
+    assert alice.put("/ui/prompts/run_sql.description",
+                     json={"text": "Run SQL, {max_rows} rows at most."}).status_code == 200
+    assert alice.put("/ui/prompts/family.sql.guidance", json={"text": "Prefer run_sql."}).status_code == 200
+    assert page() == ("Run SQL, 200 rows at most.", "Prefer run_sql.")
+    for key in ("run_sql.description", "family.sql.guidance"):
+        assert alice.delete(f"/ui/prompts/{key}").status_code == 200
+    assert page() == before
 
 
 def test_un_prompt_refuse_ne_change_rien(idp):
@@ -132,9 +155,15 @@ def test_deux_modifications_simultanees_sont_gardees_toutes_les_deux(idp, monkey
 # ── le catalogue et le code ───────────────────────────────────────────
 
 def test_chaque_cle_nommee_dans_le_code_est_au_catalogue_et_inversement():
+    """Les clés écrites dans le code, et celles qu'il DÉRIVE : la description
+    de chaque outil natif du navigateur (`<nom>.description`, exigée), la
+    consigne d'une famille native (`family.<clé>.guidance`, si elle en a
+    une)."""
     named = set()
     for path in SRC.rglob("*.py"):
         named |= set(re.findall(r'prompts\.(?:text|ref|template)\(\s*"([^"]+)"', path.read_text("utf-8")))
     assert named, "aucune clé trouvée : le motif ne correspond plus au code"
+    named |= {f"{t.name}.description" for t in tools.PAGE if t.name in NATIVE}
+    families = {f"family.{f.key}.guidance" for f in tools.FAMILIES}
     assert named - set(prompts.CATALOG) == set()
-    assert set(prompts.CATALOG) - named == set()
+    assert set(prompts.CATALOG) - named - families == set()

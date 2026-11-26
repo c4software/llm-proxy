@@ -2,14 +2,15 @@
   Configuration → Prompts (/ui/prompts, prompt_routes.py ; admin, ou proxy
   sans comptes) : les textes que le modèle lit — descriptions des outils
   et de leurs paramètres, consignes —, par domaine. Chacun se modifie et
-  se rétablit ici ; effet à la requête suivante. Un texte modifié n'utilise que les variables de son
+  se rétablit ici ; effet à la requête suivante (les outils du navigateur :
+  au rechargement de la page du chat). Un texte modifié n'utilise que les variables de son
   défaut, que le proxy remplit (une borne, le nom d'un outil).
 */
 import { call } from "../lib/http.js";
 
 const { ref, computed, onMounted } = Vue;
 
-const DOMAINS = { tools: "Outils du proxy", mcp: "Serveur MCP" };
+const DOMAINS = { tools: "Outils du proxy", page: "Outils du navigateur", mcp: "Serveur MCP" };
 
 export const PromptsPart = {
   setup() {
@@ -76,7 +77,8 @@ export const PromptsPart = {
         <div class="panel-head"><h2>Prompts</h2>
           <div class="item-actions"><span class="tag" v-if="changedCount">{{ changedCount }} modifié(s)</span></div></div>
         <p class="note">Les textes que le modèle lit : descriptions des outils et de leurs paramètres, consignes.
-          Une modification vaut pour tout le proxy, dès la requête suivante.
+          Une modification vaut pour tout le proxy, dès la requête suivante (les outils du navigateur : après
+          rechargement de la page du chat).
           Les <code>{variables}</code> sont remplies par le proxy ; <code v-text="'{{'"></code> et
           <code v-text="'}}'"></code> écrivent une accolade.</p>
         <div class="item-form">

@@ -85,7 +85,7 @@ export class CheckTypescript extends PageTool {
   async run(args, ctx) {
     const wanted = pathsOf(args).map((p) => (p === "." ? "" : clean(p)));
     const override = typeof args.code === "string" && args.code.trim()
-      ? { path: clean(args.path) || "extrait.ts", code: args.code } : null;
+      ? { path: clean(args.path) || "snippet.ts", code: args.code } : null;
     if (!wanted.length && !override) return failure("`files` ou `code` attendu.");
     let input;
     try { input = await project(ctx, wanted, override); } catch (e) { return failure(e.message + "."); }

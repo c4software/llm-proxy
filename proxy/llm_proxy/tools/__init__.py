@@ -122,6 +122,9 @@ def family_faults(family, provider: str = "", page_names=None, families=None) ->
         out.append(f"{where} : clé déjà prise")
     if not family.tools or not family.label:
         out.append(f"{where} : sans outil ou sans libellé")
+    if not provider and family.guidance:
+        out.append(f"{where} : une famille native a sa consigne au catalogue "
+                   f"(family.{family.key}.guidance), pas en argument")
     page_names = {t.name for t in PAGE} if page_names is None else set(page_names)
     taken = {n for f in families for n in f.tools}
     for name in family.tools:

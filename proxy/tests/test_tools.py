@@ -1775,7 +1775,8 @@ def test_le_registre_refuse_un_outil_hors_contrat(monkeypatch):
     """register() tient l'interface fermée de Tool : un membre public
     inconnu (une faute de frappe), un prompt ou un run non écrit, un nom
     natif pris par un outil fourni, une liaison mal formée ; pour un outil
-    du navigateur, un run écrit, un canal hors du web, un délai.
+    du navigateur, un run écrit, un canal hors du web, un délai, une
+    description absente (extension) ou en argument (natif).
     register_family tient les familles. Et chaque entrée de ToolName a son
     outil, d'un moteur ou de l'autre."""
     monkeypatch.setattr(tools, "REGISTRY", [])
@@ -1823,10 +1824,14 @@ def test_le_registre_refuse_un_outil_hors_contrat(monkeypatch):
             (Etat(), "", "`extra` est réservé"),
             (Nulle(), "exemple", "`offered` doit être"),
             (Ailleurs(), "exemple", "`offered` doit être"),
-            (PageRun("p", "x"), "exemple", "run() écrit, mais le navigateur l'exécute"),
-            (PageApi("p", "x"), "exemple", "qu'au web"),
-            (PageDelai("p", "x"), "exemple", "ni liaison, ni timeout"),
-            (tools.BrowserTool(tools.ToolName.ASK_USER, "x"), "exemple", "un nom d'outil natif"),
+            (PageRun("p", description="x"), "exemple", "run() écrit, mais le navigateur l'exécute"),
+            (PageApi("p", description="x"), "exemple", "qu'au web"),
+            (PageDelai("p", description="x"), "exemple", "ni liaison, ni timeout"),
+            (tools.BrowserTool(tools.ToolName.ASK_USER, description="x"), "exemple", "un nom d'outil natif"),
+            # Sa description : écrite par une extension, au catalogue pour un natif.
+            (tools.BrowserTool("p"), "exemple", "écrit sa description"),
+            (tools.BrowserTool("p", description=" "), "exemple", "écrit sa description"),
+            (tools.BrowserTool(tools.ToolName.ASK_USER, description="x"), "", "pas en argument"),
             (object(), "exemple", "n'hérite pas de Tool")]:
         assert any(fault in f for f in tools.faults(tool, provider)), fault
         with pytest.raises(ValueError):
@@ -1839,7 +1844,7 @@ def test_le_registre_refuse_un_outil_hors_contrat(monkeypatch):
     assert tools.faults(mcp.McpTool(None, "lire", "srv__lire"), "mcp") == []
     # Une famille du navigateur : une clé native seulement pour une famille
     # native, des outils du navigateur inscrits, chacun dans une seule.
-    monkeypatch.setattr(tools, "PAGE", [tools.BrowserTool("p", "x")])
+    monkeypatch.setattr(tools, "PAGE", [tools.BrowserTool("p", description="x")])
     monkeypatch.setattr(tools, "FAMILIES", [tools.Family("prise", "P", ("p",))])
     for family, provider, fault in [
             (tools.Family("hors", "H", ("p",)), "", "clé hors de FamilyKey"),
@@ -1847,7 +1852,8 @@ def test_le_registre_refuse_un_outil_hors_contrat(monkeypatch):
             (tools.Family("prise", "P", ("q",)), "exemple", "clé déjà prise"),
             (tools.Family("vide", "V", ()), "exemple", "sans outil"),
             (tools.Family("autre", "A", ("echo",)), "exemple", "n'est pas un outil du navigateur"),
-            (tools.Family("double", "D", ("p",)), "exemple", "déjà dans une famille")]:
+            (tools.Family("double", "D", ("p",)), "exemple", "déjà dans une famille"),
+            (tools.Family(tools.FamilyKey.ASK, "A", ("p",), guidance="x"), "", "consigne au catalogue")]:
         assert any(fault in f for f in tools.family_faults(family, provider)), fault
         with pytest.raises(ValueError):
             tools.register_family(family, provider)

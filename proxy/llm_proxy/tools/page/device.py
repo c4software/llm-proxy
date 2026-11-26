@@ -7,6 +7,7 @@ menu Outils. Leur exécution est dans la page, chat/tools/device/
 (docs/navigateur.md, « Écrire un outil de la page »).
 """
 
+from ... import prompts
 from ..contract import BrowserTool, Family, FamilyKey, ToolName
 from .common import REASON
 
@@ -18,10 +19,6 @@ MAX_TEXT = 4000              # caractères lus à voix haute (speak), au plus
 
 DEVICE_CONTEXT = BrowserTool(
     ToolName.DEVICE_CONTEXT,
-    description=("Donne la date et l'heure locales de l'utilisateur, son fuseau horaire et ses "
-                 "langues, et ce que son navigateur dit de l'appareil (en ligne, connexion, "
-                 "batterie, thème, taille d'écran). À utiliser avant de parler d'« aujourd'hui "
-                 "», de « demain » ou d'une heure, ou pour adapter une réponse à l'appareil."),
 )
 
 CONTEXT_FAMILY = Family(
@@ -37,13 +34,10 @@ CONTEXT_FAMILY = Family(
 
 GET_LOCATION = BrowserTool(
     ToolName.GET_LOCATION,
-    description=("Demande à l'utilisateur sa position (latitude, longitude), qu'il accepte ou "
-                 'refuse sur une carte dans le chat. Seulement quand la réponse en dépend '
-                 'vraiment (météo, itinéraire, lieux proches) ; dire pourquoi dans `reason`.'),
     params={
         'reason': {
             'type': 'string',
-            'description': "Pourquoi la position est utile, en une phrase, montrée à l'utilisateur.",
+            'description': prompts.ref("get_location.param.reason"),
         },
     },
     required=('reason',),
@@ -61,16 +55,12 @@ LOCATION_FAMILY = Family(
 
 NOTIFY = BrowserTool(
     ToolName.NOTIFY,
-    description=("Envoie une notification du navigateur à l'utilisateur, tout de suite ou "
-                 'après un délai (un rappel : « rappelle-moi dans 20 minutes »). Le rappel '
-                 "n'arrive que si la page reste ouverte ; pour un rendez-vous, préférer "
-                 'add_to_calendar.'),
     params={
-        'title': {'type': 'string', 'description': 'Le titre, court.'},
-        'body': {'type': 'string', 'description': 'Le texte (facultatif).'},
+        'title': {'type': 'string', 'description': prompts.ref("notify.param.title")},
+        'body': {'type': 'string', 'description': prompts.ref("notify.param.body")},
         'delay_minutes': {
             'type': 'number',
-            'description': f'Dans combien de minutes (0 à {MAX_DELAY}) ; 0 ou absent : tout de suite.',
+            'description': prompts.ref("notify.param.delay_minutes"),
         },
     },
     required=('title',),
@@ -90,16 +80,12 @@ NOTIFY_FAMILY = Family(
 
 CLIPBOARD_WRITE = BrowserTool(
     ToolName.CLIPBOARD_WRITE,
-    description=("Copie un texte dans le presse-papiers de l'utilisateur (une commande, une "
-                 'adresse, un message à coller ailleurs).'),
-    params={'text': {'type': 'string', 'description': 'Le texte à copier.'}},
+    params={'text': {'type': 'string', 'description': prompts.ref("clipboard_write.param.text")}},
     required=('text',),
 )
 
 CLIPBOARD_READ = BrowserTool(
     ToolName.CLIPBOARD_READ,
-    description=("Demande à l'utilisateur le contenu de son presse-papiers, qu'il accepte ou "
-                 "refuse sur une carte : quand il parle de « ce que j'ai copié »."),
     params={
         'reason': REASON,
     },
@@ -118,23 +104,19 @@ CLIPBOARD_FAMILY = Family(
 
 ADD_TO_CALENDAR = BrowserTool(
     ToolName.ADD_TO_CALENDAR,
-    description=("Propose à l'utilisateur un événement à ajouter à son agenda (un fichier .ics "
-                 "sous la réponse, qu'il ouvre dans son agenda). Les heures sont locales à "
-                 "l'utilisateur (appeler device_context si la date du jour est utile)."),
     params={
-        'title': {'type': 'string', 'description': "Le titre de l'événement."},
+        'title': {'type': 'string', 'description': prompts.ref("add_to_calendar.param.title")},
         'start': {
             'type': 'string',
-            'description': ('Début, heure locale : « 2026-10-18T09:30 », ou « 2026-10-18 » pour une journée '
-             'entière.'),
+            'description': prompts.ref("add_to_calendar.param.start"),
         },
         'end': {
             'type': 'string',
-            'description': 'Fin, même format (facultatif : 1 h après le début, ou la journée).',
+            'description': prompts.ref("add_to_calendar.param.end"),
         },
-        'location': {'type': 'string', 'description': 'Le lieu (facultatif).'},
-        'description': {'type': 'string', 'description': 'Les détails (facultatif).'},
-        'alarm_minutes': {'type': 'number', 'description': 'Une alerte N minutes avant (facultatif).'},
+        'location': {'type': 'string', 'description': prompts.ref("add_to_calendar.param.location")},
+        'description': {'type': 'string', 'description': prompts.ref("add_to_calendar.param.description")},
+        'alarm_minutes': {'type': 'number', 'description': prompts.ref("add_to_calendar.param.alarm_minutes")},
     },
     required=('title', 'start'),
 )
@@ -152,13 +134,9 @@ CALENDAR_FAMILY = Family(
 
 OPEN_LINK = BrowserTool(
     ToolName.OPEN_LINK,
-    description=("Propose à l'utilisateur d'ouvrir une adresse web (un itinéraire, une "
-                 'recherche, une page de documentation) : une carte sous la réponse, où il lit '
-                 "l'adresse et l'ouvre dans un nouvel onglet quand il veut. Le résultat ne dit "
-                 "pas s'il l'a ouverte."),
     params={
-        'url': {'type': 'string', 'description': "L'adresse complète, http ou https."},
-        'reason': {'type': 'string', 'description': "Pourquoi l'ouvrir, en une phrase (facultatif)."},
+        'url': {'type': 'string', 'description': prompts.ref("open_link.param.url")},
+        'reason': {'type': 'string', 'description': prompts.ref("open_link.param.reason")},
     },
     required=('url',),
 )
@@ -176,14 +154,10 @@ LINKS_FAMILY = Family(
 
 SHARE = BrowserTool(
     ToolName.SHARE,
-    description=("Propose à l'utilisateur de partager un texte (et une adresse) vers une autre "
-                 'application — messagerie, mail, notes — par le partage du système : une '
-                 "carte sous la réponse, avec un bouton Partager… qu'il utilise quand il veut "
-                 "(et autant de fois qu'il veut). Le résultat ne dit pas s'il a partagé."),
     params={
-        'title': {'type': 'string', 'description': 'Un titre (facultatif).'},
-        'text': {'type': 'string', 'description': 'Le texte à partager.'},
-        'url': {'type': 'string', 'description': 'Une adresse (facultatif).'},
+        'title': {'type': 'string', 'description': prompts.ref("share.param.title")},
+        'text': {'type': 'string', 'description': prompts.ref("share.param.text")},
+        'url': {'type': 'string', 'description': prompts.ref("share.param.url")},
     },
     required=('text',),
 )
@@ -200,9 +174,6 @@ SHARE_FAMILY = Family(
 
 CAPTURE_SCREEN = BrowserTool(
     ToolName.CAPTURE_SCREEN,
-    description=("Demande à l'utilisateur une capture de son écran (un onglet, une fenêtre ou "
-                 "l'écran entier, qu'il choisit et vérifie avant de l'envoyer) : pour voir une "
-                 'erreur, une interface, un document. Il faut un modèle qui lit les images.'),
     params={
         'reason': REASON,
     },
@@ -221,9 +192,6 @@ SCREEN_FAMILY = Family(
 
 TAKE_PHOTO = BrowserTool(
     ToolName.TAKE_PHOTO,
-    description=("Demande à l'utilisateur une photo prise avec sa caméra (une étiquette, un "
-                 "document, un objet), qu'il vérifie avant de l'envoyer. Il faut un modèle qui "
-                 'lit les images.'),
     params={
         'reason': REASON,
     },
@@ -242,8 +210,6 @@ CAMERA_FAMILY = Family(
 
 SCAN_CODE = BrowserTool(
     ToolName.SCAN_CODE,
-    description=("Demande à l'utilisateur de lire un QR code ou un code-barres, à la caméra ou "
-                 "sur son écran ; rend le texte lu (pas d'image)."),
     params={
         'reason': REASON,
     },
@@ -261,9 +227,7 @@ CODES_FAMILY = Family(
 
 PICK_COLOR = BrowserTool(
     ToolName.PICK_COLOR,
-    description=("Demande à l'utilisateur de prendre une couleur n'importe où à son écran "
-                 '(pipette) ; rend son code hexadécimal.'),
-    params={'reason': {'type': 'string', 'description': 'Pourquoi, en une phrase (facultatif).'}},
+    params={'reason': {'type': 'string', 'description': prompts.ref("pick_color.param.reason")}},
 )
 
 COLOR_FAMILY = Family(
@@ -278,10 +242,7 @@ COLOR_FAMILY = Family(
 
 KEEP_SCREEN_ON = BrowserTool(
     ToolName.KEEP_SCREEN_ON,
-    description=("Empêche l'écran de l'utilisateur de se mettre en veille (recette, pas-à-pas, "
-                 'présentation), ou le rend à la normale. Tant que la page est visible ; une '
-                 "carte sous la réponse permet à l'utilisateur de basculer lui-même."),
-    params={'on': {'type': 'boolean', 'description': 'true : écran allumé ; false : veille normale.'}},
+    params={'on': {'type': 'boolean', 'description': prompts.ref("keep_screen_on.param.on")}},
     required=('on',),
 )
 
@@ -297,15 +258,11 @@ WAKE_FAMILY = Family(
 
 SPEAK = BrowserTool(
     ToolName.SPEAK,
-    description=("Lit un texte à voix haute sur l'appareil de l'utilisateur (synthèse vocale "
-                 "du navigateur) : une étape d'un pas-à-pas mains libres, un résumé à écouter. "
-                 'Un texte court et oral, sans Markdown ; une carte sous la réponse permet de '
-                 'le relire.'),
     params={
-        'text': {'type': 'string', 'description': f'Le texte à lire ({MAX_TEXT} caractères au plus).'},
+        'text': {'type': 'string', 'description': prompts.ref("speak.param.text")},
         'lang': {
             'type': 'string',
-            'description': 'La langue, au format BCP 47 (« fr-FR », « en-US ») ; défaut : celle du navigateur.',
+            'description': prompts.ref("speak.param.lang"),
         },
     },
     required=('text',),

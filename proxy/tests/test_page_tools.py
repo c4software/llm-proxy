@@ -20,7 +20,8 @@ def test_les_declarations_viennent_du_registre():
     assert families["compute"] == ["run_javascript", "check_typescript"]
     assert [t["name"] for t in page["tools"]] == [n for ts in families.values() for n in ts]
     sql = next(t for t in page["tools"] if t["name"] == "run_sql")
-    assert sql["settings"] == {"max_rows": 200} and "200 lignes" in sql["spec"]["function"]["description"]
+    # La borne que le prompt cite est celle que la page applique.
+    assert sql["settings"] == {"max_rows": 200} and "200 rows" in sql["spec"]["function"]["description"]
     assert not any("module" in t for t in page["tools"])          # natifs : la page les a
 
 

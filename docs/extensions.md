@@ -162,12 +162,13 @@ outil suit le contrat des outils natifs, décrit dans
 - **un outil du proxy** (`ext.Tool`) a un nom, un prompt, un schéma et une
   exécution, `run`, et rend un `Result` ou lève un `ToolError` ;
 - **un outil du navigateur** (`ext.BrowserTool`) a un nom, une
-  description, des `params` (et `required`, `settings`) ; il n'a pas de
-  `run` : son exécution est dans le [`.js`](#le-js). Il est rangé dans
-  une famille du menu Outils, `FAMILY` ou `FAMILIES` (`ext.Family` : clé,
-  libellé, outils, `hint`, `on`, `fixed`, `authored`, `guidance`, comme
-  une [famille native](navigateur.md#la-déclaration-proxy)). Sans famille
-  déclarée, l'extension en a une à son nom.
+  `description` (son prompt, un texte littéral), des `params` (et
+  `required`, `settings`) ; il n'a pas de `run` : son exécution est dans
+  le [`.js`](#le-js). Il est rangé dans une famille du menu Outils,
+  `FAMILY` ou `FAMILIES` (`ext.Family` : clé, libellé, outils, `hint`,
+  `on`, `fixed`, `authored`, et `guidance`, sa consigne en texte
+  littéral, comme une [famille native](navigateur.md#la-déclaration-proxy)).
+  Sans famille déclarée, l'extension en a une à son nom.
 
 **Le prompt** est celui de la fonction présentée au modèle : `prompt()`
 (ou la `description` d'un outil du navigateur) en donne la description,
