@@ -89,7 +89,7 @@ import * as Compact from "./compact.js";
 import * as prompts from "../lib/prompts.js";
 import * as api from "./api.js";
 import { apiMessages } from "./api.js";
-import { chipFor, recordCall, endStep, closeStep } from "./turn.js";
+import { chipFor, recordCall, endStep, closeStep, pushStep, timeline } from "./turn.js";
 
 const ChatPanel = {
   components: { ArtifactPanel, AssetPanel, LinuxPanel, VoiceSettings, VoiceStudio },
@@ -893,6 +893,7 @@ const ChatPanel = {
       const c = current.value;
       if (!c || streaming.value || !m.waiting) return;
       m.waiting.result = result;
+      pinned = true;            // la réponse reprend : le fil suit sa fin
       respond(c, m);
     }
     // Une action de la carte (un bouton) : l'API de l'appareil part de ce
@@ -991,8 +992,7 @@ const ChatPanel = {
         const chip = m.tools.find((t) => t.id === q.id);
         if (chip) Object.assign(chip, { status: "error", preview: result, chars: result.length });
       }
-      (m.steps || (m.steps = [])).push({ content: m.step.content, calls: m.step.calls });
-      m.step = null;
+      pushStep(m, m.step);
       m.waiting = null;
     }
 
@@ -1559,16 +1559,17 @@ const ChatPanel = {
     // Le Markdown d'un message n'est recalculé que si son texte a changé :
     // pendant un flux, seul le dernier message se réanalyse.
     const cache = new WeakMap();
-    function html(m, field = "content") {
+    // Le Markdown d'un texte du message `m`, gardé sous `key` (un champ, un
+    // segment de la chronologie) tant que ce texte ne change pas.
+    function md(m, key, src) {
       const raw = toRaw(m);
       let entry = cache.get(raw);
       if (!entry) cache.set(raw, entry = {});
-      const src = m[field] || "";
-      if (!entry[field] || entry[field].src !== src) {
-        entry[field] = { src, html: Markdown.render(src) };
-      }
-      return entry[field].html;
+      src = src || "";
+      if (!entry[key] || entry[key].src !== src) entry[key] = { src, html: Markdown.render(src) };
+      return entry[key].html;
     }
+    const html = (m, field = "content") => md(m, field, m[field]);
 
     // Le CORPS d'une réponse : son texte, et les cartes durables qui s'y
     // placent (un graphique interactif : celles à `slot` et à composant).
@@ -1576,30 +1577,40 @@ const ChatPanel = {
     // ![titre](chart:<slot>) ; une carte qu'il ne place pas va en tête.
     const SLOT_MARK = /^[ \t]*!\[[^\]\n]*\]\((?:chart|card):([\w.-]+)\)[ \t]*$/gm;
     const slotted = (m) => (m.kept || []).filter((k) => k.slot && tools.keptComponent(k));
-    function body(m) {
+    // `src` : le texte d'un segment de la chronologie (le `k`-ième, qui
+    // commence à `start` dans m.content) ; une carte n'est placée qu'à son
+    // PREMIER marqueur du message ; celle que le modèle ne place pas va en
+    // tête du dernier segment (`last`).
+    function body(m, src = m.content, k = 0, last = true, start = 0) {
       const cards = slotted(m);
-      if (!cards.length) return [{ html: html(m) }];
+      if (!cards.length) return [{ html: md(m, "c" + k, src) }];
       const raw = toRaw(m);
       let entry = cache.get(raw);
       if (!entry) cache.set(raw, entry = {});
-      const src = m.content || "";
-      const key = src + "\u0000" + cards.map((k) => k.id).join(",");
-      if (entry.body && entry.body.key === key) return entry.body.parts;
-      const bySlot = new Map(cards.map((k) => [k.slot, k]));
-      const used = new Set();
-      const parts = [];
-      let last = 0;
-      for (const hit of src.matchAll(SLOT_MARK)) {
-        const k = bySlot.get(hit[1]);
-        if (!k || used.has(k.id)) continue;
-        parts.push({ html: Markdown.render(src.slice(last, hit.index)) }, { k });
-        used.add(k.id);
-        last = hit.index + hit[0].length;
+      src = src || "";
+      const key = src + "\u0000" + cards.map((c) => c.id).join(",") + "\u0000" + last + "\u0000" + start
+        + "\u0000" + (m.content || "").length;
+      const slot = "body" + k;
+      if (entry[slot] && entry[slot].key === key) return entry[slot].parts;
+      const bySlot = new Map(cards.map((c) => [c.slot, c]));
+      // Le premier marqueur de chaque carte, dans tout le message.
+      const first = new Map();
+      for (const hit of (m.content || "").matchAll(SLOT_MARK)) {
+        const c = bySlot.get(hit[1]);
+        if (c && !first.has(c.id)) first.set(c.id, hit.index);
       }
-      parts.push({ html: Markdown.render(src.slice(last)) });
-      const out = [...cards.filter((k) => !used.has(k.id)).map((k) => ({ k })),
-                   ...parts.filter((p) => p.k || p.html.trim())];
-      entry.body = { key, parts: out };
+      const parts = [];
+      let at = 0;
+      for (const hit of src.matchAll(SLOT_MARK)) {
+        const c = bySlot.get(hit[1]);
+        if (!c || first.get(c.id) !== start + hit.index) continue;
+        parts.push({ html: Markdown.render(src.slice(at, hit.index)) }, { k: c });
+        at = hit.index + hit[0].length;
+      }
+      parts.push({ html: Markdown.render(src.slice(at)) });
+      const loose = last ? cards.filter((c) => !first.has(c.id)).map((c) => ({ k: c })) : [];
+      const out = [...loose, ...parts.filter((p) => p.k || p.html.trim())];
+      entry[slot] = { key, parts: out };
       return out;
     }
     const keptComponent = (k) => tools.keptComponent(k);
@@ -1685,10 +1696,20 @@ const ChatPanel = {
       const cut = last.slice(-REASON_TAIL).replace(/\s+\S*$/, "");
       return "… " + cut.slice(cut.indexOf(" ") + 1);
     }
-    function preview(m, i) {
-      const live = streaming.value && i === current.value.messages.length - 1 && !m.content;
-      if (!live) return { text: candidate(m.reasoning), n: "fin" };
-      return shown[m.id] || { text: "", n: 0 };
+    // Un segment de la chronologie (turn.timeline, `t`) réfléchit encore :
+    // le dernier — le tour en cours —, pendant le flux, tant qu'il n'a rien
+    // écrit et qu'aucun de ses outils ne tourne (sa puce le dit déjà).
+    const busyTool = (seg) => seg.tools.some((c) => c.status === "running" || c.status === "writing");
+    function thinking(m, i, t, k) {
+      const seg = t.segments[k];
+      return streaming.value && i === current.value.messages.length - 1
+        && k === t.segments.length - 1 && !seg.content.trim() && !busyTool(seg);
+    }
+    function preview(m, i, t, k) {
+      if (!thinking(m, i, t, k)) return { text: candidate(t.segments[k].reasoning), n: "fin" };
+      const s = shown[m.id];
+      // L'aperçu d'un tour précédent ne passe pas au tour suivant.
+      return s && s.seg === t.segments.length ? s : { text: "", n: 0 };
     }
     // Le pas de l'aperçu, tant qu'une réponse réfléchit.
     let pace = null;
@@ -1698,10 +1719,14 @@ const ChatPanel = {
       pace = setInterval(() => {
         const msgs = current.value ? current.value.messages : [];
         const m = msgs[msgs.length - 1];
-        if (!m || m.role !== "assistant" || m.content || !m.reasoning) return;
-        const text = candidate(m.reasoning);
+        if (!m || m.role !== "assistant") return;
+        const segs = timeline(m).segments, seg = segs.at(-1);
+        if (seg.content.trim() || !seg.reasoning) return;
+        const text = candidate(seg.reasoning);
         const s = shown[m.id];
-        if (text && (!s || s.text !== text)) shown[m.id] = { text, n: (s ? s.n : 0) + 1 };
+        if (text && (!s || s.text !== text || s.seg !== segs.length)) {
+          shown[m.id] = { text, n: (s ? s.n : 0) + 1, seg: segs.length };
+        }
       }, REASON_PACE);
     });
     onUnmounted(() => clearInterval(pace));
@@ -1823,7 +1848,7 @@ const ChatPanel = {
              sheet, sheetOpen, cardAct, cardView, keptView, keptAct, keptNotes, body, keptComponent, keptBelow, cardComponent, cardPlacement, cardPending, folderCtx,
              download, downloadOut, extOf,
              dropZone, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
-             copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, num, size, when,
+             copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, thinking, busyTool, timeline, md, candidateOf: candidate, num, size, when,
              host, context, contextTitle, ctxParts, sentFrom, autoCompact, ctxOpen, compactNow, uncompact,
              retryCompacted, tooLong, editing, cancelEdit, commandHints, useCommand, kTokens: Compact.kTokens, estimate: Compact.estimate,
              AUTO_AT: Compact.AUTO_AT };
@@ -2027,48 +2052,66 @@ export default ChatPanel;
             </div>
           </template>
           <template v-else>
-            <!-- Plié de base : une ligne d'aperçu, remplacée à son rythme
-                 (clé = n), et le CONTENEUR miroite tant que le modèle
-                 réfléchit (jamais le span coupé par « … », qui transite). -->
-            <details class="reasoning" v-if="m.reasoning && current.showReasoning">
-              <summary>
-                <span class="r-label">Raisonnement</span>
-                <span class="r-last"
-                      :class="{ live: streaming && i === current.messages.length - 1 && !m.content }">
-                  <transition name="r-swap" mode="out-in">
-                    <span :key="preview(m, i).n">{{ preview(m, i).text }}</span>
-                  </transition></span>
-              </summary>
-              <div class="md" v-html="html(m, 'reasoning')"></div>
-            </details>
-            <div class="tool-calls" v-if="m.tools.length">
-              <details v-for="t in m.tools" :key="t.id" class="tool" :class="t.status">
+            <!-- La réponse en CHRONOLOGIE (turn.timeline) : par tour, sa
+                 réflexion, son texte, ses puces ; le tour en cours en
+                 dernier, là où l'on regarde. Une réponse d'avant les
+                 positions a sa réflexion d'un seul tenant en tête (`head`). -->
+            <template v-for="t in [timeline(m)]" :key="'tl' + m.id">
+              <details class="reasoning" v-if="t.head && current.showReasoning">
                 <summary>
-                  <i class="state"></i><b>{{ t.name }}</b>
-                  <span class="arg">{{ argSummary(t) }}</span>
-                  <span class="dim" v-if="t.status === 'writing'">écriture… {{ num(t.chars) }} car.</span>
-                  <span class="dim" v-else-if="t.status === 'running'">en cours…</span>
-                  <span class="dim" v-else-if="t.status === 'limit'">limite d'appels atteinte</span>
-                  <span class="dim" v-else-if="t.chars !== undefined">{{ num(t.chars) }} car.</span>
+                  <span class="r-label">Raisonnement</span>
+                  <span class="r-last">{{ candidateOf(t.head) }}</span>
                 </summary>
-                <pre v-if="t.preview">{{ t.preview }}{{ t.chars > t.preview.length ? "\n…" : "" }}</pre>
+                <div class="md" v-html="md(m, 'head', t.head)"></div>
               </details>
-            </div>
-            <div class="gen-images" :class="{ multi: m.attachments.length > 1 }" v-if="m.attachments && m.attachments.length">
-              <template v-for="a in m.attachments" :key="a.name">
-                <audio v-if="a.kind === 'audio' && a.data" class="gen-audio" controls preload="metadata"
-                       :src="a.data" :autoplay="m.id === justSpoken" @play="onlyOne"></audio>
-                <button v-else-if="a.data" type="button" class="gen-image" title="Agrandir"
-                        @click="zoom = a"><img :src="a.data" :alt="a.name" @load="onImageLoad"></button>
-                <span v-else class="chip file" :data-ext="extOf(a.name)">{{ a.name }}<span class="dim">
-                  · image absente</span></span>
+              <template v-for="(seg, k) in t.segments" :key="'seg' + k">
+                <!-- Plié de base : une ligne d'aperçu, remplacée à son rythme
+                     (clé = n), et le CONTENEUR miroite tant que le modèle
+                     réfléchit (jamais le span coupé par « … », qui transite). -->
+                <details class="reasoning" v-if="seg.reasoning && current.showReasoning">
+                  <summary>
+                    <span class="r-label">Raisonnement</span>
+                    <span class="r-last" :class="{ live: thinking(m, i, t, k) }">
+                      <transition name="r-swap" mode="out-in">
+                        <span :key="preview(m, i, t, k).n">{{ preview(m, i, t, k).text }}</span>
+                      </transition></span>
+                  </summary>
+                  <div class="md" v-html="md(m, 'r' + k, seg.reasoning)"></div>
+                </details>
+                <!-- Les images et l'audio produits : avant le texte final. -->
+                <template v-if="k === t.segments.length - 1">
+                <div class="gen-images" :class="{ multi: m.attachments.length > 1 }" v-if="m.attachments && m.attachments.length">
+                  <template v-for="a in m.attachments" :key="a.name">
+                    <audio v-if="a.kind === 'audio' && a.data" class="gen-audio" controls preload="metadata"
+                           :src="a.data" :autoplay="m.id === justSpoken" @play="onlyOne"></audio>
+                    <button v-else-if="a.data" type="button" class="gen-image" title="Agrandir"
+                            @click="zoom = a"><img :src="a.data" :alt="a.name" @load="onImageLoad"></button>
+                    <span v-else class="chip file" :data-ext="extOf(a.name)">{{ a.name }}<span class="dim">
+                      · image absente</span></span>
+                  </template>
+                </div>
+                <details class="gen-prompt" v-if="m.image && m.prompt && m.prompt.includes('\n')">
+                  <summary>prompt envoyé (avec le contexte)</summary><pre>{{ m.prompt }}</pre></details>
+                </template>
+                <template v-for="(part, n) in body(m, seg.content, k, k === t.segments.length - 1, seg.start)"
+                          :key="part.k ? part.k.id : 'md' + k + '-' + n">
+                  <component v-if="part.k" :is="keptComponent(part.k)" :k="part.k"></component>
+                  <div class="md" v-else v-html="part.html"></div>
+                </template>
+                <div class="tool-calls" v-if="seg.tools.length">
+                  <details v-for="c in seg.tools" :key="c.id" class="tool" :class="c.status">
+                    <summary>
+                      <i class="state"></i><b>{{ c.name }}</b>
+                      <span class="arg">{{ argSummary(c) }}</span>
+                      <span class="dim" v-if="c.status === 'writing'">écriture… {{ num(c.chars) }} car.</span>
+                      <span class="dim" v-else-if="c.status === 'running'">en cours…</span>
+                      <span class="dim" v-else-if="c.status === 'limit'">limite d'appels atteinte</span>
+                      <span class="dim" v-else-if="c.chars !== undefined">{{ num(c.chars) }} car.</span>
+                    </summary>
+                    <pre v-if="c.preview">{{ c.preview }}{{ c.chars > c.preview.length ? "\n…" : "" }}</pre>
+                  </details>
+                </div>
               </template>
-            </div>
-            <details class="gen-prompt" v-if="m.image && m.prompt && m.prompt.includes('\n')">
-              <summary>prompt envoyé (avec le contexte)</summary><pre>{{ m.prompt }}</pre></details>
-            <template v-for="(part, n) in body(m)" :key="part.k ? part.k.id : 'md' + n">
-              <component v-if="part.k" :is="keptComponent(part.k)" :k="part.k"></component>
-              <div class="md" v-else v-html="part.html"></div>
             </template>
             <!-- Ce qui attend l'utilisateur : la CARTE d'un outil (tools/) —
                  son composant, ou le gabarit commun (view) ; une carte de la
@@ -2120,7 +2163,9 @@ export default ChatPanel;
             <div class="typing" v-if="m.serverTurn && !m.error">
               <i></i><i></i><i></i><span class="dim">réponse en cours, menée par le proxy (webhook « {{ m.webhook ? m.webhook.name : "" }} »)…</span></div>
             <div class="typing" v-else-if="streaming && !m.error
-                 && (m.image ? m.want > (m.attachments || []).length : i === current.messages.length - 1 && !m.content)">
+                 && (m.image ? m.want > (m.attachments || []).length
+                     : i === current.messages.length - 1 && [timeline(m).segments.at(-1)].every((seg) =>
+                       !seg.content.trim() && !busyTool(seg)))">
               <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ m.want > 1
                 ? " " + ((m.attachments || []).length + 1) + " / " + m.want : "" }}…</span>
               <span class="dim" v-else-if="m.voice">synthèse vocale{{ m.progress ? " · " + m.progress : "" }}…</span>

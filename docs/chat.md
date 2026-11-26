@@ -239,10 +239,15 @@ remplacées par un bouton *Afficher l'image (hôte)* : un chargement
 automatique transmettrait à ce site les données qu'une injection de
 prompt pourrait inclure dans l'adresse (`![](https://site/?q=…)`).
 
-**Raisonnement** : replié par défaut au-dessus de la réponse. Lorsqu'il
-est replié, une phrase complète est affichée et actualisée au plus toutes
-les 1,8 s pendant le flux. Le nombre de tokens et la durée sont affichés
-sous la réponse.
+**Raisonnement** : replié par défaut au-dessus du texte qu'il précède.
+Lorsqu'il est replié, une phrase complète est affichée et actualisée au
+plus toutes les 1,8 s pendant le flux. Le nombre de tokens et la durée sont
+affichés sous la réponse.
+
+**Réponse en plusieurs tours d'outils** : elle s'affiche dans l'ordre où
+elle s'écrit. Pour chaque tour : son raisonnement, son texte, puis les
+appels d'outils qu'il a faits. Le tour en cours est en bas, et le fil le
+suit, y compris après la réponse à une carte (questions, permission).
 
 **Voix** : *Écouter*, sous une réponse, la lit sans code ni Markdown
 (20 000 caractères au plus) ; *Arrêter la lecture* interrompt la
