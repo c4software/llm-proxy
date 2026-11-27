@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS requests (
   exact             INTEGER NOT NULL,
   streamed          INTEGER NOT NULL,
   cached_tokens     INTEGER NOT NULL DEFAULT 0,
-  api_key_id        TEXT    NOT NULL DEFAULT ''
+  api_key_id        TEXT    NOT NULL DEFAULT '',
+  generation        REAL    NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS requests_ts       ON requests(ts);
 CREATE INDEX IF NOT EXISTS requests_ts_model ON requests(ts, model_key);
@@ -58,8 +59,8 @@ CREATE INDEX IF NOT EXISTS requests_ts_model ON requests(ts, model_key);
 INSERT = """
 INSERT INTO requests (ts, model_key, backend, model, endpoint, status,
                       latency, prompt_tokens, completion_tokens, exact,
-                      streamed, cached_tokens, api_key_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      streamed, cached_tokens, api_key_id, generation)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -111,6 +112,7 @@ ADDED_COLUMNS = (
     ("requests", "cached_tokens", "INTEGER NOT NULL DEFAULT 0"),
     ("requests", "api_key_id", "TEXT NOT NULL DEFAULT ''"),
     ("tool_calls", "api_key_id", "TEXT NOT NULL DEFAULT ''"),
+    ("requests", "generation", "REAL NOT NULL DEFAULT 0"),
 )
 
 
@@ -270,15 +272,19 @@ class _reader:
 def record(model_key: str, backend: str, model: str, endpoint: str,
            status: int, latency: float, prompt_tokens: int,
            completion_tokens: int, exact: bool, streamed: bool,
-           cached_tokens: int = 0) -> None:
+           cached_tokens: int = 0, generation: float = 0.0) -> None:
     """Enregistre UNE requête. `model_key` est le nom préfixé demandé par
-    le client. Non bloquant : la ligne part dans la file d'écriture."""
+    le client. `generation` : les secondes entre le premier et le dernier
+    morceau d'une réponse en flux d'un seul tour upstream (0 sinon), d'où
+    se lit la vitesse de génération. Non bloquant : la ligne part dans la
+    file d'écriture."""
     if not model_key:
         return
     row = (time.time(), model_key, backend, model, "/" + endpoint.strip("/"),
            int(status), max(float(latency), 0.0), max(int(prompt_tokens), 0),
            max(int(completion_tokens), 0), int(bool(exact)),
-           int(bool(streamed)), max(int(cached_tokens), 0), CLIENT.get())
+           int(bool(streamed)), max(int(cached_tokens), 0), CLIENT.get(),
+           max(float(generation), 0.0))
     _enqueue(INSERT, row)
 
 

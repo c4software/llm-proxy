@@ -31,6 +31,12 @@ Fonctions disponibles autour du relais :
   comptes.
 - Limiteur de quotas pour les backends concernés et statistiques persistées
   au format de l'Usage API d'OpenAI.
+- Passerelle pour `omarchy models` (Omarchy) : `omarchy models pair
+  https://<proxy>` appaire le proxy avec une de ses clés. Les modèles de
+  conversation que voit la clé arrivent dans le panneau des agents, avec
+  leur contexte et la vitesse de génération mesurée, et
+  `omarchy agent --local-model <hôte>/<modèle>` lance pi dessus
+  ([Omarchy](docs/omarchy.md)).
 - Tableau de bord `/ui` : statistiques, chat et configuration des clés,
   comptes, webhooks, dépôts, bacs d'exécution et caches.
 - Conteneur du proxy en lecture seule, sans capacités Linux.

@@ -71,6 +71,11 @@ réglage et outil.
   traduite vers chat/completions. [API Anthropic Messages](api-anthropic.md)
 - **API OpenAI Responses** (`[responses].enabled`) : `/v1/responses`,
   traduite vers chat/completions. [API OpenAI Responses](api-responses.md)
+- **Passerelle Omarchy** (`[omarchy].enabled`) : `/local-ai/models.json`,
+  la liste des modèles de conversation que voit la clé, avec leur contexte
+  et leur vitesse de génération mesurée, et
+  `/local-ai/<id>/v1/chat/completions` pour chacun ; Omarchy s'y appaire
+  par `omarchy models pair https://<proxy>`. [Omarchy](omarchy.md)
 
 ## Outils hébergés
 
@@ -118,7 +123,8 @@ réglage et outil.
   (`data/stats.db`), lues par l'Usage API d'OpenAI
   (`/v1/organization/usage/completions`, `/v1/organization/usage/tools`),
   et l'usage d'un compte au format du panneau d'agents d'Omarchy
-  (`/v1/usage/agent`). [Statistiques](statistiques.md)
+  (`/v1/usage/agent`) ; la vitesse de génération de chaque modèle, mesurée
+  sur ses réponses en flux. [Statistiques](statistiques.md)
 - **Observabilité** : `GET /healthz` donne l'état de chaque backend
   (quotas restants, modèles vus, réglages) et de la surface Anthropic.
   Sans la clé, quand l'auth est active, seulement `{"status": "ok"}`. Un

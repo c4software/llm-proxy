@@ -39,7 +39,7 @@ def data(tmp_path, monkeypatch):
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(stats.SCHEMA)
     conn.execute(stats.INSERT, (1.0, "a/m", "a", "m", "/v1/chat/completions",
-                                200, 1.0, 10, 2, 1, 0, 0, ""))
+                                200, 1.0, 10, 2, 1, 0, 0, "", 0.0))
     conn.commit()
     yield d, conn                    # la connexion reste ouverte : WAL vivant
     conn.close()
@@ -50,7 +50,7 @@ def test_backup_check_restore(data, tmp_path, capsys):
     # Une écriture encore dans le journal (-wal), pas dans stats.db : une
     # copie de fichier la perdrait.
     live.execute(stats.INSERT, (2.0, "a/m", "a", "m", "/v1/chat/completions",
-                                200, 1.0, 5, 1, 1, 0, 0, ""))
+                                200, 1.0, 5, 1, 1, 0, 0, "", 0.0))
     live.commit()
     assert os.path.getsize(str(d / "stats.db") + "-wal") > 0
 

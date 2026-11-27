@@ -41,6 +41,7 @@ Rangé en parties :
   collector.py   l'usage lu dans un flux relayé (UsageCollector)
   db.py          la base SQLite : schéma, file d'écriture, enregistrement
   usage.py       l'Usage API (requêtes, outils hébergés)
+                 et la vitesse de génération par modèle
 """
 
 from .collector import (  # noqa: F401
@@ -72,6 +73,7 @@ from .usage import (  # noqa: F401
     GROUP_FIELDS,
     MAX_LIMIT,
     TOOL_GROUP_FIELDS,
+    decode_speeds,
     default_limit,
     parse_group_by,
     recent,

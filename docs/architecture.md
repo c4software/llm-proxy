@@ -192,7 +192,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `upstream/rate_headers.py` | Les limites annoncées dans les en-têtes d'une réponse (Mistral, OpenAI, Groq, Anthropic) : `parse`, appliquées par `QuotaState.observe` depuis `send_upstream`, sur le bucket de la requête |
 | `upstream/anthropic.py` | Le backend Anthropic natif (`api = "anthropic"`) : chat/completions ↔ Messages, flux compris |
 | `upstream/openai.py` | La réponse de chat d'un backend `openai` dont le `content` est une liste de morceaux (Mistral) ramenée à une chaîne et à `reasoning_content` (`normalize`, `Upstream`) ; l'enveloppe des adaptateurs de réponse (`Adapted`) |
-| `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), le corps ajusté au backend (`inject_tool_choice`, `cap_max_tokens`, `fit_fields`), `forward`, `relay`, `drain` |
+| `upstream/relaying.py` | Le relais : `Call`, porte (`gate`, `share_gate`), le corps ajusté au backend (`inject_tool_choice`, `cap_max_tokens`, `fit_fields`), `forward`, `relay` (et la durée d'un flux, `generation` des statistiques), `drain` |
 | `upstream/catalog.py` | Catalogue fusionné et préfixé (servi par `/v1/models`), type, contexte et niveaux de réflexion annoncés (`_announced_efforts`) de chaque modèle |
 
 ### `surfaces/` : les API de conversation
@@ -205,7 +205,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `surfaces/responses_api/` | Traduction Responses ↔ chat/completions, flux compris ; outils hébergés ; `namespace` aplatis. Paquet : `common`, `request`, `response`, `stream` (le `Translator`) |
 | `surfaces/anthropic_api/` | Traduction Messages ↔ chat/completions, flux compris ; `model_map` ; outils serveur `web_search` et `web_fetch`. Paquet : `common`, `request`, `response`, `stream` (le `Translator`) |
 | `surfaces/tool_loop.py` | La boucle des outils hébergés, commune aux trois surfaces |
-| `surfaces/omarchy.py` | Les modèles vus par `omarchy models` : la liste `/local-ai/models.json`, `/local-ai/<id>/v1/chat/completions` relayé par `endpoints.chat` (`recipe_id` : nom préfixé → identifiant de recette) |
+| `surfaces/omarchy.py` | Les modèles vus par `omarchy models` : la liste `/local-ai/models.json`, `/local-ai/<id>/v1/chat/completions` relayé par `endpoints.chat` (`recipe_id` : nom préfixé → identifiant de recette) ; la vitesse de génération publiée (`decode_tok_s`), relue au plus une fois par `SPEEDS_TTL` |
 | `surfaces/relay_routes.py` | `GET /v1/audio/voices` et le catch-all (`forward_post_paths`, sinon `404`) ; l'audio pas à pas : [Voix](voix.md) |
 
 ### `tools/` : les outils hébergés
@@ -246,7 +246,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 
 | Fichier | Rôle |
 |---|---|
-| `storage/stats/` | Compteurs SQLite (par requête, par exécution d'outil), lecture de l'`usage` dans le flux. Paquet : `collector` (`UsageCollector`), `db` (SQLite, file d'écriture), `usage` (Usage API) |
+| `storage/stats/` | Compteurs SQLite (par requête, par exécution d'outil), lecture de l'`usage` dans le flux. Paquet : `collector` (`UsageCollector`), `db` (SQLite, file d'écriture), `usage` (Usage API, vitesse de génération par modèle : `decode_speeds`) |
 | `storage/conversations.py` | Historique du chat de la page (`data/conversations.db`) : conversations et images par compte |
 | `storage/memories.py` | Magasin de la mémoire persistante (`data/memory.db`), par client, sous `/memories` |
 | `storage/voices.py` | Les voix clonées de la page, par compte (table à part de `conversations.db`) |

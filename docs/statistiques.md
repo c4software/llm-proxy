@@ -75,6 +75,25 @@ percentile**, qui n'a pas cette propriété.
 - Une requête en erreur sans `usage` (500 du backend, 429 local, client
   parti) compte **0 token**.
 
+### Vitesse de génération
+
+Chaque ligne d'une réponse en flux relayée en un seul tour porte la durée
+entre le premier token et le dernier morceau reçus du backend : la
+génération seule, hors attente (quotas, partage équitable) et traitement
+de l'invite ; un commentaire SSE d'avant le premier token ne compte pas.
+La vitesse d'un modèle est la médiane, en tokens par seconde, de ses 20
+dernières réponses des 7 derniers jours, réussies, à l'usage exact (le
+bloc `usage` du backend), d'au moins 32 tokens et 0,5 s de flux, tous
+clients confondus. La liste d'[Omarchy](omarchy.md) la publie
+(`decode_tok_s`).
+
+- Une réponse passée par la boucle des outils hébergés (un outil déclaré,
+  ou `[chat].always`) n'est pas mesurée : ses tours se mêlent à
+  l'exécution des outils.
+- Un backend qui génère un raisonnement sans le diffuser le compte dans
+  `completion_tokens` avant le premier morceau : sa vitesse paraît plus
+  élevée.
+
 ## Usage d'un compte (Omarchy)
 
 ```http

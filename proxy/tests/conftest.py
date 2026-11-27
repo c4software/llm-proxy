@@ -91,11 +91,15 @@ def fresh_direct_calls():
 @pytest.fixture(autouse=True)
 def fresh_catalog():
     """Chaque test relit les catalogues des backends (catalog.fetch_models
-    les garde CATALOG_TTL)."""
+    les garde CATALOG_TTL) et les vitesses de génération (omarchy.speeds,
+    gardées SPEEDS_TTL)."""
+    from llm_proxy.surfaces import omarchy
     from llm_proxy.upstream import catalog
     catalog.forget()
+    omarchy.forget()
     yield
     catalog.forget()
+    omarchy.forget()
 
 
 @pytest.fixture

@@ -16,7 +16,10 @@ modèle : chacun y est annoncé en marche.
 
 Sans `[omarchy].enabled = true`, ces routes répondent `404`. Proxy ouvert
 (sans `[proxy].api_keys` ni comptes), la liste porte tous les modèles de
-conversation. Elle ne porte que des noms, le contexte, le plafond de réponse
+conversation. Elle ne porte que des noms, la [vitesse de
+génération](statistiques.md#vitesse-de-génération) mesurée par le proxy
+(`decode_tok_s`, que le panneau d'Omarchy affiche ; relue au plus une fois
+par minute), le contexte, le plafond de réponse
 (`[backends.<nom>].max_tokens`, à défaut 16384, borné par le contexte) et
 les entrées acceptées (`text`, `image` pour un modèle multimodal d'un
 backend `images = true`) ; elle ne contient aucune clé. Le chat passe par

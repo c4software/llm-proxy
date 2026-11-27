@@ -4,6 +4,7 @@ par modèle, par clé, par tranche de temps), et l'usage des outils
 hébergés.
 """
 
+import statistics
 import time
 
 from .db import _reader
@@ -115,6 +116,35 @@ def slots(keys=None) -> list[tuple]:
             f"SELECT CAST(ts / {SLOT} AS INTEGER) * {SLOT}, model_key, SUM(prompt_tokens), "
             "SUM(completion_tokens), SUM(cached_tokens), COUNT(*) FROM requests "
             f"WHERE 1{where} GROUP BY 1, 2", tail).fetchall()
+
+
+# La vitesse de génération (decode_speeds) : la médiane des dernières
+# réponses en flux réussies, à l'usage exact, assez longues pour que le
+# découpage du flux ne fausse pas la mesure.
+SPEED_WINDOW = 7 * 86_400
+SPEED_SAMPLES = 20
+SPEED_MIN_TOKENS = 32
+SPEED_MIN_SECONDS = 0.5
+
+
+def decode_speeds() -> dict[str, float]:
+    """Tokens générés par seconde, par modèle préfixé (en minuscules) : la
+    médiane de ses SPEED_SAMPLES dernières réponses en flux d'un seul tour
+    upstream (colonne `generation`) des SPEED_WINDOW dernières secondes,
+    réussies, à l'usage exact, d'au moins SPEED_MIN_TOKENS tokens et
+    SPEED_MIN_SECONDS secondes de flux. Un modèle sans telle réponse n'y
+    est pas."""
+    with _reader() as conn:
+        rows = conn.execute(
+            "SELECT lower(model_key), completion_tokens / generation FROM requests "
+            "WHERE ts >= ? AND status BETWEEN 200 AND 299 AND streamed AND exact "
+            "AND completion_tokens >= ? AND generation >= ? ORDER BY ts DESC",
+            (time.time() - SPEED_WINDOW, SPEED_MIN_TOKENS, SPEED_MIN_SECONDS)).fetchall()
+    samples: dict[str, list[float]] = {}
+    for model, speed in rows:
+        if len(seen := samples.setdefault(model, [])) < SPEED_SAMPLES:
+            seen.append(speed)
+    return {model: statistics.median(seen) for model, seen in samples.items()}
 
 
 def default_limit(bucket_width: str) -> int:

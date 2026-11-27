@@ -910,7 +910,7 @@ def test_app_loop_runs_hosted_calls_until_the_answer(proxy):
     assert len(proxy.lines) == 1
     line = proxy.lines[0]
     assert line[:5] == ("essai/qwen", "essai", "qwen", "/v1/responses", 200)
-    assert line[6:] == (250, 15, True, True, 140)
+    assert line[6:] == (250, 15, True, True, 140, 0.0)
     assert all(u.closed for u in ups) and not proxy.replies
 
 
@@ -930,7 +930,7 @@ def test_app_loop_json_mode(proxy):
     assert "stream" not in proxy.sent[1]
     assert proxy.sent[1]["messages"][-1]["content"] == FOUND
     assert len(proxy.lines) == 1
-    assert proxy.lines[0][6:] == (250, 15, True, False, 140)
+    assert proxy.lines[0][6:] == (250, 15, True, False, 140, 0.0)
 
 
 def test_app_loop_hands_back_when_the_client_is_called_too(proxy):

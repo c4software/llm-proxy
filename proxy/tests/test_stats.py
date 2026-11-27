@@ -6,9 +6,10 @@ import time
 
 import pytest
 
-from fakes import everywhere
+from fakes import FakeUpstream, chunk, everywhere, stream, usage
 
 from llm_proxy.storage import stats
+from llm_proxy.upstream import relaying
 
 
 def test_usage_collector_reads_cached_tokens_from_sse():
@@ -37,14 +38,16 @@ def test_usage_collector_json_without_details():
 
 
 def test_migration_adds_cached_column_to_old_base(tmp_path, monkeypatch):
-    """Une base d'avant les colonnes cached_tokens et api_key_id est
-    complétée au démarrage — aucune migration à jouer à la main."""
+    """Une base d'avant les colonnes cached_tokens, api_key_id et
+    generation est complétée au démarrage — aucune migration à jouer à la
+    main."""
     import sqlite3
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
     conn.executescript(stats.SCHEMA.replace(
         ",\n  cached_tokens     INTEGER NOT NULL DEFAULT 0", "").replace(
-        ",\n  api_key_id        TEXT    NOT NULL DEFAULT ''", ""))
+        ",\n  api_key_id        TEXT    NOT NULL DEFAULT ''", "").replace(
+        ",\n  generation        REAL    NOT NULL DEFAULT 0", ""))
     conn.executescript(stats.TOOLS_SCHEMA.replace(
         ",\n  api_key_id   TEXT    NOT NULL DEFAULT ''", ""))
     conn.execute("INSERT INTO requests VALUES (NULL, ?, 'a/m', 'a', 'm', "
@@ -55,9 +58,9 @@ def test_migration_adds_cached_column_to_old_base(tmp_path, monkeypatch):
     try:
         with stats._reader() as r:
             cols = {row[1] for row in r.execute("PRAGMA table_info(requests)")}
-            assert {"cached_tokens", "api_key_id"} <= cols
-            assert r.execute("SELECT cached_tokens, api_key_id FROM requests"
-                             ).fetchone() == (0, "")
+            assert {"cached_tokens", "api_key_id", "generation"} <= cols
+            assert r.execute("SELECT cached_tokens, api_key_id, generation FROM requests"
+                             ).fetchone() == (0, "", 0)
             cols = {row[1] for row in r.execute("PRAGMA table_info(tool_calls)")}
             assert "api_key_id" in cols
     finally:
@@ -111,6 +114,57 @@ def test_usage_api_exposes_input_cached_tokens(stats_db):
     assert r["input_tokens"] == 40000
     assert r["input_cached_tokens"] == 18000
     assert r["num_anthropic_requests"] == 2
+
+
+# ── decode speed ────────────────────────────────────────────────────────
+
+def test_relay_times_a_stream_from_its_first_token_to_its_last_chunk(proxy, monkeypatch):
+    """A streamed reply relayed as is records the time between its first
+    and last upstream chunks: a leading SSE comment (a gateway's ping
+    while it waits) doesn't start it, and a JSON reply records none."""
+    ticks = iter(range(1, 1000))
+    monkeypatch.setattr(relaying, "clock", lambda: float(next(ticks)))
+    body = b":" + b"x" * 62 + b"\n" + stream(*[chunk({"content": "mot "}) for _ in range(40)], usage(10, 40))
+    chunks = -(-len(body) // 64)                 # FakeUpstream sends 64 bytes at a time
+    proxy.replies = [FakeUpstream(body, content_type="text/event-stream"),
+                     FakeUpstream(json.dumps({**usage(10, 40), "choices": [{"index": 0, "message": {
+                         "role": "assistant", "content": "x"}, "finish_reason": "stop"}]}).encode())]
+    for streamed in (True, False):
+        r = proxy.client.post("/v1/chat/completions", json={
+            "model": "essai/m", "stream": streamed, "messages": [{"role": "user", "content": "x"}]})
+        assert r.status_code == 200, r.text
+    streamed_line, json_line = proxy.lines
+    # One tick per chunk, from 1: the comment's is skipped, the first token's is 2, the last chunk's is chunks.
+    assert streamed_line[-1] == chunks - 2 and json_line[-1] == 0.0, (streamed_line, json_line)
+
+
+def test_decode_speed_is_the_median_of_the_last_replies_fit_to_measure(stats_db):
+    """Only successful streamed replies with exact usage, long enough, from
+    the last 7 days count: each outlier below, at 1000 tokens per second (or
+    62), would move the median. A model keeps its last 20, whatever the
+    case of its name."""
+    good = dict(status=200, completion=100, exact=True, streamed=True)
+    def put(model, generation, **over):
+        row = {**good, **over}
+        stats.record(model, model.split("/")[0], "m", "/v1/chat/completions", row["status"], 9.0,
+                     10, row["completion"], row["exact"], row["streamed"], 0, generation)
+    for generation in (1.0, 2.0, 4.0):           # 100, 50 and 25 tokens/s
+        put("a/m" if generation < 4 else "A/M", generation)
+    # Each breaks one rule only, at 1000 tokens/s (31 tokens: 62 tokens/s).
+    for over in ({"streamed": False}, {"status": 500}, {"exact": False}):
+        put("a/m", 1.0, completion=1000, **over)
+    put("a/m", 0.5, completion=31)               # too few tokens
+    put("a/m", 0.49, completion=490)             # stream too short
+    put("a/m", 0.0)                              # hosted tool loop: no time
+    for speed in [1000] * 5 + [10] * 20:         # the last 20 only
+        put("b/m", 100 / speed)
+    with stats._reader() as conn:
+        conn.execute(stats.INSERT, (time.time() - 8 * 86_400, "c/m", "c", "m", "/v1/chat/completions",
+                                    200, 1.0, 10, 100, 1, 1, 0, "", 1.0))
+        conn.commit()
+    stats.close()
+    stats.init()
+    assert stats.decode_speeds() == {"a/m": 50.0, "b/m": 10.0}
 
 
 # ── exécutions d'outils hébergés (table tool_calls) ─────────────────────
@@ -305,7 +359,7 @@ def test_migration_adds_tool_calls_to_a_base_with_requests_only(tmp_path, monkey
     conn.executescript(stats.SCHEMA)
     conn.execute(stats.INSERT, (time.time(), "a/m", "a", "m",
                                 "/v1/chat/completions", 200, 1.0, 10, 2, 1, 0, 0,
-                                ""))
+                                "", 0.0))
     conn.commit(); conn.close()
     everywhere(monkeypatch, stats, "DB_PATH", str(path))
     stats.init()
@@ -328,7 +382,7 @@ def test_purge_drops_old_tool_calls_with_old_requests(stats_db, monkeypatch):
             conn.execute(stats.INSERT_TOOL,
                          (ts, "web_search", "/v1/tools", "", "ok", 0.1, 1, ""))
             conn.execute(stats.INSERT, (ts, "a/m", "a", "m", "/v1/messages",
-                                        200, 1.0, 1, 1, 1, 0, 0, ""))
+                                        200, 1.0, 1, 1, 1, 0, 0, "", 0.0))
         conn.commit()
         count = lambda: [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
                          for t in stats.TABLES]

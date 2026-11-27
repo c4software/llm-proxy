@@ -805,7 +805,7 @@ def test_un_backend_du_toml_borne_ses_modeles(env, monkeypatch):
 
 # ── les modèles permis d'un compte ──────────────────────────────────────
 
-def test_l_admin_borne_les_modeles_d_un_compte(env, monkeypatch):
+def test_l_admin_borne_les_modeles_d_un_compte(env, stats_db, monkeypatch):
     monkeypatch.setattr(omarchy, "ENABLED", True)
     alice, bob, bob_id = admin_and_user(env)
     alice.post("/ui/backends", json={**MINE, "name": "alice", "shared": True})

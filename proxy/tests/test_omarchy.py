@@ -4,12 +4,14 @@ préfixé ramené à un identifiant de recette. Les modèles permis d'un
 compte : test_backends.py (les modèles permis d'un compte)."""
 
 import json
+import time
 
 import httpx2
 import pytest
 
 from fakes import FakeUpstream, bearer, fake_backend
 from llm_proxy.access import auth
+from llm_proxy.storage import stats
 from llm_proxy.surfaces import omarchy
 
 KEY = "0f6c2f9e-4b1a-4c7e-9d4e-2a1b3c4d5e6f"
@@ -26,7 +28,7 @@ CATALOG = [
 
 
 @pytest.fixture
-def shared(proxy, monkeypatch):
+def shared(proxy, stats_db, monkeypatch):
     """`proxy`, l'auth active (une clé), le backend «essai» à images
     (plafond de réponse 4096) dont /v1/models rend CATALOG, et la surface
     Omarchy ouverte."""
@@ -75,6 +77,27 @@ def test_la_liste_propose_les_modeles_de_conversation_que_voit_la_cle(shared):
         == ("essai/Mistral_Small-3.2", 128000, 4096, ["text"], "active", "text")
     assert (vision["ctx"], vision["input"]) == (omarchy.DEFAULT_CONTEXT, ["text", "image"])
     assert BACKEND_KEY not in r.text
+
+
+def test_la_liste_porte_la_vitesse_mesuree_relue_au_plus_une_fois_par_minute(shared, monkeypatch):
+    """decode_tok_s : la vitesse de génération mesurée par le proxy, que le
+    panneau d'Omarchy affiche ; relue au plus une fois par SPEEDS_TTL."""
+    def speed():
+        r = shared.client.get("/local-ai/models.json", headers=bearer(KEY))
+        return {m["recipe"]: m["decode_tok_s"] for m in r.json()["models"]}
+    def put(generation):
+        with stats._reader() as conn:
+            conn.execute(stats.INSERT, (time.time(), "essai/Mistral_Small-3.2", "essai", "Mistral_Small-3.2",
+                                        "/v1/chat/completions", 200, 9.0, 10, 100, 1, 1, 0, "", generation))
+            conn.commit()
+    put(2.0)
+    assert speed() == {"essai.mistral-small-3.2": 50.0, "essai.gemma-vision": None}
+    put(0.5)
+    put(0.5)
+    assert speed()["essai.mistral-small-3.2"] == 50.0
+    later = omarchy.time.monotonic() + omarchy.SPEEDS_TTL
+    monkeypatch.setattr(omarchy.time, "monotonic", lambda: later)
+    assert speed()["essai.mistral-small-3.2"] == 200.0
 
 
 def test_desactivees_les_routes_omarchy_repondent_404(shared, monkeypatch):

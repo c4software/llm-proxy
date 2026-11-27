@@ -32,6 +32,9 @@ from .backends import Backend, backend_offline_message
 # jamais relayés, auth active ou non.
 ANTHROPIC_HEADERS = {"x-api-key", "anthropic-version", "anthropic-beta"}
 
+# L'horloge de la durée d'un flux (relay) : remplacée par un test.
+clock = time.monotonic
+
 
 def clean_headers(request: Request, b: Backend) -> dict:
     # Authorization du client jamais relayé si le backend a sa clé, ni si
@@ -164,11 +167,12 @@ class Call:
     def done(self, status: int, prompt_tokens: int = 0,
              completion_tokens: int = 0, exact: bool = False,
              streamed: bool = False, cached_tokens: int = 0,
-             partial: bool = False) -> None:
+             partial: bool = False, generation: float = 0.0) -> None:
         """`partial` : la réponse a commencé puis s'est interrompue (client
         parti en plein flux → 499, upstream coupé → 502) — ce qui a été
         généré est compté (estimé au besoin), sinon raccrocher juste avant
-        la fin ferait passer outre quotas et partage équitable."""
+        la fin ferait passer outre quotas et partage équitable.
+        `generation` : la durée du flux d'un seul tour upstream (relay)."""
         if self._done or not self.model_key:
             return
         self._done = True
@@ -192,7 +196,7 @@ class Call:
         stats.record(self.model_key, self.backend.name, self.plain_model,
                      self.endpoint, status, time.monotonic() - self.started,
                      prompt_tokens, completion_tokens, exact, streamed,
-                     cached_tokens)
+                     cached_tokens, generation)
         if shared(self):
             fairshare.charge(fairshare.CLIENT.get(),
                              prompt_tokens + completion_tokens)
@@ -497,9 +501,18 @@ async def relay(call: Call, upstream: httpx2.Response, robinet,
     failed = upstream.status_code >= 400
     status, partial = upstream.status_code, False
     excerpt = bytearray()
+    # Le premier et le dernier morceau reçus d'un flux : la durée de la
+    # génération, hors attente (files, partage équitable) et traitement de
+    # l'invite. Un commentaire SSE d'avant le premier token (le ping d'une
+    # passerelle qui attend) ne la fait pas commencer.
+    first = last = 0.0
     try:
         try:
             async for chunk in upstream.aiter_raw():
+                now = clock()
+                if first or not chunk.lstrip().startswith(b":"):
+                    first = first or now
+                    last = now
                 if failed and len(excerpt) < ERROR_EXCERPT:
                     excerpt += chunk[:ERROR_EXCERPT - len(excerpt)]
                 out = robinet.feed(chunk)
@@ -540,7 +553,8 @@ async def relay(call: Call, upstream: httpx2.Response, robinet,
             )
         prompt, completion, exact = robinet.tokens(prompt_estimate)
         call.done(status, prompt, completion, exact,
-                  robinet.sse, robinet.cached(), partial=partial)
+                  robinet.sse, robinet.cached(), partial=partial,
+                  generation=last - first if robinet.sse else 0.0)
         await upstream.aclose()
 
 

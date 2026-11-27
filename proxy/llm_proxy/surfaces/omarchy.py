@@ -20,14 +20,19 @@ sans clé tant qu'elle n'est pas appairée : le middleware la laisse passer
 (auth.OPEN_PATHS), et elle est vide quand l'auth est active.
 """
 
+import asyncio
 import json
 import re
+import sqlite3
+import time
 
 from fastapi import APIRouter, Request
 
 from ..access.auth import auth_required, request_owner
 from ..core import config
 from ..core.httputil import error_response, parse_json
+from ..core.settings import log
+from ..storage import stats
 from ..upstream.backends import route_backend
 from ..upstream.catalog import CHAT_TYPES, accepts_images, merged_models
 from .endpoints import chat
@@ -44,6 +49,11 @@ DEFAULT_MAX_TOKENS = 16384
 
 ENABLED = config.flag("omarchy.enabled", False)
 DEFAULT_CONTEXT = config.integer("omarchy.context", 32768, minimum=1)
+# Omarchy relit la liste toutes les quelques secondes tant que son panneau
+# est ouvert : la vitesse de génération (stats.decode_speeds, une requête)
+# se relit au plus une fois par SPEEDS_TTL secondes, hors de la boucle.
+SPEEDS_TTL = 60.0
+_speeds: tuple[float, dict[str, float]] = (0.0, {})
 
 RECIPE_RE = re.compile(r"^[a-z0-9]+([.-][a-z0-9]+)*$")
 
@@ -92,6 +102,26 @@ def disabled():
                           "surface Omarchy désactivée ([omarchy].enabled)")
 
 
+def forget() -> None:
+    """Oublie les vitesses gardées : la liste suivante les relit."""
+    global _speeds
+    _speeds = (0.0, {})
+
+
+async def speeds() -> dict[str, float]:
+    """La vitesse de génération mesurée de chaque modèle, gardée SPEEDS_TTL."""
+    global _speeds
+    at, known = _speeds
+    if not at or time.monotonic() - at >= SPEEDS_TTL:
+        try:
+            known = await asyncio.to_thread(stats.decode_speeds)
+        except sqlite3.Error as exc:
+            # La liste sans vitesse plutôt que pas de liste.
+            log.warning("omarchy : vitesses de génération illisibles (%s)", exc)
+        _speeds = (time.monotonic(), known)
+    return known
+
+
 @router.get(LISTING_PATH)
 async def listing(request: Request):
     """La liste qu'Omarchy lit sur chaque machine du tailnet
@@ -100,6 +130,7 @@ async def listing(request: Request):
     if not ENABLED:
         return disabled()
     models = []
+    measured = await speeds()
     for rid, e in list((await offered(request)).items())[:MAX_MODELS]:
         vendor = str(e.get("owned_by") or "").lower()
         ctx, max_tokens, entries = await limits(e)
@@ -120,7 +151,8 @@ async def listing(request: Request):
             "expected_load_seconds": None,
             "expected_stop_seconds": None,
             "observed": None,
-            "decode_tok_s": None,
+            # Mesurée sur les réponses relayées par le proxy, tous clients.
+            "decode_tok_s": round(s, 1) if (s := measured.get(str(e["id"]).lower())) else None,
             "prefill_tok_s": None,
         })
     # Ni `host` ni `dns` : Omarchy prend ceux de l'appairage ou du tailnet.
