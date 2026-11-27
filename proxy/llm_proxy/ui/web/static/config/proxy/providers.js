@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Les fournisseurs connus : la page d'installation (SetupPanel.vue) et
   Configuration → Proxy, section Backends. Un choix remplit le nom

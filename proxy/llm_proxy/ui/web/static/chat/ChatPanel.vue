@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   L'onglet « Chat » : un composant enregistré par main.js sous
   <chat-panel>, avec ses propres appels.
@@ -61,7 +62,7 @@ import * as VueUse from "@vueuse/core";
 import { ChatStore } from "./store.js";
 import { inline, dataUrl, ownImage } from "./history.js";
 import { readAttachment } from "./attachments.js";
-import { imagePrompt, oneImage, naturalSize, upscaleSize } from "./images.js";
+import { imagePrompt, oneImage } from "./images.js";
 import { readStream } from "./stream.js";
 import { partialString } from "../lib/partialjson.js";
 import { modelCaps } from "./browser.js";
@@ -75,15 +76,13 @@ import LinuxPanel from "./LinuxPanel.vue";
 import ChatHeader from "./ChatHeader.vue";
 import ChatSettings from "./ChatSettings.vue";
 import ChatModals from "./ChatModals.vue";
+import ChatComposer from "./ChatComposer.vue";
+import ChatThread from "./ChatThread.vue";
 import { useChatModels } from "./useChatModels.js";
+import { useChatVoice } from "./useChatVoice.js";
+import { useChatImages } from "./useChatImages.js";
 import { setOpener as setLinuxOpener, vm as linuxVm } from "./tools/sandbox/linuxvm.js";
 import { download, useCopy } from "../lib/files.js";
-import * as voice from "./voice/index.js";
-import * as speech from "./voice/speech.js";
-import * as asr from "./voice/transcribe.js";
-import { useRecorder } from "./voice/recorder.js";
-import { presetVoices, language as voiceLanguage } from "./voice/proxy.js";
-import { clones as voiceClones, load as loadClones } from "./voice/clones.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
@@ -93,7 +92,7 @@ import { apiMessages } from "./api.js";
 import { chipFor, recordCall, endStep, closeStep, pushStep, timeline } from "./turn.js";
 
 const ChatPanel = {
-  components: { ArtifactPanel, AssetPanel, LinuxPanel, ChatHeader, ChatSettings, ChatModals },
+  components: { ArtifactPanel, AssetPanel, LinuxPanel, ChatHeader, ChatSettings, ChatModals, ChatComposer, ChatThread },
   props: { session: { type: Object, required: true } },
   emits: ["unauthorized"],
   setup(props, { emit }) {
@@ -236,23 +235,6 @@ const ChatPanel = {
       toggleLinux(true);
       return true;
     });
-    // ── voix (voice/) : écouter ─────────────────────────────────
-    // Par le navigateur ou par un modèle de synthèse du proxy (voix toutes
-    // faites ou clonées) : le choix, dans les réglages (VoiceSettings),
-    // reste dans ce navigateur.
-    const voiceName = voice.label;
-    const voiceSupported = voice.supported;
-    // Le message en cours de lecture (voice.state : une seule à la fois).
-    const playing = computed(() => ({ id: voice.state.id.startsWith("msg:") ? voice.state.id.slice(4) : "",
-                                      loading: voice.state.loading }));
-    function listen(m) {
-      if (playing.value.id === m.id) { voice.stop(); return; }
-      voice.speak("msg:" + m.id, voice.speakable(m.final || m.content),
-                  { incognito: !!(current.value && current.value.incognito) })
-        .catch((e) => { status.value = "Écoute : " + e.message; });
-    }
-    onUnmounted(() => { if (voice.state.id.startsWith("msg:")) voice.stop(); });
-
     // Prévenir de la fin d'une réponse (notify.js), réglage du navigateur.
     const notifyOn = ref(notify.enabled());
     async function toggleNotify(e) { notifyOn.value = await notify.setEnabled(e.target.checked); }
@@ -260,10 +242,12 @@ const ChatPanel = {
       memoryOpen.value = open;
       if (open) { artifactsOpen.value = false; linuxOpen.value = false; assetsOpen.value = false; }
     }
-    const thread = ref(null);
+    const threadComp = ref(null);
+    const thread = computed(() => threadComp.value && threadComp.value.el);
     // Écran étroit : textes courts (la zone de saisie, sur mobile).
     const narrow = VueUse.useMediaQuery("(max-width: 760px)");
-    const input = ref(null);
+    const composer = ref(null);
+    const input = computed(() => composer.value && composer.value.textarea);
     let controller = null;
     // Une réponse (ou un résumé, une image, une voix…) commence : le chat
     // passe en cours, et `stop()` l'arrête par ce contrôleur.
@@ -422,8 +406,8 @@ const ChatPanel = {
     // n'écrit pas dans la conversation (envoyer, modifier, régénérer) : elle
     // écrirait sur une révision dépassée (409).
     const serverBusy = computed(() => !!(current.value && current.value.messages.some((m) => m.serverTurn)));
-    const canSend = computed(() => current.value && !serverBusy.value
-      && current.value.model && (draft.value.trim() || pending.value.length));
+    const canSend = computed(() => Boolean(current.value && !serverBusy.value
+      && current.value.model && (draft.value.trim() || pending.value.length)));
     const queue = computed(() => (current.value && current.value.queue) || []);
 
     // Les messages et les outils d'une requête : chat/api.js (sans Vue,
@@ -1119,196 +1103,19 @@ const ChatPanel = {
       }
     }
 
-    // ── un modèle de voix (voice/speech.js) ─────────────────────────────
-    // La voix de la conversation : toute faite (conv.voiceName, parmi
-    // celles du modèle) ou clonée (conv.voiceClone, du compte).
-    const presets = reactive({});
-    watch(() => current.value && voiceMode.value === "custom" && current.value.model, async (m) => {
-      if (!m || presets[m]) return;
-      try { presets[m] = await presetVoices(m); } catch (e) { status.value = "Voix : " + e.message; }
-    }, { immediate: true });
-    watch(voiceMode, (r) => { if (r === "clone") loadClones(); }, { immediate: true });
-    const voiceChoices = computed(() => {
-      const c = current.value;
-      if (!c) return [];
-      if (voiceMode.value === "custom") return (presets[c.model] || []).map((v) => ({ id: v, name: v }));
-      if (voiceMode.value === "clone") return voiceClones.value.map((v) => ({ id: v.id, name: v.name }));
-      return [];
+    // ── voix, transcription et images (useChatVoice.js, useChatImages.js) ─
+    const {
+      voiceName, voiceSupported, playing, listen, voiceChoices, studioOpen,
+      newVoice, voiceSaved, voiceLang, justSpoken, onlyOne, speakReply,
+      transcribeReply, rec, toggleRecord,
+    } = useChatVoice({ current, pending, status, voiceMode, voiceOf, asrMode, uid, startRun, done });
+    const {
+      zoom, zoomIndex, zoomGo, upscaleOpt, upscaleFactor, upscaleStrength,
+      strengthText, upscale, retouch,
+    } = useChatImages({
+      chat, current, assets, pending, streaming, input, uid, startRun, done,
+      onUnauthorized: () => emit("unauthorized"),
     });
-    // Rien de choisi (ou plus là) : la première voix.
-    watch(voiceChoices, (list) => {
-      const c = current.value;
-      const key = voiceMode.value === "clone" ? "voiceClone" : "voiceName";
-      if (c && list.length && !list.some((v) => v.id === c[key])) c[key] = list[0].id;
-    });
-    // Le studio des voix clonées, en fenêtre sur la conversation : la
-    // voix gardée devient celle de la conversation.
-    const studioOpen = ref(false);
-    const newVoice = () => { studioOpen.value = true; };
-    function voiceSaved(c) {
-      studioOpen.value = false;
-      if (current.value) current.value.voiceClone = c.id;
-    }
-    const voiceLang = computed(() => voice.prefs.language);
-    // La dernière réponse lue : son audio part tout seul, une fois et
-    // seulement si l'onglet est regardé (caché, le navigateur garderait la
-    // lecture pour le retour sur l'onglet). Un audio à la fois : en lancer
-    // un arrête les autres (et la lecture d'Écouter).
-    const justSpoken = ref("");
-    function onlyOne(e) {
-      justSpoken.value = "";
-      for (const a of document.querySelectorAll("audio.gen-audio")) if (a !== e.target) a.pause();
-      voice.stop();
-    }
-    async function speakReply(conv) {
-      const r = voiceOf(conv.model);
-      const msg = { id: uid(), role: "assistant", content: "", reasoning: "", tools: [], sources: [],
-                    attachments: [], voice: r, voiceName: "", model: conv.model, usage: null, error: "",
-                    started: Date.now(), duration: 0 };
-      const ask = [...conv.messages].reverse().find((m) => m.role === "user");
-      conv.messages.push(msg);
-      conv.updated = Date.now();
-      const live = conv.messages[conv.messages.length - 1];
-      const ctrl = startRun();
-      try {
-        if (!ask || !ask.content.trim()) throw new Error("Écrire le texte à lire.");
-        const clone = voiceClones.value.find((v) => v.id === conv.voiceClone);
-        live.voiceName = r === "custom" ? conv.voiceName || "" : r === "clone" ? (clone ? clone.name : "") : "décrite";
-        const got = await speech.speakTurn({
-          text: ask.content, model: conv.model, role: r, voice: conv.voiceName, clone: conv.voiceClone,
-          instructions: conv.system, language: voice.prefs.language || voiceLanguage(),
-          incognito: !!conv.incognito, signal: ctrl.signal,
-          onPart: (k, n) => { live.progress = n > 1 ? `passage ${k + 1} / ${n}` : ""; } });
-        live.attachments.push(got);
-        if (current.value && current.value.id === conv.id && document.visibilityState === "visible") justSpoken.value = live.id;
-      } catch (e) {
-        live.error = e.name === "AbortError" ? "Arrêté." : e.message;
-      } finally {
-        delete live.progress;
-        done(conv, live, ctrl);
-      }
-    }
-
-    // ── un modèle de transcription (voice/transcribe.js) ────────────────
-    // L'audio du dernier message (data URL, ou adresse /ui/assets une fois
-    // la conversation gardée) → le texte de la réponse.
-    async function transcribeReply(conv) {
-      const msg = { id: uid(), role: "assistant", content: "", reasoning: "", tools: [], sources: [],
-                    attachments: [], asr: true, model: conv.model, usage: null, error: "",
-                    started: Date.now(), duration: 0 };
-      const ask = [...conv.messages].reverse().find((m) => m.role === "user");
-      conv.messages.push(msg);
-      conv.updated = Date.now();
-      const live = conv.messages[conv.messages.length - 1];
-      const ctrl = startRun();
-      try {
-        const sources = ((ask && ask.attachments) || []).filter((a) => a.kind === "audio" && a.data);
-        const blobs = [];
-        for (const a of sources) blobs.push(await (await fetch(a.data, { signal: ctrl.signal })).blob());
-        const got = await asr.transcribeTurn({
-          audio: blobs, model: conv.model, prompt: ask ? ask.content : "",
-          language: asr.languageCode(voice.prefs.language), incognito: !!conv.incognito, signal: ctrl.signal,
-          onPart: (k, n) => { live.progress = n > 1 ? `passage ${k + 1} / ${n}` : ""; } });
-        live.audioDuration = got.duration;
-        live.content = got.text || "(rien d'entendu)";
-      } catch (e) {
-        live.error = e.name === "AbortError" ? "Arrêté." : e.message;
-      } finally {
-        delete live.progress;
-        done(conv, live, ctrl);
-      }
-    }
-    // Le micro de la barre (modèle de transcription) : l'enregistrement
-    // rejoint les pièces jointes du message.
-    const rec = useRecorder({ max: 10 * 60 });
-    async function toggleRecord() {
-      if (rec.state.recording) { rec.stop(); return; }
-      try {
-        await rec.start((blob) => {
-          const ext = /ogg/.test(blob.type) ? "ogg" : /mp4/.test(blob.type) ? "m4a" : "webm";
-          const name = "micro-" + new Date().toLocaleTimeString("fr-FR").replace(/:/g, "-") + "." + ext;
-          const r = new FileReader();
-          r.onload = () => { pending.value.push({ kind: "audio", name, type: blob.type, size: blob.size, data: String(r.result) }); };
-          r.readAsDataURL(blob);
-        });
-        status.value = "";
-      } catch (e) { status.value = "Micro : " + (e.name === "NotAllowedError" ? "accès refusé" : e.message); }
-    }
-    watch(asrMode, (on) => { if (!on && rec.state.recording) rec.cancel(); });
-
-    // L'image agrandie (clic sur une image rendue), et la retouche : l'image
-    // rejoint les pièces jointes du message en cours.
-    const zoom = ref(null);
-    // Précédent et Suivant dans l'image agrandie : parmi les images de la
-    // conversation (celles du panneau), si elle en est une.
-    const zoomIndex = computed(() => (zoom.value ? assets.value.findIndex((a) => a.data === zoom.value.data) : -1));
-    function zoomGo(step) {
-      const list = assets.value;
-      if (zoomIndex.value < 0 || list.length < 2) return;
-      zoom.value = list[(zoomIndex.value + step + list.length) % list.length];
-    }
-    VueUse.onKeyStroke(["ArrowLeft", "ArrowRight"], (e) => {
-      if (!zoom.value || e.defaultPrevented) return;
-      e.preventDefault();
-      zoomGo(e.key === "ArrowLeft" ? -1 : 1);
-    });
-    // AGRANDIR une image (`[tools.image_generation].upscale_model`) : une
-    // retouche par ce modèle, consigne fixe, à `factor` fois la taille
-    // (bornée par la surface permise). Le modèle REDESSINE l'image : la
-    // réponse le dit. Sous une force (`strength`) de 1, il part de l'image
-    // et ne joue que les dernières passes : il la redessine moins. Sans prompt de suite (m.prompt vide) : ni « Générer
-    // encore » ni « Régénérer » ne la rejouent comme une demande.
-    const upscaleOpt = computed(() => chat.value.image_upscale || null);
-    const upscaleFactor = ref(2);
-    // La force choisie (`upscale_strengths`, la première par défaut) ;
-    // affichée « libellé (valeur) ».
-    const upscaleStrength = ref(null);
-    watch(upscaleOpt, (up) => {
-      const all = (up && up.strengths) || [];
-      if (!all.some((s) => s.value === upscaleStrength.value)) {
-        upscaleStrength.value = all.length ? all[0].value : null;
-      }
-    }, { immediate: true });
-    const strengthText = (s) => `${s.label} (${String(s.value).replace(".", ",")})`;
-    async function upscale(a, factor = upscaleFactor.value) {
-      const up = upscaleOpt.value, c = current.value;
-      if (!up || !c || streaming.value || !ownImage(a.data)) return;
-      zoom.value = null;
-      const msg = { id: uid(), role: "assistant", content: "", reasoning: "",
-                    tools: [], sources: [], attachments: [], image: true, prompt: "",
-                    upscale: true, model: up.model, usage: null, error: "",
-                    started: Date.now(), duration: 0 };
-      c.messages.push(msg);
-      c.updated = Date.now();
-      const live = c.messages[c.messages.length - 1];
-      const ctrl = startRun();
-      live.want = 1;
-      try {
-        const image = await dataUrl(a.data);
-        const { w, h } = await naturalSize(image);
-        const size = upscaleSize(w, h, factor, up.max_pixels);
-        if (!size) throw new Error(`Déjà à la taille maximale (${w} × ${h}).`);
-        live.content = `*Agrandie ×${factor} : ${w} × ${h} → ${size.replace("x", " × ")}, redessinée par ${up.model}*`;
-        const body = { model: up.model, prompt: up.prompt, size, n: 1, image };
-        const force = upscaleStrength.value;
-        if (force != null && force < 1) body.strength = force;
-        const got = await oneImage(c, body,
-                                   ctrl.signal, () => emit("unauthorized"));
-        const { revised, ...img } = got;
-        live.attachments.push(img);
-      } catch (e) {
-        live.error = e.name === "AbortError" ? "Arrêté." : e.message;
-      } finally {
-        delete live.want;
-        done(c, live, ctrl);
-      }
-    }
-    function retouch(a) {
-      pending.value = [...pending.value.filter((p) => p.kind !== "image"),
-        { kind: "image", name: a.name, type: a.type, size: a.size, data: a.data }];
-      zoom.value = null;
-      nextTick(() => { if (input.value) input.value.focus(); });
-    }
     // Échap : ferme l'image agrandie ; sinon, une génération en cours
     // s'arrête — sauf si la touche a déjà servi (modification annulée,
     // feuille de questions, champ d'un menu).
@@ -1724,7 +1531,7 @@ const ChatPanel = {
              ownImage, filePreview, openOut, previewCopied, copyPreview, models, modelGroups, modelsError, modelsLoading, modelsTitle, reloadModels, caps, blind, unsent, imageMode, imageSizes, imageSteps, imageLoras, upscaleOpt, upscaleFactor, upscaleStrength, strengthText, upscale,
              voiceMode, asrMode, rec, toggleRecord, genMode, voiceChoices, newVoice, studioOpen, voiceSaved, voiceLang, justSpoken, onlyOne, toggleIncognito, zoom, retouch, exportMd: S.exportMd, draft, pending, streaming, status,
              settingsOpen,
-             storageWarning, conflict, resolveConflict, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, thread, input, canSend,
+             storageWarning, conflict, resolveConflict, dragging, narrow, memoryOpen, memoryStamp, toggleMemory, threadComp, composer, canSend,
              toggleTool, pickFiles, pickFolderFiles, closeFolder, folderReady, folderCount, attachOpen,
              toolsOpen, hostedShown, devicesShown, hostedOn, activeTools, deviceOn, toggleDevice,
              promptOpen, hiddenPrompt, hostedCost, familyCost, toolsCost, showPrompt,
@@ -1737,8 +1544,7 @@ const ChatPanel = {
              dropZone, onPaste, send, stop, queue, resume, unqueue, regenerate, edit, onKey, html,
              copyText, onThreadClick, onScroll, onImageLoad, argSummary, preview, thinking, busyTool, timeline, md, candidateOf: candidate, num, size, when,
              host, context, contextTitle, ctxParts, sentFrom, autoCompact, ctxOpen, compactNow, uncompact,
-             retryCompacted, tooLong, editing, cancelEdit, commandHints, useCommand, kTokens: Compact.kTokens, estimate: Compact.estimate,
-             AUTO_AT: Compact.AUTO_AT };
+             retryCompacted, tooLong, editing, cancelEdit, commandHints, useCommand, kTokens: Compact.kTokens, estimate: Compact.estimate };
   },
 };
 
@@ -1783,6 +1589,7 @@ export default ChatPanel;
                    :linux-offered="linuxOffered" :linux-open="linuxOpen"
                    :memory-enabled="!!$props.session.memory" :memory-open="memoryOpen"
                    :settings-open="settingsOpen"
+                   @update:model="current.model = $event"
                    @reload-models="reloadModels" @toggle-incognito="toggleIncognito"
                    @toggle-artifacts="toggleArtifacts()" @toggle-assets="toggleAssets()"
                    @toggle-linux="toggleLinux()" @toggle-memory="toggleMemory()"
@@ -1791,6 +1598,9 @@ export default ChatPanel;
       <chat-settings v-if="settingsOpen" :current="current"
                      v-model:prompt-open="promptOpen" :hidden-prompt="hiddenPrompt"
                      :notify-supported="notifySupported" :notify-on="notifyOn"
+                     @update:system="current.system = $event"
+                     @update:temperature="current.temperature = $event"
+                     @update:show-reasoning="current.showReasoning = $event"
                      @toggle-notify="toggleNotify" @export="exportMd"></chat-settings>
       <p class="chat-incognito" v-if="current.incognito">Incognito : rien n'est gardé, ni dans
         ce navigateur ni par le proxy (ni mémoire, ni cache), et la conversation disparaît dès
@@ -1802,237 +1612,27 @@ export default ChatPanel;
         <button type="button" class="link" @click="resolveConflict('reload')">Reprendre l'autre version</button> ·
         <button type="button" class="link" @click="resolveConflict('overwrite')">Garder celle-ci</button></p>
 
-      <div class="thread" ref="thread" @scroll="onScroll" @click="onThreadClick">
-        <div class="empty" v-if="!current.messages.length">
-          <div class="big">{{ imageMode ? "Quelle image ?" : voiceMode ? "Quel texte lire ?" : asrMode ? "Quel audio transcrire ?" : current.incognito ? "Une question, sans trace ?" : "Une question ?" }}</div>
-          <div v-if="voiceMode === 'design'">La voix se décrit dans le prompt système (Réglages) : genre, âge, timbre, accent, style.</div>
-          <div v-else-if="voiceMode">Le message envoyé est lu par la voix choisie<template v-if="voiceMode === 'custom'"> ;
-            le prompt système (Réglages) en donne le ton</template>.</div>
-          <div v-if="asrMode">Joindre un audio (ou l'enregistrer : Micro) ; la réponse est son texte.
-            Le message, facultatif, guide le modèle (noms propres, vocabulaire).</div>
-          <div v-if="!current.model">Choisir un modèle</div>
-        </div>
-        <article v-for="(m, i) in current.messages" :key="m.id" :data-msg="m.id" class="msg"
-                 :class="[m.role, { compacted: i < sentFrom && m.role !== 'summary' }]">
-          <template v-if="m.role === 'summary'">
-            <div class="compact-mark" role="separator">
-              <span class="compact-label">
-                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
-                {{ m.running ? "Résumé de la conversation…" : m.auto ? "Résumé automatique" : "Conversation résumée" }}
-                <span class="dim" v-if="!m.running">· {{ m.covered }} message{{ m.covered > 1 ? "s" : "" }}
-                  · ≈ {{ kTokens(m.before) }} → {{ kTokens(estimate(m.content)) }} tokens<template v-if="m.light">
-                  · d'un historique allégé</template></span>
-              </span>
-            </div>
-            <div class="typing" v-if="m.running"><i></i><i></i><i></i></div>
-            <details class="compact-body" v-else>
-              <summary>Voir le résumé<span class="dim" v-if="m.focus"> · consigne : {{ m.focus }}</span></summary>
-              <div class="md" v-html="html(m)"></div>
-            </details>
-            <div class="msg-meta" v-if="!m.running">
-              <span>{{ m.model }}</span>
-              <span v-if="m.duration">{{ m.duration.toFixed(1) }} s</span>
-              <span>les messages au-dessus ne sont plus envoyés au modèle</span>
-              <button type="button" class="link" :disabled="streaming" @click="uncompact(i)"
-                      title="Retirer ce résumé : tout l'historique repart au modèle">Annuler le résumé</button>
-            </div>
-          </template>
-          <template v-else-if="m.role === 'user'">
-            <div class="msg-origin" v-if="m.webhook" :title="m.webhook.at ? 'Reçu le ' + new Date(m.webhook.at).toLocaleString('fr-FR') : ''">
-              reçu par le webhook « {{ m.webhook.name }} »<template v-if="m.webhook.from"> · {{ m.webhook.from }}</template></div>
-            <div class="bubble">
-              <div class="attachments" v-if="m.attachments && m.attachments.length">
-                <template v-for="a in m.attachments" :key="a.name">
-                  <img v-if="a.kind === 'image' && a.data" :src="a.data" :alt="a.name">
-                  <span v-else-if="a.kind === 'audio' && a.data" class="msg-audio">
-                    <audio class="gen-audio" controls preload="metadata" :src="a.data" @play="onlyOne"></audio>
-                    <span class="dim">{{ a.name }}</span></span>
-                  <span v-else class="chip file" :data-ext="extOf(a.name)">{{ a.name }}<span class="dim" v-if="a.kind === 'image'">
-                    · image absente</span></span>
-                </template>
-              </div>
-              <div class="text" v-if="m.content">{{ m.content }}</div>
-            </div>
-            <div class="msg-meta">
-              <button type="button" class="link" :disabled="streaming" @click="edit(i)">Modifier</button>
-            </div>
-          </template>
-          <template v-else>
-            <!-- La réponse en CHRONOLOGIE (turn.timeline) : par tour, sa
-                 réflexion, son texte, ses puces ; le tour en cours en
-                 dernier, là où l'on regarde. Une réponse d'avant les
-                 positions a sa réflexion d'un seul tenant en tête (`head`). -->
-            <template v-for="t in [timeline(m)]" :key="'tl' + m.id">
-              <details class="reasoning" v-if="t.head && current.showReasoning">
-                <summary>
-                  <span class="r-label">Raisonnement</span>
-                  <span class="r-last">{{ candidateOf(t.head) }}</span>
-                </summary>
-                <div class="md" v-html="md(m, 'head', t.head)"></div>
-              </details>
-              <template v-for="(seg, k) in t.segments" :key="'seg' + k">
-                <!-- Plié de base : une ligne d'aperçu, remplacée à son rythme
-                     (clé = n), et le CONTENEUR miroite tant que le modèle
-                     réfléchit (jamais le span coupé par « … », qui transite). -->
-                <details class="reasoning" v-if="seg.reasoning && current.showReasoning">
-                  <summary>
-                    <span class="r-label">Raisonnement</span>
-                    <span class="r-last" :class="{ live: thinking(m, i, t, k) }">
-                      <transition name="r-swap" mode="out-in">
-                        <span :key="preview(m, i, t, k).n">{{ preview(m, i, t, k).text }}</span>
-                      </transition></span>
-                  </summary>
-                  <div class="md" v-html="md(m, 'r' + k, seg.reasoning)"></div>
-                </details>
-                <!-- Les images et l'audio produits : avant le texte final. -->
-                <template v-if="k === t.segments.length - 1">
-                <div class="gen-images" :class="{ multi: m.attachments.length > 1 }" v-if="m.attachments && m.attachments.length">
-                  <template v-for="a in m.attachments" :key="a.name">
-                    <audio v-if="a.kind === 'audio' && a.data" class="gen-audio" controls preload="metadata"
-                           :src="a.data" :autoplay="m.id === justSpoken" @play="onlyOne"></audio>
-                    <button v-else-if="a.data" type="button" class="gen-image" title="Agrandir"
-                            @click="zoom = a"><img :src="a.data" :alt="a.name" @load="onImageLoad"></button>
-                    <span v-else class="chip file" :data-ext="extOf(a.name)">{{ a.name }}<span class="dim">
-                      · image absente</span></span>
-                  </template>
-                </div>
-                <details class="gen-prompt" v-if="m.image && m.prompt && m.prompt.includes('\n')">
-                  <summary>prompt envoyé (avec le contexte)</summary><pre>{{ m.prompt }}</pre></details>
-                </template>
-                <template v-for="(part, n) in body(m, seg.content, k, k === t.segments.length - 1, seg.start)"
-                          :key="part.k ? part.k.id : 'md' + k + '-' + n">
-                  <component v-if="part.k" :is="keptComponent(part.k)" :k="part.k"></component>
-                  <div class="md" v-else v-html="part.html"></div>
-                </template>
-                <div class="tool-calls" v-if="seg.tools.length">
-                  <details v-for="c in seg.tools" :key="c.id" class="tool" :class="c.status">
-                    <summary>
-                      <i class="state"></i><b>{{ c.name }}</b>
-                      <span class="arg">{{ argSummary(c) }}</span>
-                      <span class="dim" v-if="c.status === 'writing'">écriture… {{ num(c.chars) }} car.</span>
-                      <span class="dim" v-else-if="c.status === 'running'">en cours…</span>
-                      <span class="dim" v-else-if="c.status === 'limit'">limite d'appels atteinte</span>
-                      <span class="dim" v-else-if="c.chars !== undefined">{{ num(c.chars) }} car.</span>
-                    </summary>
-                    <pre v-if="c.preview">{{ c.preview }}{{ c.chars > c.preview.length ? "\n…" : "" }}</pre>
-                  </details>
-                </div>
-              </template>
-            </template>
-            <!-- Ce qui attend l'utilisateur : la CARTE d'un outil (tools/) —
-                 son composant, ou le gabarit commun (view) ; une carte de la
-                 feuille du bas n'a ici qu'une ligne qui la rouvre. -->
-            <template v-if="m.waiting">
-              <button type="button" class="ask-pending" v-if="cardPlacement(m.waiting) === 'sheet'"
-                      @click="sheetOpen = true">{{ cardPending(m.waiting) }}</button>
-              <component v-else-if="cardComponent(m.waiting)" :is="cardComponent(m.waiting)" :key="m.waiting.id"
-                         :w="m.waiting" :busy="streaming || !!m.waiting.busy" :ctx="folderCtx()"
-                         @act="(action, payload) => cardAct(m, action, payload)"></component>
-              <div class="tool-card device-card" v-else>
-                <template v-for="v in [cardView(m.waiting)]" :key="m.waiting.id">
-                  <p class="write-head"><b>{{ v.title }}</b></p>
-                  <p class="dim" v-if="v.detail">{{ v.detail }}</p>
-                  <code class="device-url" v-if="v.code">{{ v.code }}</code>
-                  <span class="device-swatch" v-if="v.swatch" :style="{ background: v.swatch }"></span>
-                  <pre class="device-quote" v-if="v.quote">{{ v.quote }}</pre>
-                  <video class="device-media" v-if="v.video" :srcObject.prop="v.video" autoplay muted playsinline></video>
-                  <img class="device-media" v-if="v.preview" :src="v.preview" alt="Aperçu de l'image à envoyer">
-                  <div class="card-actions">
-                    <button v-for="a in v.actions" :key="a.id" type="button" :class="['btn', { ghost: !a.primary }]"
-                            :disabled="streaming || m.waiting.busy" :title="a.title || ''"
-                            @click="cardAct(m, a.id)">{{ a.label }}</button>
-                    <span class="dim" v-if="v.note">{{ v.note }}</span>
-                  </div>
-                </template>
-              </div>
-            </template>
-            <div class="tool-card device-card kept-card" v-for="k in keptBelow(m)" :key="k.id">
-              <template v-for="v in [keptView(k)]" :key="k.id">
-                <p class="write-head"><b>{{ v.title }}</b></p>
-                <p class="dim" v-if="v.detail">{{ v.detail }}</p>
-                <code class="device-url" v-if="v.code">{{ v.code }}</code>
-                <span class="device-swatch" v-if="v.swatch" :style="{ background: v.swatch }"></span>
-                <pre class="device-quote" v-if="v.quote">{{ v.quote }}</pre>
-                <div class="card-actions">
-                  <button v-for="a in v.actions" :key="a.id" type="button" :class="['btn', { ghost: !a.primary }]"
-                          :disabled="keptNotes[k.id] === '…'" :title="a.title || ''"
-                          @click="keptAct(m, k, a.id)">{{ a.label }}</button>
-                  <span class="dim" v-if="keptNotes[k.id] && keptNotes[k.id] !== '…'">{{ keptNotes[k.id] }}</span>
-                </div>
-              </template>
-            </div>
-            <div class="out-files" v-if="m.files && m.files.length">
-              <button type="button" class="chip file" v-for="f in m.files" :key="f.name" :data-ext="extOf(f.name)"
-                      @click="openOut(f)" title="Ouvrir (aperçu, copier, télécharger)">{{ f.name }}
-                <span class="dim">{{ size(f.size) }}</span></button>
-            </div>
-            <div class="typing" v-if="m.serverTurn && !m.error">
-              <i></i><i></i><i></i><span class="dim">réponse en cours, menée par le proxy (webhook « {{ m.webhook ? m.webhook.name : "" }} »)…</span></div>
-            <div class="typing" v-else-if="streaming && !m.error
-                 && (m.image ? m.want > (m.attachments || []).length
-                     : i === current.messages.length - 1 && [timeline(m).segments.at(-1)].every((seg) =>
-                       !seg.content.trim() && !busyTool(m)))">
-              <i></i><i></i><i></i><span class="dim" v-if="m.image">génération de l'image{{ m.want > 1
-                ? " " + ((m.attachments || []).length + 1) + " / " + m.want : "" }}…</span>
-              <span class="dim" v-else-if="m.voice">synthèse vocale{{ m.progress ? " · " + m.progress : "" }}…</span>
-              <span class="dim" v-else-if="m.asr">transcription{{ m.progress ? " · " + m.progress : "" }}…</span></div>
-            <p class="msg-warn" v-if="m.interrupted && !streaming">Réponse interrompue : la page a été
-              rechargée pendant qu'elle s'écrivait.
-              <button type="button" class="link" v-if="i === current.messages.length - 1"
-                      @click="resumeInterrupted(m)">Reprendre</button></p>
-            <p class="msg-warn" v-else-if="m.cut && !(streaming && i === current.messages.length - 1)">{{ m.cut === "length"
-                ? "Réponse coupée : le modèle a atteint sa limite de longueur."
-                : "Réponse incomplète : le flux s'est arrêté avant la fin." }}
-              <button type="button" class="link" v-if="i === current.messages.length - 1 && !streaming"
-                      @click="continueReply">Continuer</button></p>
-            <p class="msg-error" v-if="m.error">{{ m.error }}
-              <button type="button" class="link" v-if="tooLong(m) && i === current.messages.length - 1 && !streaming"
-                      @click="retryCompacted">Résumer la conversation et réessayer</button></p>
-            <div class="sources" v-if="m.sources.length">
-              <a v-for="s in m.sources" :key="s.url" :href="s.url" target="_blank"
-                 rel="noopener noreferrer" :title="s.url">{{ s.title || host(s.url) }}
-                <span class="dim">{{ host(s.url) }}</span></a>
-            </div>
-            <div class="msg-meta" v-if="!m.serverTurn && !(streaming && i === current.messages.length - 1)">
-              <span>{{ m.model }}</span>
-              <span v-if="m.usage">{{ num(m.usage.prompt_tokens) }} → {{ num(m.usage.completion_tokens) }} tokens</span>
-              <span v-if="m.duration">{{ m.duration.toFixed(1) }} s</span>
-              <button type="button" class="link" v-if="m.content" @click="copyText(m.content, $event.target)">Copier</button>
-              <button type="button" class="link" v-if="m.content && voiceSupported" @click="listen(m)"
-                      :title="'Lire à voix haute (' + voiceName + ')'">{{ playing.id === m.id
-                        ? (playing.loading ? "Synthèse…" : "Arrêter la lecture") : "Écouter" }}</button>
-              <span v-if="m.asr && m.audioDuration">{{ m.audioDuration.toFixed(1) }} s d'audio</span>
-              <!-- Une image : ses actions ici ; plusieurs : dans l'image agrandie. -->
-              <template v-if="m.voice && m.attachments.length && m.attachments[0].data">
-                <span v-if="m.voiceName">voix : {{ m.voiceName }}</span>
-                <span v-if="m.attachments[0].duration">{{ m.attachments[0].duration.toFixed(1) }} s d'audio</span>
-                <a class="link" :href="m.attachments[0].data" :download="m.attachments[0].name">Télécharger</a>
-              </template>
-              <template v-if="m.image && m.attachments.length === 1 && m.attachments[0].data">
-                <a class="link" :href="m.attachments[0].data" :download="m.attachments[0].name">Télécharger</a>
-                <button type="button" class="link" v-if="ownImage(m.attachments[0].data)"
-                        :disabled="streaming" @click="retouch(m.attachments[0])">Retoucher</button>
-                <span class="gen-more" v-if="upscaleOpt && ownImage(m.attachments[0].data) && !streaming">
-                  <button type="button" class="link" @click="upscale(m.attachments[0])"
-                          title="Agrandir : le modèle d'agrandissement redessine l'image à une plus grande taille (détails un peu changés)">Agrandir</button>
-                  <select v-model.number="upscaleFactor" aria-label="Facteur d'agrandissement">
-                    <option v-for="f in upscaleOpt.factors" :key="f" :value="f">× {{ f }}</option></select>
-                  <select v-if="upscaleOpt.strengths && upscaleOpt.strengths.length > 1" v-model.number="upscaleStrength"
-                          aria-label="Force de l'agrandissement" title="Plus bas : plus fidèle à l'image, moins de détail ajouté">
-                    <option v-for="s in upscaleOpt.strengths" :key="s.value" :value="s.value">{{ strengthText(s) }}</option></select></span>
-              </template>
-              <span v-else-if="m.image && m.attachments.length > 1">cliquer une image pour la télécharger ou la retoucher</span>
-              <span class="gen-more" v-if="m.image && m.prompt && !streaming">
-                <button type="button" class="link" @click="generateMore(m)"
-                        title="D'autres images avec le même prompt, jointes à cette réponse (sans le fil depuis)">Générer encore</button>
-                <select v-model.number="moreCount" aria-label="Nombre d'images à générer encore">
-                  <option v-for="n in 4" :key="n" :value="n">{{ n }}</option></select></span>
-              <button type="button" class="link" v-if="i === current.messages.length - 1 && !m.upscale"
-                      @click="regenerate">Régénérer</button>
-            </div>
-          </template>
-        </article>
-      </div>
+      <chat-thread ref="threadComp" :current="current" :sent-from="sentFrom" :streaming="streaming"
+                   :image-mode="imageMode" :voice-mode="voiceMode" :asr-mode="asrMode"
+                   :just-spoken="justSpoken" :voice-supported="voiceSupported" :voice-name="voiceName"
+                   :playing="playing" :upscale-opt="upscaleOpt"
+                   v-model:upscale-factor="upscaleFactor" v-model:upscale-strength="upscaleStrength"
+                   v-model:more-count="moreCount" :kept-notes="keptNotes"
+                   :html="html" :md="md" :body="body" :candidate-of="candidateOf"
+                   :thinking="thinking" :preview="preview" :busy-tool="busyTool"
+                   :arg-summary="argSummary" :ext-of="extOf" :host="host"
+                   :too-long="tooLong" :strength-text="strengthText"
+                   :kept-component="keptComponent" :kept-below="keptBelow" :kept-view="keptView"
+                   :card-placement="cardPlacement" :card-pending="cardPending"
+                   :card-component="cardComponent" :card-view="cardView" :folder-ctx="folderCtx"
+                   @scroll="onScroll" @thread-click="onThreadClick" @only-one="onlyOne"
+                   @zoom="zoom = $event" @image-load="onImageLoad" @open-sheet="sheetOpen = true"
+                   @card-act="(m, a, p) => cardAct(m, a, p)" @kept-act="(m, k, a) => keptAct(m, k, a)"
+                   @open-out="openOut" @uncompact="uncompact" @edit="edit"
+                   @resume-interrupted="resumeInterrupted" @continue-reply="continueReply"
+                   @retry-compacted="retryCompacted" @copy-text="(t, el) => copyText(t, el)"
+                   @listen="listen" @retouch="retouch" @upscale="upscale"
+                   @generate-more="generateMore" @regenerate="regenerate"></chat-thread>
 
       <!-- La feuille du bas : la carte d'un outil qui s'y affiche (ask_user),
            par-dessus la zone de saisie ; réduite, une barre la rouvre. -->
@@ -2049,216 +1649,29 @@ export default ChatPanel;
       </section>
       </transition>
 
-      <form class="composer" :class="{ dragging }" @submit.prevent="send">
-        <div class="queue" v-if="queue.length">
-          <div class="queue-head">
-            <span>En file · {{ queue.length }}</span>
-            <span class="dim" v-if="!streaming">en pause</span>
-            <button type="button" class="link" v-if="!streaming" @click="resume">Envoyer la suite</button>
-          </div>
-          <ol>
-            <li v-for="(q, k) in queue" :key="q.id">
-              <span class="text">{{ q.content || q.attachments.map((a) => a.name).join(", ") }}</span>
-              <span class="dim" v-if="q.content && q.attachments.length">+ {{ q.attachments.length }} pièce{{ q.attachments.length > 1 ? "s" : "" }}</span>
-              <button type="button" class="link" @click="unqueue(k)">Modifier</button>
-              <button type="button" class="icon" title="Retirer de la file" @click="queue.splice(k, 1)">×</button>
-            </li>
-          </ol>
-        </div>
-        <div class="attachments" v-if="pending.length || (current && current.folder)">
-          <span class="chip folder" v-if="current && current.folder"
-                :title="folderReady ? 'Le modèle peut lister, lire et chercher dans ce dossier' : 'Rouvrir le dossier pour que le modèle y accède'">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
-            {{ current.folder.name }}/
-            <span class="dim" v-if="folderReady">{{ num(folderCount) }} fichier{{ folderCount > 1 ? "s" : "" }}</span>
-            <button type="button" class="link" v-else-if="canPick" @click="pickFolder">à rouvrir</button>
-            <button type="button" class="link" v-else @click="pickFolderFiles">à rouvrir</button>
-            <button type="button" class="icon" title="Fermer le dossier" @click="closeFolder">×</button>
-          </span>
-          <span v-for="(a, k) in pending" :key="k" class="chip" :class="{ file: a.kind !== 'image' }">
-            <img v-if="a.kind === 'image'" :src="a.data" alt="">
-            {{ a.name }} <span class="dim">{{ size(a.size) }}</span>
-            <button type="button" class="icon" title="Retirer" @click="pending.splice(k, 1)">×</button>
-          </span>
-        </div>
-        <div class="editing-note" v-if="editing !== null">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4"/></svg>
-          <span>Modification d'un message : l'envoyer reprend la conversation de lui (la suite disparaît)</span>
-          <button type="button" class="link" @click="cancelEdit">Annuler <kbd>Échap</kbd></button>
-        </div>
-        <div class="command-hints" v-if="commandHints.length" role="listbox">
-          <button type="button" v-for="c in commandHints" :key="c.name" role="option"
-                  @mousedown.prevent="useCommand(c)">
-            <code>{{ c.name }}</code> <span class="dim">{{ c.args }}</span> <small>{{ c.hint }}</small>
-            <kbd>Tab</kbd></button>
-        </div>
-        <textarea ref="input" v-model="draft" rows="1" @keydown="onKey" @paste="onPaste"
-                  :placeholder="narrow ? (streaming ? 'Réponse en cours… (mise en file)' : imageMode ? 'Décrire l’image…' : voiceMode ? 'Texte à lire…' : asrMode ? 'Contexte (facultatif)…' : 'Écrire un message…')
-                    : streaming ? 'Réponse en cours — Entrée pour mettre un message en file'
-                    : imageMode ? 'Décrire l’image à générer — Entrée pour envoyer'
-                    : voiceMode ? 'Texte à lire à voix haute — Entrée pour envoyer'
-                    : asrMode ? 'Audio joint ou enregistré ; contexte facultatif (noms propres, vocabulaire) — Entrée pour envoyer'
-                    : 'Écrire un message — Entrée pour envoyer'"
-                  title="Entrée pour envoyer, Maj+Entrée pour aller à la ligne"></textarea>
-        <div class="composer-bar">
-          <div class="attach-menu">
-            <button type="button" class="btn ghost attach ico-btn" aria-haspopup="menu"
-                    :aria-expanded="String(attachOpen)" @click="attachOpen = !attachOpen"
-                    title="Joindre : des fichiers (ou glisser-déposer, ou coller), ou un dossier que le modèle lira">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4L14.6 7.5"/></svg>
-              <span class="lbl">Joindre</span></button>
-            <div class="menu" role="menu" v-show="attachOpen" @click="attachOpen = false">
-              <button type="button" role="menuitem" @click="pickFiles"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/></svg>
-                <span>Fichiers…<small>{{ asrMode ? "audios : transcrits" : "images, textes : joints au message" }}</small></span></button>
-              <button type="button" role="menuitem" v-if="caps.folder && canPick" @click.stop="pickFolder"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
-                <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut, propose des écritures</small></span></button>
-              <button type="button" role="menuitem" v-else-if="caps.folder" @click="pickFolderFiles"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg>
-                <span>Dossier…<small>le modèle le parcourt, lit ce qu'il lui faut ; écritures téléchargées</small></span></button>
-            </div>
-          </div>
-          <button type="button" class="btn ghost ico-btn mic" v-if="asrMode && rec.supported.value"
-                  :class="{ rec: rec.state.recording }" @click="toggleRecord"
-                  :title="rec.state.recording ? 'Arrêter : l’enregistrement est joint au message' : 'Enregistrer au micro (' + rec.MAX / 60 + ' min au plus)'">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-            <span class="lbl">{{ rec.state.recording ? "Arrêter · " + Math.floor(rec.state.seconds) + " s" : "Micro" }}</span></button>
-          <div class="attach-menu tools-menu" v-if="!genMode && (hostedShown.length || devicesShown.length)">
-            <button type="button" class="btn ghost attach ico-btn" aria-haspopup="menu"
-                    :aria-expanded="String(toolsOpen)" @click="toolsOpen = !toolsOpen"
-                    :title="activeTools.length ? 'Outils actifs : ' + activeTools.join(', ') : 'Aucun outil actif'">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg>
-              <span class="lbl">Outils</span><span class="count">{{ activeTools.length }}</span></button>
-            <div class="menu" role="menu" v-show="toolsOpen">
-              <template v-if="hostedShown.length">
-                <p class="menu-head">Proxy</p>
-                <label role="menuitemcheckbox" v-for="g in hostedShown" :key="g.type"
-                       :aria-checked="String(hostedOn(g))"
-                       :title="current.incognito && g.type === 'memory' ? 'Pas de mémoire en incognito' : ''">
-                  <input type="checkbox" :checked="hostedOn(g)" @change="toggleTool(g.type)"
-                         :disabled="current.incognito && g.type === 'memory'">
-                  <span>{{ g.label }}<small>{{ current.incognito && g.type === 'memory'
-                    ? "pas de mémoire en incognito" : g.tools.join(", ") }}<template v-if="g.specs">
-                    · ≈ {{ kTokens(hostedCost(g)) }} tokens</template></small></span></label>
-              </template>
-              <p class="menu-note" v-else-if="caps.hostedTools && !chat.hosted_tools"
-                 title="[chat] hosted_tools = true dans config.toml">Outils du proxy inactifs</p>
-              <template v-if="devicesShown.length">
-                <p class="menu-head">Navigateur</p>
-                <label role="menuitemcheckbox" v-for="f in devicesShown" :key="f.key"
-                       :aria-checked="String(deviceOn.includes(f.key))">
-                  <input type="checkbox" :checked="deviceOn.includes(f.key)" @change="toggleDevice(f.key)">
-                  <span>{{ f.label }}<small>{{ f.hint }} · ≈ {{ kTokens(familyCost(f)) }} tokens</small></span></label>
-              </template>
-              <p class="menu-note tools-cost">≈ {{ kTokens(toolsCost) }} tokens ajoutés à chaque requête
-                par les outils cochés<br>
-                <button type="button" class="link" @click="showPrompt">Voir le prompt invisible</button></p>
-            </div>
-          </div>
-          <label class="effort" v-if="imageMode"
-                 title="Contexte : avec la suite, les demandes précédentes de la même suite d'images partent avec le message (« plus sombre » suit « un phare ») ; seul, le dernier message uniquement">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12M4 12h16M4 18h9"/></svg>
-            <select v-model="current.imageAlone" :disabled="streaming" aria-label="Contexte des images">
-              <option :value="false">avec la suite</option>
-              <option :value="true">message seul</option>
-            </select>
-          </label>
-          <label class="effort" v-if="imageMode" title="Nombre d'images par demande">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
-            <select v-model.number="current.imageCount" :disabled="streaming" aria-label="Nombre d'images">
-              <option v-for="k in 4" :key="k" :value="k">× {{ k }}</option>
-            </select>
-          </label>
-          <label class="effort" v-if="imageMode" title="Taille de l'image (largeur × hauteur) ; plus grande, plus lente">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4"/></svg>
-            <select v-model="current.imageSize" :disabled="streaming" aria-label="Taille de l'image">
-              <option v-for="z in imageSizes" :key="z" :value="z">{{ z.replace("x", " × ") }}</option>
-            </select>
-          </label>
-          <label class="effort" v-if="imageMode && imageSteps.length" title="Passes de débruitage ; moins, plus rapide et moins fin ; auto : le défaut du modèle">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M10 19V5M15 19v-7M20 19v-4"/></svg>
-            <select v-model.number="current.imageSteps" :disabled="streaming" aria-label="Passes de débruitage">
-              <option :value="0">auto</option>
-              <option v-for="k in imageSteps" :key="k" :value="k">{{ k }} passes</option>
-            </select>
-          </label>
-          <label class="effort" v-if="imageMode && imageLoras.length" title="LoRA appliqué par le modèle d'images (adaptateur de style ou de contenu) ; sans : le modèle seul">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5-8 4.5-8-4.5zM4 12l8 4.5 8-4.5M4 16.5l8 4.5 8-4.5"/></svg>
-            <select v-model="current.imageLora" :disabled="streaming" aria-label="LoRA">
-              <option value="">sans LoRA</option>
-              <option v-for="k in imageLoras" :key="k" :value="k">{{ k }}</option>
-            </select>
-          </label>
-          <label class="effort" v-if="voiceMode === 'custom' || voiceMode === 'clone'"
-                 :title="voiceMode === 'clone' ? 'Voix clonée (gardée avec le compte)' : 'Voix du modèle'">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-            <select v-if="voiceMode === 'custom'" v-model="current.voiceName" :disabled="streaming" aria-label="Voix">
-              <option v-if="!voiceChoices.length" value="" disabled>chargement…</option>
-              <option v-for="v in voiceChoices" :key="v.id" :value="v.id">{{ v.name }}</option>
-            </select>
-            <select v-else :value="current.voiceClone || ''" :disabled="streaming" aria-label="Voix clonée"
-                    @change="$event.target.value === '+' ? ($event.target.value = current.voiceClone || '', newVoice()) : (current.voiceClone = $event.target.value)">
-              <option v-if="!voiceChoices.length" value="" disabled>aucune voix</option>
-              <option v-for="v in voiceChoices" :key="v.id" :value="v.id">{{ v.name }}</option>
-              <option value="+">＋ nouvelle voix…</option>
-            </select>
-          </label>
-          <label class="effort" v-if="!genMode && caps.reasoning" title="Niveau de réflexion du modèle : auto (celui du modèle), non, faible, moyenne, élevée">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>
-            <select v-model="current.reasoning" :disabled="streaming" aria-label="Réflexion">
-              <option value="auto">auto</option>
-              <option value="none">non</option>
-              <option value="low">faible</option>
-              <option value="medium">moyenne</option>
-              <option value="high">élevée</option>
-            </select>
-          </label>
-          <div class="attach-menu ctx-menu" v-if="context && context.tokens">
-            <button type="button" class="btn ghost ctx-gauge" aria-haspopup="menu" :aria-expanded="String(ctxOpen)"
-                    :class="{ warn: context.max && context.ratio >= 0.6, full: context.max && context.ratio >= AUTO_AT }"
-                    @click="ctxOpen = !ctxOpen" :title="contextTitle">
-              <svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" class="track"/>
-                <circle cx="10" cy="10" r="8" class="fill" v-if="context.max"
-                        :stroke-dasharray="(Math.min(1, context.ratio) * 50.27).toFixed(2) + ' 50.27'"/></svg>
-              <span class="lbl">{{ context.max ? Math.round(context.ratio * 100) + " %" : kTokens(context.tokens) }}</span></button>
-            <div class="menu" role="menu" v-show="ctxOpen">
-              <p class="menu-head">Contexte</p>
-              <p class="menu-note">{{ context.measured ? "" : "≈ " }}{{ num(context.tokens) }} tokens{{ context.max
-                ? " sur " + num(context.max) + " (" + Math.round(context.ratio * 100) + " %)" : "" }}<br>
-                <span class="dim">{{ context.measured ? "mesuré par le modèle à sa dernière réponse"
-                  : "estimé : la dernière mesure, plus ce qui a suivi" }}</span></p>
-              <template v-if="ctxParts">
-                <div class="ctx-bar" role="img" :aria-label="ctxParts.parts.map((p) => p.label + ' ' + num(p.tokens)).join(', ')">
-                  <span v-for="p in ctxParts.parts" :key="p.key" :class="'part-' + p.key"
-                        :style="{ width: p.pct + '%' }" :title="p.label + ' : ≈ ' + num(p.tokens) + ' tokens'"></span></div>
-                <ul class="ctx-legend">
-                  <li v-for="p in ctxParts.parts" :key="p.key"
-                      :title="p.key === 'other' ? 'Ce que mesure le modèle sans que l’estimation l’explique : son gabarit de conversation, l’écart de l’estimation (≈ 3,5 caractères par token)' : ''"><i :class="'part-' + p.key"></i>{{ p.label }}<b>≈ {{ kTokens(p.tokens) }}</b></li>
-                  <li v-if="ctxParts.free"><i class="part-free"></i>Libre<b>{{ kTokens(ctxParts.free) }}</b></li>
-                </ul>
-              </template>
-              <button type="button" role="menuitem" :disabled="streaming" @click="compactNow">
-                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
-                <span>Résumer maintenant<small>/compact [consigne] — les messages restent affichés, le résumé part à leur place</small></span></button>
-              <label role="menuitemcheckbox" :aria-checked="String(autoCompact)">
-                <input type="checkbox" v-model="autoCompact">
-                <span>Résumé automatique<small>{{ context.max ? "avant le message suivant, au-delà de " + Math.round(AUTO_AT * 100) + " % du contexte"
-                  : "fenêtre de ce modèle inconnue : jamais automatique" }}</small></span></label>
-            </div>
-          </div>
-          <span class="status" :class="{ warn: (blind || unsent) && !status }">{{ status
-            || (unsent && voiceMode ? "les pièces jointes ne sont pas lues"
-              : unsent && asrMode ? "seuls les audios sont transcrits"
-              : unsent && !imageMode ? "l'audio n'est lu que par un modèle de transcription"
-              : unsent ? "seule la première image est envoyée (à retoucher)"
-            : blind ? "ce modèle ne lit peut-être pas les images" : "") }}</span>
-          <button type="submit" class="btn ico-btn send" :class="{ ghost: streaming }" :disabled="!canSend"
-                  :title="streaming ? 'Mettre en file' : 'Envoyer'">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-            <span class="lbl">{{ streaming ? "Mettre en file" : "Envoyer" }}</span></button>
-          <button v-if="streaming" type="button" class="btn danger ico-btn" @click="stop" title="Arrêter">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>
-            <span class="lbl">Arrêter</span></button>
-        </div>
-      </form>
+      <chat-composer ref="composer" :current="current" :chat="chat" :caps="caps"
+                     v-model:draft="draft" :queue="queue" :pending="pending"
+                     :streaming="streaming" :dragging="dragging" :narrow="narrow"
+                     :editing="editing" :command-hints="commandHints" :can-send="canSend"
+                     :status="status" :blind="blind" :unsent="unsent"
+                     :image-mode="imageMode" :voice-mode="voiceMode" :asr-mode="asrMode" :gen-mode="genMode"
+                     :image-sizes="imageSizes" :image-steps="imageSteps" :image-loras="imageLoras"
+                     :voice-choices="voiceChoices" :rec="rec"
+                     :folder-ready="folderReady" :folder-count="folderCount" :can-pick="canPick"
+                     v-model:attach-open="attachOpen" v-model:tools-open="toolsOpen"
+                     :hosted-shown="hostedShown" :devices-shown="devicesShown" :hosted-on="hostedOn"
+                     :active-tools="activeTools" :device-on="deviceOn"
+                     :hosted-cost="hostedCost" :family-cost="familyCost" :tools-cost="toolsCost"
+                     :context="context" :context-title="contextTitle" :ctx-parts="ctxParts"
+                     v-model:ctx-open="ctxOpen" v-model:auto-compact="autoCompact"
+                     @send="send" @stop="stop" @resume="resume" @unqueue="unqueue"
+                     @remove-queue="queue.splice($event, 1)" @remove-pending="pending.splice($event, 1)"
+                     @pick-files="pickFiles" @pick-folder="pickFolder" @pick-folder-files="pickFolderFiles"
+                     @close-folder="closeFolder" @cancel-edit="cancelEdit" @use-command="useCommand"
+                     @keydown="onKey" @paste="onPaste" @toggle-record="toggleRecord"
+                     @toggle-tool="toggleTool" @toggle-device="toggleDevice" @show-prompt="showPrompt"
+                     @new-voice="newVoice" @compact-now="compactNow"
+                     @set-conv="(k, v) => (current[k] = v)"></chat-composer>
     </section>
     <memory-panel v-if="memoryOpen && $props.session.memory" compact
                   :stamp="memoryStamp" @close="toggleMemory(false)"></memory-panel>

@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Lire un JSON qui s'écrit encore (les arguments d'un appel d'outil en
   flux, la réponse JSON de Gemini Nano) : la valeur d'une chaîne, même

@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Le PANNEAU LATÉRAL commun, à droite du fil : celui des artifacts
   (ArtifactPanel) et celui du terminal (LinuxPanel) — la même apparence,

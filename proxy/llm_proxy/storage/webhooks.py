@@ -134,7 +134,7 @@ def _in_fields(body, c, owner: str) -> dict:
                            "« conversation » (toujours la même) ou « none » (passe plat)")
     conv = str(body.get("conversation") or "") if target == "conversation" else ""
     if conv:
-        conversations._check_id(conv)
+        conversations.check_id(conv)
     reply = str(body.get("reply") or "")
     if target == "none" and not reply:
         raise WebhookError("le passe plat (aucune conversation) exige un webhook "

@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   L'application de la page : la SESSION et l'entrée, les VUES et le menu
   latéral (montée par main.js). Chaque vue est un composant dans son

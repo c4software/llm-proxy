@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Le THÈME de la page : « auto » (celui du système), « clair » ou
   « sombre », choisi dans le menu latéral et gardé dans ce navigateur.

@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   L'onglet « Configuration » : un sélecteur de PARTIES, chacune un
   composant à part, dans ce dossier :

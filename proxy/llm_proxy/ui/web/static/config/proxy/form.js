@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Le FORMULAIRE de Configuration → Proxy, sans Vue : son état neuf
   (newForm), son préremplissage depuis la configuration en vigueur

@@ -1,3 +1,4 @@
+// @ts-check
 /*
   GEMINI NANO, le modèle que Chrome embarque (l'API Prompt,
   `LanguageModel`) : sa description pour la liste (browser.js) et sa
@@ -19,7 +20,7 @@ const OPTIONS = {
   expectedOutputs: [{ type: "text", languages: ["fr"] }],
 };
 
-const api = () => (typeof self !== "undefined" && self.LanguageModel) || null;
+const api = () => (typeof self !== "undefined" && /** @type {any} */ (self).LanguageModel) || null;
 
 async function blob(url) {
   return (await fetch(url)).blob();
@@ -92,7 +93,7 @@ function plain(messages) {
   return out;
 }
 
-async function nanoAnswer(messages, live, signal, onStatus = () => {}) {
+async function nanoAnswer(messages, live, signal, onStatus = (_text) => {}) {
   const LM = api();
   if (!LM) throw new Error("Ce navigateur n'a pas de modèle intégré.");
   // Le dernier message de l'utilisateur est la demande ; ce qui précède,

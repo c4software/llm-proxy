@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Ce que les parties de la configuration partagent : l'écriture TOML, la
   clé du poste, le catalogue des modèles et les comptes (Clés y prend la

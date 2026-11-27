@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Le panneau des ARTIFACTS, à droite du fil (comme celui de la mémoire) :
   ce que le modèle a montré par show_artifact dans la conversation — un

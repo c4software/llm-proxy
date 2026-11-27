@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Clients : on choisit le client (Claude Code, Codex CLI
   ou application, pi / omp, OpenCode, SDK OpenAI, curl, Open WebUI, tout client OpenAI, le

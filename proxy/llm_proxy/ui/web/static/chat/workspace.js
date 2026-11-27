@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Le DOSSIER ouvert dans une conversation du chat (Joindre → Dossier…) :
   il reste dans le navigateur — rien n'est envoyé d'avance. Ses outils

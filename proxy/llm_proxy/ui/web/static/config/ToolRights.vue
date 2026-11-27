@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 import * as Vue from "vue";
 import { TOOL_LABELS } from "./rights.js";
 

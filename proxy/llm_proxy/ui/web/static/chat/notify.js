@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Prévenir quand une réponse se termine — ou qu'une question vous
   attend — pendant que l'onglet est en arrière-plan : le titre de l'onglet

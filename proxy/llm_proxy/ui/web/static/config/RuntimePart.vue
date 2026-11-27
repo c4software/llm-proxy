@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Exécution (/ui/runtime, runtime_routes.py) : les BACS de
   l'exécuteur de code et les CACHES du proxy.

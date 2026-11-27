@@ -164,24 +164,29 @@ IMG = {"type": "image", "source": {"type": "base64", "media_type": "image/png",
                                    "data": "A" * 4096}}
 
 
-@pytest.mark.parametrize("images, content", [
-    (True, [{"type": "image_url",
-             "image_url": {"url": "data:image/png;base64," + "A" * 4096}},
-            {"type": "text", "text": "Quoi ?"}]),
-    # Backend texte seul : tout est texte → une chaîne, la forme que tout
-    # backend accepte.
-    (False, "[image ignorée : image/png, 3 Ko]Quoi ?"),
-])
-def test_to_openai_image_selon_le_backend(images, content):
-    out = A.to_openai({"model": "m", "messages": [{"role": "user", "content": [
-        IMG, {"type": "text", "text": "Quoi ?"},
-    ]}]}, images=images)
-    assert out["messages"][0]["content"] == content
+def test_to_openai_images_et_has_images():
+    """Images dans un message utilisateur ou un tool_result selon `images`,
+    et détection par has_images."""
+    assert not A.has_images({"messages": [{"role": "user", "content": "x"}]})
+    assert A.has_images({"messages": [{"role": "user", "content": [IMG]}]})
+    assert A.has_images({"messages": [{"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t", "content": [IMG]}]}]})
 
+    for images, content in (
+        (True, [{"type": "image_url",
+                 "image_url": {"url": "data:image/png;base64," + "A" * 4096}},
+                {"type": "text", "text": "Quoi ?"}]),
+        # Backend texte seul : tout est texte → une chaîne, la forme que tout
+        # backend accepte.
+        (False, "[image ignorée : image/png, 3 Ko]Quoi ?"),
+    ):
+        out = A.to_openai({"model": "m", "messages": [{"role": "user", "content": [
+            IMG, {"type": "text", "text": "Quoi ?"},
+        ]}]}, images=images)
+        assert out["messages"][0]["content"] == content, images
 
-def test_to_openai_tool_result_with_image():
-    """Claude Code lit un .png : le tool_result porte une image. Le
-    message `tool` reste texte ; l'image suit dans un message user."""
+    # Claude Code lit un .png : le tool_result porte une image. Le message
+    # `tool` reste texte ; l'image suit dans un message user.
     msgs = {"model": "m", "messages": [{"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": "t1",
          "content": [{"type": "text", "text": "lu"}, IMG]},
@@ -196,13 +201,6 @@ def test_to_openai_tool_result_with_image():
     out = A.to_openai(msgs)["messages"]
     assert out == [{"role": "tool", "tool_call_id": "t1",
                     "content": "lu[image ignorée : image/png, 3 Ko]"}]
-
-
-def test_has_images():
-    assert not A.has_images({"messages": [{"role": "user", "content": "x"}]})
-    assert A.has_images({"messages": [{"role": "user", "content": [IMG]}]})
-    assert A.has_images({"messages": [{"role": "user", "content": [
-        {"type": "tool_result", "tool_use_id": "t", "content": [IMG]}]}]})
 
 
 def test_to_openai_documents():

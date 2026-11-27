@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Quotas (admin) : le limiteur de chaque backend à quotas
   (/ui/quotas, backend_routes.py). Par bucket — un routeur du compte, une
@@ -55,7 +56,7 @@ function money(amount, currency) {
 function budgetText(f) {
   const parts = [`${money(f.initial * f.used_percent / 100, f.currency)} / ${money(f.initial, f.currency)}`];
   const reset = f.reset_at ? new Date(f.reset_at) : null;
-  if (reset && !isNaN(reset)) parts.push(`réinitialisation le ${reset.toLocaleDateString()}`);
+  if (reset && !isNaN(reset.getTime())) parts.push(`réinitialisation le ${reset.toLocaleDateString()}`);
   if (f.payg) parts.push("puis paiement à l'usage");
   return parts.join(" · ");
 }

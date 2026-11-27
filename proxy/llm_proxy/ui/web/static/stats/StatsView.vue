@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Les STATISTIQUES : l'usage de la période, lu sur l'Usage API du proxy
   (/ui/usage = /v1/organization/usage/completions servi sous /ui, pour

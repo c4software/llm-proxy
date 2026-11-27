@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Un diff de lignes, pour montrer une écriture proposée dans le dossier
   ouvert : les lignes communes autour des changements (3 de contexte),

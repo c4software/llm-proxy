@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Comptes (admin, comptes OIDC) : accepter un compte en
   attente, bloquer, promouvoir (/ui/users) ; régler la part de chacun au

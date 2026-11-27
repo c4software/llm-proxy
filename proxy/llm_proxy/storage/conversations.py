@@ -123,10 +123,13 @@ _reclaim = reclaim
 _run = run
 
 
-def _check_id(cid) -> str:
+def check_id(cid) -> str:
     if not valid_id(cid):
         raise HistoryError("identifiant de conversation invalide")
     return cid
+
+
+_check_id = check_id
 
 
 def _used(conn, owner: str) -> int:
@@ -256,8 +259,8 @@ def save(owner: str, cid: str, doc, base: int | None = None) -> int:
                            f"{MAX_DOC_BYTES} au plus)", 413)
     title = str(doc.get("title") or "")[:200]
     now = time.time()
-    created = _stamp(doc.get("created"), now)
-    updated = _stamp(doc.get("updated"), now)
+    created = stamp(doc.get("created"), now)
+    updated = stamp(doc.get("updated"), now)
     cited = set(_CITED.findall(text))
 
     def q(c):
@@ -286,7 +289,7 @@ def save(owner: str, cid: str, doc, base: int | None = None) -> int:
     return _run(q)
 
 
-def _stamp(value, default: float) -> float:
+def stamp(value, default: float) -> float:
     """Une date de la page (millisecondes) → secondes."""
     try:
         return float(value) / 1000.0

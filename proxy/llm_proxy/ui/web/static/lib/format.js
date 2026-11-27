@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Les formats d'affichage de la page, à la française.
 */

@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Les PIÈCES JOINTES du chat : une image (data URL, au modèle de la lire),
   un fichier texte (joint au message entre balises <file name="…">), ou

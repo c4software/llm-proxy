@@ -1,3 +1,4 @@
+// @ts-check
 /*
   La section « Avancé » de Configuration → Proxy, sans Vue : chaque
   réglage que les autres sections ne couvrent pas (formCovers), généré

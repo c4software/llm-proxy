@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Dépôts : les SOURCES du compte connecté (/ui/repos,
   repo_routes.py), que lit l'outil `repository` (arborescence, fichier,

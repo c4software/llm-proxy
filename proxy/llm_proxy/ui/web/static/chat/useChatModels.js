@@ -1,3 +1,4 @@
+// @ts-check
 // Composable des modèles du chat : catalogue du proxy + navigateur, groupes
 // du sélecteur, capacités, modes (image, voix, ASR), options d'images et
 // modèle par défaut.

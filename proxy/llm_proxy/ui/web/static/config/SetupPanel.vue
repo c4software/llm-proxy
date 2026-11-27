@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   La page d'INSTALLATION : premier démarrage, sans data/config.toml
   (/ui/session → setup). Les fournisseurs et quelques options donnent les
@@ -36,7 +37,7 @@ const SetupPanel = {
     });
     watch(c, (v) => { try { localStorage.setItem(STORE, JSON.stringify(v)); } catch { /* sans effet */ } },
           { deep: true });
-    const keys = ref({});
+    const keys = ref({ proxy: "", second: "", searxng: "" });
     const newKeys = () => { keys.value = { proxy: randomKey(), second: randomKey(), searxng: hex(32) }; };
     newKeys();
 

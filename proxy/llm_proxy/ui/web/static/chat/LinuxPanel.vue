@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Le panneau TERMINAL, à droite du fil (comme celui des artifacts) : la VM
   Linux de la conversation (tools/sandbox/linuxvm.js), celle où run_shell

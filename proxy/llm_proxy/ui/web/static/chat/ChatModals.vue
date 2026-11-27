@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 // Modales téléportées du chat : lightbox d'images (navigation, retouche,
 // agrandissement), studio de voix clonée et aperçu d'un fichier produit.
 import VoiceStudio from "./voice/VoiceStudio.vue";

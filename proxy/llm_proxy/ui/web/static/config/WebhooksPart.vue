@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Webhooks : ceux du compte connecté (/ui/webhooks,
   webhook_routes.py).

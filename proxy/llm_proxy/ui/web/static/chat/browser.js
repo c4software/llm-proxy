@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Les modèles DU NAVIGATEUR : ceux que le navigateur embarque. Chacun a
   son module (chat/models/ : gemini-nano.js), qui le DÉCRIT comme une

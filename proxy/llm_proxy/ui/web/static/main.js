@@ -1,3 +1,4 @@
+// @ts-check
 /*
   L'entrée de la page (index.html) : l'application (App.vue), et les
   composants que plusieurs vues nomment sans les importer — le chat et la

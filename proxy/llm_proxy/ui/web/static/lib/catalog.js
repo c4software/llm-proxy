@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Le CATALOGUE des modèles : /ui/models?all=1, tout le catalogue avec le
   type de chacun (`chat` : de conversation, `vision`, `image` : d'images,

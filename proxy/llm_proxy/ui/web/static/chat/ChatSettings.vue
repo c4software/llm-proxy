@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 // Panneau « Réglages » d'une conversation : prompt système, aperçu du prompt
 // invisible, température, affichage du raisonnement, voix, notifications et
 // export Markdown.
@@ -14,7 +15,10 @@ export default {
     notifySupported: { type: Boolean, default: false },
     notifyOn: { type: Boolean, default: false },
   },
-  emits: ["update:promptOpen", "toggle-notify", "export"],
+  emits: [
+    "update:promptOpen", "update:system", "update:temperature",
+    "update:showReasoning", "toggle-notify", "export",
+  ],
   setup() {
     return { kTokens };
   },
@@ -25,12 +29,13 @@ export default {
   <div class="chat-settings">
     <label class="field wide">
       <span>Prompt système</span>
-      <textarea v-model="current.system" rows="3" spellcheck="false"
+      <textarea :value="current.system" rows="3" spellcheck="false"
+                @input="$emit('update:system', /** @type {HTMLTextAreaElement} */ ($event.target).value)"
                 placeholder="Instructions données au modèle avant la conversation (facultatif)."></textarea>
     </label>
     <div class="field wide hidden-prompt">
       <label class="check"><input type="checkbox" :checked="promptOpen"
-                                  @change="$emit('update:promptOpen', $event.target.checked)">
+                                  @change="$emit('update:promptOpen', /** @type {HTMLInputElement} */ ($event.target).checked)">
         Afficher le prompt invisible <span class="dim">— ce que le prochain message enverra en plus
         du fil{{ hiddenPrompt ? " : ≈ " + kTokens(hiddenPrompt.total) + " tokens" : "" }}</span></label>
       <div class="hidden-body" v-if="hiddenPrompt">
@@ -48,16 +53,18 @@ export default {
       <span>Température</span>
       <div class="temp">
         <label class="check"><input type="checkbox" :checked="current.temperature === null"
-          @change="current.temperature = $event.target.checked ? null : 0.7"> celle du modèle</label>
+          @change="$emit('update:temperature', /** @type {HTMLInputElement} */ ($event.target).checked ? null : 0.7)"> celle du modèle</label>
         <template v-if="current.temperature !== null">
-          <input type="range" min="0" max="2" step="0.05" v-model.number="current.temperature">
+          <input type="range" min="0" max="2" step="0.05" :value="current.temperature"
+                 @input="$emit('update:temperature', Number(/** @type {HTMLInputElement} */ ($event.target).value))">
           <b>{{ Number(current.temperature).toFixed(2) }}</b>
         </template>
       </div>
     </div>
     <div class="field">
       <span>Affichage</span>
-      <label class="check"><input type="checkbox" v-model="current.showReasoning">
+      <label class="check"><input type="checkbox" :checked="current.showReasoning"
+                                  @change="$emit('update:showReasoning', /** @type {HTMLInputElement} */ ($event.target).checked)">
         montrer le raisonnement du modèle</label>
     </div>
     <voice-settings :incognito="!!current.incognito"></voice-settings>

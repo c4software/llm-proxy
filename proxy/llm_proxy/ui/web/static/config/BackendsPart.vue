@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Backends : les BACKENDS du compte connecté (/ui/backends,
   backend_routes.py) — un nom (le préfixe de ses modèles), un protocole, une

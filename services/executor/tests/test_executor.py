@@ -285,9 +285,12 @@ def test_quotas_expiration_destruction_orphelins(service, monkeypatch):
     assert destroy("clientB", "o4") is False and destroy("", "o4") is True
     assert len(box) == 2 and len(os.listdir(service.root)) == 2
 
-    # Expiration par inactivité : horloge décalée au-delà de `idle`, sans attente.
+    # Expiration par inactivité : horloge du module sandbox seule décalée
+    # au-delà de `idle`, sans toucher time.monotonic global (sinon asyncio.sleep
+    # de la tâche de fond du serveur se réveille en même temps).
+    import types
     later = time.monotonic() + 3601
-    monkeypatch.setattr(sandbox.time, "monotonic", lambda: later)
+    monkeypatch.setattr(sandbox, "time", types.SimpleNamespace(monotonic=lambda: later))
     assert asyncio.run(box.sweep()) == 2
     assert len(box) == 0 and os.listdir(service.root) == []
 

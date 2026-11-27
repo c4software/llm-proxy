@@ -82,7 +82,7 @@ def save(owner: str, vid: str, meta, wav: bytes) -> dict:
     except (TypeError, ValueError):
         duration = 0.0
     source = str(meta.get("source") or "")[:40]
-    created = conversations._stamp(meta.get("created"), time.time())
+    created = conversations.stamp(meta.get("created"), time.time())
 
     def q(c):
         known = c.execute("SELECT 1 FROM voices WHERE owner = ? AND id = ?",

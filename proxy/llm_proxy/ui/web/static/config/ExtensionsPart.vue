@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Extensions (/ui/extensions, extension_routes.py ; lue
   par un admin, ou la page d'un proxy sans comptes ; basculée — écrite

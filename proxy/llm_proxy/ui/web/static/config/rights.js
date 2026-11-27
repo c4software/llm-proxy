@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Les DROITS d'une clé sur les outils hébergés, en mots : le nom lisible
   des outils natifs, la liste complète (info-bulle) et sa forme courte

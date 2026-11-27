@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Proxy : TOUTE la configuration, à voir et à modifier.
   Un sommaire (la section à l'écran en évidence), une barre d'actions qui
@@ -217,7 +218,7 @@ const ProxyPart = {
       if (!("IntersectionObserver" in window)) return;
       const visible = new Map();
       observer = new IntersectionObserver((entries) => {
-        for (const e of entries) visible.set(e.target.dataset.section, e.isIntersecting);
+        for (const e of entries) visible.set(e.target.getAttribute("data-section"), e.isIntersecting);
         const first = SECTIONS.find((sct) => visible.get(sct.id));
         if (first) activeSection.value = first.id;
       }, { rootMargin: "-80px 0px -55% 0px" });

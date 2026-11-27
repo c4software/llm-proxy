@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   La section « Mémoire » : ce que l'outil `memory` a gardé pour la clé
   CONNECTÉE (celle du cookie de la page), à lire, corriger, renommer ou
@@ -67,7 +68,7 @@ const MemoryPanel = {
     function local(ts) {
       if (!ts) return "";
       const d = new Date(ts * 1000);
-      return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     }
     const seconds = (v) => v ? new Date(v).getTime() / 1000 : null;
 

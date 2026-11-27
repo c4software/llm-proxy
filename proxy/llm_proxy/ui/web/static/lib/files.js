@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Copier et télécharger un texte produit par la page.
 */

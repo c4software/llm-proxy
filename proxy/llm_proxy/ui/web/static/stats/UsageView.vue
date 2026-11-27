@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   La vue USAGE : l'usage et les limites du client de la page, tels que les
   rend /ui/usage/agent (ui/agent_usage.py), l'enregistrement que lit aussi
@@ -70,7 +71,7 @@ const UsageView = {
       .sort((a, b) => b.total - a.total));
     const resets = (iso) => {
       const d = iso ? new Date(iso) : null;
-      return d && !isNaN(d) ? ` · réinitialisation le ${d.toLocaleDateString("fr-FR")}` : "";
+      return d && !isNaN(d.getTime()) ? ` · réinitialisation le ${d.toLocaleDateString("fr-FR")}` : "";
     };
     return { rec, error, days, models, resets, percent, num };
   },

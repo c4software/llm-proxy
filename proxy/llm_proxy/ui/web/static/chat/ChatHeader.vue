@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 // En-tête du chat : titre, sélecteur de modèle, rechargement du catalogue et
 // boutons d'ouverture des panneaux (Incognito, Artifacts, Images, Terminal,
 // Mémoire, Réglages).
@@ -20,8 +21,8 @@ export default {
     settingsOpen: { type: Boolean, default: false },
   },
   emits: [
-    "reload-models", "toggle-incognito", "toggle-artifacts", "toggle-assets",
-    "toggle-linux", "toggle-memory", "toggle-settings",
+    "update:model", "reload-models", "toggle-incognito", "toggle-artifacts",
+    "toggle-assets", "toggle-linux", "toggle-memory", "toggle-settings",
   ],
 };
 </script>
@@ -30,7 +31,8 @@ export default {
   <header class="chat-head">
     <h2 :title="current.title">{{ current.title }}</h2>
     <label class="model-pick" title="Modèle">
-      <select v-model="current.model" :disabled="streaming" :title="current.model">
+      <select :value="current.model" :disabled="streaming" :title="current.model"
+              @change="$emit('update:model', /** @type {HTMLSelectElement} */ ($event.target).value)">
         <option v-if="!models.length && current.model" :value="current.model">{{ modelsLoading ? "Chargement des modèles…" : current.model }}</option>
         <option v-if="!models.length && !current.model" value="" disabled>{{ modelsLoading ? "Chargement des modèles…" : "Aucun modèle" }}</option>
         <option v-if="current.model && models.length && !models.some((m) => m.id === current.model)"

@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Clés (comptes OIDC) : chacun crée ses clés (des uuid4,
   /ui/keys) pour ses clients — montrées UNE fois, à la création, avec la

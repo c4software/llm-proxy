@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Configuration → Prompts (/ui/prompts, prompt_routes.py ; lue par un
   admin, ou la page d'un proxy sans comptes ; modifiée — écrite dans

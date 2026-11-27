@@ -1,3 +1,4 @@
+// @ts-check
 /*
   Les modèles d'IMAGES du chat : le prompt avec le contexte de la
   conversation, et une requête de génération (/ui/images/generations) ou

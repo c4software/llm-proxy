@@ -144,21 +144,15 @@ def test_is_public_ne_garde_que_les_adresses_routables():
                "::1", "::", "fe80::1", "fc00::1", "2001:db8::1",
                "ff0e::1",                               # multicast « global »
                "2002:a00:1::1",                         # 6to4 autour de 10.0.0.1
+               # NAT64, compatibles IPv4 et mappées vers des plages privées.
+               "64:ff9b::a00:1", "64:ff9b::a9fe:a9fe", "::10.0.0.1",
+               "::ffff:10.0.0.1", "::ffff:169.254.169.254",
                "", "pas-une-ip", "10.0.0.1/8", " 8.8.8.8"]:
         assert net.is_public(ip) is False, ip
-    # Publiques, bords des plages privées compris.
+    # Publiques, bords des plages privées et IPv4 publiques emballées compris.
     for ip in ["8.8.8.8", PUBLIC, "100.63.255.255", "100.128.0.1",
-               "172.15.255.255", "172.32.0.1", PUBLIC6]:
-        assert net.is_public(ip) is True, ip
-
-
-def test_is_public_juge_l_ipv4_emballee_dans_une_ipv6():
-    """NAT64, « compatibles IPv4 » et mappées : `is_global` seul les tient
-    pour publiques alors qu'elles désignent 10.0.0.1 ou les métadonnées."""
-    for ip in ["64:ff9b::a00:1", "64:ff9b::a9fe:a9fe", "::10.0.0.1",
-               "::ffff:10.0.0.1", "::ffff:169.254.169.254"]:
-        assert net.is_public(ip) is False, ip
-    for ip in ["64:ff9b::808:808", "::ffff:8.8.8.8"]:
+               "172.15.255.255", "172.32.0.1", PUBLIC6,
+               "64:ff9b::808:808", "::ffff:8.8.8.8"]:
         assert net.is_public(ip) is True, ip
 
 
@@ -659,17 +653,14 @@ def test_search_moteurs_indisponibles_n_est_pas_aucun_resultat():
     assert out == "No results for «q»."
 
 
-def test_search_reponse_illisible():
-    """Pas du JSON, ou du JSON valide d'une autre forme (liste, `results`
-    qui n'en est pas une) : une erreur, pas une exception."""
+def test_search_moteur_en_erreur_ou_injoignable():
+    """Réponses illisibles, statuts HTTP d'erreur ou moteur injoignable :
+    une erreur claire, jamais une exception."""
     for corps in [b"<html>pas du json</html>", b"", b"\xff\xfe", b"[1, 2]", b"null",
                   b'{"results": 5}', b'{"results": {"0": {"url": "https://r.test/"}}}']:
         out, _ = search({"query": "q"}, httpx2.Response(
             200, content=corps, headers={"content-type": "application/json"}))
         assert out == "Error: unreadable search engine response.", corps
-
-
-def test_search_moteur_en_erreur_ou_injoignable():
     out, _ = search({"query": "q"}, httpx2.Response(403, text="Forbidden"))
     assert out.startswith("Error:") and "search.formats" in out and "json" in out
     for status in (204, 302, 500):

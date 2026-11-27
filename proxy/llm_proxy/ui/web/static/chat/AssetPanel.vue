@@ -1,4 +1,5 @@
 <script>
+// @ts-check
 /*
   Le panneau des IMAGES, à droite du fil (comme celui des artifacts) :
   les images GÉNÉRÉES dans la conversation (conversationImages) — celles
