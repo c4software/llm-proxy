@@ -205,6 +205,7 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `surfaces/responses_api/` | Traduction Responses ↔ chat/completions, flux compris ; outils hébergés ; `namespace` aplatis. Paquet : `common`, `request`, `response`, `stream` (le `Translator`) |
 | `surfaces/anthropic_api/` | Traduction Messages ↔ chat/completions, flux compris ; `model_map` ; outils serveur `web_search` et `web_fetch`. Paquet : `common`, `request`, `response`, `stream` (le `Translator`) |
 | `surfaces/tool_loop.py` | La boucle des outils hébergés, commune aux trois surfaces |
+| `surfaces/omarchy.py` | Les modèles vus par `omarchy models` : la liste `/local-ai/models.json`, `/local-ai/<id>/v1/chat/completions` relayé par `endpoints.chat` (`recipe_id` : nom préfixé → identifiant de recette) |
 | `surfaces/relay_routes.py` | `GET /v1/audio/voices` et le catch-all (`forward_post_paths`, sinon `404`) ; l'audio pas à pas : [Voix](voix.md) |
 
 ### `tools/` : les outils hébergés

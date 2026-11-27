@@ -89,6 +89,18 @@ enabled = true
 reasoning_as_summary = true
 
 
+# ── Omarchy : GET /local-ai/models.json ─────────────────────────────────
+# Voir docs/omarchy.md. Les modèles du proxy pour `omarchy models` : une
+# liste lue sans clé, puis /local-ai/<id>/v1/chat/completions avec une clé
+# du proxy.
+[omarchy]
+# Motifs (fnmatch, casse ignorée) des noms préfixés proposés ; seuls les
+# modèles de conversation sont retenus. Vide (défaut) → routes en 404.
+models = []
+# Contexte annoncé pour un modèle dont le catalogue ne donne pas la taille.
+context = 32768
+
+
 # ── Outils hébergés sur /v1/chat/completions ────────────────────────────
 # Voir docs/outils-heberges.md et docs/chat.md.
 [chat]

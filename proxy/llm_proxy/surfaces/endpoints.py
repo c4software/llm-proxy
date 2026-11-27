@@ -55,10 +55,13 @@ async def chat_completions(request: Request):
     return await chat(request)
 
 
-async def chat(request: Request, page: bool = False):
+async def chat(request: Request, page: bool = False, raw: bytes | None = None):
     """/v1/chat/completions, et le chat du tableau de bord (`page`) : pas
-    de [chat].always, l'exécution des outils annoncée dans le flux."""
-    raw = await request.body()
+    de [chat].always, l'exécution des outils annoncée dans le flux. `raw` :
+    le corps à relayer à la place de celui de la requête (Omarchy, qui
+    renomme le modèle)."""
+    if raw is None:
+        raw = await request.body()
     payload = parse_json(raw)
     if INCOGNITO.get() and isinstance(payload, dict) \
             and isinstance(payload.get("tools"), list):

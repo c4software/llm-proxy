@@ -124,6 +124,7 @@ configuration d'OpenCode comme client.
 | Usage API d'OpenAI | [Statistiques](docs/statistiques.md) |
 | `/v1/messages` : traduction, `model_map`, `[anthropic]` | [API Anthropic Messages](docs/api-anthropic.md) |
 | `/v1/responses` : traduction, outils, `[responses]` | [API OpenAI Responses](docs/api-responses.md) |
+| Les modèles du proxy dans `omarchy models`, `[omarchy]` | [Omarchy](docs/omarchy.md) |
 | Recherche web, OCR, transcription, images, mémoire et MCP | [Outils hébergés](docs/outils-heberges.md) |
 | Synthèse vocale, création et clonage de voix (Qwen3-TTS) | [Voix](docs/voix.md) |
 | Bac à sable de `code_execution` et lecture des dépôts | [Exécution de code](docs/execution-de-code.md) |

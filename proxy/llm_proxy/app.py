@@ -32,7 +32,7 @@ from .access import auth
 from .access.auth import UISession
 from .exposure import tool_routes
 from .startup import lifespan
-from .surfaces import endpoints, relay_routes
+from .surfaces import endpoints, omarchy, relay_routes
 from .ui import (
     config_view,
     conversation_routes,
@@ -79,7 +79,7 @@ async def setup_gate(request: Request, call_next):
 
 # Les routes des modules, le relais (son catch-all) EN DERNIER, qui sinon
 # les prendrait toutes.
-for module in (endpoints, usage_api, agent_usage, static_files, dashboard,
+for module in (endpoints, omarchy, usage_api, agent_usage, static_files, dashboard,
                conversation_routes, voice_routes, config_view, health, tool_routes,
                linux_relay, webhook_routes, repo_routes, backend_routes,
                runtime_routes, extension_routes, prompt_routes):

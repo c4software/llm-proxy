@@ -15,6 +15,7 @@ from fakes import admin_and_user, bearer, chat_doc, everywhere
 from llm_proxy.access import oidc
 from llm_proxy.core import config
 from llm_proxy.storage import backends as user_backends, conversations
+from llm_proxy.surfaces import omarchy
 from llm_proxy.ui import dashboard
 from llm_proxy.upstream import backends, relaying
 
@@ -804,7 +805,9 @@ def test_un_backend_du_toml_borne_ses_modeles(env, monkeypatch):
 
 # ── les modèles permis d'un compte ──────────────────────────────────────
 
-def test_l_admin_borne_les_modeles_d_un_compte(env):
+def test_l_admin_borne_les_modeles_d_un_compte(env, monkeypatch):
+    # Omarchy propose tout : seuls les modèles permis du compte bornent.
+    monkeypatch.setattr(omarchy, "PATTERNS", ["*"])
     alice, bob, bob_id = admin_and_user(env)
     alice.post("/ui/backends", json={**MINE, "name": "alice", "shared": True})
     bob.post("/ui/backends", json={**MINE, "name": "bob"})
@@ -824,14 +827,22 @@ def test_l_admin_borne_les_modeles_d_un_compte(env):
             "model": m, "max_tokens": 10, "messages": [{"role": "user", "content": "x"}]}),
         "relais": lambda m: env.client.post("/v1/embeddings", headers=bearer(key), json={
             "model": m, "input": "x"}),
+        "omarchy": lambda m: env.client.post(
+            f"/local-ai/{omarchy.recipe_id(m)}/v1/chat/completions", headers=bearer(key),
+            json={"model": "x", "messages": [{"role": "user", "content": "x"}]}),
     }
     for surface, send in surfaces.items():
         for model, status in (("essai/permis-1", 200), ("ESSAI/Permis-2", 200),
                               ("essai/autre", 403), ("alice/m", 403),
                               # Ses propres backends ne sont pas bornés.
-                              ("bob/m", 200)):
+                              ("bob/m", 200), ("bob/autre", 200)):
             r = send(model)
-            assert r.status_code == status, (surface, model, r.text)
+            # Omarchy ne propose que les modèles du catalogue (MODELS), et ne
+            # voit pas un modèle non permis : 404, pas 403.
+            listed = model.split("/", 1)[1].lower() in MODELS
+            expected = 404 if surface == "omarchy" and (
+                status == 403 or not listed) else status
+            assert r.status_code == expected, (surface, model, r.text)
     r = surfaces["chat"]("essai/autre")
     assert r.json()["error"]["type"] == "model_not_allowed"
 
