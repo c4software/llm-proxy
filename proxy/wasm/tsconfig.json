@@ -1,11 +1,11 @@
 {
   // La VÉRIFICATION des types du code de la page (web/static, .js et le
-  // <script> des .vue), par vue-tsc : du JavaScript annoté en JSDoc. Seuls
-  // les fichiers qui commencent par `// @ts-check` sont vérifiés.
+  // <script> des .vue), par vue-tsc : du JavaScript annoté en JSDoc, tout
+  // fichier vérifié d'office (`checkJs: true`).
   //   npm run check
   "compilerOptions": {
     "allowJs": true,
-    "checkJs": false,
+    "checkJs": true,
     "noEmit": true,
     "target": "ES2022",
     "module": "ESNext",

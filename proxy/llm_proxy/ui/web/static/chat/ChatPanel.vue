@@ -81,8 +81,10 @@ import ChatThread from "./ChatThread.vue";
 import { useChatModels } from "./useChatModels.js";
 import { useChatVoice } from "./useChatVoice.js";
 import { useChatImages } from "./useChatImages.js";
+import { useChatCards } from "./useChatCards.js";
+import { useChatCompact } from "./useChatCompact.js";
 import { setOpener as setLinuxOpener, vm as linuxVm } from "./tools/sandbox/linuxvm.js";
-import { download, useCopy } from "../lib/files.js";
+import { download } from "../lib/files.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
 import * as Compact from "./compact.js";
@@ -747,124 +749,15 @@ const ChatPanel = {
       }
     }
 
-    // ── les cartes ─────────────────────────────────────────────────────
-    // Un outil qui attend l'utilisateur montre une CARTE (m.waiting) : le
-    // gabarit commun (tools.view), ou le composant de l'outil — dans le
-    // fil, ou dans la feuille du bas. Sa réponse devient le résultat de
-    // l'outil, et la réponse du modèle reprend.
-
-    // Ce que les outils reçoivent du tour : la conversation, le message,
-    // le dossier ouvert, ce que le modèle sait lire, un téléchargement.
-    function toolCtx(conv, live, signal = undefined) {
-      return { conv, live, ws: folders.get(conv.id) || null,
-               vision: !!(modelEntry(conv.model) || {}).vision, download, signal };
-    }
-    function settle(m, result) {
-      const c = current.value;
-      if (!c || streaming.value || !m.waiting) return;
-      m.waiting.result = result;
-      pinned = true;            // la réponse reprend : le fil suit sa fin
-      respond(c, m);
-    }
-    // Une action de la carte (un bouton) : l'API de l'appareil part de ce
-    // clic (le geste que le navigateur exige). Répondue, elle rend un
-    // résultat, et peut-être une image (capture, photo) : jointe à la
-    // réponse, et envoyée au modèle avec le résultat. Une erreur levée
-    // s'affiche ; la carte reste.
-    async function cardAct(m, action, payload) {
-      const w = m.waiting;
-      if (!w || w.busy || streaming.value) return;
-      const c = current.value;
-      let out = null;
-      w.busy = true;
-      try {
-        out = await tools.act(w, action, toolCtx(c, m), payload);
-      } catch (e) {
-        status.value = e.message;
-      } finally {
-        w.busy = false;
-      }
-      if (!out || m.waiting !== w) return;
-      tools.release(w);
-      if (out.image) {
-        (m.attachments || (m.attachments = [])).push({ kind: "image", name: out.name || "image.jpg", data: out.image });
-        w.image = out.image;
-      }
-      settle(m, out.result);
-    }
-    const cardView = (w) => tools.view(w);
-    // Les cartes DURABLES (m.kept) : laissées sous la réponse par un outil,
-    // leurs boutons se rejouent à volonté ; la note d'un clic (« Partagé. »)
-    // ne dure que le temps de la page.
-    const keptView = (k) => tools.keptView(k);
-    const keptNotes = reactive({});
-    async function keptAct(m, k, action) {
-      if (keptNotes[k.id] === "…") return;
-      keptNotes[k.id] = "…";
-      try {
-        keptNotes[k.id] = (await tools.keptAct(k, action, toolCtx(current.value, m))) || "";
-      } catch (e) {
-        keptNotes[k.id] = e.message;
-      }
-    }
-    const cardComponent = (w) => tools.component(w);
-    const cardPlacement = (w) => tools.placement(w);
-    const cardPending = (w) => tools.pending(w);
-    const folderCtx = () => (folderTick.value, current.value ? toolCtx(current.value, null) : {});
-    // La carte de la feuille du bas (la dernière réponse), et la feuille
-    // ouverte ou réduite : rouverte à chaque nouvelle carte.
-    const sheet = computed(() => {
-      const ms = (current.value && current.value.messages) || [];
-      const m = ms[ms.length - 1];
-      return m && m.waiting && tools.placement(m.waiting) === "sheet" ? m : null;
+    // ── les cartes et fichiers produits (useChatCards.js) ──────────────
+    const {
+      toolCtx, cardAct, cardView, keptView, keptNotes, keptAct, cardComponent,
+      cardPlacement, cardPending, folderCtx, sheet, sheetOpen, extOf, filePreview,
+      previewCopied, copyPreview, downloadOut, openOut, abandonWaiting,
+    } = useChatCards({
+      current, folders, folderTick, modelEntry, streaming, status,
+      onPin: () => { pinned = true; }, respond,
     });
-    const sheetOpen = ref(true);
-    watch(() => sheet.value && sheet.value.waiting.id, (id) => { if (id) sheetOpen.value = true; });
-    // Le badge d'un fichier : son extension, en capitales (« TXT » sans).
-    const extOf = (name) => ((String(name).match(/\.([a-z0-9]{1,6})$/i) || [])[1] || "txt").toUpperCase();
-    // Un fichier sous la réponse : son texte, ou ce que l'outil qui l'a
-    // produit en relit au moment du clic (la base SQL de la conversation).
-    // Un clic l'OUVRE en aperçu (Markdown rendu, autre texte tel quel),
-    // d'où il se copie ou se télécharge ; un binaire se télécharge.
-    const PREVIEW_MAX = 500_000;              // caractères montrés
-    const filePreview = ref(null);
-    const { copied: previewCopied, copy: copyPreview } = useCopy();
-    async function contentOut(f) {
-      const content = await tools.fileContent(f);
-      if (content === null || content === undefined) {
-        status.value = `${f.name} : introuvable dans ce navigateur (supprimé, ou créé sur un autre).`;
-      }
-      return content;
-    }
-    async function downloadOut(f) {
-      const content = await contentOut(f);
-      if (content !== null && content !== undefined) download({ name: f.name, content }, f.type);
-    }
-    async function openOut(f) {
-      const content = await contentOut(f);
-      if (content === null || content === undefined) return;
-      const binary = typeof content !== "string" && content.subarray(0, 8192).includes(0);
-      if (binary) { download({ name: f.name, content }, f.type); return; }
-      const text = typeof content === "string" ? content : new TextDecoder().decode(content);
-      const shown = text.length > PREVIEW_MAX ? text.slice(0, PREVIEW_MAX) : text;
-      const md = /\.(md|markdown)$/i.test(f.name);
-      filePreview.value = { f, name: f.name, text, shown, cut: text.length - shown.length, html: md ? Markdown.render(shown) : "" };
-    }
-    // Un nouveau message pendant qu'une carte attend : elle est close sans
-    // réponse, et le tour en cours avec elle (ses autres appels aussi).
-    function abandonWaiting(c) {
-      const m = c.messages[c.messages.length - 1];
-      if (!m || !m.waiting || !m.step) return;
-      const waited = tools.abandon(m.waiting);
-      for (const q of m.step.queue) {
-        const result = q.id === m.waiting.id ? waited : "Non exécuté : l'utilisateur est passé à autre chose.";
-        m.step.calls.push({ ...q, result });
-        const chip = m.tools.find((t) => t.id === q.id);
-        if (chip) Object.assign(chip, { status: "error", preview: result, chars: result.length });
-      }
-      pushStep(m, m.step);
-      m.waiting = null;
-    }
 
     function done(conv, live, ctrl, paused = false) {
       live.duration = (Date.now() - live.started) / 1000;
@@ -887,151 +780,16 @@ const ChatPanel = {
       }
     }
 
-    // ── contexte : la jauge, le résumé (compact.js) ─────────────────────
-    const autoCompact = VueUse.useLocalStorage("llm-proxy-auto-compact", true);
-    const ctxOpen = ref(false);
-    const contextMax = (conv) => { const e = conv && modelEntry(conv.model); return (e && e.context) || 0; };
-    const context = computed(() => {
-      const c = current.value;
-      if (!c || !c.messages.length || genMode.value) return null;
-      return Compact.occupancy(c, contextMax(c));
+    // ── contexte : la jauge, le résumé (useChatCompact.js) ──────────────
+    const {
+      autoCompact, ctxOpen, context, ctxParts, sentFrom, contextNear,
+      contextTitle, tooLong, compact, compactNow, uncompact, retryCompacted,
+      commandHints, useCommand,
+    } = useChatCompact({
+      API, current, genMode, modelEntry, requested, streaming, status, draft,
+      input, uid, startRun, clearController: () => { controller = null; },
+      respond, onUnauthorized: () => emit("unauthorized"),
     });
-    // Sa répartition, dans le menu de la jauge (seulement ouvert) : ramenée
-    // à la mesure du modèle s'il y en a une, et ce qui reste libre.
-    const ctxParts = computed(() => {
-      const c = current.value, o = context.value, r = requested.value;
-      if (!c || !o || !ctxOpen.value) return null;
-      const parts = Compact.breakdown(c, o.metered ? o.tokens : 0, {
-        guidance: r ? r.guidance : "", tools: r ? JSON.stringify(r.specs.map((d) => d.spec)) : "" });
-      const used = parts.reduce((n, p) => n + p.tokens, 0);
-      const scale = Math.max(o.max || 0, used) || 1;
-      const free = o.max ? Math.max(0, o.max - used) : 0;
-      return { parts: parts.map((p) => ({ ...p, pct: (p.tokens / scale) * 100 })), free };
-    });
-    // Le premier message encore envoyé au modèle : ceux d'avant sont résumés.
-    const sentFrom = computed(() => (current.value ? Compact.start(current.value, current.value.messages.length) : 0));
-    const contextNear = (conv) => {
-      const o = Compact.occupancy(conv, contextMax(conv));
-      return !!o.max && o.ratio >= Compact.AUTO_AT && conv.messages.slice(Compact.start(conv, conv.messages.length))
-        .some((m) => m.role === "assistant");
-    };
-    const contextTitle = computed(() => {
-      const o = context.value;
-      if (!o) return "";
-      const what = (o.measured ? "" : "≈ ") + num(o.tokens) + " tokens"
-        + (o.max ? ` sur ${num(o.max)} (${Math.round(o.ratio * 100)} %)` : " (fenêtre du modèle inconnue)");
-      return `Contexte : ${what} — /compact pour résumer la conversation`;
-    });
-    // Un contexte refusé par le backend (trop long) : de quoi le dire.
-    const tooLong = (m) => /context.{0,40}(length|window|size|limit)|contexte|too long|too many tokens|maximum.*(length|tokens)|exceeds?.*(context|tokens)/i.test(m.error || "");
-
-    // Résumer la conversation jusqu'à `upto` (exclu) : un message
-    // `summary` y est inséré, rempli par le modèle de la conversation, sans
-    // outils. Rend true s'il a réussi ; sinon il disparaît, l'erreur dite.
-    async function compact(conv, focus = "", auto = false, upto = conv.messages.length) {
-      if (streaming.value) return false;
-      const from = Compact.start(conv, upto);
-      const covered = conv.messages.slice(from, upto).filter((m) => m.role !== "summary").length;
-      if (!conv.messages.slice(from, upto).some((m) => m.role === "assistant")) {
-        status.value = "Rien à résumer depuis le dernier résumé.";
-        return false;
-      }
-      const before = Compact.occupancy({ ...conv, messages: conv.messages.slice(0, upto) }, contextMax(conv)).tokens;
-      conv.messages.splice(upto, 0, { id: uid(), role: "summary", content: "", reasoning: "", tools: [],
-        sources: [], model: conv.model, usage: null, error: "", started: Date.now(), duration: 0,
-        running: true, auto, focus, covered, before });
-      const s = conv.messages[upto];
-      const ctrl = startRun(auto ? "Contexte presque plein : résumé de la conversation…" : "Résumé de la conversation…");
-      try {
-        const msgs = await inline(apiMessages(conv, upto));
-        const entry = modelEntry(conv.model);
-        const once = async (list) => {
-          if (entry && entry.answer) {
-            await entry.answer(list, s, ctrl.signal, (t) => { status.value = t; });
-            return;
-          }
-          const body = { model: conv.model, stream: true, stream_options: { include_usage: true }, messages: list };
-          // Un résumé n'a pas besoin de réflexion (un modèle hybride s'en passe).
-          if (modelCaps(entry).reasoning) body.chat_template_kwargs = { enable_thinking: false };
-          const r = await fetch(API, {
-            method: "POST", signal: ctrl.signal,
-            headers: { "content-type": "application/json", accept: "text/event-stream",
-                       ...(conv.incognito ? { "x-incognito": "1" } : {}) },
-            body: JSON.stringify(body),
-          });
-          if (r.status === 401) { emit("unauthorized"); throw new Error("session expirée"); }
-          if (!r.ok) {
-            let j = null;
-            try { j = await r.json(); } catch { /* corps illisible */ }
-            throw new Error((j && j.error && (j.error.message || j.error)) || `HTTP ${r.status}`);
-          }
-          if ((r.headers.get("content-type") || "").includes("event-stream")) await readStream(r.body, s);
-          else { const j = await r.json(); s.content = (((j.choices || [])[0] || {}).message || {}).content || ""; s.usage = j.usage || null; }
-        };
-        try {
-          await once(Compact.request(msgs, focus));
-        } catch (e) {
-          // Le contexte déborde déjà : l'échange allégé, une fois.
-          if (e.name === "AbortError" || !tooLong({ error: e.message })) throw e;
-          s.light = true;
-          status.value = "Contexte trop long pour le résumer tel quel : résumé d'une version allégée…";
-          await once(Compact.request(Compact.lighten(msgs), focus));
-        }
-        s.content = (s.content || "").trim();
-        if (!s.error && !s.content) s.error = "le modèle n'a rien rendu";
-      } catch (e) {
-        s.error = e.name === "AbortError" ? "arrêté" : e.message;
-      } finally {
-        s.running = false;
-        s.reasoning = "";
-        s.duration = (Date.now() - s.started) / 1000;
-        streaming.value = false;
-        controller = null;
-        conv.updated = Date.now();
-      }
-      if (s.error) {
-        conv.messages.splice(conv.messages.indexOf(s), 1);
-        status.value = "Résumé impossible : " + s.error + (auto ? " — l'historique part en entier." : ".");
-        return false;
-      }
-      status.value = "";
-      return true;
-    }
-    function compactNow() {
-      ctxOpen.value = false;
-      const c = current.value;
-      if (c && !streaming.value) compact(c);
-    }
-    // « Annuler le résumé » : l'historique repart en entier.
-    function uncompact(i) {
-      const c = current.value;
-      if (!c || streaming.value || !c.messages[i] || c.messages[i].role !== "summary") return;
-      c.messages.splice(i, 1);
-    }
-    // Une réponse refusée (contexte trop long) : résumer ce qui précède la
-    // question, puis la reposer.
-    async function retryCompacted() {
-      const c = current.value;
-      if (!c || streaming.value) return;
-      const last = c.messages[c.messages.length - 1];
-      if (last && last.role === "assistant") c.messages.pop();
-      const q = c.messages.length - 1;
-      if (q < 0 || c.messages[q].role !== "user") return;
-      if (await compact(c, "", true, q)) respond(c);
-    }
-
-    // Les commandes de la zone de saisie : « / » les propose.
-    const COMMANDS = [{ name: "/compact", args: "[consigne]",
-                        hint: "résumer la conversation pour libérer du contexte (les messages restent affichés)" }];
-    const commandHints = computed(() => {
-      const d = draft.value;
-      if (!d.startsWith("/") || /\s/.test(d) || genMode.value) return [];
-      return COMMANDS.filter((c) => c.name.startsWith(d.toLowerCase()));
-    });
-    function useCommand(c) {
-      draft.value = c.name + " ";
-      nextTick(() => { if (input.value) input.value.focus(); });
-    }
 
     // Un modèle d'images : le dernier message (avec son contexte) → une ou
     // plusieurs images, pièces jointes de la réponse. Une image jointe au
