@@ -163,13 +163,22 @@ def test_jeton_pas_suivi_vers_un_autre_hote():
 
 
 def test_archive_refusee_ou_trop_grosse(monkeypatch):
-    gl = {"forge": "gitlab", "url": "https://g.lan", "token": "x"}
-    for status, code in ((401, "not_allowed"), (404, "not_accessible"),
-                         (429, "too_many_requests")):
-        t = forge([], {"/api/v4/projects/a%2Fb/repository/archive.tar.gz": (status, b"", {})})
-        with pytest.raises(ToolError) as exc:
-            go(repository.fetch(gl, "a/b", "", t))
-        assert exc.value.code == code
+    cases = [
+        ({"forge": "gitlab", "url": "https://g.lan", "token": "x"},
+         "/api/v4/projects/a%2Fb/repository/archive.tar.gz", (401, 404, 429)),
+        ({"forge": "github", "url": "https://github.com", "token": "x"},
+         "/repos/a/b/tarball", (401, 404)),
+        ({"forge": "gitea", "url": "https://gitea.lan", "token": "x"},
+         "/api/v1/repos/a/b", (401, 404)),
+    ]
+    codes = {401: "not_allowed", 404: "not_accessible", 429: "too_many_requests"}
+    for src, path, statuses in cases:
+        for status in statuses:
+            t = forge([], {path: (status, b"", {})})
+            with pytest.raises(ToolError) as exc:
+                go(repository.fetch(src, "a/b", "", t))
+            assert exc.value.code == codes[status], (src["forge"], status)
+    gl = cases[0][0]
     monkeypatch.setattr(repository, "MAX_BYTES", 10)
     t = forge([], {"/api/v4/projects/a%2Fb/repository/archive.tar.gz": (200, b"x" * 100, {})})
     with pytest.raises(ToolError, match="larger"):
@@ -461,6 +470,8 @@ def test_routes_de_la_page(proxy, monkeypatch):
     c.cookies.clear()
     c.post("/ui/login", json={"key": "sk-b"})
     assert c.get("/ui/repos").json()["sources"] == []
+    assert c.put(f"/ui/repos/{sid}", json={"name": "Autre", "forge": "gitlab",
+                                           "url": "https://g.lan"}).status_code == 404
     assert c.delete(f"/ui/repos/{sid}").json()["deleted"] is False
     monkeypatch.setattr(repository, "ENABLED", False)
     assert c.get("/ui/repos").status_code == 404

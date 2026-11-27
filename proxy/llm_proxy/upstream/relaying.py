@@ -503,15 +503,20 @@ async def relay(call: Call, upstream: httpx2.Response, robinet,
     excerpt = bytearray()
     # Le premier et le dernier morceau reçus d'un flux : la durée de la
     # génération, hors attente (files, partage équitable) et traitement de
-    # l'invite. Un commentaire SSE d'avant le premier token (le ping d'une
-    # passerelle qui attend) ne la fait pas commencer.
-    first = last = 0.0
+    # l'invite. Un commentaire SSE (ping) ou une ligne vide d'avant le
+    # premier token ne la fait pas commencer.
+    first: float | None = None
+    last = 0.0
     try:
         try:
             async for chunk in upstream.aiter_raw():
                 now = clock()
-                if first or not chunk.lstrip().startswith(b":"):
-                    first = first or now
+                if first is not None or any(
+                    not s.startswith(b":")
+                    for line in chunk.splitlines() if (s := line.lstrip())
+                ):
+                    if first is None:
+                        first = now
                     last = now
                 if failed and len(excerpt) < ERROR_EXCERPT:
                     excerpt += chunk[:ERROR_EXCERPT - len(excerpt)]
@@ -554,7 +559,7 @@ async def relay(call: Call, upstream: httpx2.Response, robinet,
         prompt, completion, exact = robinet.tokens(prompt_estimate)
         call.done(status, prompt, completion, exact,
                   robinet.sse, robinet.cached(), partial=partial,
-                  generation=last - first if robinet.sse else 0.0)
+                  generation=last - first if robinet.sse and first is not None else 0.0)
         await upstream.aclose()
 
 

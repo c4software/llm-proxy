@@ -97,13 +97,15 @@ son propre chemin, sur les mêmes attentes.
 
 ### Sens des dépendances
 
-`core/` ne dépend de rien d'autre du proxy. Puis, de bas en haut :
-`access/` et `storage/` ; `upstream/` (les backends) ; `tools/` (qui
-appellent des backends) ; `surfaces/` et `exposure/` ; `ui/`. Un paquet
-n'importe que des paquets plus bas. Deux écarts assumés : `storage/backup`
-lit `access/accounts` (il sauvegarde sa base), et `surfaces/endpoints`
-lit `ui/page_tools`, une feuille qui ne dépend que de `core/` (les outils
-de la page refusés par la configuration).
+`core/` ne dépend de rien d'autre du proxy, et `prompts/` uniquement de
+`core/`. Puis, de bas en haut : `access/` et `storage/` ; `upstream/` (les
+backends) ; `tools/` (qui appellent des backends) ; `surfaces/` et
+`exposure/` ; `ui/`. Un paquet n'importe que des paquets plus bas. Écarts
+assumés : les échanges latéraux entre `access/` et `storage/` (`auth` pose
+`stats.CLIENT` et reconnaît les liens `files`, `oidc` lit `files.PUBLIC_URL`,
+`backup` sauvegarde `accounts`), et `surfaces/endpoints` lit `ui/page_tools`,
+une feuille qui ne dépend que de `core/` (les outils de la page refusés par
+la configuration).
 
 ### Un seul processus
 
@@ -279,8 +281,8 @@ remplacer aussi les copies importées dans ses sous-modules.
 | `ui/webhook_routes.py` | `POST /hooks/<jeton>` (un message au format Slack, « ok » tout de suite) et `/ui/webhooks` (la gestion par la page) |
 | `ui/webhook_turn.py` | Le tour d'un message reçu, sans navigateur : la conversation, le seul message reçu et le prompt système envoyés au modèle, `/ui/chat/completions` appelé en interne au nom du créateur, les envois sortants |
 | `ui/dataurl.py` | Lecture des URL `data:` envoyées par la page (images, audio) |
-| `ui/web/static/` | Les sources de la page, racine de Vite (`proxy/wasm/vite.config.mjs`) : `index.html` (l'entrée), `main.js` (monte l'application, enregistre le chat et la mémoire), `App.vue` (session, vues, menu), composants `.vue` et modules ES par domaine — `stats/` (Statistiques, Usage), `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, prompts, thème) —, `dashboard.css`, `public/` (manifeste, icônes, copiés tels quels). Vue 3 (avec son compilateur de gabarits, pour les cartes des extensions) et VueUse 15 sont des imports (`vue`, `@vueuse/core`) |
+| `ui/web/static/` | Les sources de la page, racine de Vite (`proxy/wasm/vite.config.mjs`) : `index.html` (l'entrée), `main.js` (monte l'application, enregistre le chat et la mémoire), `App.vue` (session, vues, menu), composants `.vue` et modules ES par domaine — `stats/` (Statistiques, Usage), `chat/`, `config/` (une partie par fichier), `memory/`, `lib/` (appels, formats, fichiers, Markdown, prompts, thème) —, `dashboard.css` (qui assemble `styles/*.css` par domaine), `public/` (manifeste, icônes, copiés tels quels). Vue 3 (avec son compilateur de gabarits, pour les cartes des extensions) et VueUse 15 sont des imports (`vue`, `@vueuse/core`) |
 | `ui/web/dist/` | Le build de la page (`npm run build`), non versionné |
-| `ui/web/static/chat/` | `ChatPanel.vue`, `api.js` (les messages envoyés au modèle, règle « ajout seul »), `turn.js` (les étapes d'un tour et leur chronologie d'affichage), `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage ; pour un projet, l'aperçu d'un HTML avec le CSS et le JS du projet mis en ligne, la source colorée d'un fichier, l'archive `.zip`), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.vue`, `LinuxPanel.vue` (le terminal de la VM Linux), `SidePanel.vue` (leur panneau commun : largeur, Large, Réseau), `voice/` (la voix : moteurs navigateur et proxy, voix clonées et leur studio, normalisation de la référence, transcription des modèles ASR), `notify.js` |
+| `ui/web/static/chat/` | `ChatPanel.vue` (avec `ChatHeader.vue`, `ChatSettings.vue`, `ChatModals.vue`, `useChatModels.js`), `api.js` (les messages envoyés au modèle, règle « ajout seul »), `turn.js` (les étapes d'un tour et leur chronologie d'affichage), `store.js`, `stream.js`, `attachments.js`, `images.js` ; `tools/`, les outils de la page (voir ci-dessous) ; `workspace.js` (le dossier ouvert), `artifacts.js` (le rendu isolé d'un artifact, et son pont de débogage ; pour un projet, l'aperçu d'un HTML avec le CSS et le JS du projet mis en ligne, la source colorée d'un fichier, l'archive `.zip`), `artifact-bridge.js` (la page ↔ l'artifact affiché), `models/`, `diff.js`, `ArtifactPanel.vue`, `LinuxPanel.vue` (le terminal de la VM Linux), `SidePanel.vue` (leur panneau commun : largeur, Large, Réseau), `voice/` (la voix : moteurs navigateur et proxy, voix clonées et leur studio, normalisation de la référence, transcription des modèles ASR), `notify.js` |
 | `ui/web/static/chat/tools/` | L'exécution des outils du navigateur (leurs déclarations : `tools/page/` du proxy) : `contract.js` (les listes `TOOL` et `FAMILY`, l'interface `PageTool`), `index.js` (le registre, qui vérifie chaque outil au chargement et y installe les déclarations de `/ui/session`, et les modules des extensions), `page/` (questions, fichiers, artifacts, dossier), `device/` (l'appareil ; `vueuse.js`, les composables VueUse des outils ; `media.js`, les flux), `sandbox/` (`bac.js`, le bac commun ; `files.js` ; `javascript.js`, `typescript.js`, `php.js`, `sql.js`, `postgres.js`, `sqlbase.js`, `tables.js` ; `linux.js` et `linuxvm.js`, la VM Linux ; `programs.js`, le Code Mode, dont les `tools.x()` passent par la page et `/ui/tools`) ; `text.js`, lire, chercher et retoucher un texte (artifacts et fichiers de la VM). Voir [Écrire un outil de la page](navigateur.md#écrire-un-outil-de-la-page) |
 | `ui/web/static/vendor/` | Construit par `proxy/wasm/`, non versionné : `php.js`/`php.wasm` (PHP 8.3, @php-wasm), `sql.js`/`sql.wasm` (SQLite, sql.js), `chart.js` (Chart.js), `html-to-image.js` (la capture d'un artifact), `highlight.js` (la coloration d'un artifact de code), `sucrase.js`, `typescript.js` (le compilateur TypeScript 6 et ses `lib.*.d.ts`), `pglite.*` et `initdb.wasm` (PostgreSQL, PGlite), `xterm.*` (le terminal) ; `linux/`, la VM Linux, construite par `proxy/linux/build.sh` |

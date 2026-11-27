@@ -123,32 +123,23 @@ def test_login_checks_the_key_and_sets_the_cookie(ui):
     assert ui.client.get("/ui/session").status_code == 401
 
 
-def test_a_key_in_the_url_opens_nothing(ui):
-    """La clé ne passe jamais par une URL (journaux du reverse proxy,
-    historique du navigateur)."""
+def test_auth_cookie_header_and_revocation(ui, monkeypatch):
+    """La clé ne passe jamais par l'URL, l'ancien cookie est ignoré puis
+    effacé, un en-tête Bearer reste accepté, et retirer la clé du TOML
+    ferme aussitôt la session."""
     r = ui.client.get(f"/ui?key={KEY}")
     assert r.status_code == 200 and not r.cookies
     assert ui.client.get(f"/ui/session?key={KEY}").status_code == 401
 
-
-def test_the_old_cookie_with_the_key_is_ignored_then_erased(ui):
     ui.client.cookies.set(auth.LEGACY_COOKIE, KEY)
     assert ui.client.get("/ui/session").status_code == 401
     r = login(ui)
     assert 'proxy_key=""' in r.headers.get("set-cookie", "")
-
-
-def test_removing_the_key_from_the_toml_closes_the_page(ui, monkeypatch):
-    login(ui)
     assert ui.client.get("/ui/session").status_code == 200
+
+    assert ui.client.get("/ui/session", headers={"authorization": f"Bearer {KEY}"}).status_code == 200
     monkeypatch.setattr(auth, "PROXY_API_KEYS", ["sk-bob"])
     assert ui.client.get("/ui/session").status_code == 401
-
-
-def test_a_header_key_still_reads_the_ui_routes(ui):
-    """Un curl sur /ui/usage avec la clé en en-tête est accepté."""
-    r = ui.client.get("/ui/session", headers={"authorization": f"Bearer {KEY}"})
-    assert r.status_code == 200
 
 
 def test_writing_routes_want_a_json_body(ui):

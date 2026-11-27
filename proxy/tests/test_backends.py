@@ -16,7 +16,8 @@ from llm_proxy.access import oidc
 from llm_proxy.core import config
 from llm_proxy.storage import backends as user_backends, conversations
 from llm_proxy.surfaces import omarchy
-from llm_proxy.ui import dashboard
+from llm_proxy.tools import webhook as slack
+from llm_proxy.ui import dashboard, webhook_routes
 from llm_proxy.upstream import backends, relaying
 
 # Le vrai envoi au backend, avant que la fixture `proxy` ne le remplace :
@@ -849,6 +850,20 @@ def test_l_admin_borne_les_modeles_d_un_compte(env, stats_db, monkeypatch):
         "/local-ai/models.json", headers=bearer(key)).json()["models"]}
     assert "essai/permis-1" in listed and "bob/autre" in listed
     assert not listed & {"essai/autre", "alice/autre"}, listed
+
+    # Webhook créé par Bob : limité à ses modèles permis, et fermé si son
+    # compte OIDC est bloqué.
+    monkeypatch.setattr(slack, "ENABLED", True)
+    monkeypatch.setattr(webhook_routes, "_start", lambda *a: None)
+    wh = bob.post("/ui/webhooks/in", json={
+        "name": "H", "model": "essai/permis-1", "model_override": True,
+        "target": "new"}).json()
+    hook_url = f"/hooks/{wh['token']}"
+    assert env.client.post(hook_url, json={"text": "x", "model": "essai/autre"}).text == "model_not_found"
+    assert env.client.post(hook_url, json={"text": "x", "model": "essai/permis-1"}).text == "ok"
+    alice.patch(f"/ui/users/{bob_id}", json={"role": "blocked"})
+    assert env.client.post(hook_url, json={"text": "x"}).status_code == 403
+    alice.patch(f"/ui/users/{bob_id}", json={"role": "user"})
 
     # Alice n'est pas bornée ; aucun motif = aucun modèle.
     assert ask(alice, "essai/autre").status_code == 200

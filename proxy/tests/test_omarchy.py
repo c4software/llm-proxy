@@ -4,7 +4,6 @@ préfixé ramené à un identifiant de recette. Les modèles permis d'un
 compte : test_backends.py (les modèles permis d'un compte)."""
 
 import json
-import time
 
 import httpx2
 import pytest
@@ -81,23 +80,28 @@ def test_la_liste_propose_les_modeles_de_conversation_que_voit_la_cle(shared):
 
 def test_la_liste_porte_la_vitesse_mesuree_relue_au_plus_une_fois_par_minute(shared, monkeypatch):
     """decode_tok_s : la vitesse de génération mesurée par le proxy, que le
-    panneau d'Omarchy affiche ; relue au plus une fois par SPEEDS_TTL."""
+    panneau d'Omarchy affiche ; ignorée sans clé, relue au plus une fois
+    par SPEEDS_TTL."""
+    calls, current = [], {"essai/mistral_small-3.2": 50.0}
+
+    def fake_speeds():
+        calls.append(1)
+        return dict(current)
+    monkeypatch.setattr(stats, "decode_speeds", fake_speeds)
+
     def speed():
         r = shared.client.get("/local-ai/models.json", headers=bearer(KEY))
         return {m["recipe"]: m["decode_tok_s"] for m in r.json()["models"]}
-    def put(generation):
-        with stats._reader() as conn:
-            conn.execute(stats.INSERT, (time.time(), "essai/Mistral_Small-3.2", "essai", "Mistral_Small-3.2",
-                                        "/v1/chat/completions", 200, 9.0, 10, 100, 1, 1, 0, "", generation))
-            conn.commit()
-    put(2.0)
+
+    # Liste vide sans clé : pas de lecture SQLite inutile.
+    assert shared.client.get("/local-ai/models.json").status_code == 200
+    assert calls == []
     assert speed() == {"essai.mistral-small-3.2": 50.0, "essai.gemma-vision": None}
-    put(0.5)
-    put(0.5)
-    assert speed()["essai.mistral-small-3.2"] == 50.0
+    current["essai/mistral_small-3.2"] = 200.0
+    assert speed()["essai.mistral-small-3.2"] == 50.0 and len(calls) == 1
     later = omarchy.time.monotonic() + omarchy.SPEEDS_TTL
     monkeypatch.setattr(omarchy.time, "monotonic", lambda: later)
-    assert speed()["essai.mistral-small-3.2"] == 200.0
+    assert speed()["essai.mistral-small-3.2"] == 200.0 and len(calls) == 2
 
 
 def test_desactivees_les_routes_omarchy_repondent_404(shared, monkeypatch):

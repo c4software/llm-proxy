@@ -103,19 +103,28 @@ _store = Store(lambda: DB_PATH, _setup,
                before=("PRAGMA auto_vacuum=INCREMENTAL",))
 
 
-def _reclaim(conn) -> None:
+def reclaim(conn) -> None:
     """Rend au disque les pages libérées (sans effet hors auto_vacuum
     INCREMENTAL). Le pragma libère une page par pas : tout lire."""
     conn.execute("PRAGMA incremental_vacuum").fetchall()
 
 
-def _run(fn):
+def run(fn):
     """fn(conn) sous le verrou, dans une transaction."""
     return _store.run(fn)
 
 
+def valid_id(value) -> bool:
+    """Identifiant sûr pour une table de conversations.db."""
+    return isinstance(value, str) and bool(_ID.match(value))
+
+
+_reclaim = reclaim
+_run = run
+
+
 def _check_id(cid) -> str:
-    if not isinstance(cid, str) or not _ID.match(cid):
+    if not valid_id(cid):
         raise HistoryError("identifiant de conversation invalide")
     return cid
 

@@ -40,12 +40,12 @@ def runner(setup):
         def q(c):
             setup(c)
             return fn(c)
-        return conversations._run(q)
+        return conversations.run(q)
     return run
 
 
 def check_id(value, what: str) -> str:
-    if not isinstance(value, str) or not conversations._ID.match(value):
+    if not conversations.valid_id(value):
         raise OwnedError(f"identifiant de {what} invalide")
     return value
 

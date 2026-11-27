@@ -34,7 +34,7 @@ clés d'avant) ; sinon une liste JSON de noms — un outil (`web_search`),
 les outils d'un serveur MCP (`mcp:<serveur>`, ceux qu'il découvrira
 compris) ou de tous (`mcp`) ; [] = aucun. Choisis à la création,
 modifiables ensuite (set_key_tools) ; ils suivent la clé, pas le compte.
-Le filtre lui-même est dans tools.enabled (tools.GRANTED).
+Le filtre lui-même est dans tools.enabled (GRANTED, posé par auth.identify).
 
 LES MODÈLES PERMIS D'UN COMPTE (colonne `models` de `users`) : posés par
 un admin. NULL = tous (le défaut) ; sinon une liste JSON de motifs à
@@ -79,6 +79,10 @@ PATTERN = re.compile(r"[A-Za-z0-9_.:/*?\[\]-]{1,200}")
 # Ceux du compte de la requête (None : tous), posés par auth.identify.
 MODELS: contextvars.ContextVar[frozenset | None] = contextvars.ContextVar(
     "models", default=None)
+# Les droits d'outils de la clé qui fait la requête (None : tous les outils
+# actifs), posés par auth.identify ; lus par tools.enabled et tool_routes.
+GRANTED: contextvars.ContextVar[frozenset | None] = contextvars.ContextVar(
+    "tool_rights", default=None)
 # Une clé présentée, le compte d'une session : relus au plus toutes les
 # CACHE_TTL secondes. Assez court pour qu'une révocation faite par un
 # autre processus prenne effet vite ; assez long pour ne pas toucher

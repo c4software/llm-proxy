@@ -390,14 +390,25 @@ def test_translator_stream_reasoning():
     assert ev[4][1]["content_block"]["type"] == "text"
 
 
-def test_translator_stream_split_across_chunks():
-    """Un événement coupé en plein milieu par la segmentation TCP."""
+def test_translator_stream_edge_cases():
+    """Segmentation TCP en plein événement, absence d'usage estimée, et
+    flux vide clos proprement."""
     t = A.Translator(200, "text/event-stream", "m")
     whole = sse({"choices": [{"delta": {"content": "coupé"}}]})
     raw = t.feed(whole[:10]) + t.feed(whole[10:]) + t.finish()
     deltas = [d for e, d in events(raw) if e == "content_block_delta"]
     assert deltas == [{"type": "content_block_delta", "index": 0,
                        "delta": {"type": "text_delta", "text": "coupé"}}]
+
+    t = A.Translator(200, "text/event-stream", "m")
+    t.feed(sse({"choices": [{"delta": {"content": "x" * 40},
+                             "finish_reason": "stop"}]}))
+    t.finish()
+    assert t.tokens(123) == (123, 10, False)
+
+    t = A.Translator(200, "text/event-stream", "m")
+    assert [e for e, _ in events(t.finish())] == [
+        "message_start", "message_delta", "message_stop"]
 
 
 def test_translator_stream_error_mid_flow():
@@ -412,32 +423,14 @@ def test_translator_stream_error_mid_flow():
     assert ev[-1][0] == "message_stop"
 
 
-def test_translator_stream_without_usage_estimates():
-    t = A.Translator(200, "text/event-stream", "m")
-    t.feed(sse({"choices": [{"delta": {"content": "x" * 40},
-                             "finish_reason": "stop"}]}))
-    t.finish()
-    assert t.tokens(123) == (123, 10, False)
-
-
-def test_translator_stream_empty_upstream():
-    """Upstream qui ferme sans rien envoyer : un message vide mais
-    complet, jamais un flux tronqué."""
-    t = A.Translator(200, "text/event-stream", "m")
-    assert [e for e, _ in events(t.finish())] == [
-        "message_start", "message_delta", "message_stop"]
-
-
 # ── divers ──────────────────────────────────────────────────────────────
 
-def test_estimate_tokens():
+def test_helpers_format_anthropic():
+    """Estimation de tokens, liste des modèles, ping et erreurs SSE."""
     n = A.estimate_tokens({"system": "x" * 400, "messages": [], "stream": True})
     assert 100 <= n <= 120
-    # prompt_text : ce qui part à /tokenize — sans les champs hors prompt.
     assert "stream" not in A.prompt_text({"system": "s", "stream": True})
 
-
-def test_models_list():
     out = A.models_list([{"id": "albert/m", "created": 1_700_000_000},
                          {"id": "bigchuck/q", "created": 0}])
     assert out["data"][0] == {"type": "model", "id": "albert/m",
@@ -446,18 +439,13 @@ def test_models_list():
     assert out["first_id"] == "albert/m" and out["last_id"] == "bigchuck/q"
     assert out["has_more"] is False
 
-
-def test_ping_and_sse_error():
     assert A.ping_event() == b'event: ping\ndata: {"type": "ping"}\n\n'
     ev = events(A.sse_error(A.error_body("trop", "rate_limit_error")))
     assert ev == [("error", {"type": "error", "error": {
         "type": "rate_limit_error", "message": "trop"}})]
-
-
-def test_error_type():
-    assert A.error_type(429) == "rate_limit_error"
-    assert A.error_type(418) == "invalid_request_error"
-    assert A.error_type(502) == "api_error"
+    for status, want in ((429, "rate_limit_error"), (418, "invalid_request_error"),
+                         (502, "api_error")):
+        assert A.error_type(status) == want, status
 
 
 def test_mid_conversation_system_keeps_its_place_across_turns():

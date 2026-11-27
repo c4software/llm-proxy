@@ -61,6 +61,7 @@ SAFE = (
     "prompts",
     "ui.linux_relay_max_bytes",
     "ui.linux_relay_idle_seconds",
+    "omarchy.context",
 )
 
 

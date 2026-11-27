@@ -388,6 +388,50 @@ def pdf_bytes(objs: list[bytes]) -> bytes:
     return bytes(out)
 
 
+def page(text="bonjour", ct="text/plain", status=200, **headers):
+    h = dict(headers)
+    if ct is not None:
+        h["content-type"] = ct
+    return httpx2.Response(status, content=text.encode() if isinstance(text, str)
+                           else text, headers=h)
+
+
+def pdf(*pages, password=None):
+    """Un PDF écrit à la main, une page par texte (ASCII ; «» : une page
+    sans couche texte, comme un scan). `password` : chiffré par pypdf, en
+    RC4 — le seul algorithme qu'il porte sans autre dépendance."""
+    import io
+    n = len(pages)
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Count %d /Kids [%s] >>" % (
+                n, b" ".join(b"%d 0 R" % (4 + 2 * i) for i in range(n))),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    for i, text in enumerate(pages):
+        flux = b"BT /F1 12 Tf 72 720 Td (%s) Tj ET" % text.encode("ascii") \
+            if text else b""
+        objs += [b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                 b"/Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>"
+                 % (5 + 2 * i),
+                 b"<< /Length %d >>\nstream\n%s\nendstream" % (len(flux), flux)]
+    out = pdf_bytes(objs)
+    if password is None:
+        return out
+    import pypdf
+    writer = pypdf.PdfWriter(clone_from=io.BytesIO(out))
+    writer.encrypt(password, "proprio", algorithm="RC4-128")
+    chiffre = io.BytesIO()
+    writer.write(chiffre)
+    return chiffre.getvalue()
+
+
+def chat_post(proxy, **extra):
+    body = {"model": "essai/qwen", "stream": True,
+            "tools": [{"type": "web_search"}],
+            "messages": [{"role": "user", "content": "Dernière version ?"}],
+            **extra}
+    return proxy.client.post("/v1/chat/completions", json=body)
+
+
 def everywhere(monkeypatch, module, name: str, value) -> None:
     """monkeypatch.setattr d'un réglage dans un module ET, si c'est un
     paquet découpé en parties (`from .common import ENABLED`), dans chacune

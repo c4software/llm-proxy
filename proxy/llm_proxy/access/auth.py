@@ -23,7 +23,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-from .. import tools
 from ..core import identity
 from ..core.httputil import dialect_of, error_response
 from ..core.settings import PROXY_API_KEYS, log
@@ -184,7 +183,7 @@ def identify(request: Request, who: Who) -> None:
     fairshare.CLIENT.set(who.client)
     fairshare.ACCOUNT.set(who.account)
     # Les droits de la clé : tools.enabled ne rend que ce qu'ils permettent.
-    tools.GRANTED.set(who.tools)
+    accounts.GRANTED.set(who.tools)
     # Les modèles permis du compte : upstream/backends.py les applique.
     accounts.MODELS.set(who.models)
     request.state.owner = who.client

@@ -21,7 +21,7 @@ import pytest
 
 from fakes import (FOUND, PUBLIC, RESULTS, SEARCHED, Echo, FakeUpstream,
                    FakeWeb, chat_doc, everywhere, fake_dns, go, hosted_chat,
-                   outil, pdf_bytes, rendu)
+                   outil, page, pdf, rendu)
 from llm_proxy.core import identity
 from llm_proxy.access import auth
 from llm_proxy.upstream import catalog
@@ -98,43 +98,8 @@ class Web(FakeWeb):
         return self.last.text
 
 
-def page(text="bonjour", ct="text/plain", status=200, **headers):
-    h = dict(headers)
-    if ct is not None:
-        h["content-type"] = ct
-    return httpx2.Response(status, content=text.encode() if isinstance(text, str)
-                          else text, headers=h)
-
-
 def redirect(location, status=302):
     return httpx2.Response(status, headers={"location": location})
-
-
-def pdf(*pages, password=None):
-    """Un PDF écrit à la main, une page par texte (ASCII ; «» : une page
-    sans couche texte, comme un scan). `password` : chiffré par pypdf, en
-    RC4 — le seul algorithme qu'il porte sans autre dépendance."""
-    n = len(pages)
-    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
-            b"<< /Type /Pages /Count %d /Kids [%s] >>" % (
-                n, b" ".join(b"%d 0 R" % (4 + 2 * i) for i in range(n))),
-            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
-    for i, text in enumerate(pages):
-        flux = b"BT /F1 12 Tf 72 720 Td (%s) Tj ET" % text.encode("ascii") \
-            if text else b""
-        objs += [b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-                 b"/Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>"
-                 % (5 + 2 * i),
-                 b"<< /Length %d >>\nstream\n%s\nendstream" % (len(flux), flux)]
-    out = pdf_bytes(objs)
-    if password is None:
-        return out
-    import pypdf
-    writer = pypdf.PdfWriter(clone_from=io.BytesIO(out))
-    writer.encrypt(password, "proprio", algorithm="RC4-128")
-    chiffre = io.BytesIO()
-    writer.write(chiffre)
-    return chiffre.getvalue()
 
 
 def search(args, reponse=None):

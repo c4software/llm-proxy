@@ -136,14 +136,19 @@ def decode_speeds() -> dict[str, float]:
     est pas."""
     with _reader() as conn:
         rows = conn.execute(
-            "SELECT lower(model_key), completion_tokens / generation FROM requests "
-            "WHERE ts >= ? AND status BETWEEN 200 AND 299 AND streamed AND exact "
-            "AND completion_tokens >= ? AND generation >= ? ORDER BY ts DESC",
-            (time.time() - SPEED_WINDOW, SPEED_MIN_TOKENS, SPEED_MIN_SECONDS)).fetchall()
+            "SELECT mk, speed FROM ("
+            "  SELECT lower(model_key) AS mk, completion_tokens / generation AS speed,"
+            "         ROW_NUMBER() OVER (PARTITION BY lower(model_key) ORDER BY ts DESC) AS rn"
+            "  FROM requests"
+            "  WHERE ts >= ? AND status BETWEEN 200 AND 299 AND streamed AND exact"
+            "  AND completion_tokens >= ? AND generation >= ?"
+            ") WHERE rn <= ?",
+            (time.time() - SPEED_WINDOW, SPEED_MIN_TOKENS, SPEED_MIN_SECONDS,
+             SPEED_SAMPLES),
+        ).fetchall()
     samples: dict[str, list[float]] = {}
     for model, speed in rows:
-        if len(seen := samples.setdefault(model, [])) < SPEED_SAMPLES:
-            seen.append(speed)
+        samples.setdefault(model, []).append(speed)
     return {model: statistics.median(seen) for model, seen in samples.items()}
 
 

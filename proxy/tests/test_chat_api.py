@@ -6,11 +6,10 @@ import json
 
 import pytest
 
-from fakes import everywhere
 from fakes import (
     ANSWER_TURN, FOUND, QUERY, SEARCH_DOC, SEARCH_TURN,
-    FakeUpstream, chat_doc, chunk, hosted_chat, search_then_answer, stream, tool_call,
-    usage,
+    FakeUpstream, chat_doc, chat_post as post, chunk, everywhere,
+    search_then_answer, stream, tool_call, usage,
 )
 from llm_proxy import prompts
 from llm_proxy.access import auth
@@ -34,32 +33,6 @@ Q2 = {"role": "user", "content": "Et la précédente ?"}
 def fn(name):
     return {"type": "function", "function": {
         "name": name, "parameters": {"type": "object", "properties": {}}}}
-
-
-@pytest.fixture
-def chat(proxy, monkeypatch):
-    """`proxy`, [chat].hosted_tools actif, les exécutions d'outils notées
-    dans `tool_lines` (stats.record_tool), une mémoire des échanges
-    cachés neuve, et dans `raws` les OCTETS partis au backend."""
-    proxy.tool_lines, proxy.raws = [], []
-    inner = relaying.send_upstream
-
-    async def send_upstream(call, request, path, body):
-        proxy.raws.append(body)
-        return await inner(call, request, path, body)
-
-    monkeypatch.setattr(relaying, "send_upstream", send_upstream)
-    hosted_chat(monkeypatch)
-    everywhere(monkeypatch, stats, "record_tool",
-                        lambda *a: proxy.tool_lines.append(a))
-    return proxy
-
-
-def post(proxy, **extra):
-    body = {"model": "essai/qwen", "stream": True, "tools": [WEB],
-            "messages": [{"role": "user", "content": "Dernière version ?"}],
-            **extra}
-    return proxy.client.post("/v1/chat/completions", json=body)
 
 
 def ask(proxy, messages, key=None, **extra):

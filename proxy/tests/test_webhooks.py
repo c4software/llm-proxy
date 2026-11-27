@@ -235,6 +235,9 @@ def test_reception_refuse_comme_slack(proxy, started, monkeypatch):
         assert refus(json=body) == (400, "no_text"), body
     monkeypatch.setattr(webhook_routes, "MAX_TEXT", 5)
     assert refus(json={"text": "trop long"}) == (400, "msg_too_long")
+    monkeypatch.setattr(webhook_routes, "MAX_BODY", 20)
+    assert refus(json={"text": "x", "extra": "a" * 30}) == (400, "msg_too_long")
+    monkeypatch.setattr(webhook_routes, "MAX_BODY", 1_000_000)
     assert started == []
     # Une partie mal typée n'empêche pas de lire le texte.
     assert refus(json={"text": "x", "attachments": [{"fields": 5}]}) == (200, "ok")
@@ -252,11 +255,14 @@ def test_modele_du_corps_seulement_si_le_webhook_le_permet(proxy, started):
 
 
 def test_reception_bornee_et_fermee(proxy, started, monkeypatch):
-    """Au-delà du débit par minute : 429 ; webhooks désactivés : 404."""
+    """Au-delà du débit par minute ou de MAX_RUNNING : 429 ; désactivés : 404."""
     url = address(incoming())
     monkeypatch.setattr(webhook_routes, "CALLS_PER_MINUTE", 2)
     codes = [proxy.client.post(url, json={"text": "x"}).status_code for _ in range(3)]
     assert codes == [200, 200, 429] and len(started) == 2
+    monkeypatch.setattr(webhook_routes, "CALLS_PER_MINUTE", 100)
+    monkeypatch.setattr(webhook_routes, "MAX_RUNNING", 0)
+    assert proxy.client.post(url, json={"text": "x"}).status_code == 429
     monkeypatch.setattr(slack, "ENABLED", False)
     assert proxy.client.post(url, json={"text": "x"}).status_code == 404
 
@@ -453,22 +459,16 @@ def test_reponse_en_cours_visible_puis_remplacee(proxy, posted, monkeypatch):
 
 
 def test_reponse_non_rangee_ne_reste_pas_en_cours(proxy, posted, monkeypatch):
-    """Si la réponse ne peut pas être rangée (historique plein), une réponse
-    courte en erreur prend la place de celle « en cours »."""
+    """Si la réponse ne peut pas être rangée (document au-delà de
+    MAX_DOC_BYTES), une réponse courte en erreur prend la place de celle
+    « en cours »."""
     hook = incoming()
-    real, calls = webhook_turn._replace, []
-
-    def full_once(owner, cid, question, message):
-        calls.append(message)
-        if len(calls) == 1:
-            raise conversations.HistoryError("historique plein", 413)
-        return real(owner, cid, question, message)
-    monkeypatch.setattr(webhook_turn, "_replace", full_once)
-    proxy.replies = [answer("une très longue réponse")]
+    monkeypatch.setattr(conversations, "MAX_DOC_BYTES", 900)
+    proxy.replies = [answer("x" * 1200)]
     turn(hook)
     a = last_message()
     assert "serverTurn" not in a and a["error"].startswith("réponse non rangée")
-    assert "historique plein" in last_error(hook)
+    assert "trop volumineuse" in last_error(hook) or "900" in last_error(hook)
 
 
 def test_question_retiree_reponse_non_ajoutee(proxy, posted, monkeypatch):

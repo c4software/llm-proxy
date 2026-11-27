@@ -64,8 +64,7 @@ import { readAttachment } from "./attachments.js";
 import { imagePrompt, oneImage, naturalSize, upscaleSize } from "./images.js";
 import { readStream } from "./stream.js";
 import { partialString } from "../lib/partialjson.js";
-import { availableBrowserModels, browserModel, modelCaps } from "./browser.js";
-import { catalog, catalogState, refreshCatalog } from "../lib/catalog.js";
+import { modelCaps } from "./browser.js";
 import * as workspace from "./workspace.js";
 import * as notify from "./notify.js";
 import * as tools from "./tools/index.js";
@@ -73,15 +72,17 @@ import * as artifactBridge from "./artifact-bridge.js";
 import ArtifactPanel from "./ArtifactPanel.vue";
 import AssetPanel, { conversationImages } from "./AssetPanel.vue";
 import LinuxPanel from "./LinuxPanel.vue";
+import ChatHeader from "./ChatHeader.vue";
+import ChatSettings from "./ChatSettings.vue";
+import ChatModals from "./ChatModals.vue";
+import { useChatModels } from "./useChatModels.js";
 import { setOpener as setLinuxOpener, vm as linuxVm } from "./tools/sandbox/linuxvm.js";
 import { download, useCopy } from "../lib/files.js";
 import * as voice from "./voice/index.js";
-import VoiceSettings from "./voice/VoiceSettings.vue";
-import VoiceStudio from "./voice/VoiceStudio.vue";
 import * as speech from "./voice/speech.js";
 import * as asr from "./voice/transcribe.js";
 import { useRecorder } from "./voice/recorder.js";
-import { role as voiceRole, presetVoices, language as voiceLanguage } from "./voice/proxy.js";
+import { presetVoices, language as voiceLanguage } from "./voice/proxy.js";
 import { clones as voiceClones, load as loadClones } from "./voice/clones.js";
 import { Markdown } from "../lib/markdown.js";
 import { num, size } from "../lib/format.js";
@@ -92,7 +93,7 @@ import { apiMessages } from "./api.js";
 import { chipFor, recordCall, endStep, closeStep, pushStep, timeline } from "./turn.js";
 
 const ChatPanel = {
-  components: { ArtifactPanel, AssetPanel, LinuxPanel, VoiceSettings, VoiceStudio },
+  components: { ArtifactPanel, AssetPanel, LinuxPanel, ChatHeader, ChatSettings, ChatModals },
   props: { session: { type: Object, required: true } },
   emits: ["unauthorized"],
   setup(props, { emit }) {
@@ -101,8 +102,6 @@ const ChatPanel = {
     // Une réponse du proxy (webhook) encore « en cours » passé ce délai :
     // le proxy a redémarré pendant le tour, elle ne viendra plus.
     const SERVER_STALE = 30 * 60 * 1000;
-    const LAST_MODEL = "llm-proxy-chat-model";
-    const lastModel = VueUse.useLocalStorage(LAST_MODEL, "");
     const MEMORY_OPEN = "llm-proxy-chat-memory";
     // Noms lisibles des types d'outils ; un type inconnu garde le sien.
     const TOOL_LABELS = {
@@ -290,126 +289,13 @@ const ChatPanel = {
     });
     const uid = S.uid;
 
-    // ── modèles ─────────────────────────────────────────────────────────
-    const modelIds = computed(() => models.value.filter((m) => !m.image && !m.voice && !m.asr).map((m) => m.id));
-    // Les modèles : ceux du catalogue du proxy (de conversation et
-    // d'images ; lib/catalog.js, gardé dans le navigateur), puis ceux du
-    // navigateur (browser.js), décrits avec ce qu'ils savent faire.
-    const browserModels = ref([]);
-    // Les modèles de voix (`voice` : leur rôle, voice/proxy.js) et de
-    // transcription (`asr`) aussi.
-    const models = computed(() => catalogState.data
-      .filter((m) => m.chat || m.image || m.type === "text-to-speech" || m.type === "automatic-speech-recognition")
-      .map((m) => (m.type === "text-to-speech" ? { ...m, voice: voiceRole(m.id) }
-        : m.type === "automatic-speech-recognition" ? { ...m, asr: true } : m))
-      .sort((a, b) => a.id.localeCompare(b.id)).concat(browserModels.value));
-    // Sans catalogue gardé, l'échec se dit ; avec, le bouton le rappelle.
-    const modelsError = computed(() => catalogState.error && !catalogState.data.length
-      ? "Catalogue illisible : " + catalogState.error : "");
-    const modelsLoading = computed(() => catalogState.loading);
-    const modelsTitle = computed(() => catalogState.loading ? "Lecture du catalogue…"
-      : catalogState.error ? "Catalogue illisible (" + catalogState.error + ") — relire"
-      : "Relire le catalogue" + (catalogState.at ? " (lu à " + new Date(catalogState.at)
-        .toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) + ")" : ""));
-    // L'entrée du modèle de la conversation, et ce qu'il sait faire : le
-    // chat n'en connaît que cela (outils, réflexion, dossier, réponse).
-    const modelEntry = (id) => models.value.find((m) => m.id === id) || browserModel(id);
-    const caps = computed(() => modelCaps(current.value && modelEntry(current.value.model)));
-    // La liste, groupée par fournisseur (le préfixe « fournisseur/ » de
-    // l'identifiant, ou le `group` de l'entrée) : sous chaque groupe, le
-    // seul nom du modèle. La conversation d'abord, puis le navigateur,
-    // puis les images, puis les voix, puis les transcriptions.
-    const modelGroups = computed(() => {
-      const groups = new Map();
-      for (const m of models.value) {
-        const cut = m.id.indexOf("/");
-        const from = m.group || (cut > 0 ? m.id.slice(0, cut) : "Autres");
-        const label = m.image ? "Images · " + from : m.voice ? "Voix · " + from : m.asr ? "Transcription · " + from : from;
-        if (!groups.has(label)) groups.set(label, { label, rank: m.asr ? 4 : m.voice ? 3 : m.image ? 2 : m.browser ? 1 : 0, models: [] });
-        const name = m.name || (cut > 0 ? m.id.slice(cut + 1) : m.id);
-        const notes = [m.vision && !m.image && "vision", m.voice && speech.ROLE_LABELS[m.voice],
-                       m.availability && m.availability !== "available" && "à télécharger"];
-        groups.get(label).models.push({ id: m.id, text: [name, ...notes.filter(Boolean)].join(" · ") });
-      }
-      return [...groups.values()].sort((a, b) => a.rank - b.rank);
-    });
-    const isImage = (id) => !!(models.value.find((m) => m.id === id) || {}).image;
-    const imageMode = computed(() => !!current.value && isImage(current.value.model));
-    // Un modèle de voix : son rôle (custom, clone, design), sinon «».
-    const voiceOf = (id) => (models.value.find((m) => m.id === id) || {}).voice || "";
-    const voiceMode = computed(() => (current.value ? voiceOf(current.value.model) : ""));
-    // Un modèle de transcription (voice/transcribe.js).
-    const isAsr = (id) => !!(models.value.find((m) => m.id === id) || {}).asr;
-    const asrMode = computed(() => !!current.value && isAsr(current.value.model));
-    // Ni conversation ni outils : une image, une lecture, une transcription.
-    const genMode = computed(() => imageMode.value || !!voiceMode.value || asrMode.value);
-    const imageSizes = computed(() => chat.value.image_sizes || ["512x512"]);
-    // La liste du premier motif d'une table de [tools.image_generation]
-    // (`steps`, `loras`) qui couvre le nom du modèle ("*" = n'importe
-    // quoi) ; aucun motif : liste vide, pas de choix.
-    const listOf = (table, model) => {
-      for (const [pat, list] of Object.entries(table || {})) {
-        const re = new RegExp("^" + pat.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
-        if (re.test(model || "")) return list;
-      }
-      return [];
-    };
-    // Les passes de débruitage du modèle d'images de la conversation.
-    // Aucun motif : pas de choix, et `steps` jamais envoyé (le défaut du
-    // backend ; Turbo n'en accepte pas d'autre).
-    const stepsOf = (model) => listOf(chat.value.image_steps, model);
-    const imageSteps = computed(() => (current.value ? stepsOf(current.value.model) : []));
-    // Les LoRA du modèle d'images de la conversation (noms enregistrés
-    // côté backend, gufo `--lora`). Aucun motif : pas de choix, et
-    // `loras` jamais envoyé ; « sans » n'envoie rien non plus.
-    const lorasOf = (model) => listOf(chat.value.image_loras, model);
-    const imageLoras = computed(() => (current.value ? lorasOf(current.value.model) : []));
-    // Le modèle d'une nouvelle conversation : celui que le proxy
-    // présélectionne ([ui].chat_model), s'il est au catalogue ; sinon le
-    // dernier choisi dans ce navigateur, sinon le premier.
-    function defaultModel() {
-      const preset = chat.value.model;
-      if (preset && modelIds.value.includes(preset)) return preset;
-      const last = lastModel.value;
-      if (last && modelIds.value.includes(last)) return last;
-      const first = models.value.find((m) => !m.image && !m.voice && !m.asr && m.byDefault !== false);
-      return (first && first.id) || last || "";
-    }
-    // Des images à un modèle que le catalogue ne dit pas capable de les
-    // lire : envoyées quand même (le catalogue peut se tromper), mais dit.
-    const blind = computed(() => {
-      const c = current.value;
-      const m = c && models.value.find((x) => x.id === c.model);
-      return !!(m && !m.vision && !m.image && pending.value.some((a) => a.kind === "image"));
-    });
-    // Un modèle d'images ne reçoit qu'UNE image (à retoucher) : ni fichier
-    // texte, ni seconde image ; un modèle de transcription, que l'audio ;
-    // les autres, jamais l'audio.
-    const unsent = computed(() => (imageMode.value ? pending.value.some((a) => a.kind !== "image")
-      || pending.value.filter((a) => a.kind === "image").length > 1
-      : voiceMode.value ? pending.value.length > 0
-      : asrMode.value ? pending.value.some((a) => a.kind !== "audio")
-      : pending.value.some((a) => a.kind === "audio")));
-
-    async function loadModels() {
-      // Chrome peut mettre quelques secondes à dire ses modèles : le
-      // catalogue ne les attend pas.
-      availableBrowserModels().then((got) => { browserModels.value = got; });
-      try {
-        await catalog();
-        if (current.value && !current.value.model) current.value.model = defaultModel();
-      } catch (e) {
-        if (e.status === 401) emit("unauthorized");
-      }
-    }
-    async function reloadModels() {
-      availableBrowserModels().then((got) => { browserModels.value = got; });
-      try { await refreshCatalog(); } catch (e) { if (e.status === 401) emit("unauthorized"); }
-    }
-
-    watch(() => current.value && current.value.model, (m) => {
-      if (m && !isImage(m) && !voiceOf(m) && !isAsr(m)) lastModel.value = m;
-    });
+    // ── modèles (useChatModels.js) ──────────────────────────────────────
+    const {
+      models, modelsError, modelsLoading, modelsTitle, modelEntry,
+      caps, modelGroups, isImage, imageMode, voiceOf, voiceMode, isAsr, asrMode,
+      genMode, imageSizes, stepsOf, imageSteps, lorasOf, imageLoras, defaultModel,
+      blind, unsent, loadModels, reloadModels,
+    } = useChatModels({ chat, current, pending, onUnauthorized: () => emit("unauthorized") });
 
     // Incognito : la conversation vide change de genre ; sinon, une neuve
     // de l'autre genre (l'incognito quittée disparaît).
@@ -1891,102 +1777,21 @@ export default ChatPanel;
       </div>
     </section>
     <section class="chat-main" v-if="current" ref="dropZone">
-      <header class="chat-head">
-        <h2 :title="current.title">{{ current.title }}</h2>
-        <label class="model-pick" title="Modèle">
-          <select v-model="current.model" :disabled="streaming" :title="current.model">
-            <option v-if="!models.length && current.model" :value="current.model">{{ modelsLoading ? "Chargement des modèles…" : current.model }}</option>
-            <option v-if="!models.length && !current.model" value="" disabled>{{ modelsLoading ? "Chargement des modèles…" : "Aucun modèle" }}</option>
-            <option v-if="current.model && models.length && !models.some((m) => m.id === current.model)"
-                    :value="current.model">{{ current.model }} ({{ modelsLoading ? "chargement…" : "absent du catalogue" }})</option>
-            <optgroup v-for="g in modelGroups" :key="g.label" :label="g.label">
-              <option v-for="m in g.models" :key="m.id" :value="m.id">{{ m.text }}</option>
-            </optgroup>
-          </select>
-        </label>
-        <button type="button" class="btn ghost reload-models" :class="{ busy: modelsLoading }"
-                :disabled="modelsLoading" :title="modelsTitle" :aria-label="modelsTitle" @click="reloadModels">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button>
-        <button type="button" class="btn ghost ico-btn incognito-btn" :disabled="streaming"
-                :aria-pressed="String(!!current.incognito)" @click="toggleIncognito"
-                :title="current.incognito ? 'Quitter le mode incognito' : 'Conversation incognito : rien n’est gardé'">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 11h20M5 11l2.5-6h9l2.5 6M10 16.5c1.3-.8 2.7-.8 4 0"/><circle cx="7" cy="16.5" r="3"/><circle cx="17" cy="16.5" r="3"/></svg>
-          <span class="lbl">Incognito</span></button>
-        <button type="button" class="btn ghost ico-btn" v-if="(current.artifacts || []).length"
-                :aria-pressed="String(artifactsOpen)" @click="toggleArtifacts()"
-                title="Les artifacts de la conversation (pages, documents, schémas)">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 9h16M9 9v11"/></svg>
-          <span class="lbl">Artifacts ({{ current.artifacts.length }})</span></button>
-        <button type="button" class="btn ghost ico-btn" v-if="assets.length"
-                :aria-pressed="String(assetsOpen)" @click="toggleAssets()"
-                title="Les images générées dans la conversation">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>
-          <span class="lbl">Images ({{ assets.length }})</span></button>
-        <button type="button" class="btn ghost ico-btn" v-if="linuxOffered"
-                :aria-pressed="String(linuxOpen)" @click="toggleLinux()"
-                title="Terminal : la VM Linux de la conversation, celle où le modèle exécute ses scripts">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3zM7 10l3 2-3 2M12 15h5"/></svg>
-          <span class="lbl">Terminal</span></button>
-        <button type="button" class="btn ghost ico-btn" v-if="$props.session.memory"
-                :aria-pressed="String(memoryOpen)" @click="toggleMemory()"
-                title="Mémoire : ce que les modèles ont retenu">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6zM9 9h6M9 13h6M9 17h4"/></svg>
-          <span class="lbl">Mémoire</span></button>
-        <button type="button" class="btn ghost ico-btn" :aria-pressed="String(settingsOpen)"
-                @click="settingsOpen = !settingsOpen" title="Réglages">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M16 5v4M10 15v4"/></svg>
-          <span class="lbl">Réglages</span></button>
-      </header>
+      <chat-header :current="current" :models="models" :model-groups="modelGroups"
+                   :models-loading="modelsLoading" :models-title="modelsTitle" :streaming="streaming"
+                   :artifacts-open="artifactsOpen" :assets-count="assets.length" :assets-open="assetsOpen"
+                   :linux-offered="linuxOffered" :linux-open="linuxOpen"
+                   :memory-enabled="!!$props.session.memory" :memory-open="memoryOpen"
+                   :settings-open="settingsOpen"
+                   @reload-models="reloadModels" @toggle-incognito="toggleIncognito"
+                   @toggle-artifacts="toggleArtifacts()" @toggle-assets="toggleAssets()"
+                   @toggle-linux="toggleLinux()" @toggle-memory="toggleMemory()"
+                   @toggle-settings="settingsOpen = !settingsOpen"></chat-header>
 
-      <div class="chat-settings" v-if="settingsOpen">
-        <label class="field wide">
-          <span>Prompt système</span>
-          <textarea v-model="current.system" rows="3" spellcheck="false"
-                    placeholder="Instructions données au modèle avant la conversation (facultatif)."></textarea>
-        </label>
-        <div class="field wide hidden-prompt">
-          <label class="check"><input type="checkbox" v-model="promptOpen">
-            Afficher le prompt invisible <span class="dim">— ce que le prochain message enverra en plus
-            du fil{{ hiddenPrompt ? " : ≈ " + kTokens(hiddenPrompt.total) + " tokens" : "" }}</span></label>
-          <div class="hidden-body" v-if="hiddenPrompt">
-            <p class="dim">Prompt système envoyé · ≈ {{ kTokens(hiddenPrompt.systemTokens) }} tokens
-              (dont consignes des outils ≈ {{ kTokens(hiddenPrompt.guidanceTokens) }})</p>
-            <pre>{{ hiddenPrompt.system || "(aucun)" }}</pre>
-            <p class="dim">Outils déclarés ({{ hiddenPrompt.specs.length }}) · ≈ {{ kTokens(hiddenPrompt.toolTokens) }} tokens</p>
-            <details v-for="d in hiddenPrompt.specs" :key="d.from + d.name">
-              <summary><code>{{ d.name }}</code> <span class="dim">{{ d.from }} · ≈ {{ kTokens(d.tokens) }} tokens</span></summary>
-              <pre>{{ d.json }}</pre>
-            </details>
-          </div>
-        </div>
-        <div class="field">
-          <span>Température</span>
-          <div class="temp">
-            <label class="check"><input type="checkbox" :checked="current.temperature === null"
-              @change="current.temperature = $event.target.checked ? null : 0.7"> celle du modèle</label>
-            <template v-if="current.temperature !== null">
-              <input type="range" min="0" max="2" step="0.05" v-model.number="current.temperature">
-              <b>{{ Number(current.temperature).toFixed(2) }}</b>
-            </template>
-          </div>
-        </div>
-        <div class="field">
-          <span>Affichage</span>
-          <label class="check"><input type="checkbox" v-model="current.showReasoning">
-            montrer le raisonnement du modèle</label>
-        </div>
-        <voice-settings :incognito="!!current.incognito"></voice-settings>
-        <div class="field" v-if="notifySupported">
-          <span>Notifications</span>
-          <label class="check"><input type="checkbox" :checked="notifyOn" @change="toggleNotify">
-            prévenir quand une réponse se termine (onglet en arrière-plan)</label>
-        </div>
-        <div class="field">
-          <span>Conversation</span>
-          <div><button type="button" class="btn ghost" :disabled="!current.messages.length"
-                       @click="exportMd(current)">Exporter en Markdown</button></div>
-        </div>
-      </div>
+      <chat-settings v-if="settingsOpen" :current="current"
+                     v-model:prompt-open="promptOpen" :hidden-prompt="hiddenPrompt"
+                     :notify-supported="notifySupported" :notify-on="notifyOn"
+                     @toggle-notify="toggleNotify" @export="exportMd"></chat-settings>
       <p class="chat-incognito" v-if="current.incognito">Incognito : rien n'est gardé, ni dans
         ce navigateur ni par le proxy (ni mémoire, ni cache), et la conversation disparaît dès
         que vous la quittez ou rechargez la page.</p>
@@ -2463,59 +2268,13 @@ export default ChatPanel;
     <asset-panel v-else-if="assetsOpen && assets.length" :images="assets" :selected="assetKey" :busy="streaming"
                  @select="assetKey = $event" @retouch="retouch" @locate="locateAsset" @close="toggleAssets(false)"></asset-panel>
     <linux-panel v-else-if="linuxOpen && current" :conv="current" @close="toggleLinux(false)"></linux-panel>
-    <teleport to="body">
-    <div class="lightbox" v-if="zoom" @click.self="zoom = null" role="dialog" aria-label="Image agrandie">
-      <img :src="zoom.data" :alt="zoom.name" @click="zoom = null">
-      <div class="lightbox-bar">
-        <template v-if="zoomIndex >= 0 && assets.length > 1">
-          <button type="button" class="btn ghost" @click="zoomGo(-1)" title="Image précédente (←)" aria-label="Image précédente">‹</button>
-          <span class="dim">{{ zoomIndex + 1 }} / {{ assets.length }}</span>
-          <button type="button" class="btn ghost" @click="zoomGo(1)" title="Image suivante (→)" aria-label="Image suivante">›</button>
-        </template>
-        <span class="dim">{{ zoom.name }}</span>
-        <a class="btn ghost" :href="zoom.data" :download="zoom.name">Télécharger</a>
-        <button type="button" class="btn ghost" v-if="ownImage(zoom.data)"
-                :disabled="streaming" @click="retouch(zoom)">Retoucher</button>
-        <template v-if="upscaleOpt && ownImage(zoom.data)">
-          <select v-model.number="upscaleFactor" :disabled="streaming" aria-label="Facteur d'agrandissement">
-            <option v-for="f in upscaleOpt.factors" :key="f" :value="f">× {{ f }}</option></select>
-          <select v-if="upscaleOpt.strengths && upscaleOpt.strengths.length > 1" v-model.number="upscaleStrength"
-                  :disabled="streaming" aria-label="Force de l'agrandissement" title="Plus bas : plus fidèle à l'image, moins de détail ajouté">
-            <option v-for="s in upscaleOpt.strengths" :key="s.value" :value="s.value">{{ strengthText(s) }}</option></select>
-          <button type="button" class="btn ghost" :disabled="streaming" @click="upscale(zoom)"
-                  title="Le modèle d'agrandissement redessine l'image à une plus grande taille (détails un peu changés)">Agrandir</button>
-        </template>
-        <button type="button" class="btn" @click="zoom = null">Fermer</button>
-      </div>
-    </div>
-    <!-- Le studio d'une voix clonée (« ＋ nouvelle voix… » de la barre) : fermé
-         par ✕ ou Échap seulement, un clic à côté ne perd pas l'enregistrement. -->
-    <div class="lightbox voice-modal" v-if="studioOpen && current" role="dialog" aria-label="Nouvelle voix clonée">
-      <voice-studio :clone-model="current.model" :language="voiceLang" :incognito="!!current.incognito"
-                    @saved="voiceSaved" @close="studioOpen = false"></voice-studio>
-    </div>
-    <div class="lightbox file-preview" v-if="filePreview" @click.self="filePreview = null" role="dialog" :aria-label="filePreview.name">
-      <div class="file-preview-box">
-        <header class="artifact-head">
-          <h3 :title="filePreview.name">{{ filePreview.name }}</h3>
-          <span class="dim">{{ size(filePreview.f.size || filePreview.text.length) }}</span>
-          <span class="artifact-actions">
-            <button type="button" class="btn ghost art-btn" @click="copyPreview({ name: filePreview.name, content: filePreview.text })"
-                    :title="previewCopied === filePreview.name ? 'Copié' : 'Copier'" aria-label="Copier">
-              <svg v-if="previewCopied === filePreview.name" class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>
-              <svg v-else class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg></button>
-            <button type="button" class="btn ghost art-btn" @click="downloadOut(filePreview.f)"
-                    :title="'Télécharger ' + filePreview.name" aria-label="Télécharger">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>
-            <button type="button" class="btn ghost art-btn" title="Fermer (Échap)" aria-label="Fermer" @click="filePreview = null">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-          </span>
-        </header>
-        <div class="file-preview-body md" v-if="filePreview.html" v-html="filePreview.html"></div>
-        <pre class="file-preview-body artifact-source" v-else>{{ filePreview.shown }}</pre>
-        <p class="linux-note" v-if="filePreview.cut">Aperçu coupé : {{ filePreview.cut }} caractères de plus, dans le fichier téléchargé.</p>
-      </div>
-    </div>
-    </teleport>
+    <chat-modals :current="current" :zoom="zoom" :zoom-index="zoomIndex" :assets-count="assets.length"
+                 :streaming="streaming" :upscale-opt="upscaleOpt"
+                 v-model:upscale-factor="upscaleFactor" v-model:upscale-strength="upscaleStrength"
+                 :strength-text="strengthText" :studio-open="studioOpen" :voice-lang="voiceLang"
+                 :file-preview="filePreview" :preview-copied="previewCopied"
+                 @close-zoom="zoom = null" @zoom-go="zoomGo" @retouch="retouch" @upscale="upscale"
+                 @voice-saved="voiceSaved" @close-studio="studioOpen = false"
+                 @copy-preview="copyPreview" @download-out="downloadOut" @close-preview="filePreview = null"></chat-modals>
   </div>
 </template>

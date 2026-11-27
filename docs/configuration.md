@@ -100,6 +100,7 @@ Seuls ces réglages s'appliquent à chaud ; ils sont lus à chaque usage :
 | `[mcp_server]` | `allowed_origins` |
 | `[prompts]` | toute la table ([Prompts](prompts.md)) |
 | `[ui]` | `page_tools_disabled`, `chat_max_rounds` (la page la reçoit avec sa session suivante), `linux_relay_max_bytes`, `linux_relay_idle_seconds` |
+| `[omarchy]` | `context` |
 
 Tout autre changement (backends, outils activés, chemins, OIDC…) n'est
 pris en compte qu'après redémarrage. Le journal et la page indiquent

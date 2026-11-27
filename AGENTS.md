@@ -161,20 +161,3 @@ Corriger un bug, c'est d'abord écrire le test qui échoue.
   `monkeypatch` (`fakes.everywhere` pour un réglage recopié dans les parties
   d'un paquet), jamais `data/`.
 - Les imports sont en tête de fichier.
-
-### Ce qui reste à couvrir
-
-Lacunes connues, à combler quand le code concerné est touché :
-
-- webhooks : 429 de `MAX_RUNNING`, corps au-delà de `MAX_BODY`,
-  `still_allowed` pour un compte OIDC bloqué ;
-- dépôts : PUT d'une source par un autre compte, erreurs 401/404 de GitHub et
-  Gitea ;
-- backends des comptes : modèles permis du créateur d'un webhook, refus d'un
-  `model` du corps entrant ;
-- tests encore liés au temps réel : `test_the_admin_sets_an_account_share`,
-  `test_tous_les_bacs_occupes`, `test_quotas_expiration_destruction_orphelins` ;
-- `test_reponse_non_rangee_ne_reste_pas_en_cours` remplace encore
-  `webhook_turn._replace` ;
-- `test_web_grep.py` et `test_provenance.py` importent leurs fixtures d'autres
-  fichiers de tests.

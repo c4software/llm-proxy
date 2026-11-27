@@ -258,7 +258,7 @@ def test_cloisonnement_par_client_et_bac_jetable(service):
     assert client.get("/v1/status", headers=AUTH).json()["sessions"] == 2
 
 
-def test_quotas_expiration_destruction_orphelins(service):
+def test_quotas_expiration_destruction_orphelins(service, monkeypatch):
     os.makedirs(service.root / "sbx-orphelin" / "work")
     client, box = service(max_sessions_per_client=2, max_sessions=3, idle=3600)
     assert os.listdir(service.root) == []       # détruit au démarrage
@@ -285,10 +285,9 @@ def test_quotas_expiration_destruction_orphelins(service):
     assert destroy("clientB", "o4") is False and destroy("", "o4") is True
     assert len(box) == 2 and len(os.listdir(service.root)) == 2
 
-    # Expiration : par inactivité (le serveur appelle sweep() toutes les
-    # 30 s ; ici, à la main).
-    box.limits = sandbox.Limits(idle=0.05)
-    time.sleep(0.1)
+    # Expiration par inactivité : horloge décalée au-delà de `idle`, sans attente.
+    later = time.monotonic() + 3601
+    monkeypatch.setattr(sandbox.time, "monotonic", lambda: later)
     assert asyncio.run(box.sweep()) == 2
     assert len(box) == 0 and os.listdir(service.root) == []
 
@@ -296,14 +295,30 @@ def test_quotas_expiration_destruction_orphelins(service):
 def test_tous_les_bacs_occupes(service):
     """Un bac qui exécute ne cède pas sa place : 429 `busy`."""
     client, _ = service(max_sessions=1)
-    slow = threading.Thread(target=run, args=(
-        client, "import time; time.sleep(1.5)"), kwargs={"session": "lent"})
+    code = ("import os, time\nopen('started', 'w').close()\n"
+            "while not os.path.exists('stop'): time.sleep(0.01)\n")
+    slow = threading.Thread(target=run, args=(client, code), kwargs={"session": "lent"})
     slow.start()
-    time.sleep(0.6)
-    r = client.post("/v1/execute", headers=AUTH, json={
-        "client": "clientA", "session": "autre", "language": "sh",
-        "code": "echo 1"})
-    slow.join()
+    try:
+        deadline = time.monotonic() + 5.0
+        work = None
+        while time.monotonic() < deadline and work is None:
+            for name in os.listdir(service.root):
+                if (service.root / name / "work" / "started").exists():
+                    work = service.root / name / "work"
+                    break
+            if work is None:
+                time.sleep(0.01)
+        assert work is not None, "le bac lent n'a pas démarré"
+        r = client.post("/v1/execute", headers=AUTH, json={
+            "client": "clientA", "session": "autre", "language": "sh",
+            "code": "echo 1"})
+    finally:
+        for name in os.listdir(service.root):
+            w = service.root / name / "work"
+            if w.is_dir():
+                (w / "stop").write_text("")
+        slow.join(timeout=5.0)
     assert (r.status_code, r.json()["error"]["code"]) == (429, "busy")
     assert run(client, "echo 1", "sh", session="autre")["output"] == "1\n"
 

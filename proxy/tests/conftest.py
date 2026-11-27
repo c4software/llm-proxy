@@ -211,3 +211,25 @@ def conf(ui, tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_PATH", str(path))
     login(ui)
     return ui
+
+
+@pytest.fixture
+def chat(proxy, monkeypatch):
+    """`proxy`, [chat].hosted_tools actif, les exécutions d'outils notées
+    dans `tool_lines` (stats.record_tool), une mémoire des échanges
+    cachés neuve, et dans `raws` les OCTETS partis au backend."""
+    from fakes import everywhere, hosted_chat
+    from llm_proxy.storage import stats
+    from llm_proxy.upstream import relaying
+    proxy.tool_lines, proxy.raws = [], []
+    inner = relaying.send_upstream
+
+    async def send_upstream(call, request, path, body):
+        proxy.raws.append(body)
+        return await inner(call, request, path, body)
+
+    monkeypatch.setattr(relaying, "send_upstream", send_upstream)
+    hosted_chat(monkeypatch)
+    everywhere(monkeypatch, stats, "record_tool",
+               lambda *a: proxy.tool_lines.append(a))
+    return proxy

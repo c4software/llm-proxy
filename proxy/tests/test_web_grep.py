@@ -1,12 +1,24 @@
 """`web_grep` (tools/web_grep.py) : la recherche d'une expression dans une
-page lue par web_fetch.load — même faux web, mêmes réglages que
-test_tools.py, dont les fixtures sont reprises ici."""
+page lue par web_fetch.load."""
 
 import httpx2
+import pytest
 
+from fakes import PUBLIC, FakeWeb as Web, fake_dns, go, page, pdf, rendu
 from llm_proxy import tools
-from llm_proxy.tools import web_fetch, web_grep, webcache
-from test_tools import Web, dns, go, page, pdf, reglages, rendu  # noqa: F401
+from llm_proxy.tools import net, web_fetch, web_grep, webcache
+
+
+@pytest.fixture(autouse=True)
+def env(monkeypatch):
+    fake_dns(monkeypatch, {"site.test": [PUBLIC], "intern.test": ["10.0.0.5"]})
+    monkeypatch.setattr(net, "ALLOW_PRIVATE", False)
+    monkeypatch.setattr(net, "ALLOWED_DOMAINS", [])
+    monkeypatch.setattr(net, "BLOCKED_DOMAINS", [])
+    monkeypatch.setattr(web_fetch, "MAX_BYTES", 2_000_000)
+    monkeypatch.setattr(web_fetch, "MAX_CHARS", 20_000)
+    webcache.CACHE.clear()
+    monkeypatch.setattr(webcache.CACHE, "ttl", 0)
 
 DOC = "\n".join([
     "Intro",                            # offset 0

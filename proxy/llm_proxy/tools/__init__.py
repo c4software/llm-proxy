@@ -29,13 +29,13 @@ ne connaissent de ce paquet que `Hosted` et le contrat.
 """
 
 import asyncio
-import contextvars
 import dataclasses
 import json
 import re
 import time
 from collections import OrderedDict
 
+from ..access.accounts import GRANTED
 from ..core import config
 from ..core.settings import INCOGNITO, log
 from ..storage import stats
@@ -182,16 +182,6 @@ CACHE_TTL = config.num("tools.cache_ttl", 24 * 3600)
 
 EXPIRED = ("[result no longer available: the proxy was restarted or the "
            "entry expired; run the tool again if you still need it]")
-
-
-# Les DROITS de la clé qui fait la requête (accounts.py, posés par le
-# middleware d'auth comme stats.CLIENT) : None = tous les outils actifs ;
-# sinon les seuls qu'elle nomme — un outil par son nom, ou les outils d'un
-# serveur MCP par `mcp:<serveur>` (ceux qu'il découvrira compris), ou de
-# tous par `mcp`. Un outil refusé est pour cette requête un outil inactif :
-# ni présenté, ni listé, ni exécutable.
-GRANTED: contextvars.ContextVar[frozenset | None] = contextvars.ContextVar(
-    "tool_rights", default=None)
 
 
 def granted(tool: Tool, rights: frozenset | None) -> bool:

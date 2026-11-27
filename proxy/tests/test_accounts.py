@@ -234,36 +234,50 @@ def test_a_token_signed_by_another_key_is_refused(idp):
 def test_the_admin_sets_an_account_share(idp, monkeypatch):
     """La part d'un compte dans le partage équitable : par défaut, puis
     illimitée (0), puis un nombre — relue pendant l'attente."""
-    import time
-
     from fakes import FakeUpstream, chat_doc
     from llm_proxy.surfaces import chat_api
     from llm_proxy.access import fairshare
     fairshare.reset()
     everywhere(monkeypatch, chat_api, "ENABLED", False)
+    now = [1000.0]
+    slept = []
+
+    import asyncio
+    import types
+
+    async def fake_wait(tasks, *, timeout=None):
+        if timeout:
+            slept.append(timeout)
+            now[0] += timeout
+        return set(), set(tasks)
+
     monkeypatch.setattr(fairshare, "DEFAULT_SHARE", 100)
-    monkeypatch.setattr(fairshare, "WINDOW", 0.4)
-    monkeypatch.setattr(fairshare, "CHECK_EVERY", 0.05)
+    monkeypatch.setattr(fairshare, "WINDOW", 60.0)
+    monkeypatch.setattr(fairshare, "CHECK_EVERY", 5.0)
+    monkeypatch.setattr(fairshare, "time", types.SimpleNamespace(
+        time=lambda: now[0], monotonic=lambda: now[0]))
+    monkeypatch.setattr(fairshare, "asyncio", types.SimpleNamespace(
+        wait=fake_wait, ensure_future=asyncio.ensure_future))
     alice = connect(idp)
     uid = alice.get("/ui/session").json()["account"]["id"]
     key = new_key(alice)["key"]
 
     def ask():
+        slept.clear()
         idp.replies.append(FakeUpstream(chat_doc(
             {"role": "assistant", "content": "ok"}, "stop", 100, 50)))
-        started = time.monotonic()
         r = idp.client.post("/v1/chat/completions", headers=bearer(key),
                             json={"model": "essai/qwen", "messages": [
                                 {"role": "user", "content": "q"}]})
         assert r.status_code == 200
-        return time.monotonic() - started
+        return sum(slept)
 
-    ask()
-    assert ask() >= 0.3                                # part par défaut
+    assert ask() == 0.0
+    assert ask() >= 60.0                               # part par défaut : attend la fenêtre
     r = alice.patch(f"/ui/users/{uid}", json={"share": 0})
     assert r.status_code == 200 and r.json()["share"] == 0
-    ask()
-    assert ask() < 0.3                                 # illimitée
+    assert ask() == 0.0
+    assert ask() == 0.0                                # illimitée : aucune attente
     assert alice.get("/ui/session").json()["fair_share"]["share"] is None
     assert alice.patch(f"/ui/users/{uid}", json={"share": 10_000}).json()[
         "share"] == 10_000

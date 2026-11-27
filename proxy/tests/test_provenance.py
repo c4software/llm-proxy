@@ -5,27 +5,27 @@ la boucle qui transmet les sites connus — enrichis à chaque résultat."""
 
 import pytest
 
-from fakes import FakeUpstream, SEARCH_TURN, ANSWER_TURN, chunk, go, outil, stream, tool_call
+from fakes import (
+    ANSWER_TURN, SEARCH_TURN, FakeUpstream, chat_post as post, chunk, go,
+    outil, stream, tool_call,
+)
 from llm_proxy import tools
 from llm_proxy.tools import ocr, provenance, transcribe, web_fetch, web_grep
 from llm_proxy.ui import page_tools
-from test_chat_api import chat, post  # noqa: F401 — la fixture `chat`
 
 
-def test_site():
-    assert provenance.site("docs.python.org") == "python.org"
-    assert provenance.site("www.bbc.co.uk") == "bbc.co.uk"
-    assert provenance.site("service-public.gouv.fr") == "service-public.gouv.fr"
-    assert provenance.site("a.b.service-public.gouv.fr") == "service-public.gouv.fr"
-
-
-def test_sites_d_un_texte():
+def test_extraction_des_sites_et_d_une_conversation():
+    """Réduction d'un hôte à son site, extraction d'un texte et d'une
+    conversation (en excluant arguments d'appel, erreurs et sorties du
+    modèle)."""
+    for host, want in (("docs.python.org", "python.org"),
+                       ("www.bbc.co.uk", "bbc.co.uk"),
+                       ("service-public.gouv.fr", "service-public.gouv.fr"),
+                       ("a.b.service-public.gouv.fr", "service-public.gouv.fr")):
+        assert provenance.site(host) == want, host
     t = ("Voir https://docs.python.org/3/library/asyncio.html et regarde frerestoque.fr, "
          "pas config.toml ni app.js ; mail : moi@exemple.com")
     assert provenance.hosts_in_text(t) == {"python.org", "frerestoque.fr"}
-
-
-def test_sites_d_une_conversation():
     msgs = [
         {"role": "system", "content": "Résumé : on parlait de https://wiki.exemple.org/x"},
         {"role": "user", "content": [{"type": "text", "text": "Lis crates.io/crates/serde"},

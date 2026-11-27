@@ -37,11 +37,11 @@ def _run(fn):
     def q(c):
         _table(c)
         return fn(c)
-    return conversations._run(q)
+    return conversations.run(q)
 
 
 def _check_id(vid) -> str:
-    if not isinstance(vid, str) or not conversations._ID.match(vid):
+    if not conversations.valid_id(vid):
         raise conversations.HistoryError("identifiant de voix invalide")
     return vid
 
@@ -117,7 +117,7 @@ def rename(owner: str, vid: str, name) -> dict | None:
 
 def wav(owner: str, vid: str) -> bytes | None:
     """La référence d'une voix du compte ; None sinon."""
-    if not isinstance(vid, str) or not conversations._ID.match(vid):
+    if not conversations.valid_id(vid):
         return None
     row = _run(lambda c: c.execute("SELECT wav FROM voices WHERE owner = ? AND id = ?",
                                    (owner, vid)).fetchone())
@@ -129,6 +129,6 @@ def delete(owner: str, vid: str) -> int:
 
     def q(c):
         n = c.execute("DELETE FROM voices WHERE owner = ? AND id = ?", (owner, vid)).rowcount
-        conversations._reclaim(c)
+        conversations.reclaim(c)
         return n
     return _run(q)

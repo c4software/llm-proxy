@@ -54,6 +54,7 @@ DEFAULT_CONTEXT = config.integer("omarchy.context", 32768, minimum=1)
 # se relit au plus une fois par SPEEDS_TTL secondes, hors de la boucle.
 SPEEDS_TTL = 60.0
 _speeds: tuple[float, dict[str, float]] = (0.0, {})
+_speeds_lock = asyncio.Lock()
 
 RECIPE_RE = re.compile(r"^[a-z0-9]+([.-][a-z0-9]+)*$")
 
@@ -112,14 +113,18 @@ async def speeds() -> dict[str, float]:
     """La vitesse de génération mesurée de chaque modèle, gardée SPEEDS_TTL."""
     global _speeds
     at, known = _speeds
-    if not at or time.monotonic() - at >= SPEEDS_TTL:
-        try:
-            known = await asyncio.to_thread(stats.decode_speeds)
-        except sqlite3.Error as exc:
-            # La liste sans vitesse plutôt que pas de liste.
-            log.warning("omarchy : vitesses de génération illisibles (%s)", exc)
-        _speeds = (time.monotonic(), known)
-    return known
+    if at and time.monotonic() - at < SPEEDS_TTL:
+        return known
+    async with _speeds_lock:
+        at, known = _speeds
+        if not at or time.monotonic() - at >= SPEEDS_TTL:
+            try:
+                known = await asyncio.to_thread(stats.decode_speeds)
+            except sqlite3.Error as exc:
+                # La liste sans vitesse plutôt que pas de liste.
+                log.warning("omarchy : vitesses de génération illisibles (%s)", exc)
+            _speeds = (time.monotonic(), known)
+        return known
 
 
 @router.get(LISTING_PATH)
@@ -129,9 +134,12 @@ async def listing(request: Request):
     y est «active» : le proxy ne démarre ni n'arrête rien."""
     if not ENABLED:
         return disabled()
+    items = list((await offered(request)).items())[:MAX_MODELS]
+    if not items:
+        return {"schema": SCHEMA, "ram_total_gib": None, "models": []}
     models = []
     measured = await speeds()
-    for rid, e in list((await offered(request)).items())[:MAX_MODELS]:
+    for rid, e in items:
         vendor = str(e.get("owned_by") or "").lower()
         ctx, max_tokens, entries = await limits(e)
         models.append({
