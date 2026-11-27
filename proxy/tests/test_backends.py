@@ -806,8 +806,7 @@ def test_un_backend_du_toml_borne_ses_modeles(env, monkeypatch):
 # ── les modèles permis d'un compte ──────────────────────────────────────
 
 def test_l_admin_borne_les_modeles_d_un_compte(env, monkeypatch):
-    # Omarchy propose tout : seuls les modèles permis du compte bornent.
-    monkeypatch.setattr(omarchy, "PATTERNS", ["*"])
+    monkeypatch.setattr(omarchy, "ENABLED", True)
     alice, bob, bob_id = admin_and_user(env)
     alice.post("/ui/backends", json={**MINE, "name": "alice", "shared": True})
     bob.post("/ui/backends", json={**MINE, "name": "bob"})
@@ -845,6 +844,11 @@ def test_l_admin_borne_les_modeles_d_un_compte(env, monkeypatch):
             assert r.status_code == expected, (surface, model, r.text)
     r = surfaces["chat"]("essai/autre")
     assert r.json()["error"]["type"] == "model_not_allowed"
+    # La liste d'Omarchy lue avec sa clé : ses modèles permis, et les siens.
+    listed = {m["name"] for m in env.client.get(
+        "/local-ai/models.json", headers=bearer(key)).json()["models"]}
+    assert "essai/permis-1" in listed and "bob/autre" in listed
+    assert not listed & {"essai/autre", "alice/autre"}, listed
 
     # Alice n'est pas bornée ; aucun motif = aucun modèle.
     assert ask(alice, "essai/autre").status_code == 200

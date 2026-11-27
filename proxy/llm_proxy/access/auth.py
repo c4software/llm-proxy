@@ -47,8 +47,8 @@ UI_OPEN = {("GET", "/"), ("GET", UI_PREFIX), ("HEAD", UI_PREFIX),
 
 
 # Ce que l'API sert SANS clé, même l'auth active, à quiconque joint le
-# proxy : la liste des modèles qu'Omarchy lit sans clé
-# (surfaces/omarchy.py ; 404 sans [omarchy].models).
+# proxy : la liste des modèles qu'Omarchy lit (surfaces/omarchy.py), vide
+# sans clé. Une clé présentée y est vérifiée comme ailleurs.
 OPEN_PATHS = {("GET", "/local-ai/models.json")}
 
 
@@ -230,7 +230,8 @@ async def require_proxy_key(request: Request, call_next):
         and "/" not in request.url.path[len(HOOK_PREFIX):]
     if not auth_required() or request.url.path == "/healthz" or served \
             or hook or ui_open(request) \
-            or (request.method, request.url.path) in OPEN_PATHS:
+            or ((request.method, request.url.path) in OPEN_PATHS
+                and not client_token(request)):
         return await call_next(request)
     if oidc.ENABLED and is_ui_path(request.url.path):
         if (denied := await ui_account(request)) is not None:

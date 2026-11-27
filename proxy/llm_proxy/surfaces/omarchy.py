@@ -3,21 +3,21 @@ Les modèles du proxy vus comme une machine du tailnet par `omarchy models`
 (Omarchy) : la liste des modèles partagés et, par modèle, une base
 OpenAI-compatible.
 
-  GET  /local-ai/models.json                      la liste, SANS clé
+  GET  /local-ai/models.json                      la liste de ce que voit la clé
   GET  /local-ai/<id>/v1/models                   le modèle, au format OpenAI
   POST /local-ai/<id>/v1/chat/completions         le chat, comme /v1/chat/completions
 
 Omarchy nomme un modèle par un identifiant de recette
 (`^[a-z0-9]+([.-][a-z0-9]+)*$`) : le nom préfixé du proxy s'y ramène par
 `recipe_id` («albert/Mistral_Small» → «albert.mistral-small»). Deux noms
-qui donnent le même identifiant sont tous deux écartés. Seuls les modèles
-de conversation que nomment les motifs de [omarchy].models sont
-proposés ; sans motif, les routes répondent 404.
+qui donnent le même identifiant sont tous deux écartés. Ne sont
+proposés que les modèles de conversation que la clé peut employer ;
+[omarchy].enabled faux (défaut), les routes répondent 404.
 
-La liste ne porte aucun secret : Omarchy la lit sans clé, le middleware
-d'auth la laisse passer (auth.OPEN_PATHS) pour quiconque joint le proxy. Le chat passe par l'auth
-ordinaire : la clé que l'appairage d'Omarchy range est une clé du proxy,
-avec ses modèles permis et ses statistiques.
+La clé est celle que l'appairage d'Omarchy range : une clé du proxy, avec
+ses modèles permis et ses statistiques. Une machine du tailnet lit la liste
+sans clé tant qu'elle n'est pas appairée : le middleware la laisse passer
+(auth.OPEN_PATHS), et elle est vide quand l'auth est active.
 """
 
 import json
@@ -25,7 +25,7 @@ import re
 
 from fastapi import APIRouter, Request
 
-from ..access import accounts
+from ..access.auth import auth_required, request_owner
 from ..core import config
 from ..core.httputil import error_response, parse_json
 from ..upstream.backends import route_backend
@@ -42,7 +42,7 @@ MAX_MODELS = 64
 # (DEFAULT_MAX_OUTPUT_TOKENS), quand le backend n'en fixe pas.
 DEFAULT_MAX_TOKENS = 16384
 
-PATTERNS = config.strings("omarchy.models")
+ENABLED = config.flag("omarchy.enabled", False)
 DEFAULT_CONTEXT = config.integer("omarchy.context", 32768, minimum=1)
 
 RECIPE_RE = re.compile(r"^[a-z0-9]+([.-][a-z0-9]+)*$")
@@ -60,19 +60,15 @@ def recipe_id(name: str) -> str:
     return s if RECIPE_RE.match(s) else ""
 
 
-def _offered(entry: dict) -> bool:
-    return entry.get("type") in CHAT_TYPES \
-        and accounts.permitted(str(entry.get("id") or ""), PATTERNS)
-
-
-async def offered(request: Request | None) -> dict[str, dict]:
-    """Les modèles proposés, par identifiant de recette : ceux du client
-    de la requête ; sans requête (la liste, lue sans clé), ceux du TOML et
-    des partagés, chaque catalogue lu avec la clé propre de son backend."""
-    entries = await merged_models(request)
+async def offered(request: Request) -> dict[str, dict]:
+    """Les modèles de conversation que voit le client de la requête, par
+    identifiant de recette ; aucun pour une requête sans clé, l'auth
+    active."""
+    if auth_required() and not request_owner(request):
+        return {}
     seen: dict[str, list[dict]] = {}
-    for e in entries or []:
-        if _offered(e) and (rid := recipe_id(str(e["id"]))):
+    for e in await merged_models(request) or []:
+        if e.get("type") in CHAT_TYPES and (rid := recipe_id(str(e["id"]))):
             seen.setdefault(rid, []).append(e)
     return {rid: found[0] for rid, found in sorted(seen.items())
             if len(found) == 1}
@@ -93,18 +89,18 @@ async def limits(entry: dict) -> tuple[int, int, list[str]]:
 
 def disabled():
     return error_response("openai", 404, "unknown_route",
-                          "aucun modèle partagé avec Omarchy ([omarchy].models)")
+                          "surface Omarchy désactivée ([omarchy].enabled)")
 
 
 @router.get(LISTING_PATH)
-async def listing():
+async def listing(request: Request):
     """La liste qu'Omarchy lit sur chaque machine du tailnet
-    (`omarchy models network`). Chaque modèle y est «active» : le proxy
-    ne démarre ni n'arrête rien."""
-    if not PATTERNS:
+    (`omarchy models network`), ce que voit la clé présentée. Chaque modèle
+    y est «active» : le proxy ne démarre ni n'arrête rien."""
+    if not ENABLED:
         return disabled()
     models = []
-    for rid, e in list((await offered(None)).items())[:MAX_MODELS]:
+    for rid, e in list((await offered(request)).items())[:MAX_MODELS]:
         vendor = str(e.get("owned_by") or "").lower()
         ctx, max_tokens, entries = await limits(e)
         models.append({
@@ -133,19 +129,19 @@ async def listing():
 
 async def resolve(request: Request, rid: str) -> dict | None:
     """Le modèle derrière `rid`, parmi ceux que le client peut employer."""
-    if not PATTERNS or not RECIPE_RE.match(rid):
+    if not RECIPE_RE.match(rid):
         return None
     return (await offered(request)).get(rid)
 
 
 def unknown(rid: str):
     return error_response("openai", 404, "model_not_found",
-                          f"modèle «{rid}» non partagé avec Omarchy")
+                          f"modèle «{rid}» inconnu ou non permis à cette clé")
 
 
 @router.get(PREFIX + "/{rid}/v1/models")
 async def model_list(request: Request, rid: str):
-    if not PATTERNS:
+    if not ENABLED:
         return disabled()
     if (e := await resolve(request, rid)) is None:
         return unknown(rid)
@@ -159,7 +155,7 @@ async def model_list(request: Request, rid: str):
 async def chat_completions(request: Request, rid: str):
     """/v1/chat/completions, le `model` du corps (l'identifiant de recette)
     remplacé par le nom préfixé du proxy."""
-    if not PATTERNS:
+    if not ENABLED:
         return disabled()
     if (e := await resolve(request, rid)) is None:
         return unknown(rid)

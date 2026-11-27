@@ -10,13 +10,13 @@ modèle : chacun y est annoncé en marche.
 
 | Route | Clé | Rôle |
 |---|---|---|
-| `GET /local-ai/models.json` | aucune | La liste qu'Omarchy lit sur chaque machine (schéma `1`) |
+| `GET /local-ai/models.json` | facultative | La liste qu'Omarchy lit sur chaque machine (schéma `1`) : les modèles de conversation que voit la clé, aucun sans clé |
 | `POST /local-ai/<id>/v1/chat/completions` | clé du proxy | `/v1/chat/completions`, le `model` du corps remplacé par le nom préfixé |
 | `GET /local-ai/<id>/v1/models` | clé du proxy | Le modèle seul, au format OpenAI |
 
-Sans `[omarchy].models`, ces routes répondent `404`. La liste est servie
-sans clé à quiconque joint le proxy : `[omarchy].models` borne ce qu'elle
-révèle. Elle ne porte que des noms, le contexte, le plafond de réponse
+Sans `[omarchy].enabled = true`, ces routes répondent `404`. Proxy ouvert
+(sans `[proxy].api_keys` ni comptes), la liste porte tous les modèles de
+conversation. Elle ne porte que des noms, le contexte, le plafond de réponse
 (`[backends.<nom>].max_tokens`, à défaut 16384, borné par le contexte) et
 les entrées acceptées (`text`, `image` pour un modèle multimodal d'un
 backend `images = true`) ; elle ne contient aucune clé. Le chat passe par
@@ -36,28 +36,34 @@ plus 64 modèles.
 
 ```toml
 [omarchy]
-models = ["albert/*", "local/qwen*"]
+enabled = true
 ```
+
+Ce qu'un poste voit se règle par sa clé : les modèles permis du compte
+(*Configuration → Comptes*) et les backends que le compte voit.
 
 Voir [Configuration, `[omarchy]`](configuration.md#omarchy).
 
 ## Côté Omarchy
 
-Omarchy lit la liste à `https://<nom MagicDNS>/local-ai/models.json`, avec
-une vérification TLS ordinaire, et n'interroge que les pairs Linux en ligne
-du tailnet. Deux cas :
+Omarchy lit la liste à `https://<nom>/local-ai/models.json`, avec une
+vérification TLS ordinaire : `<nom>` est le nom MagicDNS d'un pair Linux
+en ligne du tailnet, ou le `dns` d'un hôte appairé. Avec l'auth active, la
+liste n'est utile que lue avec la clé de l'appairage :
+`omarchy-local-ai` doit l'envoyer (`Authorization: Bearer`) avec chaque
+lecture de la liste d'un hôte appairé et sonder un hôte appairé à son
+`dns` quand ce nom n'est pas celui du tailnet. La version publiée
+d'`omarchy-local-ai` ne fait ni l'un ni l'autre : elle trouve une liste
+vide.
 
-- **Le proxy répond au nom MagicDNS de sa machine** avec un certificat
-  valide (Tailscale : `tailscale serve --bg --set-path /local-ai
-  http://127.0.0.1:8000/local-ai`). `omarchy models network` le liste ;
-  une fois appairé, le panneau et le sélecteur `/model` de pi le
-  proposent. L'appairage porte alors le nom court MagicDNS (`host`) et le
-  nom complet (`dns`).
-- **Le proxy répond à un autre nom** (`llm.exemple.fr`, derrière un reverse
-  proxy). Seul le lancement nommé fonctionne, une fois appairé :
-  `omarchy agent --local-model llm/albert.mistral-small-3.2`. Le panneau
-  montre la machine hors ligne et le sélecteur de pi ne la propose pas :
-  Omarchy ne sonde pas un hôte appairé hors du tailnet.
+Le proxy répond au nom MagicDNS de sa machine, avec un certificat valide
+(Tailscale : `tailscale serve --bg --set-path /local-ai
+http://127.0.0.1:8000/local-ai`), ou à un autre nom (`llm.exemple.fr`,
+derrière un reverse proxy). Une fois appairé, `omarchy models network` le
+liste, le panneau et le sélecteur `/model` de pi le proposent, et
+`omarchy agent --local-model llm/albert.mistral-small-3.2` lance un agent
+dessus. Sous son nom MagicDNS, l'appairage porte le nom court (`host`) et
+le nom complet (`dns`).
 
 Le proxy ne doit pas tourner sur une machine Omarchy qui partage aussi ses
 propres modèles : `omarchy models share` retire toute route `tailscale

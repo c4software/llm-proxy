@@ -325,13 +325,12 @@ async def accepts_images(b: Backend, plain_model: str) -> bool:
     return kind is None or kind == "image-text-to-text"
 
 
-async def merged_models(request: Request | None) -> list[dict] | None:
+async def merged_models(request: Request) -> list[dict] | None:
     """Catalogue unifié : chaque backend que voit le client est interrogé,
     ses modèles exposés préfixés par son nom («albert/…», «bigchuck/…») —
     les noms renvoyés sont directement routables ; ceux que son compte ne
     peut pas employer n'y sont pas. None = aucun backend joignable ; aucun
-    backend du tout : une liste vide. Sans requête, chaque catalogue est
-    lu avec la clé propre de son backend, jamais celle d'un client."""
+    backend du tout : une liste vide."""
     seen = list(visible().values())
     results = await asyncio.gather(*(fetch_models(b, request) for b in seen))
     if results and all(lst is None for lst in results):

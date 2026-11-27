@@ -271,7 +271,7 @@ Les modèles du proxy pour `omarchy models`. Voir [Omarchy](omarchy.md).
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `models` | `[]` | Motifs `fnmatch` (casse ignorée) des noms préfixés proposés, par exemple `["albert/*", "local/qwen*"]`. Seuls les modèles de conversation sont retenus. Vide : les routes `/local-ai/…` répondent `404` |
+| `enabled` | `false` | Ouvre les routes `/local-ai/…`. Sinon `404` |
 | `context` | `32768` | Contexte annoncé pour un modèle dont le catalogue ne donne pas la taille (`max_context_length`) |
 
 ## `[chat]`

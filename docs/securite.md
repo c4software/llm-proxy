@@ -51,9 +51,8 @@ Même avec l'auth active :
   compte est actif ou que sa clé du TOML est encore là. Voir
   [Webhooks, Sécurité](webhooks.md#sécurité).
 - `GET /local-ai/models.json`, la liste des modèles proposés à
-  [Omarchy](omarchy.md), pour quiconque joint le proxy : des noms
-  préfixés (donc les noms des backends) et des tailles, aucun secret.
-  `[omarchy].models` borne ce qu'elle révèle ; `404` sans motif.
+  [Omarchy](omarchy.md) : vide sans clé ; avec une clé, vérifiée comme
+  ailleurs, les modèles que cette clé peut employer.
 - `GET /healthz`, réduit à `{"status": "ok"}`. Le détail (backends et
   leurs URL, outils, caches) exige une clé, ou la session de la page par
   `GET /ui/health`.
