@@ -58,7 +58,8 @@ omarchy models pair https://llm.exemple.fr
 - La commande demande la clé, sans écho (sur l'entrée standard hors
   terminal), et la vérifie en lisant la liste avec elle avant de la ranger
   dans `~/.config/omarchy/agent-local/remotes/llm.{json,key}`. Une clé
-  refusée ne range rien.
+  refusée ne range rien. Proxy ouvert (sans `[proxy].api_keys` ni
+  comptes) : Entrée, sans clé.
 - La clé est une clé du proxy (*Configuration → Clés*). Omarchy n'accepte
   que `[A-Za-z0-9_-]`, 16 à 128 caractères, ce que respecte une clé gérée
   (uuid). Ses modèles permis, ses statistiques et sa révocation valent
