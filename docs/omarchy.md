@@ -46,64 +46,35 @@ Voir [Configuration, `[omarchy]`](configuration.md#omarchy).
 
 ## Côté Omarchy
 
-Omarchy lit la liste à `https://<nom>/local-ai/models.json`, avec une
-vérification TLS ordinaire : `<nom>` est le nom MagicDNS d'un pair Linux
-en ligne du tailnet, ou le `dns` d'un hôte appairé. Avec l'auth active, la
-liste n'est utile que lue avec la clé de l'appairage :
-`omarchy-local-ai` doit l'envoyer (`Authorization: Bearer`) avec chaque
-lecture de la liste d'un hôte appairé et sonder un hôte appairé à son
-`dns` quand ce nom n'est pas celui du tailnet. La version publiée
-d'`omarchy-local-ai` ne fait ni l'un ni l'autre : elle trouve une liste
-vide.
-
-Le proxy répond au nom MagicDNS de sa machine, avec un certificat valide
-(Tailscale : `tailscale serve --bg --set-path /local-ai
-http://127.0.0.1:8000/local-ai`), ou à un autre nom (`llm.exemple.fr`,
-derrière un reverse proxy). Une fois appairé, `omarchy models network` le
-liste, le panneau et le sélecteur `/model` de pi le proposent, et
-`omarchy agent --local-model llm/albert.mistral-small-3.2` lance un agent
-dessus. Sous son nom MagicDNS, l'appairage porte le nom court (`host`) et
-le nom complet (`dns`).
-
-Le proxy ne doit pas tourner sur une machine Omarchy qui partage aussi ses
-propres modèles : `omarchy models share` retire toute route `tailscale
-serve` sous `/local-ai` qu'il n'a pas posée.
-
-### Appairer
-
-L'appairage range le nom et la clé dans
-`~/.config/omarchy/agent-local/remotes/<hôte>.{json,key}`. La clé est une
-clé du proxy (*Configuration → Clés*, ou `[proxy].api_keys`) ; Omarchy
-n'accepte que `[A-Za-z0-9_-]`, 16 à 128 caractères, ce que respecte une
-clé gérée (uuid). Ses modèles permis, ses statistiques et sa révocation
-valent pour chaque poste qui l'emploie.
-
-**À la main**, sur le poste Omarchy :
+Le proxy est pour Omarchy une passerelle : un serveur qui n'est pas une
+machine Omarchy mais publie la même liste. Il faut un `omarchy-local-ai`
+qui sait appairer une passerelle (`omarchy models pair https://…`) ; sans
+cela, Omarchy lit la liste sans clé et la trouve vide.
 
 ```bash
-d=~/.config/omarchy/agent-local/remotes
-install -d -m 700 "$d"
-(umask 077
- printf '%s' "$CLE" > "$d/llm.key"
- printf '{"host": "llm", "dns": "llm.exemple.fr"}\n' > "$d/llm.json")
+omarchy models pair https://llm.exemple.fr
 ```
 
-`host` est le nom du fichier, sans extension ; `dns` le nom servi par le
-proxy.
+- La commande demande la clé, sans écho (sur l'entrée standard hors
+  terminal), et la vérifie en lisant la liste avec elle avant de la ranger
+  dans `~/.config/omarchy/agent-local/remotes/llm.{json,key}`. Une clé
+  refusée ne range rien.
+- La clé est une clé du proxy (*Configuration → Clés*). Omarchy n'accepte
+  que `[A-Za-z0-9_-]`, 16 à 128 caractères, ce que respecte une clé gérée
+  (uuid). Ses modèles permis, ses statistiques et sa révocation valent
+  pour chaque poste qui l'emploie : une clé par poste les sépare.
+- L'adresse est le nom seul, sans chemin ni port, servi avec un
+  certificat valide ; le premier label (`llm`) nomme la passerelle et ne
+  peut pas être celui d'une machine du tailnet.
+- Omarchy lit la liste avec la clé, à cette adresse, tailnet ou non. Les
+  modèles arrivent dans `omarchy models network`, sous + dans le panneau
+  des agents et dans le sélecteur `/model` de pi ;
+  `omarchy agent --local-model llm/albert.mistral-small-3.2` lance un
+  agent dessus.
+- `omarchy models pair llm` redemande la clé (pour en changer),
+  `omarchy models forget llm` retire l'appairage.
 
-**Par `omarchy models pair <hôte SSH>`** : Omarchy y lance
-`omarchy-local-ai share --export` et lit son JSON. Sur la machine du proxy,
-qui n'a pas Omarchy, un script à ce nom dans le `PATH` d'une session SSH
-non interactive (`/usr/local/bin/omarchy-local-ai`) suffit ; il lit une clé
-gérée rangée en mode `600` dans `~/.config/llm-proxy/omarchy.key`, la même
-pour tous les postes appairés :
-
-```sh
-#!/bin/sh
-# Lu par `omarchy models pair` ; aucune autre commande n'est appelée.
-[ "$1 $2" = "share --export" ] || exit 1
-printf '{"schema": 1, "host": "llm", "dns": "llm.exemple.fr", "key": "%s", "shared": []}\n' \
-  "$(cat ~/.config/llm-proxy/omarchy.key)"
-```
-
-`omarchy models forget llm` retire l'appairage.
+Le proxy ne doit pas être publié par `tailscale serve` sous `/local-ai`
+sur une machine Omarchy qui partage aussi ses propres modèles :
+`omarchy models share` retire toute route sous `/local-ai` qu'il n'a pas
+posée.
